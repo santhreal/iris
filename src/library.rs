@@ -209,7 +209,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn corrupt_store_starts_fresh() {
-        let d = xdg();
+        let _d = xdg();
         let store = app_data_dir().unwrap().join("library.json");
         std::fs::write(&store, "{not json").unwrap();
         assert!(list().is_empty());

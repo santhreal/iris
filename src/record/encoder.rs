@@ -74,6 +74,7 @@ impl Encoder {
         let output = cfg.output.to_string_lossy().into_owned();
         args.push(&output);
 
+        eprintln!("iris: record: spawning ffmpeg -> {output}");
         let child = Command::new("ffmpeg")
             .args(&args)
             .stdin(Stdio::piped())
@@ -129,6 +130,7 @@ impl Encoder {
         }
         let meta = std::fs::metadata(&self.output)
             .map_err(|e| format!("output {} missing after encode: {e}", self.output.display()))?;
+        eprintln!("iris: record: encoder finished, {} bytes", meta.len());
         if meta.len() == 0 {
             return Err(format!("output {} is empty", self.output.display()));
         }

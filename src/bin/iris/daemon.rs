@@ -199,8 +199,8 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
         let _ = cx.update(|cx| match grabbed {
             Ok((frame, img)) => {
                 eprintln!("iris: capture: frame landed in {:?}", t0.elapsed());
-                let _ = handle.update(cx, |overlay, _, cx| {
-                    overlay.set_frame(frame, img);
+                let _ = handle.update(cx, |overlay, window, cx| {
+                    overlay.set_frame(frame, img, window, cx);
                     cx.notify();
                 });
             }

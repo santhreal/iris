@@ -48,6 +48,9 @@ pub struct Overlay {
     cursor: (f32, f32),
     loupe: Option<(Arc<RenderImage>, String)>,
     finishing: bool,
+    /// Enter landed before the background grab did: finish() defers
+    /// here and set_frame() completes it once the frame exists.
+    pending_finish: bool,
     /// First-render clock: the dim layer fades in over DIM_FADE.
     opened: Option<Instant>,
     /// Hover-snap fade-in clock for the current window.
@@ -95,6 +98,13 @@ pub struct ShellLayout {
     pub union: WinRect,
 }
 
+/// True on a Wayland session: no randr, no window list, no client-side
+/// placement. The overlay opens fullscreen and the compositor picks the
+/// output; the frame's own size becomes the view when it lands.
+fn wayland() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
 pub fn layout() -> ShellLayout {
     #[cfg(target_os = "linux")]
     let (monitors, windows) =
@@ -129,7 +139,7 @@ pub fn slice_frame(frame: &Frame) -> Arc<RenderImage> {
 /// renderer init, and a window per monitor doubled the time to
 /// first feedback on dual setups.
 pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Overlay>, String> {
-    if layout.union.width == 0 || layout.union.height == 0 {
+    if !wayland() && (layout.union.width == 0 || layout.union.height == 0) {
         return Err("no monitor layout".into());
     }
     let focus = cx.focus_handle();
@@ -142,17 +152,30 @@ pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Ove
         layout.union.width,
         layout.union.height,
     );
+    // Wayland: the compositor owns placement, so the shell is a
+    // fullscreen window and the frame's own size becomes the view when
+    // it lands. The bounds still need a nonzero size: GPUI sizes the
+    // Vulkan surface from them before the compositor's configure, and
+    // a 0x0 swapchain segfaults lavapipe. X11: one windowed shell
+    // spanning the virtual screen — _NET_WM_STATE_FULLSCREEN would pin
+    // it to a single monitor.
+    let bounds = {
+        let (w, h) = if wayland() {
+            cx.primary_display()
+                .map(|d| (d.bounds().size.width, d.bounds().size.height))
+                .unwrap_or((px(1280.0), px(800.0)))
+        } else {
+            (px(uw as f32), px(uh as f32))
+        };
+        WindowBounds::Windowed(Bounds {
+            origin: point(px(ux as f32), px(uy as f32)),
+            size: size(w, h),
+        })
+    };
     let handle = cx
         .open_window(
             WindowOptions {
-                // Windowed, not Fullscreen: _NET_WM_STATE_FULLSCREEN
-                // pins a window to one monitor. The shell spans the
-                // virtual screen via explicit placement plus
-                // _NET_WM_STATE_ABOVE (span_after_map).
-                window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    origin: point(px(ux as f32), px(uy as f32)),
-                    size: size(px(uw as f32), px(uh as f32)),
-                })),
+                window_bounds: Some(bounds),
                 titlebar: None,
                 focus: true,
                 show: true,
@@ -186,6 +209,7 @@ pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Ove
                     cursor: (0.0, 0.0),
                     loupe: None,
                     finishing: false,
+                    pending_finish: false,
                     opened: None,
                     hover_in: None,
                     hover_out: None,
@@ -197,7 +221,11 @@ pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Ove
         )
         .map_err(|e| format!("open overlay window: {e}"))?;
     crate::xwin::span_after_map(win_id.clone(), ux, uy, uw, uh);
-    *POOL.lock().unwrap() = Some((handle, win_id));
+    // Pooling needs minimize+restore, which Wayland cannot do; the
+    // window is destroyed on park there instead.
+    if !wayland() {
+        *POOL.lock().unwrap() = Some((handle, win_id));
+    }
     Ok(handle)
 }
 
@@ -286,12 +314,35 @@ fn loupe_image(frame: &Frame, fx: i64, fy: i64) -> (Arc<RenderImage>, String) {
 }
 
 impl Overlay {
-    /// The background grab's delivery: the frozen frame and this
-    /// window's slice. The dim is already at rest over the live
-    /// desktop, so the frame fades in underneath with no visual pop.
-    pub fn set_frame(&mut self, frame: Arc<Frame>, img: Arc<RenderImage>) {
+    pub fn set_frame(
+        &mut self,
+        frame: Arc<Frame>,
+        img: Arc<RenderImage>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Wayland opened fullscreen with no layout: the frame's own
+        // extent is the view, and its whole rect is the one monitor.
+        if wayland() {
+            self.origin = (0, 0);
+            self.view = (frame.width, frame.height);
+            if self.monitors.is_empty() {
+                self.monitors.push(WinRect {
+                    x: 0,
+                    y: 0,
+                    width: frame.width,
+                    height: frame.height,
+                });
+            }
+        }
         self.frame = Some(frame);
         self.frame_img = Some(img);
+        // Enter raced the grab: the selection is already committed,
+        // finish it now that there is a frame to crop.
+        if self.pending_finish {
+            self.pending_finish = false;
+            self.finish(window, cx);
+        }
     }
 
     /// Re-arm a pooled window for a new session: every per-session
@@ -310,6 +361,7 @@ impl Overlay {
         self.hovered = None;
         self.loupe = None;
         self.finishing = false;
+        self.pending_finish = false;
         self.opened = None;
         self.hover_in = None;
         self.hover_out = None;
@@ -401,12 +453,13 @@ impl Overlay {
         if w < MIN_SIZE || h < MIN_SIZE {
             return;
         }
-        self.finishing = true;
         let Some(frame) = self.frame.clone() else {
-            // The grab has not landed yet; nothing to crop from.
-            self.finishing = false;
+            // The grab has not landed yet; set_frame() completes the
+            // finish once it does.
+            self.pending_finish = true;
             return;
         };
+        self.finishing = true;
         let region = Self::rect_to_frame(window, self.origin, self.view, (x, y, w, h));
         let crop = match pipeline::crop(&frame, region) {
             Ok(c) => c,
@@ -512,14 +565,20 @@ impl Overlay {
     /// Park the window (minimized) instead of destroying it: the next
     /// capture reuses the live window and skips GPUI's ~130ms init.
     /// Minimize goes through the WM, so no placement constraint can
-    /// fight it, and the GPU surface is freed while iconic.
+    /// fight it, and the GPU surface is freed while iconic. Wayland has
+    /// no unminimize, so the window is destroyed there instead.
     fn park(&mut self, window: &mut Window, cx: &mut App) {
         self.release_assets(cx);
         self.hidden = true;
-        window.minimize_window();
+        if wayland() {
+            window.remove_window();
+        } else {
+            window.minimize_window();
+        }
     }
 
     pub(crate) fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_finish = false;
         close_other_overlays(cx, Some(window.window_handle()));
         self.park(window, cx);
     }
