@@ -119,3 +119,110 @@ impl Config {
         std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
 }
+
+// WHY: the class closed here is "config silently lands somewhere the app
+// never reads": a wrong ProjectDirs triple, a dropped ~ expansion, or a
+// migration that overwrites the new file all look fine until a user's
+// settings vanish. Env-mutating tests run serially; XDG vars point at a
+// tempdir per test. Not covered: platform dirs on Windows/macOS.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Point XDG at a fresh tempdir; returns it so the test can seed files.
+    fn xdg() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
+        std::env::set_var("XDG_DATA_HOME", dir.path().join("data"));
+        dir
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn toml_round_trip_preserves_every_field() {
+        let _d = xdg();
+        let cfg = Config::default();
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.screenshots_dir, cfg.screenshots_dir);
+        assert_eq!(back.recordings_dir, cfg.recordings_dir);
+        assert_eq!(back.screenshot_template, cfg.screenshot_template);
+        assert_eq!(back.recording_fps, cfg.recording_fps);
+        assert_eq!(back.capture_hotkey, cfg.capture_hotkey);
+        assert_eq!(back.record_hotkey, cfg.record_hotkey);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn tilde_dirs_expand_to_home() {
+        let _d = xdg();
+        let home = directories::UserDirs::new().unwrap().home_dir().to_path_buf();
+        let mut cfg = Config {
+            screenshots_dir: PathBuf::from("~/shots"),
+            recordings_dir: PathBuf::from("~/recs"),
+            ..Config::default()
+        };
+        cfg.expand_dirs();
+        assert_eq!(cfg.screenshots_dir, home.join("shots"));
+        assert_eq!(cfg.recordings_dir, home.join("recs"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn load_writes_defaults_when_missing() {
+        let _d = xdg();
+        let cfg = Config::load();
+        assert!(Config::path().unwrap().exists());
+        assert_eq!(cfg.recording_fps, 30);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn load_reads_stored_values() {
+        let d = xdg();
+        let path = Config::path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "recording_fps = 24\ncapture_hotkey = \"F9\"\n").unwrap();
+        let cfg = Config::load();
+        assert_eq!(cfg.recording_fps, 24);
+        assert_eq!(cfg.capture_hotkey, "F9");
+        drop(d);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn glint_config_migrates_to_iris_path() {
+        let d = xdg();
+        let old = d.path().join("config/glint/config.toml");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, "recording_fps = 12\n").unwrap();
+        let cfg = Config::load();
+        assert_eq!(cfg.recording_fps, 12);
+        // The copy landed at the iris path, not just in memory.
+        assert!(Config::path().unwrap().exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn existing_iris_config_wins_over_glint() {
+        let d = xdg();
+        let old = d.path().join("config/glint/config.toml");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, "recording_fps = 12\n").unwrap();
+        let path = Config::path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "recording_fps = 60\n").unwrap();
+        assert_eq!(Config::load().recording_fps, 60);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn invalid_toml_falls_back_to_defaults() {
+        let _d = xdg();
+        let path = Config::path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "this is not toml = = =\n").unwrap();
+        let cfg = Config::load();
+        assert_eq!(cfg.recording_fps, 30);
+    }
+}

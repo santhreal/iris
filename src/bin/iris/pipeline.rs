@@ -206,3 +206,61 @@ pub fn copy_ocr_text(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
+
+// WHY: the class closed here is "captures land in the wrong place or
+// clobber each other": a template that stops substituting, a suffix
+// collision that overwrites, or a region that crops out of bounds all
+// lose the user's shot. Not covered: the X11/Wayland grab itself.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg_at(dir: &Path) -> Config {
+        Config {
+            screenshots_dir: dir.to_path_buf(),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn unique_path_substitutes_template_and_suffixes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = cfg_at(dir.path());
+        let first = unique_path(&cfg);
+        assert!(first.to_string_lossy().ends_with(".png"));
+        assert!(!first.to_string_lossy().contains('{'));
+        std::fs::write(&first, b"x").unwrap();
+        let second = unique_path(&cfg);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn region_from_corners_normalizes_and_clamps() {
+        // Reversed drag direction.
+        let r = Region::from_corners((50.0, 40.0), (10.0, 5.0), 100, 100);
+        assert_eq!(r, Region { x: 10, y: 5, width: 40, height: 35 });
+        // Drag past the frame edges clamps to the frame.
+        let r = Region::from_corners((-20.0, -10.0), (150.0, 120.0), 100, 100);
+        assert_eq!(r, Region { x: 0, y: 0, width: 100, height: 100 });
+    }
+
+    #[test]
+    fn crop_rejects_empty_and_out_of_bounds() {
+        let frame = Frame { width: 4, height: 4, rgba: vec![0; 64] };
+        assert!(crop(&frame, Region { x: 0, y: 0, width: 0, height: 2 }).is_err());
+        assert!(crop(&frame, Region { x: 3, y: 0, width: 2, height: 2 }).is_err());
+    }
+
+    #[test]
+    fn crop_copies_exact_pixels() {
+        let mut rgba = vec![0u8; 4 * 4 * 4];
+        for i in 0..rgba.len() {
+            rgba[i] = i as u8;
+        }
+        let frame = Frame { width: 4, height: 4, rgba };
+        let out = crop(&frame, Region { x: 1, y: 1, width: 2, height: 2 }).unwrap();
+        assert_eq!(out.width(), 2);
+        // Top-left of the crop is frame pixel (1,1) = byte offset 20.
+        assert_eq!(&out.as_raw()[..4], &[20, 21, 22, 23]);
+    }
+}

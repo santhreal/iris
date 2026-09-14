@@ -869,3 +869,27 @@ fn serve_x11_clipboard<C: Connection>(
     let _ = conn.destroy_window(win);
     let _ = conn.flush();
 }
+
+// WHY: the class closed here is "a drag or copy starts with a path that
+// cannot serve": an empty set or a vanished file must fail before any X11
+// work begins, not mid-drag. Not covered: the XDnD wire protocol, which
+// the on-rig QA scripts exercise against a live drop target.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_rejects_empty_and_missing() {
+        assert!(validate_drag_paths(Vec::new()).is_err());
+        assert!(validate_drag_paths(vec![PathBuf::from("/nonexistent-xyz")]).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_existing_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.png");
+        std::fs::write(&f, b"x").unwrap();
+        let out = validate_drag_paths(vec![f.clone()]).unwrap();
+        assert_eq!(out, vec![f]);
+    }
+}

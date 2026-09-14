@@ -46,7 +46,10 @@ pub fn spring(t: f32) -> f32 {
     let zeta: f32 = 30.0 / (2.0 * w);
     let wd = w * (1.0 - zeta * zeta).sqrt();
     let time = t * 0.55;
-    1.0 - (-zeta * w * time).exp() * ((wd * time).cos() + (zeta * w / wd) * (wd * time).sin())
+    // zeta<1 overshoots ~0.01%; GPUI's animation driver panics on
+    // deltas outside 0..=1, so the curve clamps its output.
+    (1.0 - (-zeta * w * time).exp() * ((wd * time).cos() + (zeta * w / wd) * (wd * time).sin()))
+        .clamp(0.0, 1.0)
 }
 
 /// A value+velocity spring for pointer-coupled state. Unlike the
@@ -79,4 +82,57 @@ impl Spring {
     }
 
 
+}
+
+// WHY: the class closed here is "motion math breaks the animation
+// contract": spring() must stay inside 0..=1 (GPUI's animation driver
+// panics outside it) and Spring must converge without oscillation.
+// Not covered: wall-clock pacing, which is frame-scheduler territory.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spring_curve_stays_in_unit_range() {
+        for i in 0..=200 {
+            let v = spring(i as f32 / 200.0);
+            assert!((0.0..=1.0).contains(&v), "spring({}) = {v}", i as f32 / 200.0);
+        }
+        assert_eq!(spring(0.0), 0.0);
+        assert!((spring(1.0) - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn integrator_converges_without_overshoot() {
+        let mut s = Spring::default();
+        let mut peak = 0.0f32;
+        for _ in 0..600 {
+            let v = s.to(1.0, 1.0 / 120.0);
+            peak = peak.max(v);
+        }
+        assert!(s.settled(1.0), "value={} vel={}", s.value, s.velocity);
+        assert!(peak <= 1.001, "critically damped spring overshot: {peak}");
+    }
+
+    #[test]
+    fn integrator_reverses_mid_flight() {
+        let mut s = Spring::default();
+        for _ in 0..30 {
+            s.to(1.0, 1.0 / 120.0);
+        }
+        let mid = s.value;
+        assert!(mid > 0.1 && mid < 1.0);
+        for _ in 0..600 {
+            s.to(0.0, 1.0 / 120.0);
+        }
+        assert!(s.settled(0.0));
+    }
+
+    #[test]
+    fn stalled_frame_dt_is_clamped() {
+        let mut s = Spring::default();
+        // A 10-second dt must not explode the integrator.
+        let v = s.to(1.0, 10.0);
+        assert!(v.is_finite() && v < 2.0);
+    }
 }

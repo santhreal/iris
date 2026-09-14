@@ -73,3 +73,45 @@ fn percent_decode(encoded: &str) -> std::path::PathBuf {
     }
     std::path::PathBuf::from(String::from_utf8_lossy(&out).into_owned())
 }
+
+// WHY: the class closed here is "portal URIs decode wrong": a path with
+// spaces or UTF-8 arrives percent-encoded and a naive strip of file://
+// opens a file that does not exist. Not covered: the portal round-trip
+// itself, which needs a live session.
+#[cfg(test)]
+mod tests {
+    use super::percent_decode;
+
+    #[test]
+    fn decodes_percent_escapes() {
+        assert_eq!(
+            percent_decode("/home/u/my%20shot%20%231.png"),
+            std::path::PathBuf::from("/home/u/my shot #1.png")
+        );
+    }
+
+    #[test]
+    fn decodes_utf8_sequences() {
+        assert_eq!(
+            percent_decode("/tmp/%C3%A9cran.png"),
+            std::path::PathBuf::from("/tmp/écran.png")
+        );
+    }
+
+    #[test]
+    fn leaves_plain_and_malformed_input_alone() {
+        assert_eq!(
+            percent_decode("/a/b.png"),
+            std::path::PathBuf::from("/a/b.png")
+        );
+        // Trailing % and non-hex escapes pass through literally.
+        assert_eq!(
+            percent_decode("/a/100%.png"),
+            std::path::PathBuf::from("/a/100%.png")
+        );
+        assert_eq!(
+            percent_decode("/a/%zz.png"),
+            std::path::PathBuf::from("/a/%zz.png")
+        );
+    }
+}

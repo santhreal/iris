@@ -105,7 +105,9 @@ pub struct RecordingManager {
 impl RecordingManager {
     pub fn is_active(&self) -> bool {
         self.active.is_some()
-    }    /// Stop the active recording, if any. Returns the finished file path,
+    }
+
+    /// Stop the active recording, if any. Returns the finished file path,
     /// or None when the session was cancelled before encoding.
     pub fn stop(&mut self) -> Result<Option<PathBuf>, String> {
         match self.active.take() {
@@ -131,4 +133,87 @@ pub fn unique_recording_path(dir: &Path) -> PathBuf {
         }
     }
     dir.join(format!("{stem}_{}.mp4", now.timestamp_millis()))
+}
+
+// WHY: the class closed here is "a recording leaks or double-stops": a
+// stop that leaves the thread running, a cancelled pick that leaves the
+// file, or a manager that reports active after stop all hang or corrupt
+// the next session. Sources are stub closures over the real channel so
+// the lifecycle itself is what is tested. Not covered: ffmpeg output.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_path_dedupes_with_numeric_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = unique_recording_path(dir.path());
+        std::fs::write(&first, b"x").unwrap();
+        let second = unique_recording_path(dir.path());
+        assert_ne!(first, second);
+        assert!(second.to_string_lossy().ends_with("_2.mp4"));
+    }
+
+    #[test]
+    fn stop_returns_output_on_clean_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("r.mp4");
+        let rec = ActiveRecording::spawn(out.clone(), 30, false, |spec| {
+            spec.stop.recv().unwrap();
+            std::fs::write(&spec.output, b"mp4").unwrap();
+            Ok(())
+        });
+        assert_eq!(rec.stop().unwrap(), Some(out));
+    }
+
+    #[test]
+    fn cancelled_source_removes_output_and_reports_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("r.mp4");
+        std::fs::write(&out, b"partial").unwrap();
+        let rec = ActiveRecording::spawn(out.clone(), 30, false, |spec| {
+            spec.stop.recv().unwrap();
+            Err(format!("{}user escaped the pick", CANCELLED_PREFIX))
+        });
+        assert_eq!(rec.stop().unwrap(), None);
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn failed_source_removes_output_and_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("r.mp4");
+        std::fs::write(&out, b"partial").unwrap();
+        let rec = ActiveRecording::spawn(out.clone(), 30, false, |spec| {
+            spec.stop.recv().unwrap();
+            Err("encoder died".to_string())
+        });
+        assert!(rec.stop().is_err());
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn manager_stop_with_nothing_active_is_ok_none() {
+        let mut mgr = RecordingManager::default();
+        assert!(!mgr.is_active());
+        assert_eq!(mgr.stop().unwrap(), None);
+    }
+
+    #[test]
+    fn manager_clears_active_after_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = RecordingManager::default();
+        mgr.active = Some(ActiveRecording::spawn(
+            dir.path().join("r.mp4"),
+            30,
+            false,
+            |spec| {
+                spec.stop.recv().unwrap();
+                Ok(())
+            },
+        ));
+        assert!(mgr.is_active());
+        mgr.stop().unwrap();
+        assert!(!mgr.is_active());
+    }
 }
