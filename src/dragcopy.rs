@@ -19,6 +19,7 @@ use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 use x11rb::CURRENT_TIME;
 
 /// Validate and normalize drag paths before any platform work.
+#[cfg(target_os = "linux")]
 fn validate_drag_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     if paths.is_empty() {
         return Err("no paths provided for file drag".to_string());
@@ -40,10 +41,10 @@ fn validate_drag_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
 /// drag_begin fails with AlreadyGrabbed in that state). Selection
 /// requests and XdndStatus/XdndFinished arrive as events on our own
 /// connection, which grabs do not affect.
-#[cfg(target_os = "linux")]
 /// Thumbnail carried under the pointer during a drag: an
 /// override-redirect window with a rounded shape mask, moved at poll
-/// rate by the drag thread.
+/// rate by the drag thread. Plain data; defined on every platform so
+/// the non-Linux drag stub keeps the same signature.
 pub struct DragIcon {
     pub rgba: Vec<u8>,
     pub width: u32,
@@ -673,7 +674,15 @@ pub fn copy_file_path(path: &std::path::Path) -> Result<(), String> {
     }
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let abs_str = abs.to_string_lossy().into_owned();
-    serve_uri_list(format!("file://{abs_str}\r\n"), abs_str)
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = abs_str;
+        Err("file copy needs an X11 session".to_string())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        serve_uri_list(format!("file://{abs_str}\r\n"), abs_str)
+    }
 }
 
 /// Acquire CLIPBOARD with a text/uri-list payload and serve it from a
