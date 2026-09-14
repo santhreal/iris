@@ -152,7 +152,7 @@ pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntr
     if let Err(e) = copy_image(img) {
         eprintln!("iris: clipboard: {e}");
     }
-    let entry = library::add(&path, img.width(), img.height())?;
+    let entry = library::add(&path, img)?;
     Ok((path, entry))
 }
 

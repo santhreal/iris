@@ -90,6 +90,9 @@ struct StreamData {
     shared: Rc<RefCell<Shared>>,
     unsupported_reported: bool,
     frames: u64,
+    /// Reused RGBA scratch for convert_frame: recording would otherwise
+    /// allocate a multi-MB buffer per frame.
+    scratch: Vec<u8>,
 }
 
 impl StreamData {
@@ -142,13 +145,10 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
     let end = offset.saturating_add(size).min(buf.len());
     let src = &buf[offset.min(end)..end];
 
-    let rgba = match convert_frame(src, stride, width, height, format) {
-        Ok(rgba) => rgba,
-        Err(e) => {
-            data.fail(e);
-            return;
-        }
-    };
+    if let Err(e) = convert_frame(src, stride, width, height, format, &mut data.scratch) {
+        data.fail(e);
+        return;
+    }
 
     let mut shared = data.shared.borrow_mut();
     if shared.done {
@@ -170,7 +170,7 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
             }
         }
     }
-    let write_result = shared.encoder.as_mut().unwrap().write_frame(&rgba);
+    let write_result = shared.encoder.as_mut().unwrap().write_frame(&data.scratch);
     drop(shared);
     data.frames += 1;
     if data.frames == 1 {
@@ -184,13 +184,17 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
     }
 }
 
+/// Swizzle one PipeWire frame into `out` (resized to w*h*4), forcing
+/// alpha to opaque. `out` is reused across frames so recording does not
+/// allocate a multi-MB buffer per frame.
 fn convert_frame(
     src: &[u8],
     stride: usize,
     width: u32,
     height: u32,
     format: VideoFormat,
-) -> Result<Vec<u8>, String> {
+    out: &mut Vec<u8>,
+) -> Result<(), String> {
     let (w, h) = (width as usize, height as usize);
     let stride = if stride == 0 { w * 4 } else { stride };
     if src.len() < stride * h {
@@ -199,19 +203,38 @@ fn convert_frame(
             src.len()
         ));
     }
-    let mut rgba = Vec::with_capacity(w * h * 4);
+    out.clear();
+    out.resize(w * h * 4, 0);
+    // Word-level swizzle, same as the X11 grab: a per-pixel
+    // extend_from_slice is a visible slice of per-frame latency at
+    // 1280x800 and up. BGRx swaps bytes 0<->2; RGBx only forces alpha.
     match format {
         VideoFormat::BGRx | VideoFormat::BGRA => {
-            for row in src.chunks(stride).take(h) {
-                for px in row[..w * 4].chunks_exact(4) {
-                    rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
+            for (row_out, row_in) in out
+                .chunks_exact_mut(w * 4)
+                .zip(src.chunks(stride).take(h))
+            {
+                for (o, px) in row_out
+                    .chunks_exact_mut(4)
+                    .zip(row_in[..w * 4].chunks_exact(4))
+                {
+                    let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
+                    let rgb = (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
+                    o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
                 }
             }
         }
         VideoFormat::RGBx | VideoFormat::RGBA => {
-            for row in src.chunks(stride).take(h) {
-                for px in row[..w * 4].chunks_exact(4) {
-                    rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            for (row_out, row_in) in out
+                .chunks_exact_mut(w * 4)
+                .zip(src.chunks(stride).take(h))
+            {
+                for (o, px) in row_out
+                    .chunks_exact_mut(4)
+                    .zip(row_in[..w * 4].chunks_exact(4))
+                {
+                    let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
+                    o.copy_from_slice(&((v & 0xFF_FFFF) | 0xFF00_0000).to_le_bytes());
                 }
             }
         }
@@ -221,7 +244,7 @@ fn convert_frame(
             ));
         }
     }
-    Ok(rgba)
+    Ok(())
 }
 
 fn on_param_changed(
@@ -291,6 +314,7 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
         shared: shared.clone(),
         unsupported_reported: false,
         frames: 0,
+        scratch: Vec::new(),
     };
 
     // The stop signal cannot live in on_process: once the stream pauses

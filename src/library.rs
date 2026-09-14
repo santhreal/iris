@@ -77,10 +77,13 @@ fn write_store(entries: &[CaptureEntry]) -> Result<(), String> {
 }
 
 /// Register a fresh capture: build its thumbnail, prepend it, cap the list.
-pub fn add(path: &Path, width: u32, height: u32) -> Result<CaptureEntry, String> {
-    let img = image::open(path).map_err(|e| format!("open capture for thumbnail: {e}"))?;
+/// The caller passes the already-decoded image so a save does not pay a
+/// second PNG decode just to make the thumbnail.
+pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
+    let (width, height) = img.dimensions();
     let scale = THUMB_WIDTH as f64 / width as f64;
-    let thumb_img = img.resize(
+    let thumb_img = image::imageops::resize(
+        img,
         THUMB_WIDTH,
         (height as f64 * scale).round().max(1.0) as u32,
         image::imageops::FilterType::Triangle,
@@ -148,12 +151,13 @@ mod tests {
         dir
     }
 
-    /// A real PNG on disk inside `dir`; returns its path.
-    fn png(dir: &Path, name: &str) -> PathBuf {
+    /// A real PNG on disk inside `dir` plus its decoded pixels; `add`
+    /// takes the image so tests exercise the same path as `finalize`.
+    fn png(dir: &Path, name: &str) -> (PathBuf, image::RgbaImage) {
         let path = dir.join(name);
         let img = image::RgbaImage::from_pixel(8, 6, image::Rgba([1, 2, 3, 255]));
         img.save(&path).unwrap();
-        path
+        (path, img)
     }
 
     #[test]
@@ -169,8 +173,8 @@ mod tests {
     #[serial_test::serial]
     fn add_list_delete_round_trips() {
         let d = xdg();
-        let shot = png(d.path(), "a.png");
-        let entry = add(&shot, 8, 6).unwrap();
+        let (shot, img) = png(d.path(), "a.png");
+        let entry = add(&shot, &img).unwrap();
         assert!(entry.thumb.exists());
         assert_eq!(list().len(), 1);
         delete(&shot).unwrap();
@@ -190,8 +194,8 @@ mod tests {
     #[serial_test::serial]
     fn list_prunes_entries_whose_file_vanished() {
         let d = xdg();
-        let shot = png(d.path(), "gone.png");
-        add(&shot, 8, 6).unwrap();
+        let (shot, img) = png(d.path(), "gone.png");
+        add(&shot, &img).unwrap();
         std::fs::remove_file(&shot).unwrap();
         assert!(list().is_empty());
     }
@@ -200,9 +204,9 @@ mod tests {
     #[serial_test::serial]
     fn readding_same_path_replaces_not_duplicates() {
         let d = xdg();
-        let shot = png(d.path(), "dup.png");
-        add(&shot, 8, 6).unwrap();
-        add(&shot, 8, 6).unwrap();
+        let (shot, img) = png(d.path(), "dup.png");
+        add(&shot, &img).unwrap();
+        add(&shot, &img).unwrap();
         assert_eq!(list().len(), 1);
     }
 
@@ -220,8 +224,8 @@ mod tests {
     fn store_caps_at_max_entries() {
         let d = xdg();
         for i in 0..5 {
-            let shot = png(d.path(), &format!("s{i}.png"));
-            add(&shot, 8, 6).unwrap();
+            let (shot, img) = png(d.path(), &format!("s{i}.png"));
+            add(&shot, &img).unwrap();
         }
         // Push past the cap directly: 200 adds of real PNGs is slow.
         let mut entries = read_store();

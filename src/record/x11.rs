@@ -201,23 +201,30 @@ pub fn pick_window() -> Result<PickedWindow, String> {
     picked
 }
 
-fn bgrx_to_rgba(data: &[u8], pixels: usize) -> Result<Vec<u8>, String> {
+/// Swizzle a BGRX/XRGB grab into `out` (resized to pixels*4), forcing
+/// alpha to opaque. `out` is reused across frames so recording does not
+/// allocate a fresh buffer per frame.
+fn bgrx_to_rgba(data: &[u8], pixels: usize, out: &mut Vec<u8>) -> Result<(), String> {
     let bpp = data.len() / pixels.max(1);
-    let mut rgba = Vec::with_capacity(pixels * 4);
+    out.clear();
+    out.resize(pixels * 4, 0);
     match bpp {
         4 => {
-            for px in data.chunks_exact(4) {
-                rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
+            // Word-level swizzle: B,G,R,_ -> R,G,B,255 swaps bytes 0<->2.
+            for (o, px) in out.chunks_exact_mut(4).zip(data.chunks_exact(4)) {
+                let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
+                let rgb = (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
+                o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
             }
         }
         3 => {
-            for px in data.chunks_exact(3) {
-                rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
+            for (o, px) in out.chunks_exact_mut(4).zip(data.chunks_exact(3)) {
+                o.copy_from_slice(&[px[2], px[1], px[0], 255]);
             }
         }
         other => return Err(format!("unsupported bytes-per-pixel {other}")),
     }
-    Ok(rgba)
+    Ok(())
 }
 
 // ---------- recording mark: border strips + timer chip ----------
@@ -390,7 +397,8 @@ fn grab_pixmap(
     win: Window,
     width: u32,
     height: u32,
-) -> Result<Vec<u8>, String> {
+    out: &mut Vec<u8>,
+) -> Result<(), String> {
     let pixmap = conn.generate_id().map_err(|e| e.to_string())?;
     conn.composite_name_window_pixmap(win, pixmap)
         .map_err(|e| e.to_string())?
@@ -410,8 +418,9 @@ fn grab_pixmap(
         .reply()
         .map_err(|e| format!("get_image on window pixmap: {e}"))?;
     conn.free_pixmap(pixmap).map_err(|e| e.to_string())?;
-    bgrx_to_rgba(&image.data, width as usize * height as usize)
+    bgrx_to_rgba(&image.data, width as usize * height as usize, out)
 }
+
 
 fn record_loop(
     conn: &RustConnection,
@@ -432,6 +441,9 @@ fn record_loop(
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(spec.fps));
     let start = Instant::now();
     let mut frame_no: u64 = 0;
+    // Reused RGBA scratch: recording would otherwise allocate a fresh
+    // w*h*4 buffer on every frame.
+    let mut rgba: Vec<u8> = Vec::new();
 
     loop {
         if spec.stop.try_recv().is_ok() {
@@ -483,8 +495,8 @@ fn record_loop(
             frame_no = ((now - start).as_secs_f64() * f64::from(spec.fps)) as u64;
         }
 
-        let rgba = match grab_pixmap(conn, picked.id, width, height) {
-            Ok(rgba) => rgba,
+        match grab_pixmap(conn, picked.id, width, height, &mut rgba) {
+            Ok(()) => {}
             Err(_) => {
                 // Window closed mid-grab: keep what we have.
                 encoder.finish()?;

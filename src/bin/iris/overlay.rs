@@ -903,6 +903,10 @@ impl Render for Overlay {
                                 .overflow_hidden()
                                 .border_1()
                                 .border_color(theme::HAIRLINE)
+                                // Lift the loupe off the dimmed desktop so
+                                // it reads as floating chrome, like the
+                                // toast and chip.
+                                .shadow(theme::shadow_float())
                                 .child(img(ImageSource::Render(loupe.clone())).size_full()),
                         )
                         .child(

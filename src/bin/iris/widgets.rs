@@ -139,6 +139,14 @@ pub fn toggle(id: &'static str, on: bool) -> Stateful<Div> {
                 .h(px(16.))
                 .rounded_full()
                 .bg(if on { theme::ACCENT_INK } else { theme::FG })
+                // macOS toggle knobs carry a small drop shadow so they
+                // read as a raised control, not a flat disc.
+                .shadow(vec![gpui::BoxShadow {
+                    color: gpui::hsla(0.0, 0.0, 0.0, 0.28),
+                    offset: gpui::point(px(0.), px(1.)),
+                    blur_radius: px(2.),
+                    spread_radius: px(0.),
+                }])
                 .ml(if on { px(21.) } else { px(3.) })
                 .mt(px(3.)),
         )
