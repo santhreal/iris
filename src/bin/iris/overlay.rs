@@ -1,0 +1,961 @@
+//! Capture overlay: the fullscreen region picker over a frozen frame.
+//!
+//! The screen is grabbed once before this window opens; everything the
+//! user sees and selects comes out of that frozen frame. Hover snaps to
+//! top-level windows (X11 only), dragging commits a region, the loupe
+//! tracks the drag edge for pixel-precise crops. Right-click and Esc
+//! cancel; Enter, double-click or a plain click on a window finishes.
+
+use std::{path::PathBuf, sync::Arc, time::{Duration, Instant}};
+
+use iris_lib::capture::{Frame, WinRect};
+use gpui::*;
+
+use crate::{pipeline, pipeline::Region, stage, theme};
+
+const MIN_SIZE: f32 = 3.0;
+const LOUPE_SRC: u32 = 19; // source pixels across the loupe
+const LOUPE_ZOOM: u32 = 8;
+const LOUPE_PX: u32 = LOUPE_SRC * LOUPE_ZOOM;
+/// The dim layer fades in when the overlay appears.
+const DIM_FADE: Duration = Duration::from_millis(180);
+/// Window-snap reveal fades both ways, like macOS's highlight.
+const HOVER_FADE: Duration = Duration::from_millis(90);
+
+pub struct Overlay {
+    /// Parked (minimized): the window stays alive with its renderer,
+    /// and the next capture reuses it.
+    pub hidden: bool,
+    /// None until the background grab lands: the window maps at once,
+    /// transparent over the live desktop with crosshair and snap
+    /// already live, and the frozen frame fades in behind it.
+    frame: Option<Arc<Frame>>,
+    /// This window's screen: origin in frame pixels and size. The
+    /// displayed image is exactly the frozen frame at native scale;
+    /// every coordinate conversion goes through it.
+    origin: (i32, i32),
+    view: (u32, u32),
+    /// Physical monitor rects inside the view: toast anchoring picks
+    /// the one under the committed selection.
+    monitors: Vec<WinRect>,
+    frame_img: Option<Arc<RenderImage>>,
+    windows: Vec<WinRect>,
+    focus: FocusHandle,
+    dragging: bool,
+    anchor: (f32, f32),
+    current: Option<(f32, f32, f32, f32)>,
+    hovered: Option<WinRect>,
+    cursor: (f32, f32),
+    loupe: Option<(Arc<RenderImage>, String)>,
+    finishing: bool,
+    /// First-render clock: the dim layer fades in over DIM_FADE.
+    opened: Option<Instant>,
+    /// Hover-snap fade-in clock for the current window.
+    hover_in: Option<Instant>,
+    /// The window the cursor just left, fading out.
+    hover_out: Option<(WinRect, Instant)>,
+    /// Capture flight: the committed region springs from the selection
+    /// rect to the toast's resting corner rect, then the toast
+    /// materializes underneath it. The signature transition.
+    flight: Option<Flight>,
+    /// Set when the background finalize fails; the next render
+    /// cancels the session (a failed save loses the capture, never
+    /// the daemon).
+    finalize_failed: bool,
+    /// The background finalize's result, parked here when it lands so
+    /// the flight's last frame can hand it to the toast.
+    landed: Option<(PathBuf, PathBuf, u32, u32)>,
+}
+
+/// The pooled overlay window: created on the first capture, parked
+/// off-screen (never destroyed) afterwards. GPUI window init is the
+/// largest single chunk of keypress-to-overlay latency (~130ms), and
+/// a parked window skips all of it. The string is the window's class.
+pub static POOL: std::sync::Mutex<Option<(WindowHandle<Overlay>, String)>> =
+    std::sync::Mutex::new(None);
+
+#[derive(Clone)]
+struct Flight {
+    img: Arc<RenderImage>,
+    from: (f32, f32, f32, f32),
+    to: (f32, f32, f32, f32),
+    started: Instant,
+    /// The committing window's screen rect: the toast lands on this
+    /// monitor, not wherever the primary display happens to be.
+    screen: (f32, f32, f32, f32),
+}
+
+/// The monitor layout and window list for an interactive overlay
+/// session, queried before the grab so the shell can map at once.
+pub struct ShellLayout {
+    pub monitors: Vec<WinRect>,
+    pub windows: Vec<WinRect>,
+    /// The virtual screen: every monitor's union, the shell's rect
+    /// and the frozen frame's own extents.
+    pub union: WinRect,
+}
+
+pub fn layout() -> ShellLayout {
+    #[cfg(target_os = "linux")]
+    let (monitors, windows) =
+        iris_lib::capture::x11::layout().unwrap_or((Vec::new(), Vec::new()));
+    #[cfg(not(target_os = "linux"))]
+    let (monitors, windows): (Vec<WinRect>, Vec<WinRect>) = (Vec::new(), Vec::new());
+    let union = monitors.iter().skip(1).fold(
+        monitors.first().copied().unwrap_or(WinRect { x: 0, y: 0, width: 0, height: 0 }),
+        |u, m| {
+            let x0 = u.x.min(m.x);
+            let y0 = u.y.min(m.y);
+            let x1 = (u.x + u.width as i32).max(m.x + m.width as i32);
+            let y1 = (u.y + u.height as i32).max(m.y + m.height as i32);
+            WinRect { x: x0, y: y0, width: (x1 - x0) as u32, height: (y1 - y0) as u32 }
+        },
+    );
+    ShellLayout { monitors, windows, union }
+}
+
+/// The frozen frame as one display image: a parallel banded RGBA→BGRA
+/// swizzle straight into a `RenderImage`. No BMP encode/decode round
+/// trip, and the atlas tile stays freeable via `drop_image` (see
+/// `widgets::render_image_from_rgba`). Heavy on multi-4K frames;
+/// callers run this off the main thread.
+pub fn slice_frame(frame: &Frame) -> Arc<RenderImage> {
+    crate::widgets::render_image_from_rgba(frame.width, frame.height, &frame.rgba)
+}
+
+/// Open the fullscreen overlay shell over the whole virtual screen,
+/// transparent and interactive at once; the frozen frame lands via
+/// `Overlay::set_frame`. One window: each GPUI window pays its own
+/// renderer init, and a window per monitor doubled the time to
+/// first feedback on dual setups.
+pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Overlay>, String> {
+    if layout.union.width == 0 || layout.union.height == 0 {
+        return Err("no monitor layout".into());
+    }
+    let focus = cx.focus_handle();
+    let win_id = crate::xwin::unique_id("dev.iris.overlay");
+    let windows = layout.windows.clone();
+    let monitors = layout.monitors.clone();
+    let (ux, uy, uw, uh) = (
+        layout.union.x,
+        layout.union.y,
+        layout.union.width,
+        layout.union.height,
+    );
+    let handle = cx
+        .open_window(
+            WindowOptions {
+                // Windowed, not Fullscreen: _NET_WM_STATE_FULLSCREEN
+                // pins a window to one monitor. The shell spans the
+                // virtual screen via explicit placement plus
+                // _NET_WM_STATE_ABOVE (span_after_map).
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: point(px(ux as f32), px(uy as f32)),
+                    size: size(px(uw as f32), px(uh as f32)),
+                })),
+                titlebar: None,
+                focus: true,
+                show: true,
+                kind: WindowKind::Normal,
+                is_movable: false,
+                is_resizable: false,
+                is_minimizable: false,
+                display_id: None,
+                // Transparent until the frame lands: the live desktop
+                // shows through, dimmed, while the grab runs.
+                window_background: WindowBackgroundAppearance::Transparent,
+                app_id: Some(win_id.clone()),
+                window_min_size: None,
+                window_decorations: Some(WindowDecorations::Client),
+                tabbing_identifier: None,
+            },
+            move |_, cx| {
+                cx.new(|_| Overlay {
+                    hidden: false,
+                    frame: None,
+                    origin: (ux, uy),
+                    view: (uw, uh),
+                    monitors,
+                    frame_img: None,
+                    windows,
+                    focus,
+                    dragging: false,
+                    anchor: (0.0, 0.0),
+                    current: None,
+                    hovered: None,
+                    cursor: (0.0, 0.0),
+                    loupe: None,
+                    finishing: false,
+                    opened: None,
+                    hover_in: None,
+                    hover_out: None,
+                    flight: None,
+                    landed: None,
+                    finalize_failed: false,
+                })
+            },
+        )
+        .map_err(|e| format!("open overlay window: {e}"))?;
+    crate::xwin::span_after_map(win_id.clone(), ux, uy, uw, uh);
+    *POOL.lock().unwrap() = Some((handle, win_id));
+    Ok(handle)
+}
+
+/// Close every overlay window except `keep` (the one mid-flight).
+/// Destroying a sibling window's renderer inside another window's
+/// refresh tick took down the GPU context on software Vulkan, so
+/// the closes run on a short timer, off the frame path.
+fn close_other_overlays(cx: &mut App, keep: Option<AnyWindowHandle>) {
+    let handles: Vec<WindowHandle<Overlay>> = cx
+        .windows()
+        .into_iter()
+        .filter(|h| Some(*h) != keep)
+        .filter_map(|h| h.downcast::<Overlay>())
+        .collect();
+    if handles.is_empty() {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        cx.background_executor()
+            .timer(Duration::from_millis(80))
+            .await;
+        let _ = cx.update(|cx| {
+            for h in handles {
+                let _ = h.update(cx, |_, window, _| window.remove_window());
+            }
+        });
+    })
+    .detach();
+}
+
+/// BMP for the monitor slices, written straight from the frame: a
+/// 32bpp BI_RGB header plus bottom-up BGRA rows. One pass over the
+/// The loupe's 8x nearest-neighbor zoom of the 19x19 source patch around
+/// the cursor, plus the crosshair-free info line (coords + hex).
+fn loupe_image(frame: &Frame, fx: i64, fy: i64) -> (Arc<RenderImage>, String) {
+    let mut rgba = vec![0u8; (LOUPE_PX * LOUPE_PX * 4) as usize];
+    let half = LOUPE_SRC as i64 / 2;
+    let mut center = [0u8, 0u8, 0u8];
+    for sy in 0..LOUPE_SRC as i64 {
+        for sx in 0..LOUPE_SRC as i64 {
+            let px_x = fx + sx - half;
+            let px_y = fy + sy - half;
+            let inside =
+                px_x >= 0 && px_y >= 0 && px_x < frame.width as i64 && px_y < frame.height as i64;
+            let src = if inside {
+                let i = ((px_y as u32 * frame.width + px_x as u32) * 4) as usize;
+                [frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2], 255]
+            } else {
+                [0x14, 0x14, 0x16, 255]
+            };
+            if sx == half && sy == half {
+                center = [src[0], src[1], src[2]];
+            }
+            let dx = sx as u32 * LOUPE_ZOOM;
+            let dy = sy as u32 * LOUPE_ZOOM;
+            for by in 0..LOUPE_ZOOM {
+                for bx in 0..LOUPE_ZOOM {
+                    let d = (((dy + by) * LOUPE_PX + dx + bx) * 4) as usize;
+                    rgba[d..d + 4].copy_from_slice(&src);
+                }
+            }
+        }
+    }
+    // Crosshair on the center pixel.
+    let mid = LOUPE_PX / 2;
+    let z = LOUPE_ZOOM;
+    for i in 0..z {
+        for (x, y) in [
+            (mid - z / 2 + i, mid - z / 2),
+            (mid - z / 2 + i, mid + z / 2 - 1),
+            (mid - z / 2, mid - z / 2 + i),
+            (mid + z / 2 - 1, mid - z / 2 + i),
+        ] {
+            let d = ((y * LOUPE_PX + x) * 4) as usize;
+            rgba[d..d + 4].copy_from_slice(&[255, 255, 255, 242]);
+        }
+    }
+    // Straight into a RenderImage: this rebuilds on every drag
+    // mousemove, so an encode/decode round trip is out of the question.
+    let img = crate::widgets::render_image_from_rgba(LOUPE_PX, LOUPE_PX, &rgba);
+    let info = format!(
+        "{fx}, {fy}  #{:02x}{:02x}{:02x}",
+        center[0], center[1], center[2]
+    );
+    (img, info)
+}
+
+impl Overlay {
+    /// The background grab's delivery: the frozen frame and this
+    /// window's slice. The dim is already at rest over the live
+    /// desktop, so the frame fades in underneath with no visual pop.
+    pub fn set_frame(&mut self, frame: Arc<Frame>, img: Arc<RenderImage>) {
+        self.frame = Some(frame);
+        self.frame_img = Some(img);
+    }
+
+    /// Re-arm a pooled window for a new session: every per-session
+    /// field back to its opening state on the new layout. Images were
+    /// already released when the window parked.
+    pub fn reset(&mut self, layout: &ShellLayout) {
+        self.hidden = false;
+        self.frame = None;
+        self.frame_img = None;
+        self.origin = (layout.union.x, layout.union.y);
+        self.view = (layout.union.width, layout.union.height);
+        self.monitors = layout.monitors.clone();
+        self.windows = layout.windows.clone();
+        self.dragging = false;
+        self.current = None;
+        self.hovered = None;
+        self.loupe = None;
+        self.finishing = false;
+        self.opened = None;
+        self.hover_in = None;
+        self.hover_out = None;
+        self.flight = None;
+        self.landed = None;
+        self.finalize_failed = false;
+    }
+
+    /// Frame-pixel hit test for hover-snap. The window list is in frame
+    /// (physical) pixels; the cursor arrives logical.
+    fn window_at(&self, cx: f32, cy: f32, sf: f32, sx: f32, sy: f32) -> Option<WinRect> {
+        let (fx, fy) = (
+            self.origin.0 as f32 + cx * sf * sx,
+            self.origin.1 as f32 + cy * sf * sy,
+        );
+        // Topmost first: the list is bottom-to-top.
+        self.windows
+            .iter()
+            .rev()
+            .find(|w| {
+                fx >= w.x as f32
+                    && fx < (w.x + w.width as i32) as f32
+                    && fy >= w.y as f32
+                    && fy < (w.y + w.height as i32) as f32
+            })
+            .copied()
+    }
+
+    /// A frame-pixel window rect to this window's logical px for display.
+    fn to_logical(
+        origin: (i32, i32),
+        w: &WinRect,
+        sf: f32,
+        sx: f32,
+        sy: f32,
+    ) -> (f32, f32, f32, f32) {
+        (
+            (w.x - origin.0) as f32 / (sf * sx),
+            (w.y - origin.1) as f32 / (sf * sy),
+            w.width as f32 / (sf * sx),
+            w.height as f32 / (sf * sy),
+        )
+    }
+
+    fn scale(window: &Window, view: (u32, u32)) -> (f32, f32) {
+        // Event positions are logical px; the frame is physical. Convert
+        // through physical: logical * scale_factor = physical, and the
+        // window's physical size maps 1:1 onto its monitor's frame slice.
+        let sf = window.scale_factor();
+        let size = window.bounds().size;
+        (
+            view.0 as f32 / (f32::from(size.width) * sf),
+            view.1 as f32 / (f32::from(size.height) * sf),
+        )
+    }
+
+    /// A logical-px rect to frame pixels.
+    fn rect_to_frame(
+        window: &Window,
+        origin: (i32, i32),
+        view: (u32, u32),
+        rect: (f32, f32, f32, f32),
+    ) -> Region {
+        let sf = window.scale_factor();
+        let (sx, sy) = Self::scale(window, view);
+        Region {
+            x: (origin.0 as f32 + rect.0 * sf * sx) as u32,
+            y: (origin.1 as f32 + rect.1 * sf * sy) as u32,
+            width: (rect.2 * sf * sx) as u32,
+            height: (rect.3 * sf * sy) as u32,
+        }
+    }
+
+    /// Frame-pixel coordinates of a logical cursor position.
+    fn frame_pos(&self, sf: f32, sx: f32, sy: f32, lx: f32, ly: f32) -> (i64, i64) {
+        (
+            self.origin.0 as i64 + (lx * sf * sx) as i64,
+            self.origin.1 as i64 + (ly * sf * sy) as i64,
+        )
+    }
+
+    fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.finishing {
+            return;
+        }
+        let Some((x, y, w, h)) = self.current else {
+            return;
+        };
+        if w < MIN_SIZE || h < MIN_SIZE {
+            return;
+        }
+        self.finishing = true;
+        let Some(frame) = self.frame.clone() else {
+            // The grab has not landed yet; nothing to crop from.
+            self.finishing = false;
+            return;
+        };
+        let region = Self::rect_to_frame(window, self.origin, self.view, (x, y, w, h));
+        let crop = match pipeline::crop(&frame, region) {
+            Ok(c) => c,
+            Err(e) => {
+                // A bad crop loses this capture, never the daemon.
+                eprintln!("iris: capture: {e}");
+                self.cancel(window, cx);
+                return;
+            }
+        };
+        pipeline::play_shutter_sound();
+        // Every other monitor's overlay leaves with the commit; only
+        // this window stays for the flight.
+        close_other_overlays(cx, Some(window.window_handle()));
+        let (cw, ch) = (crop.width(), crop.height());
+        // The flight needs pixels now, not after an encode/decode
+        // round trip: a straight swizzle of the crop into a
+        // RenderImage. The PNG encode, thumbnail and disk write run
+        // behind the flight and land mid-animation.
+        let flight_img = crate::widgets::render_image_from_rgba(cw, ch, crop.as_raw());
+        let finalize = cx
+            .background_executor()
+            .spawn(async move { pipeline::finalize(&crop) });
+        cx.spawn(async move |this, cx| {
+            let result = finalize.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok((path, entry)) => {
+                    this.landed = Some((path, entry.thumb, entry.width, entry.height));
+                    cx.notify();
+                }
+                Err(e) => {
+                    // A failed save (full disk, unwritable dir) loses
+                    // the capture; the daemon and the overlay recover.
+                    eprintln!("iris: capture: {e}");
+                    this.finalize_failed = true;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        let show_toast = iris_lib::config::Config::load().show_toast_after_capture;
+        if show_toast {
+            // The toast lands on the monitor under the selection's
+            // center, in that monitor's own bottom-right corner.
+            let (fcx, fcy) = (
+                region.x as f32 + region.width as f32 / 2.0,
+                region.y as f32 + region.height as f32 / 2.0,
+            );
+            let sf = window.scale_factor();
+            let (sx, sy) = Self::scale(window, self.view);
+            let host = self
+                .monitors
+                .iter()
+                .find(|m| {
+                    fcx >= m.x as f32
+                        && fcx < (m.x + m.width as i32) as f32
+                        && fcy >= m.y as f32
+                        && fcy < (m.y + m.height as i32) as f32
+                })
+                .or_else(|| self.monitors.first())
+                .copied()
+                .unwrap_or(iris_lib::capture::WinRect {
+                    x: self.origin.0,
+                    y: self.origin.1,
+                    width: self.view.0,
+                    height: self.view.1,
+                });
+            let (mx, my, mw, mh) = Self::to_logical(self.origin, &host, sf, sx, sy);
+            let r = stage::card_rest_rect(mw, mh, cw, ch);
+            let rest = (mx + r.0, my + r.1, r.2, r.3);
+            self.flight = Some(Flight {
+                img: flight_img,
+                from: (x, y, w, h),
+                to: rest,
+                started: Instant::now(),
+                screen: (
+                    host.x as f32 / sf,
+                    host.y as f32 / sf,
+                    host.width as f32 / sf,
+                    host.height as f32 / sf,
+                ),
+            });
+            self.current = None;
+            self.hovered = None;
+            cx.notify();
+        } else {
+            self.park(window, cx);
+        }
+    }    /// Release this window's painted images: with the window pooled
+    /// across sessions, an unreleased tile would outlive its session.
+    fn release_assets(&self, cx: &mut App) {
+        if let Some(img) = &self.frame_img {
+            crate::widgets::release_render(img, cx);
+        }
+        if let Some(f) = &self.flight {
+            crate::widgets::release_render(&f.img, cx);
+        }
+        if let Some((img, _)) = &self.loupe {
+            crate::widgets::release_render(img, cx);
+        }
+    }
+
+    /// Park the window (minimized) instead of destroying it: the next
+    /// capture reuses the live window and skips GPUI's ~130ms init.
+    /// Minimize goes through the WM, so no placement constraint can
+    /// fight it, and the GPU surface is freed while iconic.
+    fn park(&mut self, window: &mut Window, cx: &mut App) {
+        self.release_assets(cx);
+        self.hidden = true;
+        window.minimize_window();
+    }
+
+    pub(crate) fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        close_other_overlays(cx, Some(window.window_handle()));
+        self.park(window, cx);
+    }
+}
+
+impl Render for Overlay {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.focus.focus(window);
+        if self.finalize_failed {
+            self.finalize_failed = false;
+            self.cancel(window, cx);
+            return div().into_any_element();
+        }
+        if self.flight.is_some() {
+            return self.render_flight(window, cx).into_any_element();
+        }
+        let (sx, sy) = Self::scale(window, self.view);
+
+        // Entrance: the dim fades in over the frozen frame. The frame
+        // itself is the desktop's own pixels, so only the dim moves.
+        let opened = *self.opened.get_or_insert_with(Instant::now);
+        let dim_t = (opened.elapsed().as_secs_f32()
+            / crate::motion::tempo(DIM_FADE).as_secs_f32())
+        .min(1.0);
+        let dim = 0.32 * crate::motion::ease_out(dim_t);
+        if dim_t < 1.0 {
+            window.request_animation_frame();
+        }
+
+        let mut root = div()
+            .id("overlay")
+            .size_full()
+            .font_family(theme::FONT)
+            .cursor_crosshair()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                let key = ev.keystroke.key.as_str();
+                let shift = ev.keystroke.modifiers.shift;
+                let dir = match key {
+                    "left" => Some((-1.0, 0.0)),
+                    "right" => Some((1.0, 0.0)),
+                    "up" => Some((0.0, -1.0)),
+                    "down" => Some((0.0, 1.0)),
+                    _ => None,
+                };
+                if let (Some((dx, dy)), Some((x, y, w, h))) = (dir, this.current) {
+                    let step = if shift { 10.0 } else { 1.0 };
+                    let size = window.bounds().size;
+                    let nx = (x + dx * step).clamp(0.0, f32::from(size.width) - w);
+                    let ny = (y + dy * step).clamp(0.0, f32::from(size.height) - h);
+                    this.current = Some((nx, ny, w, h));
+                    cx.notify();
+                    return;
+                }
+                match key {
+                    "escape" => this.cancel(window, cx),
+                    "enter" => this.finish(window, cx),
+                    _ => {}
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                    if ev.click_count == 2 {
+                        this.finish(window, cx);
+                        return;
+                    }
+                    this.dragging = true;
+                    this.anchor = (ev.position.x.into(), ev.position.y.into());
+                    this.current = None;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, _ev: &MouseDownEvent, window, cx| {
+                    this.cancel(window, cx);
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
+                this.cursor = (mx, my);
+                let sf = window.scale_factor();
+                let (sx, sy) = Self::scale(window, this.view);
+                if this.dragging {
+                    if let Some(old) = this.hovered.take() {
+                        this.hover_out = Some((old, Instant::now()));
+                    }
+                    this.hover_in = None;
+                    let region = Region::from_corners(
+                        this.anchor,
+                        (mx, my),
+                        window.bounds().size.width.into(),
+                        window.bounds().size.height.into(),
+                    );
+                    this.current = Some((
+                        region.x as f32,
+                        region.y as f32,
+                        region.width as f32,
+                        region.height as f32,
+                    ));
+                    let (fx, fy) = this.frame_pos(sf, sx, sy, mx, my);
+                    if let Some(frame) = &this.frame {
+                        // The previous loupe's cache entry goes with
+                        // it: a drag mints one per mousemove.
+                        let old = this
+                            .loupe
+                            .replace(loupe_image(frame, fx, fy));
+                        if let Some((img, _)) = old {
+                            crate::widgets::release_render(&img, cx);
+                        }
+                    }
+                } else {
+                    this.loupe = None;
+                    let new_hover = this.window_at(mx, my, sf, sx, sy);
+                    let changed = match (this.hovered, new_hover) {
+                        (None, None) => false,
+                        (Some(a), Some(b)) => {
+                            a.x != b.x || a.y != b.y || a.width != b.width || a.height != b.height
+                        }
+                        _ => true,
+                    };
+                    if changed {
+                        if let Some(old) = this.hovered.take() {
+                            this.hover_out = Some((old, Instant::now()));
+                        }
+                        this.hover_in = new_hover.map(|_| Instant::now());
+                        this.hovered = new_hover;
+                    }
+                }
+                cx.notify();
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseUpEvent, window, cx| {
+                    if !this.dragging {
+                        return;
+                    }
+                    this.dragging = false;
+                    if let Some((img, _)) = this.loupe.take() {
+                        crate::widgets::release_render(&img, cx);
+                    }
+                    let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
+                    let moved =
+                        ((mx - this.anchor.0).powi(2) + (my - this.anchor.1).powi(2)).sqrt();
+                    if moved < 4.0 {
+                        // A click (no drag) on a window captures that window.
+                        let sf = window.scale_factor();
+                        let (sx, sy) = Self::scale(window, this.view);
+                        if let Some(w) = this.window_at(mx, my, sf, sx, sy) {
+                            this.current = Some(Self::to_logical(this.origin, &w, sf, sx, sy));
+                            this.hovered = None;
+                            this.finish(window, cx);
+                        } else {
+                            this.current = None;
+                        }
+                        cx.notify();
+                        return;
+                    }
+                    let size = window.bounds().size;
+                    let region = Region::from_corners(
+                        this.anchor,
+                        (mx, my),
+                        size.width.into(),
+                        size.height.into(),
+                    );
+                    if (region.width as f32) < MIN_SIZE || (region.height as f32) < MIN_SIZE {
+                        this.current = None;
+                    } else {
+                        this.current = Some((
+                            region.x as f32,
+                            region.y as f32,
+                            region.width as f32,
+                            region.height as f32,
+                        ));
+                    }
+                    cx.notify();
+                }),
+            )
+            // The frozen frame, dimmed. Before it lands the window
+            // is transparent and the dim lies over the live desktop.
+            .children(
+                self.frame_img
+                    .clone()
+                    .map(|i| img(ImageSource::Render(i)).size_full().object_fit(ObjectFit::Fill)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .bg(theme::alpha(theme::BG, dim)),
+            );
+
+        // Idle crosshair coordinates, like macOS region capture:
+        // physical pixels next to the cursor, flipping at the edges.
+        if !self.dragging && self.current.is_none() && self.hovered.is_none() {
+            let sf = window.scale_factor();
+            let win = window.bounds().size;
+            let (fx, fy) = self.frame_pos(sf, sx, sy, self.cursor.0, self.cursor.1);
+            let lx = if self.cursor.0 + 90.0 > f32::from(win.width) {
+                self.cursor.0 - 82.0
+            } else {
+                self.cursor.0 + 18.0
+            };
+            let ly = if self.cursor.1 + 40.0 > f32::from(win.height) {
+                self.cursor.1 - 30.0
+            } else {
+                self.cursor.1 + 16.0
+            };
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(lx))
+                    .top(px(ly))
+                    .px(px(6.))
+                    .py(px(2.))
+                    .rounded(px(6.))
+                    .bg(theme::alpha(theme::BG_ELEV, 0.9))
+                    .text_xs()
+                    .text_color(theme::FG_DIM)
+                    .child(format!("{fx}, {fy}")),
+            );
+        }
+
+        // Hover-snap highlight: un-dimmed reveal of the window's
+        // rect, fading in; the window just left fades out behind it.
+        // Before the frame lands there is nothing to reveal.
+        if !self.dragging && self.frame_img.is_some() {
+            if let Some((old, since)) = self.hover_out {
+                let t = (since.elapsed().as_secs_f32()
+                    / crate::motion::tempo(HOVER_FADE).as_secs_f32())
+                .min(1.0);
+                if t >= 1.0 {
+                    self.hover_out = None;
+                } else {
+                    let sf = window.scale_factor();
+                    let (rx, ry, rw, rh) = Self::to_logical(self.origin, &old, sf, sx, sy);
+                    root = root.child(
+                        reveal(self.frame_img.clone().expect("checked"), rx, ry, rw, rh, window)
+                            .opacity(1.0 - t),
+                    );
+                    window.request_animation_frame();
+                }
+            }
+            if let Some(w) = self.hovered {
+                let sf = window.scale_factor();
+                let (rx, ry, rw, rh) = Self::to_logical(self.origin, &w, sf, sx, sy);
+                let mut alpha = 1.0f32;
+                if let Some(since) = self.hover_in {
+                    let t = (since.elapsed().as_secs_f32()
+                        / crate::motion::tempo(HOVER_FADE).as_secs_f32())
+                    .min(1.0);
+                    alpha = t;
+                    if t < 1.0 {
+                        window.request_animation_frame();
+                    }
+                }
+                root = root.child(
+                    reveal(self.frame_img.clone().expect("checked"), rx, ry, rw, rh, window).opacity(alpha),
+                );
+            }
+        }
+
+        // Committed or in-progress selection.
+        if let Some((x, y, w, h)) = self.current {
+            let sf = window.scale_factor();
+            let size_label = format!(
+                "{} × {}",
+                (w * sf * sx).round() as u32,
+                (h * sf * sy).round() as u32
+            );
+            if let Some(fi) = self.frame_img.clone() {
+                root = root.child(reveal(fi, x, y, w, h, window));
+            }
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(if y < 44.0 { y + 4.0 } else { y - 28.0 }))
+                    .px(px(8.))
+                    .py(px(3.))
+                    .rounded(px(6.))
+                    .bg(theme::alpha(theme::BG_ELEV, 0.9))
+                    .text_xs()
+                    .text_color(theme::FG)
+                    .child(size_label),
+            );
+        }
+
+        // Loupe while dragging only: the window-snap highlight is the
+        // hover feedback; no circle chasing the cursor. Flips to the
+        // other side of the cursor near the screen edges.
+        if self.dragging {
+            if let Some((loupe, info)) = &self.loupe {
+                let win = window.bounds().size;
+                let span = LOUPE_PX as f32 + 30.0;
+                let lx = if self.cursor.0 + 24.0 + span > f32::from(win.width) {
+                    self.cursor.0 - 24.0 - LOUPE_PX as f32
+                } else {
+                    self.cursor.0 + 24.0
+                };
+                let ly = if self.cursor.1 + 24.0 + span > f32::from(win.height) {
+                    self.cursor.1 - 24.0 - LOUPE_PX as f32
+                } else {
+                    self.cursor.1 + 24.0
+                };
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(lx))
+                        .top(px(ly))
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .w(px(LOUPE_PX as f32))
+                                .h(px(LOUPE_PX as f32))
+                                .rounded(px(theme::RADIUS_SM))
+                                .overflow_hidden()
+                                .border_1()
+                                .border_color(theme::HAIRLINE)
+                                .child(img(ImageSource::Render(loupe.clone())).size_full()),
+                        )
+                        .child(
+                            div()
+                                .px(px(6.))
+                                .py(px(2.))
+                                .rounded(px(6.))
+                                .bg(theme::alpha(theme::BG_ELEV, 0.9))
+                                .text_xs()
+                                .text_color(theme::FG_DIM)
+                                .child(info.clone()),
+                        ),
+                );
+            }
+        }
+
+        root.into_any_element()
+    }
+}
+
+impl Overlay {
+    /// The capture flight: the committed region springs from the
+    /// selection rect to the toast's corner rect while the dim lifts,
+    /// then the toast appears underneath and the overlay closes.
+    fn render_flight(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        const FLIGHT: Duration = Duration::from_millis(500);
+        let f = self.flight.clone().expect("flight checked");
+        let t = (f.started.elapsed().as_secs_f32()
+            / crate::motion::tempo(FLIGHT).as_secs_f32())
+        .min(1.0);
+        if t >= 1.0 && self.landed.is_some() {
+            self.flight = None;
+            // The flight image's atlas tile must go before the park:
+            // release_assets only looks at live fields, and the window
+            // now outlives the session.
+            crate::widgets::release_render(&f.img, cx);
+            // Window ops from inside a render are dropped by GPUI's
+            // effect queue; defer the toast to after this frame.
+            let (path, thumb, w, h) = self.landed.take().expect("landed checked");
+            let screen = f.screen;
+            cx.defer(move |cx| {
+                // A toast that cannot open loses the notification,
+                // not the daemon: the capture is already on disk.
+                if let Err(e) = stage::show_toast_landed(cx, &path, &thumb, w, h, Some(screen)) {
+                    eprintln!("iris: toast: {e}");
+                }
+            });
+            self.park(window, cx);
+        } else {
+            // Still flying, or parked at rest until the background
+            // finalize lands: a slow disk must not strand the card.
+            window.request_animation_frame();
+        }
+        let e = crate::motion::spring(t);
+        let (fx, fy, fw, fh) = f.from;
+        let (tx, ty, tw, th) = f.to;
+        let (x, y, w, h) = (
+            fx + (tx - fx) * e,
+            fy + (ty - fy) * e,
+            fw + (tw - fw) * e,
+            fh + (th - fh) * e,
+        );
+        div()
+            .size_full()
+            // The undimmed frozen frame: the desktop as it was.
+            .children(
+                self.frame_img
+                    .clone()
+                    .map(|i| img(ImageSource::Render(i)).size_full().object_fit(ObjectFit::Fill)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(w.max(1.0)))
+                    .h(px(h.max(1.0)))
+                    .rounded(px(12.))
+                    .overflow_hidden()
+                    .shadow(theme::shadow_float())
+                    .child(img(ImageSource::Render(f.img.clone())).size_full().object_fit(ObjectFit::Fill)),
+            )
+    }
+}
+
+/// The un-dimmed frame reveal inside a rect: the same full-window image
+/// drawn again inside a clipped, bordered rect, offset to align.
+fn reveal(
+    frame: Arc<RenderImage>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    window: &Window,
+) -> Div {
+    let win = window.bounds().size;
+    div()
+        .absolute()
+        .left(px(x))
+        .top(px(y))
+        .w(px(w))
+        .h(px(h))
+        .overflow_hidden()
+        .border_1()
+        .border_color(theme::ACCENT)
+        .child(
+            div()
+                .absolute()
+                .left(px(-x))
+                .top(px(-y))
+                .w(win.width)
+                .h(win.height)
+                .child(img(ImageSource::Render(frame)).size_full().object_fit(ObjectFit::Fill)),
+        )
+}
