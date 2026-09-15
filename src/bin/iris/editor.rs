@@ -10,6 +10,7 @@
 
 use std::{
     path::PathBuf,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -94,7 +95,9 @@ pub struct Editor {
     /// CPU composite: base plus every committed action, used to sample
     /// blur patches and to rasterize the final PNG.
     composite: image::RgbaImage,
-    actions: Vec<Action>,
+    /// Committed actions. Rc so the canvas prep closure clones a
+    /// refcount, not the whole vec of strokes, every render.
+    actions: Rc<Vec<Action>>,
     /// Operation-level history: commits, deletes and moves are all
     /// undoable, like Markup. Two stacks; a fresh edit clears redo.
     undos: Vec<Edit<Action>>,
@@ -264,7 +267,7 @@ pub fn open(
                 composite: base.clone(),
                 base,
                 base_img,
-                actions: Vec::new(),
+                actions: Rc::new(Vec::new()),
                 undos: Vec::new(),
                 redos: Vec::new(),
                 current: None,
@@ -450,9 +453,8 @@ impl Editor {
         } else {
             rasterize(&mut self.composite, &action, 1.0);
         }
-        self.push_edit(Edit::Add(action.clone()));
+        Rc::make_mut(&mut self.actions).push(action);
         self.selected = None;
-        self.actions.push(action);
     }
 
     fn push_edit(&mut self, edit: Edit<Action>) {
@@ -461,11 +463,11 @@ impl Editor {
     }
 
     fn apply_forward(&mut self, edit: &Edit<Action>) {
-        history::apply_forward(&mut self.actions, edit);
+        history::apply_forward(Rc::make_mut(&mut self.actions), edit);
     }
 
     fn apply_inverse(&mut self, edit: &Edit<Action>) {
-        history::apply_inverse(&mut self.actions, edit);
+        history::apply_inverse(Rc::make_mut(&mut self.actions), edit);
     }
 
     fn undo(&mut self) {
@@ -487,7 +489,7 @@ impl Editor {
     }
 
     fn clear(&mut self) {
-        self.actions.clear();
+        Rc::make_mut(&mut self.actions).clear();
         self.undos.clear();
         self.redos.clear();
         self.selected = None;
@@ -502,7 +504,7 @@ impl Editor {
         // Reuse the composite buffer: it is always the same size as base,
         // so replay writes into it instead of cloning a fresh image.
         self.composite.copy_from_slice(&self.base);
-        for action in &mut self.actions {
+        for action in Rc::make_mut(&mut self.actions) {
             if action.tool == Tool::Blur {
                 let (x, y) = (
                     action.blur_rect.0.max(0.0) as u32,
@@ -574,7 +576,7 @@ impl Editor {
         let (iw, ih) = (self.base.width() as f32, self.base.height() as f32);
         let dx = d.0.clamp(-x, iw - (x + w));
         let dy = d.1.clamp(-y, ih - (y + h));
-        let Some(action) = self.actions.get_mut(i) else {
+        let Some(action) = Rc::make_mut(&mut self.actions).get_mut(i) else {
             return;
         };
         for p in &mut action.points {
@@ -620,7 +622,7 @@ impl Editor {
         crate::widgets::release_render(&old, cx);
         self.base = cropped.clone();
         self.composite = cropped;
-        self.actions.clear();
+        Rc::make_mut(&mut self.actions).clear();
         self.undos.clear();
         self.redos.clear();
         self.selected = None;
@@ -706,7 +708,7 @@ impl Editor {
             };
             rasterize(&mut self.composite, &action, 1.0);
             self.push_edit(Edit::Add(action.clone()));
-            self.actions.push(action);
+            Rc::make_mut(&mut self.actions).push(action);
         }
     }
 
@@ -1088,7 +1090,7 @@ impl Render for Editor {
                     "delete" | "backspace" => {
                         if let Some(i) = this.selected.take() {
                             if i < this.actions.len() {
-                                let removed = this.actions.remove(i);
+                                let removed = Rc::make_mut(&mut this.actions).remove(i);
                                 this.push_edit(Edit::Remove(i, removed));
                                 this.rebuild_all();
                             }
@@ -1341,7 +1343,7 @@ impl Render for Editor {
             );
 
         // Committed vector actions + blur patches + text.
-        let actions = self.actions.clone();
+        let actions = Rc::clone(&self.actions);
         let current = self.current.clone();
         let (base_w, base_h) = (self.base.width(), self.base.height());
         stage = stage.child(
