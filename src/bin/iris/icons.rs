@@ -36,6 +36,8 @@ pub enum Icon {
     Gear,
     Folder,
     Pin,
+    Pause,
+    MicOff,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.
@@ -250,6 +252,17 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
             push_segment(&mut path, p(6.0, 7.0), p(11.0, 12.0), 1.8 * s);
             push_segment(&mut path, p(8.5, 9.5), p(13.0, 5.0), 3.0 * s);
             push_segment(&mut path, p(11.5, 2.5), p(15.5, 6.5), w);
+        }
+        Icon::Pause => {
+            // Two bars.
+            push_segment(&mut path, p(6.6, 4.5), p(6.6, 13.5), 2.4 * s);
+            push_segment(&mut path, p(11.4, 4.5), p(11.4, 13.5), 2.4 * s);
+        }
+        Icon::MicOff => {
+            // Mic capsule plus a slash through it.
+            push_ring(&mut path, p(9.0, 6.6), 2.6 * s, 3.8 * s, w);
+            push_segment(&mut path, p(4.0, 4.0), p(14.0, 14.0), w);
+            push_segment(&mut path, p(9.0, 13.2), p(9.0, 15.4), w);
         }
     }
     window.paint_path(path, color);

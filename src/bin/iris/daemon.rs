@@ -96,6 +96,8 @@ pub enum Command {
     Annotate(PathBuf),
     Toast(PathBuf),
     RecordToggle,
+    RecordPause,
+    RecordMic,
     ChipHide,
     Quit,
 }
@@ -271,6 +273,27 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::Annotate(path) => crate::editor::open(cx, path, None, None),
         Command::Toast(path) => stage::show_toast(cx, path, path, 0, 0),
         Command::RecordToggle => toggle_recording(cx),
+        Command::RecordPause => {
+            let mgr = RECORDING.lock();
+            if let Some(rec) = &mgr.active {
+                chip::set_paused(!chip::paused());
+                rec.send_control(if chip::paused() {
+                    record::RecControl::Pause
+                } else {
+                    record::RecControl::Resume
+                });
+            }
+            Ok(())
+        }
+        Command::RecordMic => {
+            let mut mgr = RECORDING.lock();
+            if let Some(rec) = &mut mgr.active {
+                rec.mic = !rec.mic;
+                chip::set_mic(rec.mic);
+                rec.send_control(record::RecControl::ToggleMic);
+            }
+            Ok(())
+        }
         Command::ChipHide => {
             chip::close(cx);
             Ok(())
@@ -452,6 +475,8 @@ impl Command {
             Command::Annotate(p) => Command::Annotate(p.clone()),
             Command::Toast(p) => Command::Toast(p.clone()),
             Command::RecordToggle => Command::RecordToggle,
+            Command::RecordPause => Command::RecordPause,
+            Command::RecordMic => Command::RecordMic,
             Command::ChipHide => Command::ChipHide,
             Command::Quit => Command::Quit,
         }

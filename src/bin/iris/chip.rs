@@ -13,7 +13,7 @@ use gpui::*;
 
 use crate::theme;
 
-const CHIP_W: f32 = 148.0;
+const CHIP_W: f32 = 208.0;
 const CHIP_H: f32 = 36.0;
 /// Transparent margin around the pill so its shadow is not clipped
 /// by the window bounds.
@@ -26,9 +26,23 @@ pub static CHIP_XID: AtomicU32 = AtomicU32::new(0);
 static CHIP_HANDLE: parking_lot::Mutex<Option<AnyWindowHandle>> =
     parking_lot::Mutex::new(None);
 
+/// Live recording state the daemon flips; the chip re-renders every
+/// frame so these read through without a notify round-trip.
+static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static MIC_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn paused() -> bool {
+    PAUSED.load(Ordering::Relaxed)
+}
+pub fn set_paused(v: bool) {
+    PAUSED.store(v, Ordering::Relaxed);
+}
+pub fn set_mic(v: bool) {
+    MIC_ON.store(v, Ordering::Relaxed);
+}
+
 pub struct Chip {
     started: Instant,
-    mic: bool,
 }
 
 /// Open the chip. Returns the X11 window id on X11, 0 elsewhere.
@@ -59,7 +73,6 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
             |_, cx| {
                 cx.new(|_| Chip {
                     started: Instant::now(),
-                    mic,
                 })
             },
         )
@@ -67,13 +80,7 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
 
     let xid = find_chip_xid().unwrap_or(0);
     if let Ok((conn, _)) = x11rb::connect(None) {
-        // Clicks pass through the chip to the window beneath it.
-        use x11rb::protocol::shape::SK;
-        use x11rb::protocol::xfixes::ConnectionExt;
         if xid != 0 {
-            let _ = conn
-                .xfixes_set_window_shape_region(xid, SK::INPUT, 0, 0, x11rb::NONE)
-                .map(|c| c.check());
             crate::xwin::suppress_decorations_on(&conn, xid);
         }
     }
@@ -82,6 +89,8 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
     // re-reads the hint when forced to re-frame the window.
     crate::xwin::place_after_map("dev.iris.chip".to_string(), 0.0, 0.0);
     CHIP_XID.store(xid, Ordering::SeqCst);
+    MIC_ON.store(mic, Ordering::Relaxed);
+    PAUSED.store(false, Ordering::Relaxed);
     *CHIP_HANDLE.lock() = Some(handle.into());
     Ok(xid)
 }
@@ -109,15 +118,17 @@ pub fn find_chip_xid_on(conn: &impl x11rb::connection::Connection) -> Option<u32
 }
 
 impl Render for Chip {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // rAF-driven: the dot pulse and timer both tick every frame.
         window.request_animation_frame();
+        let paused = paused();
+        let mic_on = MIC_ON.load(Ordering::Relaxed);
         let t = self.started.elapsed().as_secs_f32();
-        let pulse = 0.55 + 0.45 * (t * std::f32::consts::TAU / 1.6).sin().abs();
+        let pulse = if paused { 0.35 } else { 0.55 + 0.45 * (t * std::f32::consts::TAU / 1.6).sin().abs() };
         let secs = t as u64;
         let timer = format!("{:02}:{:02}", secs / 60, secs % 60);
 
-        let mut row = div()
+        div()
             .absolute()
             .left(px(CHIP_BLEED))
             .top(px(CHIP_BLEED))
@@ -136,7 +147,7 @@ impl Render for Chip {
                     .w(px(9.))
                     .h(px(9.))
                     .rounded_full()
-                    .bg(theme::DANGER)
+                    .bg(if paused { theme::FG_FAINT } else { theme::DANGER })
                     .opacity(pulse),
             )
             .child(
@@ -145,10 +156,32 @@ impl Render for Chip {
                     .text_color(theme::FG)
                     .font_family("monospace")
                     .child(timer),
-            );
-        if self.mic {
-            row = row.child(crate::icons::icon(crate::icons::Icon::Mic, theme::FG_DIM, 14.0));
-        }
-        row
+            )
+            .child(
+                div()
+                    .id("chip-pause")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        let _ = crate::daemon::dispatch(cx, &crate::daemon::Command::RecordPause);
+                    }))
+                    .child(crate::icons::icon(
+                        if paused { crate::icons::Icon::Check } else { crate::icons::Icon::Pause },
+                        theme::FG_DIM,
+                        14.0,
+                    )),
+            )
+            .child(
+                div()
+                    .id("chip-mic")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        let _ = crate::daemon::dispatch(cx, &crate::daemon::Command::RecordMic);
+                    }))
+                    .child(crate::icons::icon(
+                        if mic_on { crate::icons::Icon::Mic } else { crate::icons::Icon::MicOff },
+                        theme::FG_DIM,
+                        14.0,
+                    )),
+            )
     }
 }

@@ -15,6 +15,15 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+/// Controls the chip can send a live recording. Wayland and desktop
+/// sources ignore the channel: their chip is not shown.
+#[derive(Clone, Copy, Debug)]
+pub enum RecControl {
+    Pause,
+    Resume,
+    ToggleMic,
+}
+
 /// What a platform recording source needs: where to encode, at what rate,
 /// and the signal to stop. The source blocks until `stop` fires or it fails,
 /// having written the finished mp4 to `spec.output`.
@@ -23,6 +32,7 @@ pub struct RecordingSpec {
     pub fps: u32,
     pub mic: bool,
     pub stop: Receiver<()>,
+    pub control: Receiver<RecControl>,
 }
 
 /// User aborted before any frame was encoded (e.g. Escape during window
@@ -43,6 +53,7 @@ pub struct ActiveRecording {
     pub mic: bool,
     pub phase: Phase,
     stop: Option<Sender<()>>,
+    control: Option<Sender<RecControl>>,
     join: Option<JoinHandle<Result<(), String>>>,
 }
 
@@ -54,11 +65,13 @@ impl ActiveRecording {
         F: FnOnce(RecordingSpec) -> Result<(), String> + Send + 'static,
     {
         let (tx, rx) = channel();
+        let (ctx, crx) = channel();
         let spec = RecordingSpec {
             output: output.clone(),
             fps,
             mic,
             stop: rx,
+            control: crx,
         };
         let join = std::thread::spawn(move || source(spec));
         Self {
@@ -67,7 +80,16 @@ impl ActiveRecording {
             mic,
             phase: Phase::Picking,
             stop: Some(tx),
+            control: Some(ctx),
             join: Some(join),
+        }
+    }
+
+    /// Forward a chip control to the source thread. No-op once the
+    /// recording has been stopped or the source exited.
+    pub fn send_control(&self, ctl: RecControl) {
+        if let Some(tx) = &self.control {
+            let _ = tx.send(ctl);
         }
     }
 

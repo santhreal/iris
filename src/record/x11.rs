@@ -471,7 +471,8 @@ fn record_loop(
     })?;
 
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(spec.fps));
-    let start = Instant::now();
+    let mut start = Instant::now();
+    let mut mic = spec.mic;
     let mut frame_no: u64 = 0;
     // Reused RGBA scratch: recording would otherwise allocate a fresh
     // w*h*4 buffer on every frame.
@@ -482,6 +483,48 @@ fn record_loop(
             encoder.finish()?;
             return Ok(());
         }
+
+        // Chip controls: pause blocks the schedule (the mp4 simply has
+        // no frames for the paused span), mic toggle splits the file the
+        // same way a resize does.
+        while let Ok(ctl) = spec.control.try_recv() {
+            match ctl {
+                super::RecControl::Pause => {
+                    let paused_at = Instant::now();
+                    loop {
+                        if spec.stop.try_recv().is_ok() {
+                            encoder.finish()?;
+                            return Ok(());
+                        }
+                        match spec.control.recv_timeout(Duration::from_millis(100)) {
+                            Ok(super::RecControl::Resume) => break,
+                            Ok(super::RecControl::ToggleMic) => {
+                                mic = !mic;
+                                encoder.finish()?;
+                                let dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+                                output = unique_recording_path(&dir);
+                                encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic })?;
+                            }
+                            Ok(super::RecControl::Pause) => {}
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                    // Rebase the absolute schedule so the paused span
+                    // does not arrive as a burst of dropped frames.
+                    start += paused_at.elapsed();
+                }
+                super::RecControl::Resume => {}
+                super::RecControl::ToggleMic => {
+                    mic = !mic;
+                    encoder.finish()?;
+                    let dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+                    output = unique_recording_path(&dir);
+                    encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic })?;
+                }
+            }
+        }
+
 
         // Detect resize / close each frame. A vanished window is a clean
         // end of the recording, not an error.
