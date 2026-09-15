@@ -694,7 +694,11 @@ pub fn start(cx: &mut App) {
     match bind_socket() {
         Ok(listener) => {
             cx.spawn(async move |cx| loop {
-                cx.background_executor().timer(Duration::from_millis(100)).await;
+                // 16ms, not 100: a forwarded CLI command or tray click
+                // should reach dispatch within a frame, not a tenth of
+                // a second. try_iter is a non-blocking drain, so the
+                // tighter poll costs a wakeup, not work.
+                cx.background_executor().timer(Duration::from_millis(16)).await;
                 let args = accept_args(&listener);
                 if !args.is_empty() {
                     let cmds = parse_args(&args);
@@ -731,9 +735,10 @@ pub fn start(cx: &mut App) {
         });
     }
 
-    // Command pump: tray + hotkey threads -> app dispatch.
+    // Command pump: tray + hotkey threads -> app dispatch. 16ms keeps
+    // a hotkey press inside one frame of latency.
     cx.spawn(async move |cx| loop {
-        cx.background_executor().timer(Duration::from_millis(100)).await;
+        cx.background_executor().timer(Duration::from_millis(16)).await;
         let pending: Vec<Command> = rx.try_iter().collect();
         if !pending.is_empty() {
             let _ = cx.update(|cx| {
