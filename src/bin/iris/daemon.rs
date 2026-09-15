@@ -632,7 +632,11 @@ mod hotkeys {
                         Err(_) => return,
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                // 8ms, not 100: a grabbed keypress must reach dispatch
+                // inside a frame. The poll is a non-blocking drain, so
+                // the tighter loop costs a wakeup, not work, and the
+                // regrab check still runs between events.
+                std::thread::sleep(std::time::Duration::from_millis(8));
             }
         });
     }
