@@ -187,23 +187,24 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
             .background_executor()
             .spawn(async move {
                 let t_grab = Instant::now();
-                let frame = Arc::new(grab.await?);
+                let frame = grab.await?;
+                let (width, height) = (frame.width, frame.height);
                 let grab_ms = t_grab.elapsed();
                 let t_slice = Instant::now();
-                let img = overlay::slice_frame(&frame);
+                let img = overlay::slice_frame(frame);
                 iris_lib::ilog!(
                     "iris: capture: grab {:?}, slice {:?}",
                     grab_ms,
                     t_slice.elapsed()
                 );
-                Ok::<(Arc<iris_lib::capture::Frame>, Arc<gpui::RenderImage>), String>((frame, img))
+                Ok::<(Arc<gpui::RenderImage>, u32, u32), String>((img, width, height))
             })
             .await;
         let _ = cx.update(|cx| match grabbed {
-            Ok((frame, img)) => {
+            Ok((img, width, height)) => {
                 iris_lib::ilog!("iris: capture: frame landed in {:?}", t0.elapsed());
                 let _ = handle.update(cx, |overlay, window, cx| {
-                    overlay.set_frame(frame, img, window, cx);
+                    overlay.set_frame(img, width, height, window, cx);
                     cx.notify();
                 });
             }

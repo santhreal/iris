@@ -110,26 +110,29 @@ impl Region {
     }
 }
 
-/// Crop a region out of a frozen frame.
-pub fn crop(frame: &Frame, region: Region) -> Result<image::RgbaImage, String> {
+
+/// Crop a region out of a BGRA buffer (the overlay's RenderImage
+/// holds the frame's only CPU copy, already swizzled for the GPU).
+/// The swizzle is symmetric: BGRA in, RGBA out.
+pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result<image::RgbaImage, String> {
     if region.width == 0 || region.height == 0 {
         return Err("empty capture region".to_string());
     }
-    if region.x + region.width > frame.width || region.y + region.height > frame.height {
+    if region.x + region.width > width || region.y + region.height > height {
         return Err(format!(
             "region {}x{}+{}+{} outside frame {}x{}",
-            region.width, region.height, region.x, region.y, frame.width, frame.height
+            region.width, region.height, region.x, region.y, width, height
         ));
     }
     let mut out = image::RgbaImage::new(region.width, region.height);
-    let raw = out.as_mut();
-    let raw: &mut [u8] = &mut *raw;
+    let raw: &mut [u8] = &mut *out.as_mut();
     for row in 0..region.height {
-        let src = ((region.y + row) * frame.width + region.x) as usize * 4;
+        let src = ((region.y + row) * width + region.x) as usize * 4;
         let dst = (row * region.width) as usize * 4;
         let len = region.width as usize * 4;
-        raw[dst..dst + len].copy_from_slice(&frame.rgba[src..src + len]);
+        raw[dst..dst + len].copy_from_slice(&bgra[src..src + len]);
     }
+    crate::widgets::swizzle_rgba_bgra(&mut *out.as_mut());
     Ok(out)
 }
 
@@ -262,19 +265,22 @@ mod tests {
 
     #[test]
     fn crop_rejects_empty_and_out_of_bounds() {
-        let frame = Frame { width: 4, height: 4, rgba: vec![0; 64] };
-        assert!(crop(&frame, Region { x: 0, y: 0, width: 0, height: 2 }).is_err());
-        assert!(crop(&frame, Region { x: 3, y: 0, width: 2, height: 2 }).is_err());
+        let bgra = vec![0u8; 64];
+        assert!(crop_bgra(&bgra, 4, 4, Region { x: 0, y: 0, width: 0, height: 2 }).is_err());
+        assert!(crop_bgra(&bgra, 4, 4, Region { x: 3, y: 0, width: 2, height: 2 }).is_err());
     }
 
     #[test]
     fn crop_copies_exact_pixels() {
+        // BGRA source: build it by swizzling an RGBA ramp so the
+        // expected output is the ramp itself.
         let mut rgba = vec![0u8; 4 * 4 * 4];
         for i in 0..rgba.len() {
             rgba[i] = i as u8;
         }
-        let frame = Frame { width: 4, height: 4, rgba };
-        let out = crop(&frame, Region { x: 1, y: 1, width: 2, height: 2 }).unwrap();
+        let mut bgra = rgba.clone();
+        crate::widgets::swizzle_rgba_bgra(&mut bgra);
+        let out = crop_bgra(&bgra, 4, 4, Region { x: 1, y: 1, width: 2, height: 2 }).unwrap();
         assert_eq!(out.width(), 2);
         // Top-left of the crop is frame pixel (1,1) = byte offset 20.
         assert_eq!(&out.as_raw()[..4], &[20, 21, 22, 23]);

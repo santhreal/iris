@@ -255,7 +255,7 @@ pub fn text_field(id: String, text: String, active: bool) -> Stateful<Div> {
 /// RGBA→BGRA in place, one u32 per pixel: the rotate form vectorizes;
 /// a byte-wise swap does not.
 #[inline]
-fn swizzle_rgba_bgra(chunk: &mut [u8]) {
+pub(crate) fn swizzle_rgba_bgra(chunk: &mut [u8]) {
     for px in chunk.chunks_exact_mut(4) {
         let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
         let bgr = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
@@ -295,6 +295,32 @@ pub fn render_image_from_rgba(width: u32, height: u32, rgba: &[u8]) -> std::sync
         }
     });
     let buf = image::RgbaImage::from_raw(width, height, data).expect("rgba buffer size");
+    std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]))
+}
+
+/// Same as `render_image_from_rgba` but takes ownership of the buffer
+/// and swizzles in place: no second copy of a multi-MB frame. The
+/// overlay uses this so the frozen frame's only CPU copy IS the
+/// RenderImage's buffer.
+pub fn render_image_from_rgba_owned(width: u32, height: u32, mut rgba: Vec<u8>) -> std::sync::Arc<gpui::RenderImage> {
+    const PARALLEL_MIN: usize = 1 << 20;
+    if rgba.len() < PARALLEL_MIN {
+        swizzle_rgba_bgra(&mut rgba);
+    } else {
+        let row = width as usize * 4;
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get().min(8))
+            .unwrap_or(4)
+            .min(height as usize)
+            .max(1);
+        let band = (height as usize).div_ceil(threads) * row;
+        std::thread::scope(|scope| {
+            for chunk in rgba.chunks_mut(band) {
+                scope.spawn(move || swizzle_rgba_bgra(chunk));
+            }
+        });
+    }
+    let buf = image::RgbaImage::from_raw(width, height, rgba).expect("rgba buffer size");
     std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]))
 }
 

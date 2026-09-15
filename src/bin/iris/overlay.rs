@@ -31,7 +31,9 @@ pub struct Overlay {
     /// None until the background grab lands: the window maps at once,
     /// transparent over the live desktop with crosshair and snap
     /// already live, and the frozen frame fades in behind it.
-    frame: Option<Arc<Frame>>,
+    /// The frozen frame's pixel size; the pixels themselves live in
+    /// `frame_img`'s BGRA buffer (the only CPU copy).
+    frame_size: Option<(u32, u32)>,
     /// This window's screen: origin in frame pixels and size. The
     /// displayed image is exactly the frozen frame at native scale;
     /// every coordinate conversion goes through it.
@@ -135,13 +137,13 @@ pub fn layout() -> ShellLayout {
     ShellLayout { monitors, windows, union }
 }
 
-/// The frozen frame as one display image: a parallel banded RGBA→BGRA
-/// swizzle straight into a `RenderImage`. No BMP encode/decode round
-/// trip, and the atlas tile stays freeable via `drop_image` (see
-/// `widgets::render_image_from_rgba`). Heavy on multi-4K frames;
-/// callers run this off the main thread.
-pub fn slice_frame(frame: &Frame) -> Arc<RenderImage> {
-    crate::widgets::render_image_from_rgba(frame.width, frame.height, &frame.rgba)
+/// The frozen frame as one display image: the frame's RGBA buffer is
+/// moved into the RenderImage and swizzled to BGRA in place, so the
+/// frame's only CPU copy IS the GPU-bound buffer. Crop and loupe read
+/// pixels back out of it (the swizzle is symmetric). Callers run this
+/// off the main thread.
+pub fn slice_frame(frame: Frame) -> Arc<RenderImage> {
+    crate::widgets::render_image_from_rgba_owned(frame.width, frame.height, frame.rgba)
 }
 
 /// Open the fullscreen overlay shell over the whole virtual screen,
@@ -218,7 +220,7 @@ fn open_shell_opts(
             move |_, cx| {
                 cx.new(|_| Overlay {
                     hidden: false,
-                    frame: None,
+                    frame_size: None,
                     origin: (ux, uy),
                     view: (uw, uh),
                     monitors,
@@ -303,9 +305,11 @@ fn close_other_overlays(cx: &mut App, keep: Option<AnyWindowHandle>) {
 
 /// BMP for the monitor slices, written straight from the frame: a
 /// 32bpp BI_RGB header plus bottom-up BGRA rows. One pass over the
-/// The loupe's 8x nearest-neighbor zoom of the 19x19 source patch around
 /// the cursor, plus the crosshair-free info line (coords + hex).
-fn loupe_image(frame: &Frame, fx: i64, fy: i64) -> (Arc<RenderImage>, String) {
+/// `img` is the frame's RenderImage; its buffer is BGRA (the swizzle
+/// is symmetric, so reading R and B swapped restores RGBA).
+fn loupe_image(img: &Arc<RenderImage>, width: u32, height: u32, fx: i64, fy: i64) -> (Arc<RenderImage>, String) {
+    let bgra = img.as_bytes(0).unwrap_or(&[]);
     let mut rgba = vec![0u8; (LOUPE_PX * LOUPE_PX * 4) as usize];
     let half = LOUPE_SRC as i64 / 2;
     let mut center = [0u8, 0u8, 0u8];
@@ -314,10 +318,10 @@ fn loupe_image(frame: &Frame, fx: i64, fy: i64) -> (Arc<RenderImage>, String) {
             let px_x = fx + sx - half;
             let px_y = fy + sy - half;
             let inside =
-                px_x >= 0 && px_y >= 0 && px_x < frame.width as i64 && px_y < frame.height as i64;
+                px_x >= 0 && px_y >= 0 && px_x < width as i64 && px_y < height as i64;
             let src = if inside {
-                let i = ((px_y as u32 * frame.width + px_x as u32) * 4) as usize;
-                [frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2], 255]
+                let i = ((px_y as u32 * width + px_x as u32) * 4) as usize;
+                [bgra[i + 2], bgra[i + 1], bgra[i], 255]
             } else {
                 [0x14, 0x14, 0x16, 255]
             };
@@ -361,8 +365,9 @@ fn loupe_image(frame: &Frame, fx: i64, fy: i64) -> (Arc<RenderImage>, String) {
 impl Overlay {
     pub fn set_frame(
         &mut self,
-        frame: Arc<Frame>,
         img: Arc<RenderImage>,
+        width: u32,
+        height: u32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -370,17 +375,17 @@ impl Overlay {
         // extent is the view, and its whole rect is the one monitor.
         if wayland() {
             self.origin = (0, 0);
-            self.view = (frame.width, frame.height);
+            self.view = (width, height);
             if self.monitors.is_empty() {
                 self.monitors.push(WinRect {
                     x: 0,
                     y: 0,
-                    width: frame.width,
-                    height: frame.height,
+                    width,
+                    height,
                 });
             }
         }
-        self.frame = Some(frame);
+        self.frame_size = Some((width, height));
         self.frame_img = Some(img);
         // Enter raced the grab: the selection is already committed,
         // finish it now that there is a frame to crop.
@@ -390,12 +395,13 @@ impl Overlay {
         }
     }
 
+
     /// Re-arm a pooled window for a new session: every per-session
     /// field back to its opening state on the new layout. Images were
     /// already released when the window parked.
     pub fn reset(&mut self, layout: &ShellLayout) {
         self.hidden = false;
-        self.frame = None;
+        self.frame_size = None;
         self.frame_img = None;
         self.origin = (layout.union.x, layout.union.y);
         self.view = (layout.union.width, layout.union.height);
@@ -520,10 +526,10 @@ impl Overlay {
     /// Rebuild the loupe for a frame-pixel position, releasing the
     /// previous tile. Called on every drag and resize mousemove.
     fn update_loupe(&mut self, fx: i64, fy: i64, cx: &mut Context<Self>) {
-        if let Some(frame) = &self.frame {
+        if let (Some(img), Some((w, h))) = (&self.frame_img, self.frame_size) {
             // The previous loupe's cache entry goes with it: a drag
             // mints one per mousemove.
-            let old = self.loupe.replace(loupe_image(frame, fx, fy));
+            let old = self.loupe.replace(loupe_image(img, w, h, fx, fy));
             if let Some((img, _)) = old {
                 crate::widgets::release_render(&img, cx);
             }
@@ -540,7 +546,7 @@ impl Overlay {
         if w < MIN_SIZE || h < MIN_SIZE {
             return;
         }
-        let Some(frame) = self.frame.clone() else {
+        let Some((frame_img, (fw, fh))) = self.frame_img.clone().zip(self.frame_size) else {
             // The grab has not landed yet; set_frame() completes the
             // finish once it does.
             self.pending_finish = true;
@@ -548,7 +554,8 @@ impl Overlay {
         };
         self.finishing = true;
         let region = Self::rect_to_frame(window, self.origin, self.view, (x, y, w, h));
-        let crop = match pipeline::crop(&frame, region) {
+        let bgra = frame_img.as_bytes(0).unwrap_or(&[]);
+        let crop = match pipeline::crop_bgra(bgra, fw, fh, region) {
             Ok(c) => c,
             Err(e) => {
                 // A bad crop loses this capture, never the daemon.
