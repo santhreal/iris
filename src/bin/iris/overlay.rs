@@ -517,6 +517,19 @@ impl Overlay {
         )
     }
 
+    /// Rebuild the loupe for a frame-pixel position, releasing the
+    /// previous tile. Called on every drag and resize mousemove.
+    fn update_loupe(&mut self, fx: i64, fy: i64, cx: &mut Context<Self>) {
+        if let Some(frame) = &self.frame {
+            // The previous loupe's cache entry goes with it: a drag
+            // mints one per mousemove.
+            let old = self.loupe.replace(loupe_image(frame, fx, fy));
+            if let Some((img, _)) = old {
+                crate::widgets::release_render(&img, cx);
+            }
+        }
+    }
+
     fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.finishing {
             return;
@@ -791,6 +804,11 @@ impl Render for Overlay {
                     let (ny, nh) = (y0.min(y1).clamp(0.0, f32::from(size.height)),
                                     (y1 - y0).abs().min(f32::from(size.height)));
                     this.current = Some((nx, ny, nw, nh));
+                    // The loupe tracks the edge being dragged so a
+                    // resize lands on the exact pixel, same as the
+                    // initial drag.
+                    let (fx, fy) = this.frame_pos(sf, sx, sy, mx, my);
+                    this.update_loupe(fx, fy, cx);
                     cx.notify();
                     return;
                 }
@@ -812,16 +830,7 @@ impl Render for Overlay {
                         region.height as f32,
                     ));
                     let (fx, fy) = this.frame_pos(sf, sx, sy, mx, my);
-                    if let Some(frame) = &this.frame {
-                        // The previous loupe's cache entry goes with
-                        // it: a drag mints one per mousemove.
-                        let old = this
-                            .loupe
-                            .replace(loupe_image(frame, fx, fy));
-                        if let Some((img, _)) = old {
-                            crate::widgets::release_render(&img, cx);
-                        }
-                    }
+                    this.update_loupe(fx, fy, cx);
                 } else {
                     this.loupe = None;
                     let new_hover = this.window_at(mx, my, sf, sx, sy);
@@ -848,6 +857,9 @@ impl Render for Overlay {
                     // A handle or interior release ends the reshape or
                     // move; the rect stays armed for Enter.
                     if this.resize.take().is_some() || this.moving.take().is_some() {
+                        if let Some((img, _)) = this.loupe.take() {
+                            crate::widgets::release_render(&img, cx);
+                        }
                         cx.notify();
                         return;
                     }
@@ -1049,10 +1061,10 @@ impl Render for Overlay {
             }
         }
 
-        // Loupe while dragging only: the window-snap highlight is the
-        // hover feedback; no circle chasing the cursor. Flips to the
-        // other side of the cursor near the screen edges.
-        if self.dragging {
+        // Loupe while dragging or resizing: the window-snap highlight
+        // is the hover feedback; no circle chasing the cursor. Flips
+        // to the other side of the cursor near the screen edges.
+        if self.dragging || self.resize.is_some() {
             if let Some((loupe, info)) = &self.loupe {
                 let win = window.bounds().size;
                 let span = LOUPE_PX as f32 + 30.0;

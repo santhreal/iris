@@ -305,12 +305,19 @@ pub fn open(
                 let decoded = cx
                     .background_executor()
                     .spawn(async move {
-                        image::load_from_memory(&decode_png).map(|i| i.to_rgba8())
+                        image::load_from_memory(&decode_png).map(|i| {
+                            let img = i.to_rgba8();
+                            // Clone for `base` here, off the UI thread:
+                            // a 4K memcpy on the main thread stalls the
+                            // morph that is mid-flight when this lands.
+                            let base = img.clone();
+                            (img, base)
+                        })
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     match decoded {
-                        Ok(img) => {
+                        Ok((img, base)) => {
                             let old = std::mem::replace(
                                 &mut this.base_img,
                                 crate::widgets::render_image_from_rgba(
@@ -320,7 +327,7 @@ pub fn open(
                                 ),
                             );
                             crate::widgets::release_render(&old, cx);
-                            this.base = img.clone();
+                            this.base = base;
                             this.composite = img;
                             this.base_ready = true;
                             this.rebuild_all();
