@@ -15,7 +15,8 @@ use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{channel, Sender};
+use futures::channel::mpsc::{unbounded, UnboundedSender};
+use futures::StreamExt;
 use std::time::{Duration, Instant};
 
 use iris_lib::config::Config;
@@ -31,9 +32,9 @@ static RECORDING: std::sync::LazyLock<parking_lot::Mutex<record::RecordingManage
     std::sync::LazyLock::new(|| parking_lot::Mutex::new(record::RecordingManager::default()));
 
 /// The daemon's command channel, installed by `start`.
-static COMMAND_TX: std::sync::OnceLock<Sender<Command>> = std::sync::OnceLock::new();
+static COMMAND_TX: std::sync::OnceLock<UnboundedSender<Command>> = std::sync::OnceLock::new();
 
-fn command_tx() -> Option<Sender<Command>> {
+fn command_tx() -> Option<UnboundedSender<Command>> {
     COMMAND_TX.get().cloned()
 }
 
@@ -44,7 +45,7 @@ fn command_tx() -> Option<Sender<Command>> {
 struct XcbChip {
     xid: std::sync::atomic::AtomicU32,
     conn: Option<x11rb::rust_connection::RustConnection>,
-    done: Option<Sender<Command>>,
+    done: Option<UnboundedSender<Command>>,
 }
 
 impl XcbChip {
@@ -79,7 +80,7 @@ impl record::x11::ChipFollow for XcbChip {
     }
     fn hide(&self) {
         if let Some(tx) = &self.done {
-            let _ = tx.send(Command::ChipHide);
+            let _ = tx.unbounded_send(Command::ChipHide);
         }
     }
 }
@@ -382,7 +383,7 @@ fn accept_args(listener: &UnixListener) -> Vec<String> {
 
 #[cfg(target_os = "linux")]
 struct IrisTray {
-    tx: Sender<Command>,
+    tx: UnboundedSender<Command>,
 }
 
 #[cfg(target_os = "linux")]
@@ -422,7 +423,7 @@ impl ksni::Tray for IrisTray {
             StandardItem {
                 label: label.to_string(),
                 activate: Box::new(move |_| {
-                    let _ = tx.send(cmd.clone_for_menu());
+                    let _ = tx.unbounded_send(cmd.clone_for_menu());
                 }),
                 ..Default::default()
             }
@@ -461,7 +462,7 @@ impl Command {
 
 #[cfg(target_os = "linux")]
 mod hotkeys {
-    use super::{Command, Config, Sender};
+    use super::{Command, Config, UnboundedSender};
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::*;
 
@@ -550,7 +551,7 @@ mod hotkeys {
     /// Grab the configured hotkeys on the root window and forward
     /// presses. Runs on its own thread; silently disabled on failure
     /// (Wayland, no DISPLAY).
-    pub fn spawn(tx: Sender<Command>) {
+    pub fn spawn(tx: UnboundedSender<Command>) {
         std::thread::spawn(move || {
             let (regrab_tx, regrab_rx) = std::sync::mpsc::channel::<()>();
             let _ = REGRAB.set(regrab_tx);
@@ -611,18 +612,24 @@ mod hotkeys {
             };
             grab_all(&conn, &mut grabbed);
 
+            // Event-driven, not polled: poll() the connection's fd so a
+            // grabbed keypress wakes the thread the instant the X server
+            // delivers it, instead of up to a sleep interval late. The
+            // timeout still lets a regrab request land when no events
+            // arrive.
+            use std::os::unix::io::AsRawFd;
+            let x_fd = conn.stream().as_raw_fd();
             loop {
                 if regrab_rx.try_recv().is_ok() {
                     grab_all(&conn, &mut grabbed);
                 }
-                // Poll (not wait_for_event): a regrab request must be
-                // honored even when no X events arrive.
+                // Drain every queued event before sleeping again.
                 loop {
                     match conn.poll_for_event() {
                         Ok(Some(x11rb::protocol::Event::KeyPress(ev))) => {
                             if let Some((_, cmd)) = grabbed.iter().find(|(kc, _)| *kc == ev.detail)
                             {
-                                if tx.send(cmd.clone_for_menu()).is_err() {
+                                if tx.unbounded_send(cmd.clone_for_menu()).is_err() {
                                     return;
                                 }
                             }
@@ -632,11 +639,17 @@ mod hotkeys {
                         Err(_) => return,
                     }
                 }
-                // 8ms, not 100: a grabbed keypress must reach dispatch
-                // inside a frame. The poll is a non-blocking drain, so
-                // the tighter loop costs a wakeup, not work, and the
-                // regrab check still runs between events.
-                std::thread::sleep(std::time::Duration::from_millis(8));
+                // Sleep until the next X event or the regrab deadline.
+                // 50ms is the regrab latency bound, not the hotkey one:
+                // a keypress wakes poll() immediately.
+                let mut pfd = libc::pollfd {
+                    fd: x_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                unsafe {
+                    libc::poll(&mut pfd, 1, 50);
+                }
             }
         });
     }
@@ -695,27 +708,45 @@ pub fn start(cx: &mut App) {
     // Warm the overlay pool: the first capture reuses a live window
     // instead of paying GPUI's ~130ms renderer init on the hotkey.
     overlay::warmup(cx);
-    let (tx, rx) = channel::<Command>();
+    let (tx, rx) = unbounded::<Command>();
     let _ = COMMAND_TX.set(tx.clone());
 
     match bind_socket() {
         Ok(listener) => {
-            cx.spawn(async move |cx| loop {
-                // 16ms, not 100: a forwarded CLI command or tray click
-                // should reach dispatch within a frame, not a tenth of
-                // a second. try_iter is a non-blocking drain, so the
-                // tighter poll costs a wakeup, not work.
-                cx.background_executor().timer(Duration::from_millis(16)).await;
-                let args = accept_args(&listener);
-                if !args.is_empty() {
-                    let cmds = parse_args(&args);
-                    let _ = cx.update(|cx| {
-                        for cmd in cmds {
-                            if let Err(e) = dispatch(cx, &cmd) {
-                                eprintln!("iris: dispatch: {e}");
+            let listener = Arc::new(listener);
+            cx.spawn(async move |cx| {
+                // Event-driven: poll() the listener fd so a forwarded
+                // CLI command dispatches the instant it connects, not
+                // up to a timer interval late. accept_args drains every
+                // pending connection before the next sleep.
+                use std::os::unix::io::AsRawFd;
+                let fd = listener.as_raw_fd();
+                loop {
+                    let listener = Arc::clone(&listener);
+                    let args = cx
+                        .background_executor()
+                        .spawn(async move {
+                            let mut pfd = libc::pollfd {
+                                fd,
+                                events: libc::POLLIN,
+                                revents: 0,
+                            };
+                            unsafe {
+                                libc::poll(&mut pfd, 1, -1);
                             }
-                        }
-                    });
+                            accept_args(&listener)
+                        })
+                        .await;
+                    if !args.is_empty() {
+                        let cmds = parse_args(&args);
+                        let _ = cx.update(|cx| {
+                            for cmd in cmds {
+                                if let Err(e) = dispatch(cx, &cmd) {
+                                    eprintln!("iris: dispatch: {e}");
+                                }
+                            }
+                        });
+                    }
                 }
             })
             .detach();
@@ -741,18 +772,15 @@ pub fn start(cx: &mut App) {
             }
         });
     }
-
-    // Command pump: tray + hotkey threads -> app dispatch. 16ms keeps
-    // a hotkey press inside one frame of latency.
-    cx.spawn(async move |cx| loop {
-        cx.background_executor().timer(Duration::from_millis(16)).await;
-        let pending: Vec<Command> = rx.try_iter().collect();
-        if !pending.is_empty() {
+    // Command pump: tray + hotkey threads -> app dispatch. The
+    // receiver is a stream, so a press dispatches the instant it
+    // arrives instead of up to a poll interval late.
+    cx.spawn(async move |cx| {
+        let mut rx = rx;
+        while let Some(cmd) = rx.next().await {
             let _ = cx.update(|cx| {
-                for cmd in pending {
-                    if let Err(e) = dispatch(cx, &cmd) {
-                        eprintln!("iris: dispatch: {e}");
-                    }
+                if let Err(e) = dispatch(cx, &cmd) {
+                    eprintln!("iris: dispatch: {e}");
                 }
             });
         }
