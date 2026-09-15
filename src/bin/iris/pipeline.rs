@@ -148,9 +148,12 @@ pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntr
     )
     .map_err(|e| format!("save screenshot: {e}"))?;
     // The file is the product; a clipboard failure degrades to a
-    // log line, never a lost capture.
-    if let Err(e) = copy_image(img) {
-        eprintln!("iris: clipboard: {e}");
+    // log line, never a lost capture. copy_to_clipboard gates whether
+    // the capture lands on the clipboard at all.
+    if cfg.copy_to_clipboard {
+        if let Err(e) = copy_image(img) {
+            eprintln!("iris: clipboard: {e}");
+        }
     }
     let entry = library::add(&path, img)?;
     Ok((path, entry))
