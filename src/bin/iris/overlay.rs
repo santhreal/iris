@@ -874,6 +874,29 @@ impl Render for Overlay {
                     .text_color(theme::FG)
                     .child(size_label),
             );
+            // A committed selection (drag released, not yet captured)
+            // shows what confirms and what cancels. While still
+            // dragging the loupe is the feedback; the hint would
+            // flicker under it.
+            if !self.dragging {
+                let cfg = iris_lib::config::Config::load();
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(x))
+                        .top(px(y + h + 6.0))
+                        .px(px(8.))
+                        .py(px(3.))
+                        .rounded(px(6.))
+                        .bg(theme::alpha(theme::BG_ELEV, 0.9))
+                        .text_xs()
+                        .text_color(theme::FG_DIM)
+                        .child(format!(
+                            "{} capture   {} cancel",
+                            cfg.confirm_keybind, cfg.cancel_keybind
+                        )),
+                );
+            }
         }
 
         // Loupe while dragging only: the window-snap highlight is the
