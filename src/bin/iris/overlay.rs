@@ -720,6 +720,30 @@ impl Render for Overlay {
                     cx.notify();
                     return;
                 }
+                // Number keys snap the selection to that monitor.
+                if let Some(d) = key.strip_prefix("").and_then(|k| k.parse::<usize>().ok()) {
+                    if d >= 1 && d <= this.monitors.len() {
+                        let m = this.monitors[d - 1];
+                        let sf = window.scale_factor();
+                        let (sx, sy) = Self::scale(window, this.view);
+                        this.current = Some(Self::to_logical(this.origin, &m, sf, sx, sy));
+                        cx.notify();
+                        return;
+                    }
+                }
+                // 'c' copies the loupe's center hex while dragging.
+                if key == "c" {
+                    if let Some((_, info)) = &this.loupe {
+                        if let Some(hex) = info.split('#').nth(1) {
+                            let text = format!("#{hex}");
+                            let _ = pipeline::with_clipboard(|c| {
+                                let _ = iris_lib::dragcopy::clipboard_set_text(c, &text);
+                            });
+                        }
+                    }
+                    cx.notify();
+                    return;
+                }
                 let cfg = &this.cfg;
                 let m = &ev.keystroke.modifiers;
                 if iris_lib::config::keybind_matches(
@@ -817,12 +841,34 @@ impl Render for Overlay {
                         this.hover_out = Some((old, Instant::now()));
                     }
                     this.hover_in = None;
-                    let region = Region::from_corners(
+                    let mut region = Region::from_corners(
                         this.anchor,
                         (mx, my),
                         window.bounds().size.width.into(),
                         window.bounds().size.height.into(),
                     );
+                    // Shift locks the drag to a square, like macOS.
+                    if ev.modifiers.shift {
+                        let side = region.width.max(region.height);
+                        // Grow away from the anchor in the drag's
+                        // direction, clamped to the window.
+                        let size = window.bounds().size;
+                        let (wmax, hmax) =
+                            (f32::from(size.width), f32::from(size.height));
+                        let right = mx >= this.anchor.0;
+                        let down = my >= this.anchor.1;
+                        let side = (side as f32)
+                            .min(if right { wmax - this.anchor.0 } else { this.anchor.0 })
+                            .min(if down { hmax - this.anchor.1 } else { this.anchor.1 });
+                        region = Region {
+                            x: if right { this.anchor.0 } else { this.anchor.0 - side }
+                                .max(0.0) as u32,
+                            y: if down { this.anchor.1 } else { this.anchor.1 - side }
+                                .max(0.0) as u32,
+                            width: side as u32,
+                            height: side as u32,
+                        };
+                    }
                     this.current = Some((
                         region.x as f32,
                         region.y as f32,
