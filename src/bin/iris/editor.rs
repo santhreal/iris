@@ -22,7 +22,7 @@ use gpui::*;
 
 use crate::{icons, motion, pipeline, theme};
 use iris_lib::history::{self, Edit};
-use icons::{push_disc, push_filled_triangle, push_ring, push_segment, Icon};
+use icons::{push_disc, push_ellipse_fill, push_filled_triangle, push_rect_fill, push_ring, push_segment, Icon};
 
 /// Markup colors are user content, not UI chrome: the monochrome
 /// register governs the interface, the palette governs what you draw.
@@ -41,6 +41,14 @@ fn hex_rgba(hex: &str) -> Rgba {
         b: (v & 0xff) as f32 / 255.0,
         a: 1.0,
     }
+}
+
+/// Whole-image transforms (rotate/flip), applied to base+composite.
+#[derive(Clone, Copy)]
+enum Transform {
+    Rot90,
+    FlipH,
+    FlipV,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -71,12 +79,16 @@ const TOOLS: [(Tool, Icon, &str); 10] = [
 ];
 
 #[derive(Clone)]
-struct Action {    tool: Tool,
+struct Action {
+    tool: Tool,
     color: &'static str,
     width: f32,
     points: Vec<(f32, f32)>,
     text: Option<String>,
     font_size: f32,
+    /// Rect/Ellipse fill: when set the shape paints its interior, not
+    /// just the outline.
+    filled: bool,
     /// Pixelated patch for blur actions, computed at commit time from
     /// the composite below this action.
     blur_patch: Option<Arc<RenderImage>>,
@@ -152,6 +164,8 @@ pub struct Editor {
     pan_drag: Option<(f32, f32)>,
     /// Space held: the stage pans instead of drawing.
     space_pan: bool,
+    /// Rect/Ellipse fill toggle for new shapes.
+    fill: bool,
 }
 
 /// Editor window default placement; morph rects arrive in screen
@@ -305,6 +319,7 @@ pub fn open(
                 pan: (0.0, 0.0),
                 pan_drag: None,
                 space_pan: false,
+                fill: false,
             })
         },
     )
@@ -427,6 +442,7 @@ impl Editor {
             points: vec![p],
             text: None,
             font_size: text_size(self.img_w()),
+            filled: self.fill,
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
         }
@@ -648,6 +664,37 @@ impl Editor {
         self.selected = None;
     }
 
+    /// Rotate the whole image 90° CW, or mirror it horizontally.
+    /// Like a crop, this re-keys every coordinate system, so committed
+    /// actions flatten into the base first.
+    fn transform(&mut self, op: Transform, cx: &mut Context<Self>) {
+        if !self.base_ready {
+            self.status = Some("still decoding".into());
+            return;
+        }
+        self.commit_text(true);
+        self.commit_current();
+        self.rebuild_all();
+        let out = match op {
+            Transform::Rot90 => image::imageops::rotate90(&self.composite),
+            Transform::FlipH => image::imageops::flip_horizontal(&self.composite),
+            Transform::FlipV => image::imageops::flip_vertical(&self.composite),
+        };
+        let (w, h) = (out.width(), out.height());
+        let old = std::mem::replace(
+            &mut self.base_img,
+            crate::widgets::render_image_from_rgba(w, h, out.as_raw()),
+        );
+        crate::widgets::release_render(&old, cx);
+        self.base = out.clone();
+        self.composite = out;
+        Rc::make_mut(&mut self.actions).clear();
+        self.undos.clear();
+        self.redos.clear();
+        self.selected = None;
+        cx.notify();
+    }
+
     /// Switch tools from a hotkey or the sidebar: settle any open text
     /// entry first so a typed label is never dropped by the switch.
     fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
@@ -742,6 +789,7 @@ impl Editor {
                 points: vec![entry.point],
                 text: Some(value),
                 font_size: text_size(self.img_w()),
+                filled: false,
                 blur_patch: None,
                 blur_rect: (0.0, 0.0, 0.0, 0.0),
             };
@@ -862,10 +910,22 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
                 let rx = (b.0 - a.0).abs() / 2.0;
                 let ry = (b.1 - a.1).abs() / 2.0;
                 if rx > 0.0 && ry > 0.0 {
-                    let n = ((rx + ry) * 0.35).max(24.0) as usize;
-                    for i in 0..n {
-                        let t = i as f32 / n as f32 * std::f32::consts::TAU;
-                        stamp(img, cx + rx * t.cos(), cy + ry * t.sin(), w / 2.0, px);
+                    if action.filled {
+                        // Scanline fill: stamp every row inside the
+                        // ellipse at its chord width.
+                        let y0 = (cy - ry).max(0.0) as i64;
+                        let y1 = (cy + ry).min(img.height() as f32) as i64;
+                        for y in y0..=y1 {
+                            let t = (y as f32 - cy) / ry;
+                            let half = rx * (1.0 - t * t).max(0.0).sqrt();
+                            stamp_segment(img, (cx - half, y as f32), (cx + half, y as f32), 1.0, px);
+                        }
+                    } else {
+                        let n = ((rx + ry) * 0.35).max(24.0) as usize;
+                        for i in 0..n {
+                            let t = i as f32 / n as f32 * std::f32::consts::TAU;
+                            stamp(img, cx + rx * t.cos(), cy + ry * t.sin(), w / 2.0, px);
+                        }
                     }
                 }
             }
@@ -873,10 +933,18 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
         Tool::Rect => {
             if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
                 let (tl, br) = (*a, *b);
-                stamp_segment(img, (tl.0, tl.1), (br.0, tl.1), w, px);
-                stamp_segment(img, (br.0, tl.1), (br.0, br.1), w, px);
-                stamp_segment(img, (br.0, br.1), (tl.0, br.1), w, px);
-                stamp_segment(img, (tl.0, br.1), (tl.0, tl.1), w, px);
+                if action.filled {
+                    let (x0, x1) = (tl.0.min(br.0), tl.0.max(br.0));
+                    let (y0, y1) = (tl.1.min(br.1), tl.1.max(br.1));
+                    for y in y0.max(0.0) as i64..=y1.min(img.height() as f32) as i64 {
+                        stamp_segment(img, (x0, y as f32), (x1, y as f32), 1.0, px);
+                    }
+                } else {
+                    stamp_segment(img, (tl.0, tl.1), (br.0, tl.1), w, px);
+                    stamp_segment(img, (br.0, tl.1), (br.0, br.1), w, px);
+                    stamp_segment(img, (br.0, br.1), (tl.0, br.1), w, px);
+                    stamp_segment(img, (tl.0, br.1), (tl.0, tl.1), w, px);
+                }
             }
         }
         Tool::Text => {
@@ -1174,6 +1242,9 @@ impl Render for Editor {
                     "h" => this.set_tool(Tool::Highlight, cx),
                     "b" => this.set_tool(Tool::Blur, cx),
                     "c" => this.set_tool(Tool::Crop, cx),
+                    "f" => {
+                        this.fill = !this.fill;
+                    }
                     "1" | "2" | "3" => {
                         this.stroke = (key.as_bytes()[0] - b'1') as u8;
                     }
@@ -1269,6 +1340,15 @@ impl Render for Editor {
                                         },
                                     ))),
                             )
+                            .child(crate::widgets::button("btn-rotate", "Rotate", false).on_click(cx.listener(
+                                |this, _, _, cx| this.transform(Transform::Rot90, cx),
+                            )))
+                            .child(crate::widgets::button("btn-flip", "Flip", false).on_click(cx.listener(
+                                |this, _, _, cx| this.transform(Transform::FlipH, cx),
+                            )))
+                            .child(crate::widgets::button("btn-flipv", "Flip V", false).on_click(cx.listener(
+                                |this, _, _, cx| this.transform(Transform::FlipV, cx),
+                            )))
                             .child(crate::widgets::button("btn-done", "Done", true).on_click(cx.listener(
                                 |this, _, window, cx| this.finish(window, cx),
                             )))
@@ -1327,6 +1407,15 @@ impl Render for Editor {
                             })),
                     );
                 }
+                // Fill toggle for Rect/Ellipse: paints the interior
+                // instead of just the outline.
+                bar = bar.child(
+                    crate::widgets::icon_button("fill-toggle".into(), Icon::Rect, self.fill, 32.0)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.fill = !this.fill;
+                            cx.notify();
+                        })),
+                );
                 bar = bar
                     .child(div().h(px(1.)).w(px(28.)).my(px(4.)).flex_shrink_0().bg(theme::HAIRLINE))
                     .child(
@@ -1881,17 +1970,25 @@ fn paint_action(
                 let rx = (f32::from(b.x) - f32::from(a.x)).abs() / 2.0;
                 let ry = (f32::from(b.y) - f32::from(a.y)).abs() / 2.0;
                 if rx > 0.0 && ry > 0.0 {
-                    push_ring(&mut path, point(px(cx), px(cy)), rx, ry, w);
+                    if action.filled {
+                        push_ellipse_fill(&mut path, point(px(cx), px(cy)), rx, ry);
+                    } else {
+                        push_ring(&mut path, point(px(cx), px(cy)), rx, ry, w);
+                    }
                 }
             }
         }
         Tool::Rect => {
             if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
                 let (a, b) = (s(*a), s(*b));
-                push_segment(&mut path, a, point(b.x, a.y), w);
-                push_segment(&mut path, point(b.x, a.y), b, w);
-                push_segment(&mut path, b, point(a.x, b.y), w);
-                push_segment(&mut path, point(a.x, b.y), a, w);
+                if action.filled {
+                    push_rect_fill(&mut path, a, b);
+                } else {
+                    push_segment(&mut path, a, point(b.x, a.y), w);
+                    push_segment(&mut path, point(b.x, a.y), b, w);
+                    push_segment(&mut path, b, point(a.x, b.y), w);
+                    push_segment(&mut path, point(a.x, b.y), a, w);
+                }
             }
         }
         _ => {}

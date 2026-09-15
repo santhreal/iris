@@ -345,6 +345,27 @@ pub(crate) fn push_ring(path: &mut Path<Pixels>, c: Point<Pixels>, rx: f32, ry: 
     }
 }
 
+/// A filled ellipse (interior, no ring).
+pub(crate) fn push_ellipse_fill(path: &mut Path<Pixels>, c: Point<Pixels>, rx: f32, ry: f32) {
+    let (cx, cy): (f32, f32) = (c.x.into(), c.y.into());
+    let n = ((rx + ry) * 0.35).max(32.0) as usize;
+    for i in 0..n {
+        let t0 = i as f32 / n as f32 * std::f32::consts::TAU;
+        let t1 = (i + 1) as f32 / n as f32 * std::f32::consts::TAU;
+        push_filled_triangle(
+            path,
+            c,
+            point(px(cx + rx * t0.cos()), px(cy + ry * t0.sin())),
+            point(px(cx + rx * t1.cos()), px(cy + ry * t1.sin())),
+        );
+    }
+}
+
+/// A filled axis-aligned rectangle.
+pub(crate) fn push_rect_fill(path: &mut Path<Pixels>, a: Point<Pixels>, b: Point<Pixels>) {
+    push_quad(path, a, point(b.x, a.y), b, point(a.x, b.y));
+}
+
 pub(crate) fn push_quad(
     path: &mut Path<Pixels>,
     a: Point<Pixels>,
