@@ -46,6 +46,12 @@ pub struct Library {
     /// The config snapshot: render reads the hotkey every frame, and
     /// Config::load() hits the disk each call.
     cfg: iris_lib::config::Config,
+    /// Rubber-band selection: window-space anchor and current point
+    /// while the left button is held on empty grid space.
+    band: Option<(f32, f32, f32, f32)>,
+    /// Scroll offset of the card grid, so band math stays in
+    /// document space while the user drags.
+    scroll: gpui::ScrollHandle,
 }
 
 /// Open the library window.
@@ -96,6 +102,8 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         focus,
                         class: win_id.clone(),
                         cfg: iris_lib::config::Config::load(),
+                        band: None,
+                        scroll: gpui::ScrollHandle::new(),
                     };
                     this.arm_refresh(cx);
                     this.prefetch_thumbs(cx);
@@ -271,6 +279,40 @@ fn open_containing_folder(path: &std::path::Path) {
         cx.notify();
     }
 
+    /// Close the rubber band: a sub-4px drag is a click on empty
+    /// space and clears the selection; anything larger selects every
+    /// card whose rect intersects the band.
+    fn finish_band(&mut self, _ev: &MouseUpEvent, window: &Window, cx: &mut Context<Self>) {
+        let Some((x0, y0, x1, y1)) = self.band.take() else { return };
+        let (dx, dy) = (x1 - x0, y1 - y0);
+        if dx * dx + dy * dy < 16.0 {
+            if !self.selected.is_empty() {
+                self.selected.clear();
+                cx.notify();
+            }
+            return;
+        }
+        let (bx0, bx1) = (x0.min(x1), x0.max(x1));
+        let (by0, by1) = (y0.min(y1), y0.max(y1));
+        // Card rects live in document space: grid top is the 56px
+        // frame toolbar, scroll shifts rows up.
+        let width: f32 = window.bounds().size.width.into();
+        let scroll_y: f32 = self.scroll.offset().y.into();
+        let cols = ((width - GAP) / (CARD_W + GAP)).floor().max(1.0) as usize;
+        let card_h = THUMB_H + 8.0 + 18.0;
+        self.selected.clear();
+        for (i, e) in self.entries.iter().enumerate() {
+            let (r, c) = (i / cols, i % cols);
+            let cx0 = GAP + c as f32 * (CARD_W + GAP);
+            let cy0 = 56.0 + GAP + r as f32 * (card_h + GAP) - scroll_y;
+            if cx0 < bx1 && cx0 + CARD_W > bx0 && cy0 < by1 && cy0 + card_h > by0 {
+                self.selected.push(e.path.clone());
+            }
+        }
+        self.anchor = self.entries.iter().position(|e| self.selected.contains(&e.path));
+        cx.notify();
+    }
+
     fn start_capture(&mut self, cx: &mut Context<Self>) {
         if let Err(e) = crate::daemon::dispatch(cx, &crate::daemon::Command::Capture) {
             self.status = Some(e);
@@ -351,12 +393,42 @@ impl Render for Library {
             .id("grid")
             .flex_1()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p(px(GAP))
             .flex()
             .flex_wrap()
             .gap(px(GAP))
             .items_start()
-            .content_start();
+            .content_start()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                    // A card's own mousedown set drag_start first; only
+                    // empty grid space starts a rubber band.
+                    if this.drag_start.is_none() {
+                        this.band = Some((
+                            ev.position.x.into(),
+                            ev.position.y.into(),
+                            ev.position.x.into(),
+                            ev.position.y.into(),
+                        ));
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+                if let Some(b) = &mut this.band {
+                    b.2 = ev.position.x.into();
+                    b.3 = ev.position.y.into();
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseUpEvent, window, cx| {
+                    this.finish_band(ev, window, cx);
+                }),
+            );
 
         if self.entries.is_empty() {
             grid = grid.child(
@@ -480,6 +552,22 @@ impl Render for Library {
                 }),
             )
             .child(crate::widgets::window_frame("Iris", self.class.clone(), cluster, grid));
+
+        if let Some((x0, y0, x1, y1)) = self.band {
+            let (bx, by) = (x0.min(x1), y0.min(y1));
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(bx))
+                    .top(px(by))
+                    .w(px((x1 - x0).abs()))
+                    .h(px((y1 - y0).abs()))
+                    .bg(theme::alpha(theme::ACCENT, 0.12))
+                    .border_1()
+                    .border_color(theme::alpha(theme::ACCENT, 0.6))
+                    .rounded(px(4.)),
+            );
+        }
 
         if this_help {
             let hotkey = hotkey.clone();
