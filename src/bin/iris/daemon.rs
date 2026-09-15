@@ -692,6 +692,9 @@ pub fn notify_hotkeys_changed() {
 /// polled on one 100ms app timer; failures degrade to log lines.
 pub fn start(cx: &mut App) {
     open_anchor(cx);
+    // Warm the overlay pool: the first capture reuses a live window
+    // instead of paying GPUI's ~130ms renderer init on the hotkey.
+    overlay::warmup(cx);
     let (tx, rx) = channel::<Command>();
     let _ = COMMAND_TX.set(tx.clone());
 

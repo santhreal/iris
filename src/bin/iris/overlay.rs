@@ -139,6 +139,18 @@ pub fn slice_frame(frame: &Frame) -> Arc<RenderImage> {
 /// renderer init, and a window per monitor doubled the time to
 /// first feedback on dual setups.
 pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Overlay>, String> {
+    open_shell_opts(cx, layout, false)
+}
+
+/// `prewarm` opens the shell unfocused so the daemon can park it into
+/// the pool without stealing input focus at startup. The window still
+/// maps (show:true) so GPUI builds its renderer; a `show:false` window
+/// never does and the pooled handle comes up dead.
+fn open_shell_opts(
+    cx: &mut App,
+    layout: &ShellLayout,
+    prewarm: bool,
+) -> Result<WindowHandle<Overlay>, String> {
     if !wayland() && (layout.union.width == 0 || layout.union.height == 0) {
         return Err("no monitor layout".into());
     }
@@ -177,7 +189,7 @@ pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Ove
             WindowOptions {
                 window_bounds: Some(bounds),
                 titlebar: None,
-                focus: true,
+                focus: !prewarm,
                 show: true,
                 kind: WindowKind::Normal,
                 is_movable: false,
@@ -227,6 +239,25 @@ pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Ove
         *POOL.lock().unwrap() = Some((handle, win_id));
     }
     Ok(handle)
+}
+
+/// Pre-create the overlay at daemon start and park it into the pool,
+/// so the first capture reuses a live window instead of paying GPUI's
+/// ~130ms renderer init on the hotkey press. The shell maps unfocused
+/// and transparent, then minimizes in the same tick: invisible, and it
+/// never takes input focus. X11 only — Wayland cannot unminimize, so
+/// the pool stays empty there.
+pub fn warmup(cx: &mut App) {
+    if wayland() {
+        return;
+    }
+    if POOL.lock().unwrap().is_some() {
+        return;
+    }
+    let layout = layout();
+    if let Ok(handle) = open_shell_opts(cx, &layout, true) {
+        let _ = handle.update(cx, |o, window, cx| o.park(window, cx));
+    }
 }
 
 /// Close every overlay window except `keep` (the one mid-flight).
