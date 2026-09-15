@@ -21,6 +21,8 @@ const LOUPE_PX: u32 = LOUPE_SRC * LOUPE_ZOOM;
 const DIM_FADE: Duration = Duration::from_millis(180);
 /// Window-snap reveal fades both ways, like macOS's highlight.
 const HOVER_FADE: Duration = Duration::from_millis(90);
+/// Edge of a selection resize handle, in logical px.
+const HANDLE_PX: f32 = 10.0;
 
 pub struct Overlay {
     /// Parked (minimized): the window stays alive with its renderer,
@@ -43,6 +45,9 @@ pub struct Overlay {
     focus: FocusHandle,
     dragging: bool,
     anchor: (f32, f32),
+    /// A committed selection being reshaped by a handle: the handle
+    /// index (0-7, corners then edges) and the rect at drag start.
+    resize: Option<(usize, (f32, f32, f32, f32))>,
     current: Option<(f32, f32, f32, f32)>,
     hovered: Option<WinRect>,
     cursor: (f32, f32),
@@ -216,6 +221,7 @@ fn open_shell_opts(
                     focus,
                     dragging: false,
                     anchor: (0.0, 0.0),
+                    resize: None,
                     current: None,
                     hovered: None,
                     cursor: (0.0, 0.0),
@@ -399,6 +405,34 @@ impl Overlay {
         self.flight = None;
         self.landed = None;
         self.finalize_failed = false;
+        self.resize = None;
+    }
+
+    /// The 8 resize handles of a committed selection, in logical px:
+    /// 4 corners (NW, NE, SW, SE) then 4 edges (N, S, W, E). Each is a
+    /// HANDLE_PX square centered on the point it drags.
+    fn handles(x: f32, y: f32, w: f32, h: f32) -> [(f32, f32); 8] {
+        [
+            (x, y),
+            (x + w, y),
+            (x, y + h),
+            (x + w, y + h),
+            (x + w / 2.0, y),
+            (x + w / 2.0, y + h),
+            (x, y + h / 2.0),
+            (x + w, y + h / 2.0),
+        ]
+    }
+
+    /// Which resize handle, if any, the logical point `p` is inside.
+    fn handle_at(&self, p: (f32, f32)) -> Option<usize> {
+        let (x, y, w, h) = self.current?;
+        let half = HANDLE_PX / 2.0;
+        Self::handles(x, y, w, h)
+            .iter()
+            .position(|(hx, hy)| {
+                p.0 >= hx - half && p.0 <= hx + half && p.1 >= hy - half && p.1 <= hy + half
+            })
     }
 
     /// Frame-pixel hit test for hover-snap. The window list is in frame
@@ -683,8 +717,16 @@ impl Render for Overlay {
                         this.finish(window, cx);
                         return;
                     }
+                    let p = (ev.position.x.into(), ev.position.y.into());
+                    // A press on a committed selection's handle reshapes
+                    // it instead of starting a fresh drag.
+                    if let Some(h) = this.handle_at(p) {
+                        this.resize = Some((h, this.current.unwrap()));
+                        cx.notify();
+                        return;
+                    }
                     this.dragging = true;
-                    this.anchor = (ev.position.x.into(), ev.position.y.into());
+                    this.anchor = p;
                     this.current = None;
                     cx.notify();
                 }),
@@ -700,6 +742,30 @@ impl Render for Overlay {
                 this.cursor = (mx, my);
                 let sf = window.scale_factor();
                 let (sx, sy) = Self::scale(window, this.view);
+                if let Some((h, r0)) = this.resize {
+                    // Reshape the committed rect by the dragged handle.
+                    // Corners move two edges; edge handles move one.
+                    let (mut x0, mut y0, mut x1, mut y1) =
+                        (r0.0, r0.1, r0.0 + r0.2, r0.1 + r0.3);
+                    match h {
+                        0 => { x0 = mx; y0 = my; }
+                        1 => { x1 = mx; y0 = my; }
+                        2 => { x0 = mx; y1 = my; }
+                        3 => { x1 = mx; y1 = my; }
+                        4 => { y0 = my; }
+                        5 => { y1 = my; }
+                        6 => { x0 = mx; }
+                        _ => { x1 = mx; }
+                    }
+                    let size = window.bounds().size;
+                    let (nx, nw) = (x0.min(x1).clamp(0.0, f32::from(size.width)),
+                                    (x1 - x0).abs().min(f32::from(size.width)));
+                    let (ny, nh) = (y0.min(y1).clamp(0.0, f32::from(size.height)),
+                                    (y1 - y0).abs().min(f32::from(size.height)));
+                    this.current = Some((nx, ny, nw, nh));
+                    cx.notify();
+                    return;
+                }
                 if this.dragging {
                     if let Some(old) = this.hovered.take() {
                         this.hover_out = Some((old, Instant::now()));
@@ -751,6 +817,11 @@ impl Render for Overlay {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseUpEvent, window, cx| {
+                    // A handle release ends the reshape; the rect stays.
+                    if this.resize.take().is_some() {
+                        cx.notify();
+                        return;
+                    }
                     if !this.dragging {
                         return;
                     }
@@ -927,6 +998,25 @@ impl Render for Overlay {
                             cfg.confirm_keybind, cfg.cancel_keybind
                         )),
                 );
+            }
+            // Resize handles on a committed selection: 8 grab points
+            // the cursor can pull to reshape the rect before capture.
+            if !self.dragging {
+                for (hx, hy) in Self::handles(x, y, w, h) {
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(px(hx - HANDLE_PX / 2.0))
+                            .top(px(hy - HANDLE_PX / 2.0))
+                            .w(px(HANDLE_PX))
+                            .h(px(HANDLE_PX))
+                            .rounded(px(2.))
+                            .bg(theme::FG)
+                            .border_1()
+                            .border_color(theme::alpha(theme::BG, 0.6))
+                            .shadow(theme::shadow_float()),
+                    );
+                }
             }
         }
 
