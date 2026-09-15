@@ -107,7 +107,42 @@ impl Config {
             .map(|p| p.config_dir().join("config.toml"))
     }
 
+    /// The shared parsed-config cache, keyed on the file's mtime+len.
+    /// `load` reads through it; `store` writes through it.
+    fn cache() -> &'static std::sync::Mutex<(Option<std::time::SystemTime>, u64, Config)> {
+        use std::sync::LazyLock;
+        static CACHE: LazyLock<std::sync::Mutex<(Option<std::time::SystemTime>, u64, Config)>> =
+            LazyLock::new(|| std::sync::Mutex::new((None, 0, Config::default())));
+        &CACHE
+    }
+
+    /// Load the config, re-reading the file only when it changed. The
+    /// parsed result is cached behind a mutex keyed on the file's
+    /// mtime+len, so the many per-action and per-frame callers share one
+    /// stat instead of one parse each.
     pub fn load() -> Self {
+        let cache = Self::cache();
+        let Some(path) = Self::path() else {
+            return Self::default();
+        };
+        let stamp = std::fs::metadata(&path)
+            .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
+            .unwrap_or((None, 0));
+        {
+            let guard = cache.lock().unwrap();
+            if guard.0 == stamp.0 && guard.1 == stamp.1 && stamp.0.is_some() {
+                return guard.2.clone();
+            }
+        }
+        let cfg = Self::load_uncached();
+        let mut guard = cache.lock().unwrap();
+        *guard = (stamp.0, stamp.1, cfg.clone());
+        cfg
+    }
+
+    /// Read and parse config.toml unconditionally (migration, defaults,
+    /// write-on-missing). `load` wraps this with the mtime cache.
+    fn load_uncached() -> Self {
         let Some(path) = Self::path() else {
             return Self::default();
         };
@@ -169,7 +204,14 @@ impl Config {
         }
         let text = toml::to_string_pretty(self)
             .map_err(|e| format!("serialize config: {e}"))?;
-        std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
+        std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
+        // Keep the load() cache coherent: a save must be visible to the
+        // next reader even when the mtime granularity misses the write.
+        let stamp = std::fs::metadata(&path)
+            .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
+            .unwrap_or((None, 0));
+        *Self::cache().lock().unwrap() = (stamp.0, stamp.1, self.clone());
+        Ok(())
     }
 }
 
