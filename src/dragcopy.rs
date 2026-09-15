@@ -303,6 +303,7 @@ impl IconWindow {
 struct XdndAtoms {
     selection: x11rb::protocol::xproto::Atom,
     aware: x11rb::protocol::xproto::Atom,
+    proxy: x11rb::protocol::xproto::Atom,
     enter: x11rb::protocol::xproto::Atom,
     position: x11rb::protocol::xproto::Atom,
     status: x11rb::protocol::xproto::Atom,
@@ -321,6 +322,7 @@ impl XdndAtoms {
         Ok(Self {
             selection: intern(conn, b"XdndSelection")?,
             aware: intern(conn, b"XdndAware")?,
+            proxy: intern(conn, b"XdndProxy")?,
             enter: intern(conn, b"XdndEnter")?,
             position: intern(conn, b"XdndPosition")?,
             status: intern(conn, b"XdndStatus")?,
@@ -340,29 +342,41 @@ impl XdndAtoms {
 #[cfg(target_os = "linux")]
 fn xdnd_target_at<C: Connection>(
     conn: &C,
-    root: x11rb::protocol::xproto::Window,
+    win: x11rb::protocol::xproto::Window,
     aware: x11rb::protocol::xproto::Atom,
-    mut x: i32,
-    mut y: i32,
+    proxy: x11rb::protocol::xproto::Atom,
+    x: i32,
+    y: i32,
     skip: Option<x11rb::protocol::xproto::Window>,
 ) -> Option<(x11rb::protocol::xproto::Window, u32)> {
-    let mut win = root;
-    let mut found: Option<(x11rb::protocol::xproto::Window, u32)> = None;
-    loop {
-        let prop = conn
-            .get_property(false, win, aware, AtomEnum::ATOM, 0, 1)
-            .ok()
-            .and_then(|c| c.reply().ok());
-        if let Some(prop) = prop {
-            if let Some(version) = prop.value32().and_then(|mut it| it.next()) {
-                found = Some((win, version.min(5)));
+    let mut self_target = None;
+
+    if let Some(reply) = conn
+        .get_property(false, win, proxy, AtomEnum::ANY, 0, 2)
+        .ok()
+        .and_then(|c| c.reply().ok())
+    {
+        if let Some(mut it) = reply.value32() {
+            if let (Some(proxy_win), Some(version)) = (it.next(), it.next()) {
+                self_target = Some((proxy_win, version.min(5)));
             }
         }
-        let children = conn.query_tree(win).ok()?.reply().ok()?.children;
-        let mut descended = false;
-        for child in children.into_iter().rev() {
-            // The drag icon follows the pointer; without this it swallows
-            // every lookup and no target is ever found.
+    }
+
+    if self_target.is_none() {
+        if let Some(reply) = conn
+            .get_property(false, win, aware, AtomEnum::ANY, 0, 1)
+            .ok()
+            .and_then(|c| c.reply().ok())
+        {
+            if let Some(version) = reply.value32().and_then(|mut it| it.next()) {
+                self_target = Some((win, version.min(5)));
+            }
+        }
+    }
+
+    if let Some(tree) = conn.query_tree(win).ok().and_then(|c| c.reply().ok()) {
+        for child in tree.children.into_iter().rev() {
             if Some(child) == skip {
                 continue;
             }
@@ -371,11 +385,9 @@ fn xdnd_target_at<C: Connection>(
             };
             let cx = i32::from(geom.x);
             let cy = i32::from(geom.y);
-            if x >= cx
-                && y >= cy
-                && x < cx + i32::from(geom.width)
-                && y < cy + i32::from(geom.height)
-            {
+            let cw = i32::from(geom.width);
+            let ch = i32::from(geom.height);
+            if x >= cx && y >= cy && x < cx + cw && y < cy + ch {
                 let mapped = conn
                     .get_window_attributes(child)
                     .ok()
@@ -383,18 +395,17 @@ fn xdnd_target_at<C: Connection>(
                     .map(|a| a.map_state == x11rb::protocol::xproto::MapState::VIEWABLE)
                     .unwrap_or(false);
                 if mapped {
-                    x -= cx;
-                    y -= cy;
-                    win = child;
-                    descended = true;
-                    break;
+                    if let Some(target) =
+                        xdnd_target_at(conn, child, aware, proxy, x - cx, y - cy, skip)
+                    {
+                        return Some(target);
+                    }
                 }
             }
         }
-        if !descended {
-            return found;
-        }
     }
+
+    self_target
 }
 
 #[cfg(target_os = "linux")]
@@ -501,6 +512,7 @@ fn run_xdnd_drag<C: Connection>(
             &conn,
             root,
             atoms.aware,
+            atoms.proxy,
             px,
             py,
             icon.as_ref().map(|i| i.win),

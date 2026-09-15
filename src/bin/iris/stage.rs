@@ -29,7 +29,6 @@ const MAX_H: f32 = 140.0;
 const MARGIN: f32 = 12.0;
 const BLEED: f32 = 44.0;
 const RADIUS: f32 = 12.0;
-const SIT: Duration = Duration::from_millis(5000);
 const ENTER: Duration = motion::ENTER;
 const EXIT: Duration = Duration::from_millis(300);
 /// Replaced by a newer capture: a fast fade, not the full fly-off.
@@ -162,8 +161,11 @@ impl ToastStage {
         if self.closing_at.is_some() {
             return;
         }
+        let sit = Duration::from_millis(u64::from(
+            iris_lib::config::Config::load().toast_duration_ms,
+        ));
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SIT).await;
+            cx.background_executor().timer(sit).await;
             this.update(cx, |stage, cx| {
                 if stage.hover_paused || stage.menu_at.is_some() {
                     stage.arm_dismiss(cx);
@@ -235,6 +237,73 @@ impl ToastStage {
         }
         cx.notify();
     }
+    fn copy_image(&mut self, cx: &mut Context<Self>) {
+        if let Err(e) = crate::pipeline::copy_image_file(&self.path) {
+            eprintln!("copy: {e}");
+        }
+        cx.notify();
+    }
+
+    fn copy_file(&mut self, cx: &mut Context<Self>) {
+        if let Err(e) = iris_lib::dragcopy::copy_file_path(&self.path) {
+            eprintln!("copy file: {e}");
+        }
+        cx.notify();
+    }
+
+    fn open_folder(&mut self, cx: &mut Context<Self>) {
+        reveal_in_folder(&self.path);
+        cx.notify();
+    }
+
+    fn delete_capture(&mut self, cx: &mut Context<Self>) {
+        match iris_lib::library::delete(&self.path) {
+            Ok(()) => self.begin_close(cx),
+            Err(e) => eprintln!("delete: {e}"),
+        }
+        cx.notify();
+    }
+
+    fn perform_click_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cfg = iris_lib::config::Config::load();
+        match cfg.toast_click_action {
+            iris_lib::config::ToastClickAction::Markup => {
+                self.hand_off_to_editor(window, cx);
+            }
+            iris_lib::config::ToastClickAction::Copy => {
+                self.copy_image(cx);
+            }
+            iris_lib::config::ToastClickAction::OpenFolder => {
+                self.open_folder(cx);
+            }
+            iris_lib::config::ToastClickAction::None => {}
+        }
+    }
+}
+
+fn reveal_in_folder(path: &Path) {
+    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let uri = format!("file://{}", abs.to_string_lossy());
+    let parent = abs.parent().unwrap_or(path).to_path_buf();
+    std::thread::spawn(move || {
+        let dbus_status = std::process::Command::new("dbus-send")
+            .args([
+                "--session",
+                "--dest=org.freedesktop.FileManager1",
+                "--type=method_call",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+                &format!("array:string:{uri}"),
+                "string:",
+            ])
+            .status();
+        if dbus_status.map(|s| s.success()).unwrap_or(false) {
+            return;
+        }
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&parent)
+            .spawn();
+    });
 }
 
 /// One soft, deep shadow: the only thing separating the thumbnail
@@ -261,31 +330,35 @@ fn card_shadow(visibility: f32) -> Vec<BoxShadow> {
 impl Render for ToastStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (w, h) = self.dims;
+        let cfg = iris_lib::config::Config::load();
+        let is_left = matches!(
+            cfg.toast_position,
+            iris_lib::config::ToastPosition::BottomLeft | iris_lib::config::ToastPosition::TopLeft
+        );
+        let is_top = matches!(
+            cfg.toast_position,
+            iris_lib::config::ToastPosition::TopLeft | iris_lib::config::ToastPosition::TopRight
+        );
 
-        // Entrance: the card comes from beyond the screen's right
-        // edge moving left, decelerating hard into the corner, and
-        // stops dead. No overshoot, no fade, no scale. The clock
-        // starts at first render: window mapping latency would
-        // otherwise eat it. `right` is the distance from the window's
-        // right edge; smaller values carry the card rightward.
+        // Entrance: decelerating hard into the corner.
         let opened = *self.opened.get_or_insert_with(Instant::now);
         let enter_t = (opened.elapsed().as_secs_f32() / motion::tempo(ENTER).as_secs_f32()).min(1.0);
         let ease = 1.0 - (1.0 - enter_t).powi(4);
-        let mut right = MARGIN - (1.0 - ease) * (w + 2.0 * MARGIN);
+        let mut offset = MARGIN - (1.0 - ease) * (w + 2.0 * MARGIN);
         let mut opacity = 1.0f32;
         let shadow_vis = ease;
         let mut animating = enter_t < 1.0;
 
-        // Dismiss swipe: the card tracks the pointer 1:1 rightward.
+        // Dismiss swipe: the card tracks the pointer toward the screen edge.
         if let Some(s) = &self.swipe {
-            right -= s.dx;
+            offset -= s.dx;
         }
         // A short swipe released: spring back to the corner.
         if let Some((started, dx0)) = self.swipe_return {
             let t = (started.elapsed().as_secs_f32()
                 / motion::tempo(SWIPE_RETURN).as_secs_f32())
             .min(1.0);
-            right -= dx0 * (1.0 - motion::spring(t));
+            offset -= dx0 * (1.0 - motion::spring(t));
             if t >= 1.0 {
                 self.swipe_return = None;
             } else {
@@ -293,15 +366,11 @@ impl Render for ToastStage {
             }
         }
 
-        // Exit: accelerate off the right edge from wherever the card
-        // sits, fade in the last third, then the window goes away.
+        // Exit: accelerate off the edge from wherever the card sits.
         if let Some(started) = self.closing_at {
             let t = (started.elapsed().as_secs_f32() / motion::tempo(self.closing_dur).as_secs_f32()).min(1.0);
-            // A replace-fade stays in place and dissolves over the
-            // whole run; the full exit flies and fades in its last
-            // third.
             if self.closing_dur > REPLACE_EXIT {
-                right = MARGIN - self.exit_from - (w + 2.0 * MARGIN + 24.0) * t * t;
+                offset = MARGIN - self.exit_from - (w + 2.0 * MARGIN + 24.0) * t * t;
                 opacity = 1.0 - ((t - 0.66) / 0.34).clamp(0.0, 1.0);
             } else {
                 opacity = 1.0 - t;
@@ -315,12 +384,9 @@ impl Render for ToastStage {
             }
         }
 
-        // Editor-morph handshake: hold the resting position, painted
-        // over by the editor's first frame, then leave without any
-        // exit animation. Snap to rest: the editor morphs from the
-        // resting rect, so a click mid-entrance must not drift.
+        // Editor-morph handshake.
         if let Some((ready, since)) = &self.pending_morph {
-            right = MARGIN;
+            offset = MARGIN;
             opacity = 1.0;
             if ready.load(Ordering::Acquire) && self.morph_ready_at.is_none() {
                 self.morph_ready_at = Some(Instant::now());
@@ -336,7 +402,6 @@ impl Render for ToastStage {
                 window.request_animation_frame();
             }
         }
-
         if animating {
             window.request_animation_frame();
         }
@@ -373,10 +438,7 @@ impl Render for ToastStage {
                     .on_click(cx.listener(|stage, _, _, cx| {
                         cx.stop_propagation();
                         stage.menu_at = None;
-                        if let Err(e) = crate::pipeline::copy_image_file(&stage.path) {
-                            eprintln!("copy: {e}");
-                        }
-                        cx.notify();
+                        stage.copy_image(cx);
                     })),
             );
             menu = menu.child(
@@ -384,14 +446,7 @@ impl Render for ToastStage {
                     .on_click(cx.listener(|stage, _, _, cx| {
                         cx.stop_propagation();
                         stage.menu_at = None;
-                        match iris_lib::library::delete(&stage.path) {
-                            // Only the honest exit flies off: a failed
-                            // delete leaves the card, so nothing
-                            // pretends to have happened.
-                            Ok(()) => stage.begin_close(cx),
-                            Err(e) => eprintln!("delete: {e}"),
-                        }
-                        cx.notify();
+                        stage.delete_capture(cx);
                     })),
             );
             menu = menu.child(
@@ -457,16 +512,21 @@ impl Render for ToastStage {
                 let (mx, my): (f32, f32) =
                     (ev.position.x.into(), ev.position.y.into());
                 let (dx, dy) = (mx - sx, my - sy);
+                let is_left = matches!(
+                    iris_lib::config::Config::load().toast_position,
+                    iris_lib::config::ToastPosition::BottomLeft | iris_lib::config::ToastPosition::TopLeft
+                );
+                let dismiss_dx = if is_left { -dx } else { dx };
                 if stage.gesture == Gesture::Swipe {
                     let now = Instant::now();
                     if let Some(s) = &mut stage.swipe {
                         let dt =
                             now.duration_since(s.last_at).as_secs_f32().max(0.001);
-                        let v = (dx - s.last_dx) / dt;
+                        let v = (dismiss_dx - s.last_dx) / dt;
                         s.vel = 0.65 * s.vel + 0.35 * v;
                         s.last_at = now;
-                        s.last_dx = dx;
-                        s.dx = dx.max(0.0);
+                        s.last_dx = dismiss_dx;
+                        s.dx = dismiss_dx.max(0.0);
                     }
                     cx.notify();
                     return;
@@ -474,114 +534,178 @@ impl Render for ToastStage {
                 if dx.hypot(dy) < 8.0 {
                     return;
                 }
-                if dx > 6.0 && dx.abs() > 2.0 * dy.abs() {
-                    // Dominantly rightward: a dismiss swipe.
+                if dismiss_dx > 6.0 && dismiss_dx.abs() > 2.0 * dy.abs() {
+                    // Dominantly toward screen edge: a dismiss swipe.
                     stage.gesture = Gesture::Swipe;
                     stage.swipe = Some(Swipe {
-                        dx: dx.max(0.0),
+                        dx: dismiss_dx.max(0.0),
                         vel: 0.0,
                         last_at: Instant::now(),
-                        last_dx: dx,
+                        last_dx: dismiss_dx,
                     });
                 } else {
-                    // Any other direction: a file drag. The card
-                    // itself stays put, like macOS: dropping a copy
-                    // does not consume the notification, and a drag
-                    // that lands nowhere loses nothing.
-                    stage.gesture = Gesture::FileDrag;
-                    let icon = iris_lib::dragcopy::DragIcon {
-                        width: stage.dims.0 as u32,
-                        height: stage.dims.1 as u32,
-                        rgba: (*stage.thumb_rgba).clone(),
-                    };
-                    if let Err(e) = iris_lib::dragcopy::start_file_drag_at_cursor(
-                        vec![stage.path.clone()],
-                        Some(icon),
-                    ) {
-                        eprintln!("drag: {e}");
+                    if iris_lib::config::Config::load().toast_drag_enabled {
+                        stage.gesture = Gesture::FileDrag;
+                        let icon = iris_lib::dragcopy::DragIcon {
+                            width: stage.dims.0 as u32,
+                            height: stage.dims.1 as u32,
+                            rgba: (*stage.thumb_rgba).clone(),
+                        };
+                        if let Err(e) = iris_lib::dragcopy::start_file_drag_at_cursor(
+                            vec![stage.path.clone()],
+                            Some(icon),
+                        ) {
+                            eprintln!("drag: {e}");
+                        }
                     }
                 }
                 cx.notify();
             }))
-            .child(
-                div()
+            .child({
+                let mut card = div()
                     .id("card")
                     .absolute()
-                    .bottom(px(MARGIN))
-                    .right(px(right))
                     .w(px(w))
                     .h(px(h))
                     .rounded(px(RADIUS))
                     .overflow_hidden()
                     .shadow(card_shadow(shadow_vis))
-                    .opacity(opacity)
-                    .child(
-                        div().absolute().top_0().left_0().size_full().child(
-                            img(ImageSource::Render(thumb))
-                                .size_full()
-                                .object_fit(ObjectFit::Fill)
-                                .rounded(px(RADIUS)),
-                        ),
-                    )
-                    .on_hover(cx.listener(|stage, hovering, _window, cx| {
-                        // Hover only suspends the dismiss clock. The
-                        // thumbnail itself stays visually inert.
-                        stage.hover_paused = *hovering;
-                        if !*hovering {
-                            stage.arm_dismiss(cx);
-                        }
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|stage, ev: &MouseDownEvent, _, cx| {
-                            stage.drag_start =
-                                Some((ev.position.x.into(), ev.position.y.into()));
-                            stage.gesture = Gesture::Undecided;
-                            stage.swipe_return = None;
-                            cx.notify();
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|stage, ev: &MouseDownEvent, _, cx| {
-                            // Store the clamped origin: the render and
-                            // the outside-press hit test must agree on
-                            // where the menu actually is.
-                            let menu_h = 4.0 * crate::widgets::MENU_ROW_H + 10.0;
-                            let win_w = stage.dims.0 + BLEED + MARGIN;
-                            let win_h = stage.dims.1 + BLEED + MARGIN;
-                            let mx: f32 = ev.position.x.into();
-                            let my: f32 = ev.position.y.into();
-                            stage.menu_at = Some((
-                                mx.min(win_w - crate::widgets::MENU_W - 2.0).max(2.0),
-                                my.min(win_h - menu_h - 2.0).max(2.0),
-                            ));
-                            stage.menu_opened = None;
-                            cx.notify();
-                        }),
-                    )
-                    .on_click(cx.listener(|stage, _, window, cx| {
-                        match stage.gesture {
-                            // A gesture that ended on the card is not a
-                            // click. GPUI may dispatch click instead of
-                            // mouse-up, so the swipe resolves here too.
-                            Gesture::Swipe => {
-                                stage.release_swipe(cx);
-                                stage.gesture = Gesture::Undecided;
-                            }
-                            Gesture::FileDrag => {
-                                stage.gesture = Gesture::Undecided;
-                            }
-                            Gesture::Undecided => {
-                                if stage.swallow_click {
-                                    stage.swallow_click = false;
-                                    return;
-                                }
+                    .opacity(opacity);
+
+                if is_left {
+                    card = card.left(px(offset));
+                } else {
+                    card = card.right(px(offset));
+                }
+                if is_top {
+                    card = card.top(px(MARGIN));
+                } else {
+                    card = card.bottom(px(MARGIN));
+                }
+
+                card = card.child(
+                    div().absolute().top_0().left_0().size_full().child(
+                        img(ImageSource::Render(thumb))
+                            .size_full()
+                            .object_fit(ObjectFit::Fill)
+                            .rounded(px(RADIUS)),
+                    ),
+                );
+
+                if cfg.toast_show_actions {
+                    let actions = div()
+                        .absolute()
+                        .bottom(px(6.))
+                        .left(px(6.))
+                        .right(px(6.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(3.))
+                        .child(
+                            crate::widgets::overlay_icon_button(
+                                "toast-action-copy-img".into(),
+                                crate::icons::Icon::Copy,
+                            )
+                            .on_click(cx.listener(|stage, _, _, cx| {
+                                cx.stop_propagation();
+                                stage.copy_image(cx);
+                            })),
+                        )
+                        .child(
+                            crate::widgets::overlay_icon_button(
+                                "toast-action-copy-file".into(),
+                                crate::icons::Icon::Grid,
+                            )
+                            .on_click(cx.listener(|stage, _, _, cx| {
+                                cx.stop_propagation();
+                                stage.copy_file(cx);
+                            })),
+                        )
+                        .child(
+                            crate::widgets::overlay_icon_button(
+                                "toast-action-open-folder".into(),
+                                crate::icons::Icon::Viewfinder,
+                            )
+                            .on_click(cx.listener(|stage, _, _, cx| {
+                                cx.stop_propagation();
+                                stage.open_folder(cx);
+                            })),
+                        )
+                        .child(
+                            crate::widgets::overlay_icon_button(
+                                "toast-action-markup".into(),
+                                crate::icons::Icon::Pen,
+                            )
+                            .on_click(cx.listener(|stage, _, window, cx| {
+                                cx.stop_propagation();
                                 stage.hand_off_to_editor(window, cx);
-                            }
+                            })),
+                        )
+                        .child(
+                            crate::widgets::overlay_icon_button(
+                                "toast-action-delete".into(),
+                                crate::icons::Icon::Trash,
+                            )
+                            .on_click(cx.listener(|stage, _, _, cx| {
+                                cx.stop_propagation();
+                                stage.delete_capture(cx);
+                            })),
+                        );
+                    card = card.child(actions);
+                }
+
+                card.on_hover(cx.listener(|stage, hovering, _window, cx| {
+                    stage.hover_paused = *hovering;
+                    if !*hovering {
+                        stage.arm_dismiss(cx);
+                    }
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|stage, ev: &MouseDownEvent, _, cx| {
+                        stage.drag_start =
+                            Some((ev.position.x.into(), ev.position.y.into()));
+                        stage.gesture = Gesture::Undecided;
+                        stage.swipe_return = None;
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|stage, ev: &MouseDownEvent, _, cx| {
+                        let menu_h = 4.0 * crate::widgets::MENU_ROW_H + 10.0;
+                        let win_w = stage.dims.0 + BLEED + MARGIN;
+                        let win_h = stage.dims.1 + BLEED + MARGIN;
+                        let mx: f32 = ev.position.x.into();
+                        let my: f32 = ev.position.y.into();
+                        stage.menu_at = Some((
+                            mx.min(win_w - crate::widgets::MENU_W - 2.0).max(2.0),
+                            my.min(win_h - menu_h - 2.0).max(2.0),
+                        ));
+                        stage.menu_opened = None;
+                        cx.notify();
+                    }),
+                )
+                .on_click(cx.listener(|stage, _, window, cx| {
+                    match stage.gesture {
+                        Gesture::Swipe => {
+                            stage.release_swipe(cx);
+                            stage.gesture = Gesture::Undecided;
                         }
-                    })),
-            )
+                        Gesture::FileDrag => {
+                            stage.gesture = Gesture::Undecided;
+                        }
+                        Gesture::Undecided => {
+                            if stage.swallow_click {
+                                stage.swallow_click = false;
+                                return;
+                            }
+                            stage.perform_click_action(window, cx);
+                        }
+                    }
+                }))
+            })
             .children(menu_el)
     }
 }
@@ -595,7 +719,15 @@ pub fn card_rest_rect(disp_w: f32, disp_h: f32, img_w: u32, img_h: u32) -> (f32,
     let scale = (MAX_W / iw).min(MAX_H / ih).min(1.0);
     let w = (iw * scale).round().max(1.0);
     let h = (ih * scale).round().max(1.0);
-    (disp_w - MARGIN - w, disp_h - MARGIN - h, w, h)
+    let cfg = iris_lib::config::Config::load();
+    match cfg.toast_position {
+        iris_lib::config::ToastPosition::BottomRight => {
+            (disp_w - MARGIN - w, disp_h - MARGIN - h, w, h)
+        }
+        iris_lib::config::ToastPosition::BottomLeft => (MARGIN, disp_h - MARGIN - h, w, h),
+        iris_lib::config::ToastPosition::TopRight => (disp_w - MARGIN - w, MARGIN, w, h),
+        iris_lib::config::ToastPosition::TopLeft => (MARGIN, MARGIN, w, h),
+    }
 }
 
 /// Open the toast stage window in the bottom-right corner of the primary
@@ -641,29 +773,57 @@ fn show_toast_kind(
     }
     let (w, h) = stage.dims;
 
+    let cfg = iris_lib::config::Config::load();
     let win_size = size(px(w + BLEED + MARGIN), px(h + BLEED + MARGIN));
-    // The toast anchors bottom-right of the committing monitor, or of
-    // the primary monitor for captures with no overlay. Wayland
-    // compositors ignore client-side toplevel positions; the zero
-    // origin is a placeholder there.
     let screen = anchor.or_else(|| crate::xwin::primary_monitor_rect(cx));
     let origin = match screen {
-        Some((sx, sy, sw, sh)) => point(
-            px(sx) + px(sw) - win_size.width,
-            px(sy) + px(sh) - win_size.height,
-        ),
+        Some((sx, sy, sw, sh)) => match cfg.toast_position {
+            iris_lib::config::ToastPosition::BottomRight => point(
+                px(sx) + px(sw) - win_size.width,
+                px(sy) + px(sh) - win_size.height,
+            ),
+            iris_lib::config::ToastPosition::BottomLeft => point(
+                px(sx),
+                px(sy) + px(sh) - win_size.height,
+            ),
+            iris_lib::config::ToastPosition::TopRight => point(
+                px(sx) + px(sw) - win_size.width,
+                px(sy),
+            ),
+            iris_lib::config::ToastPosition::TopLeft => point(
+                px(sx),
+                px(sy),
+            ),
+        },
         None => point(px(0.), px(0.)),
     };
-    // The card's rect in screen coordinates, for the editor morph. The
-    // card rests MARGIN from the window's bottom-right corner.
     let (ox, oy): (f32, f32) = (origin.x.into(), origin.y.into());
-    stage.card_screen = (
-        ox + f32::from(win_size.width) - MARGIN - w,
-        oy + f32::from(win_size.height) - MARGIN - h,
-        w,
-        h,
-    );
-
+    stage.card_screen = match cfg.toast_position {
+        iris_lib::config::ToastPosition::BottomRight => (
+            ox + f32::from(win_size.width) - MARGIN - w,
+            oy + f32::from(win_size.height) - MARGIN - h,
+            w,
+            h,
+        ),
+        iris_lib::config::ToastPosition::BottomLeft => (
+            ox + MARGIN,
+            oy + f32::from(win_size.height) - MARGIN - h,
+            w,
+            h,
+        ),
+        iris_lib::config::ToastPosition::TopRight => (
+            ox + f32::from(win_size.width) - MARGIN - w,
+            oy + MARGIN,
+            w,
+            h,
+        ),
+        iris_lib::config::ToastPosition::TopLeft => (
+            ox + MARGIN,
+            oy + MARGIN,
+            w,
+            h,
+        ),
+    };
     let win_id = crate::xwin::unique_id("dev.iris.toast");
     let handle = cx
         .open_window(
@@ -708,4 +868,37 @@ fn show_toast_kind(
     let (ox, oy): (f32, f32) = (origin.x.into(), origin.y.into());
     crate::xwin::place_after_map_kind(win_id, ox, oy, true);
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::prelude::v1::test;
+    use iris_lib::config::{Config, ToastPosition};
+    #[test]
+    #[serial_test::serial]
+    fn card_rest_rect_anchors_all_four_corners() {
+        let mut cfg = Config::default();
+
+        cfg.toast_position = ToastPosition::BottomRight;
+        cfg.store().unwrap();
+        let (x, y, w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
+        assert_eq!((x, y), (1920.0 - MARGIN - w, 1080.0 - MARGIN - h));
+
+        cfg.toast_position = ToastPosition::BottomLeft;
+        cfg.store().unwrap();
+        let (x, y, w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
+        assert_eq!((x, y), (MARGIN, 1080.0 - MARGIN - h));
+
+        cfg.toast_position = ToastPosition::TopRight;
+        cfg.store().unwrap();
+        let (x, y, w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
+        assert_eq!((x, y), (1920.0 - MARGIN - w, MARGIN));
+
+        cfg.toast_position = ToastPosition::TopLeft;
+        cfg.store().unwrap();
+        let (x, y, w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
+        assert_eq!((x, y), (MARGIN, MARGIN));
+
+        let _ = Config::default().store();
+    }
 }
