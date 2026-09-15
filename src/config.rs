@@ -15,6 +15,48 @@ pub struct Config {
     pub record_hotkey: String,
     pub flash_on_capture: bool,
     pub sound_on_capture: bool,
+    /// What a plain click on the toast does.
+    pub toast_click_action: ToastClickAction,
+    /// Whether dragging the toast starts a file drag-out.
+    pub toast_drag_enabled: bool,
+    /// Whether the toast shows a row of action buttons under the thumb.
+    pub toast_show_actions: bool,
+    /// How long the toast sits before it dismisses itself.
+    pub toast_duration_ms: u32,
+    /// Which screen corner the toast lands in.
+    pub toast_position: ToastPosition,
+    /// Whether a finished capture is placed on the clipboard.
+    pub copy_to_clipboard: bool,
+    /// Key that cancels the overlay / editor / recording.
+    pub cancel_keybind: String,
+    /// Key that confirms a pending selection in the overlay.
+    pub confirm_keybind: String,
+}
+
+/// The action a plain toast click runs.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToastClickAction {
+    /// Open the markup editor over the capture.
+    #[default]
+    Markup,
+    /// Copy the image to the clipboard.
+    Copy,
+    /// Reveal the file in its folder.
+    OpenFolder,
+    /// Do nothing; the toast is display-only.
+    None,
+}
+
+/// The corner the toast anchors to.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToastPosition {
+    #[default]
+    BottomRight,
+    BottomLeft,
+    TopRight,
+    TopLeft,
 }
 
 impl Default for Config {
@@ -44,6 +86,14 @@ impl Default for Config {
             record_hotkey: "Ctrl+Shift+R".to_string(),
             flash_on_capture: true,
             sound_on_capture: true,
+            toast_click_action: ToastClickAction::Markup,
+            toast_drag_enabled: true,
+            toast_show_actions: true,
+            toast_duration_ms: 5000,
+            toast_position: ToastPosition::BottomRight,
+            copy_to_clipboard: true,
+            cancel_keybind: "Escape".to_string(),
+            confirm_keybind: "Enter".to_string(),
         }
     }
 }
@@ -150,6 +200,39 @@ mod tests {
         assert_eq!(back.recording_fps, cfg.recording_fps);
         assert_eq!(back.capture_hotkey, cfg.capture_hotkey);
         assert_eq!(back.record_hotkey, cfg.record_hotkey);
+        assert_eq!(back.toast_click_action, cfg.toast_click_action);
+        assert_eq!(back.toast_position, cfg.toast_position);
+        assert_eq!(back.toast_duration_ms, cfg.toast_duration_ms);
+        assert_eq!(back.cancel_keybind, cfg.cancel_keybind);
+        assert_eq!(back.confirm_keybind, cfg.confirm_keybind);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn old_config_without_new_fields_loads_defaults() {
+        // A config.toml written before the toast/keybind fields existed
+        // must still load; serde(default) fills them.
+        let d = xdg();
+        let path = Config::path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "recording_fps = 24\n").unwrap();
+        let cfg = Config::load();
+        assert_eq!(cfg.recording_fps, 24);
+        assert_eq!(cfg.toast_click_action, ToastClickAction::Markup);
+        assert_eq!(cfg.toast_position, ToastPosition::BottomRight);
+        assert_eq!(cfg.toast_duration_ms, 5000);
+        assert_eq!(cfg.cancel_keybind, "Escape");
+        drop(d);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn enum_fields_parse_kebab_case() {
+        let cfg: Config =
+            toml::from_str("toast_click_action = \"copy\"\ntoast_position = \"top-left\"\n")
+                .unwrap();
+        assert_eq!(cfg.toast_click_action, ToastClickAction::Copy);
+        assert_eq!(cfg.toast_position, ToastPosition::TopLeft);
     }
 
     #[test]

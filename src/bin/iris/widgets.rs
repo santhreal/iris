@@ -106,6 +106,11 @@ pub fn menu() -> Div {
 }
 
 pub fn menu_row(id: &'static str, label: &'static str) -> Stateful<Div> {
+    menu_row_owned(id.to_string(), label.to_string())
+}
+
+/// A menu row with a runtime label (dropdown options, file names).
+pub fn menu_row_owned(id: String, label: String) -> Stateful<Div> {
     div()
         .id(ElementId::Name(id.into()))
         .h(px(MENU_ROW_H))
@@ -121,6 +126,41 @@ pub fn menu_row(id: &'static str, label: &'static str) -> Stateful<Div> {
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .hover(|s| s.bg(theme::SURFACE_HOVER))
         .child(label)
+}
+
+/// A dropdown field: a button showing the current value with a
+/// chevron. The parent owns the open state and renders
+/// `dropdown_menu` beneath it when open.
+pub fn dropdown(id: String, current: String, open: bool) -> Stateful<Div> {
+    div()
+        .id(ElementId::Name(id.into()))
+        .h(px(28.))
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.))
+        .rounded(px(6.))
+        .bg(theme::FIELD_BG)
+        .border_1()
+        .border_color(if open { theme::ACCENT } else { theme::HAIRLINE })
+        .text_sm()
+        .text_color(theme::FG)
+        .cursor_pointer()
+        .child(current)
+        .child(icons::icon(Icon::ChevronDown, theme::FG_DIM, 10.0))
+}
+
+/// The floating option list a `dropdown` opens. `selected` is drawn
+/// with a check; the parent wires each row's on_click and positions
+/// the menu absolutely under the field.
+pub fn dropdown_menu(options: &[String], selected: usize) -> Div {
+    let mut m = menu();
+    for (i, opt) in options.iter().enumerate() {
+        let mark = if i == selected { "✓ " } else { "   " };
+        m = m.child(menu_row_owned(format!("opt-{i}"), format!("{mark}{opt}")));
+    }
+    m
 }
 
 /// macOS-style toggle: 40x22 pill, 16px knob. The knob is white in
