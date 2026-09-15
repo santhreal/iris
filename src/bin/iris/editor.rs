@@ -1995,3 +1995,62 @@ fn paint_action(
     }
     window.paint_path(path, color);
 }
+
+// WHY: rasterize is the CPU mirror of the GPU paint path; a tool that
+// fills when it should outline (or vice versa) is a visible defect the
+// editor's own pixels must catch. Not covered: GPU paint_action.
+#[cfg(test)]
+mod tests {
+    use super::{rasterize, Action, Tool};
+
+    fn action(tool: Tool, points: Vec<(f32, f32)>, filled: bool) -> Action {
+        Action {
+            tool,
+            color: "#ff0000",
+            width: 2.0,
+            points,
+            text: None,
+            font_size: 16.0,
+            filled,
+            blur_patch: None,
+            blur_rect: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    fn painted(img: &image::RgbaImage, x: u32, y: u32) -> bool {
+        img.get_pixel(x, y).0[3] > 0
+    }
+
+    #[test]
+    fn filled_rect_paints_interior() {
+        let mut img = image::RgbaImage::new(20, 20);
+        rasterize(&mut img, &action(Tool::Rect, vec![(2.0, 2.0), (18.0, 18.0)], true), 1.0);
+        assert!(painted(&img, 10, 10), "interior must be painted");
+        assert!(painted(&img, 2, 2), "corner must be painted");
+    }
+
+    #[test]
+    fn outline_rect_leaves_interior_clear() {
+        let mut img = image::RgbaImage::new(20, 20);
+        rasterize(&mut img, &action(Tool::Rect, vec![(2.0, 2.0), (18.0, 18.0)], false), 1.0);
+        assert!(!painted(&img, 10, 10), "interior must stay clear");
+        assert!(painted(&img, 2, 10), "edge must be painted");
+    }
+
+    #[test]
+    fn line_stamps_both_endpoints() {
+        let mut img = image::RgbaImage::new(30, 10);
+        rasterize(&mut img, &action(Tool::Line, vec![(2.0, 5.0), (28.0, 5.0)], false), 1.0);
+        assert!(painted(&img, 2, 5));
+        assert!(painted(&img, 28, 5));
+        assert!(painted(&img, 15, 5));
+    }
+
+    #[test]
+    fn filled_ellipse_paints_center_not_corners() {
+        let mut img = image::RgbaImage::new(30, 30);
+        rasterize(&mut img, &action(Tool::Ellipse, vec![(5.0, 5.0), (25.0, 25.0)], true), 1.0);
+        assert!(painted(&img, 15, 15), "center must be painted");
+        assert!(!painted(&img, 5, 5), "bounding corner must stay clear");
+    }
+}

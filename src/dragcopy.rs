@@ -51,6 +51,18 @@ pub struct DragIcon {
     pub height: u32,
 }
 
+/// `text/uri-list` payload for a set of paths: one `file://` URI per
+/// line, CRLF-terminated per RFC 2483. Pure so the wire format is
+/// testable without an X connection.
+#[cfg(target_os = "linux")]
+fn build_uri_list(paths: &[PathBuf]) -> String {
+    let mut out = String::new();
+    for pb in paths {
+        let abs = std::fs::canonicalize(pb).unwrap_or_else(|_| pb.clone());
+        out.push_str(&format!("file://{}\r\n", abs.to_string_lossy()));
+    }
+    out
+}
 #[cfg(target_os = "linux")]
 pub fn start_file_drag_at_cursor(
     paths: Vec<PathBuf>,
@@ -60,11 +72,7 @@ pub fn start_file_drag_at_cursor(
     if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_none() {
         return Err("file drag needs an X11 session".to_string());
     }
-    let mut uri_list = String::new();
-    for pb in &paths {
-        let abs = std::fs::canonicalize(pb).unwrap_or_else(|_| pb.clone());
-        uri_list.push_str(&format!("file://{}\r\n", abs.to_string_lossy()));
-    }
+    let uri_list = build_uri_list(&paths);
     let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
     let root = conn.setup().roots[screen_num].root;
     let atoms = XdndAtoms::intern(&conn)?;
@@ -661,20 +669,19 @@ pub fn copy_file_paths(paths: &[PathBuf]) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        let mut uri_list = String::new();
         let mut first = String::new();
         for pb in paths {
             if !pb.exists() {
                 return Err(format!("file does not exist: {}", pb.display()));
             }
-            let abs = std::fs::canonicalize(pb).unwrap_or_else(|_| pb.clone());
-            let s = abs.to_string_lossy().into_owned();
             if first.is_empty() {
-                first = s.clone();
+                first = std::fs::canonicalize(pb)
+                    .unwrap_or_else(|_| pb.clone())
+                    .to_string_lossy()
+                    .into_owned();
             }
-            uri_list.push_str(&format!("file://{s}\r\n"));
         }
-        serve_uri_list(uri_list, first)
+        serve_uri_list(build_uri_list(paths), first)
     }
 }
 
@@ -903,6 +910,23 @@ mod tests {
     fn validate_rejects_empty_and_missing() {
         assert!(validate_drag_paths(Vec::new()).is_err());
         assert!(validate_drag_paths(vec![PathBuf::from("/nonexistent-xyz")]).is_err());
+    }
+
+    #[test]
+    fn uri_list_is_crlf_file_uris() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.png");
+        let b = dir.path().join("b.png");
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"y").unwrap();
+        let out = build_uri_list(&[a.clone(), b.clone()]);
+        // RFC 2483: one absolute file URI per line, CRLF terminated.
+        let lines: Vec<&str> = out.split("\r\n").collect();
+        assert_eq!(lines.len(), 3, "two URIs plus trailing empty after last CRLF");
+        assert!(lines[0].starts_with("file://"));
+        assert!(lines[0].ends_with("a.png"));
+        assert!(lines[1].ends_with("b.png"));
+        assert_eq!(lines[2], "");
     }
 
     #[test]
