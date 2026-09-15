@@ -251,6 +251,7 @@ pub fn status_pill(text: &str, left: f32) -> Div {
         .py(px(5.))
         .rounded(px(theme::RADIUS_SM))
         .bg(theme::alpha(theme::BG_ELEV, 0.95))
+        .shadow(theme::shadow_float())
         .text_xs()
         .text_color(theme::FG_DIM)
         .child(text.to_string())

@@ -385,8 +385,12 @@ impl Render for Library {
             }
         }
         self.sel_springs.retain(|i, _| *i < n);
+        // Membership is checked per entry below and per card; a Vec
+        // scan is O(n*m) PathBuf compares a frame. Build the set once.
+        let sel_set: std::collections::HashSet<&std::path::Path> =
+            self.selected.iter().map(PathBuf::as_path).collect();
         for i in 0..n {
-            let target = if self.selected.contains(&self.entries[i].path) { 1.0 } else { 0.0 };
+            let target = if sel_set.contains(self.entries[i].path.as_path()) { 1.0 } else { 0.0 };
             let s = self.sel_springs.entry(i).or_default();
             if target == 0.0 && s.settled(0.0) && s.value == 0.0 {
                 continue;
@@ -419,7 +423,7 @@ impl Render for Library {
             } else {
                 1.0
             };
-            grid = grid.child(self.card(index, entry, amt, et, cx));
+            grid = grid.child(self.card(index, entry, amt, et, &sel_set, cx));
         }
 
         let mut root = div()
@@ -492,8 +496,8 @@ impl Render for Library {
 }
 
 impl Library {
-    fn card(&self, index: usize, entry: &CaptureEntry, hover_amt: f32, enter: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.selected.contains(&entry.path);
+    fn card(&self, index: usize, entry: &CaptureEntry, hover_amt: f32, enter: f32, sel_set: &std::collections::HashSet<&std::path::Path>, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = sel_set.contains(entry.path.as_path());
         let hovered = self.hovered == Some(index);
         let sel_amt = self.sel_springs.get(&index).map(|s| s.value).unwrap_or(0.0);
         let squish = if self.pressed == Some(index) {
