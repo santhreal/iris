@@ -633,10 +633,16 @@ impl Render for Overlay {
                     cx.notify();
                     return;
                 }
-                match key {
-                    "escape" => this.cancel(window, cx),
-                    "enter" => this.finish(window, cx),
-                    _ => {}
+                let cfg = iris_lib::config::Config::load();
+                let m = &ev.keystroke.modifiers;
+                if iris_lib::config::keybind_matches(
+                    &cfg.cancel_keybind, key, m.control, m.shift, m.alt, m.platform,
+                ) {
+                    this.cancel(window, cx);
+                } else if iris_lib::config::keybind_matches(
+                    &cfg.confirm_keybind, key, m.control, m.shift, m.alt, m.platform,
+                ) {
+                    this.finish(window, cx);
                 }
             }))
             .on_mouse_down(

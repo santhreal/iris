@@ -170,6 +170,48 @@ impl Config {
     }
 }
 
+/// Does a stored keybind string ("Escape", "Ctrl+Shift+R", "Print")
+/// match a pressed key? `key` is the GPUI key name (lowercase, e.g.
+/// "escape", "enter", "a"); `ctrl`/`shift`/`alt`/`super_` are the
+/// modifier states. Modifier-only presses never match.
+pub fn keybind_matches(
+    binding: &str,
+    key: &str,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    super_: bool,
+) -> bool {
+    let mut want_ctrl = false;
+    let mut want_shift = false;
+    let mut want_alt = false;
+    let mut want_super = false;
+    let mut want_key = String::new();
+    for part in binding.split('+') {
+        match part.trim().to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => want_ctrl = true,
+            "shift" => want_shift = true,
+            "alt" => want_alt = true,
+            "super" | "meta" | "cmd" | "win" => want_super = true,
+            other => want_key = other.to_string(),
+        }
+    }
+    if want_key.is_empty() {
+        return false;
+    }
+    // Normalize the pressed key the same way the binding is stored.
+    let pressed = match key {
+        " " => "space",
+        "printscreen" => "print",
+        k => k,
+    };
+    pressed.eq_ignore_ascii_case(&want_key)
+        && ctrl == want_ctrl
+        && shift == want_shift
+        && alt == want_alt
+        && super_ == want_super
+}
+
 // WHY: the class closed here is "config silently lands somewhere the app
 // never reads": a wrong ProjectDirs triple, a dropped ~ expansion, or a
 // migration that overwrites the new file all look fine until a user's
