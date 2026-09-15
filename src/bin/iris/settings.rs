@@ -3,19 +3,20 @@
 //! Every field edits the loaded Config; Save validates and persists
 //! with Config::store. Text fields are click-to-edit (type, Enter
 //! commits, Esc cancels), hotkey fields are press-to-record: click the
-//! field, press the combination, it is captured verbatim.
+//! field, press the combination, it is captured verbatim. Dropdowns
+//! toggle a floating option list and write the selected value on click.
 
 use std::path::PathBuf;
 
-use iris_lib::config::Config;
 use gpui::*;
+use iris_lib::config::{Config, ToastClickAction, ToastPosition};
 
 use crate::theme;
 
 const ROW_H: f32 = 38.0;
 const FIELD_W: f32 = 280.0;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Field {
     ScreenshotsDir,
     RecordingsDir,
@@ -23,14 +24,24 @@ enum Field {
     Fps,
     CaptureHotkey,
     RecordHotkey,
+    CancelKeybind,
+    ConfirmKeybind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DropdownField {
+    ToastClickAction,
+    ToastDuration,
+    ToastPosition,
 }
 
 pub struct Settings {
     cfg: Config,
     editing: Option<(Field, String)>,
     recording: Option<Field>,
+    open_dropdown: Option<DropdownField>,
     status: Option<String>,
-    focus: FocusHandle,
+    focus: Option<FocusHandle>,
     /// This window's unique WM_CLASS, for the title-bar drag.
     class: String,
 }
@@ -38,7 +49,7 @@ pub struct Settings {
 /// Open the settings window. A second call focuses a new window; the
 /// daemon milestone owns single-instance behavior for all windows.
 pub fn open(cx: &mut App) -> Result<(), String> {
-    let focus = cx.focus_handle();
+    let focus = Some(cx.focus_handle());
     let win = (680.0f32, 650.0f32);
     let origin = crate::xwin::centered_origin(cx, win.0, win.1, (220.0, 140.0));
     let win_id = crate::xwin::unique_id("dev.iris.settings");
@@ -67,6 +78,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 cfg: Config::load(),
                 editing: None,
                 recording: None,
+                open_dropdown: None,
                 status: None,
                 focus,
                 class: win_id.clone(),
@@ -87,6 +99,8 @@ impl Settings {
             Field::Fps => self.cfg.recording_fps.to_string(),
             Field::CaptureHotkey => self.cfg.capture_hotkey.clone(),
             Field::RecordHotkey => self.cfg.record_hotkey.clone(),
+            Field::CancelKeybind => self.cfg.cancel_keybind.clone(),
+            Field::ConfirmKeybind => self.cfg.confirm_keybind.clone(),
         }
     }
 
@@ -123,12 +137,16 @@ impl Settings {
                 }
                 self.cfg.recording_fps = fps;
             }
-            Field::CaptureHotkey | Field::RecordHotkey => {} // hotkeys are recorded, not typed
+            Field::CaptureHotkey
+            | Field::RecordHotkey
+            | Field::CancelKeybind
+            | Field::ConfirmKeybind => {} // hotkeys are recorded, not typed
         }
         Ok(())
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
+        self.open_dropdown = None;
         if self.editing.is_some() {
             if let Err(e) = self.commit_edit() {
                 self.status = Some(e);
@@ -147,7 +165,7 @@ impl Settings {
     }
 
     /// Format a pressed keystroke the way config.toml stores hotkeys:
-    /// "Ctrl+Shift+R", "Print".
+    /// "Ctrl+Shift+R", "Print", "Escape", "Enter".
     fn format_keystroke(ev: &KeyDownEvent) -> Option<String> {
         let key = ev.keystroke.key.as_str();
         // Bare modifier presses are not a hotkey yet.
@@ -193,11 +211,20 @@ impl Settings {
                 match self.recording.take() {
                     Some(Field::CaptureHotkey) => self.cfg.capture_hotkey = hotkey,
                     Some(Field::RecordHotkey) => self.cfg.record_hotkey = hotkey,
+                    Some(Field::CancelKeybind) => self.cfg.cancel_keybind = hotkey,
+                    Some(Field::ConfirmKeybind) => self.cfg.confirm_keybind = hotkey,
                     _ => {}
                 }
             }
             cx.notify();
             return;
+        }
+        if self.open_dropdown.is_some() {
+            if ev.keystroke.key == "escape" {
+                self.open_dropdown = None;
+                cx.notify();
+                return;
+            }
         }
         if self.editing.is_none() {
             if ev.keystroke.key == "escape" {
@@ -235,81 +262,256 @@ impl Settings {
 
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.focus.focus(window);
+        if let Some(focus) = &self.focus {
+            focus.focus(window);
+        }
         let mut form = div().flex().flex_col().gap(px(20.)).p(px(24.));
 
-        form = form
-            .child(self.section(
-                "Storage",
-                vec![
-                    self.text_row("Screenshots folder", Field::ScreenshotsDir, cx)
-                        .into_any_element(),
-                    self.text_row("Recordings folder", Field::RecordingsDir, cx)
-                        .into_any_element(),
-                    self.text_row("Filename template", Field::Template, cx)
-                        .into_any_element(),
-                ],
-            ))
-            .child(self.section(
-                "Recording",
-                vec![
-                    self.text_row("Recording fps", Field::Fps, cx).into_any_element(),
-                    self.toggle_row(
-                        "tog-mic",
-                        "Record microphone by default",
-                        self.cfg.record_mic_default,
-                        cx.listener(|this, _, _, cx| {
-                            this.cfg.record_mic_default = !this.cfg.record_mic_default;
-                            cx.notify();
-                        }),
-                    )
+        // Storage section
+        form = form.child(self.section(
+            "Storage",
+            vec![
+                self.text_row("Screenshots folder", Field::ScreenshotsDir, cx)
                     .into_any_element(),
-                ],
-            ))
-            .child(self.section(
-                "Capture",
-                vec![
-                    self.toggle_row(
-                        "tog-flash",
-                        "Flash on capture",
-                        self.cfg.flash_on_capture,
-                        cx.listener(|this, _, _, cx| {
-                            this.cfg.flash_on_capture = !this.cfg.flash_on_capture;
-                            cx.notify();
-                        }),
-                    )
+                self.text_row("Recordings folder", Field::RecordingsDir, cx)
                     .into_any_element(),
-                    self.toggle_row(
-                        "tog-sound",
-                        "Shutter sound",
-                        self.cfg.sound_on_capture,
-                        cx.listener(|this, _, _, cx| {
-                            this.cfg.sound_on_capture = !this.cfg.sound_on_capture;
-                            cx.notify();
-                        }),
-                    )
+                self.text_row("Filename template", Field::Template, cx)
                     .into_any_element(),
-                    self.toggle_row(
-                        "tog-toast",
-                        "Show thumbnail after capture",
-                        self.cfg.show_toast_after_capture,
-                        cx.listener(|this, _, _, cx| {
-                            this.cfg.show_toast_after_capture = !this.cfg.show_toast_after_capture;
-                            cx.notify();
-                        }),
-                    )
+            ],
+        ));
+
+        // Capture section
+        form = form.child(self.section(
+            "Capture",
+            vec![
+                self.toggle_row(
+                    "tog-flash",
+                    "Flash on capture",
+                    self.cfg.flash_on_capture,
+                    cx.listener(|this, _, _, cx| {
+                        this.cfg.flash_on_capture = !this.cfg.flash_on_capture;
+                        this.open_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+                self.toggle_row(
+                    "tog-sound",
+                    "Shutter sound",
+                    self.cfg.sound_on_capture,
+                    cx.listener(|this, _, _, cx| {
+                        this.cfg.sound_on_capture = !this.cfg.sound_on_capture;
+                        this.open_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+                self.toggle_row(
+                    "tog-toast",
+                    "Show thumbnail after capture",
+                    self.cfg.show_toast_after_capture,
+                    cx.listener(|this, _, _, cx| {
+                        this.cfg.show_toast_after_capture = !this.cfg.show_toast_after_capture;
+                        this.open_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+                self.toggle_row(
+                    "tog-clipboard",
+                    "Copy to clipboard",
+                    self.cfg.copy_to_clipboard,
+                    cx.listener(|this, _, _, cx| {
+                        this.cfg.copy_to_clipboard = !this.cfg.copy_to_clipboard;
+                        this.open_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            ],
+        ));
+
+        // Toast section
+        let toast_click_options = vec![
+            "Markup".to_string(),
+            "Copy".to_string(),
+            "Open folder".to_string(),
+            "Nothing".to_string(),
+        ];
+        let toast_click_current = match self.cfg.toast_click_action {
+            ToastClickAction::Markup => "Markup".to_string(),
+            ToastClickAction::Copy => "Copy".to_string(),
+            ToastClickAction::OpenFolder => "Open folder".to_string(),
+            ToastClickAction::None => "Nothing".to_string(),
+        };
+        let toast_click_selected = match self.cfg.toast_click_action {
+            ToastClickAction::Markup => Some(0),
+            ToastClickAction::Copy => Some(1),
+            ToastClickAction::OpenFolder => Some(2),
+            ToastClickAction::None => Some(3),
+        };
+
+        let toast_duration_options = vec![
+            "2s".to_string(),
+            "3s".to_string(),
+            "5s".to_string(),
+            "8s".to_string(),
+            "10s".to_string(),
+        ];
+        let toast_duration_current = match self.cfg.toast_duration_ms {
+            2000 => "2s".to_string(),
+            3000 => "3s".to_string(),
+            5000 => "5s".to_string(),
+            8000 => "8s".to_string(),
+            10000 => "10s".to_string(),
+            ms if ms % 1000 == 0 => format!("{}s", ms / 1000),
+            ms => format!("{}ms", ms),
+        };
+        let toast_duration_selected = match self.cfg.toast_duration_ms {
+            2000 => Some(0),
+            3000 => Some(1),
+            5000 => Some(2),
+            8000 => Some(3),
+            10000 => Some(4),
+            _ => None,
+        };
+
+        let toast_pos_options = vec![
+            "Bottom right".to_string(),
+            "Bottom left".to_string(),
+            "Top right".to_string(),
+            "Top left".to_string(),
+        ];
+        let toast_pos_current = match self.cfg.toast_position {
+            ToastPosition::BottomRight => "Bottom right".to_string(),
+            ToastPosition::BottomLeft => "Bottom left".to_string(),
+            ToastPosition::TopRight => "Top right".to_string(),
+            ToastPosition::TopLeft => "Top left".to_string(),
+        };
+        let toast_pos_selected = match self.cfg.toast_position {
+            ToastPosition::BottomRight => Some(0),
+            ToastPosition::BottomLeft => Some(1),
+            ToastPosition::TopRight => Some(2),
+            ToastPosition::TopLeft => Some(3),
+        };
+
+        form = form.child(self.section(
+            "Toast",
+            vec![
+                self.dropdown_row(
+                    "drop-toast-click",
+                    "Click action",
+                    DropdownField::ToastClickAction,
+                    toast_click_current,
+                    toast_click_options,
+                    toast_click_selected,
+                    cx,
+                    |this, idx, _, _| {
+                        this.cfg.toast_click_action = match idx {
+                            0 => ToastClickAction::Markup,
+                            1 => ToastClickAction::Copy,
+                            2 => ToastClickAction::OpenFolder,
+                            _ => ToastClickAction::None,
+                        };
+                    },
+                )
+                .into_any_element(),
+                self.toggle_row(
+                    "tog-toast-drag",
+                    "Drag to export",
+                    self.cfg.toast_drag_enabled,
+                    cx.listener(|this, _, _, cx| {
+                        this.cfg.toast_drag_enabled = !this.cfg.toast_drag_enabled;
+                        this.open_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+                self.toggle_row(
+                    "tog-toast-actions",
+                    "Show action buttons",
+                    self.cfg.toast_show_actions,
+                    cx.listener(|this, _, _, cx| {
+                        this.cfg.toast_show_actions = !this.cfg.toast_show_actions;
+                        this.open_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+                self.dropdown_row(
+                    "drop-toast-duration",
+                    "Duration",
+                    DropdownField::ToastDuration,
+                    toast_duration_current,
+                    toast_duration_options,
+                    toast_duration_selected,
+                    cx,
+                    |this, idx, _, _| {
+                        this.cfg.toast_duration_ms = match idx {
+                            0 => 2000,
+                            1 => 3000,
+                            2 => 5000,
+                            3 => 8000,
+                            4 => 10000,
+                            _ => 5000,
+                        };
+                    },
+                )
+                .into_any_element(),
+                self.dropdown_row(
+                    "drop-toast-pos",
+                    "Position",
+                    DropdownField::ToastPosition,
+                    toast_pos_current,
+                    toast_pos_options,
+                    toast_pos_selected,
+                    cx,
+                    |this, idx, _, _| {
+                        this.cfg.toast_position = match idx {
+                            0 => ToastPosition::BottomRight,
+                            1 => ToastPosition::BottomLeft,
+                            2 => ToastPosition::TopRight,
+                            _ => ToastPosition::TopLeft,
+                        };
+                    },
+                )
+                .into_any_element(),
+            ],
+        ));
+
+        // Recording section
+        form = form.child(self.section(
+            "Recording",
+            vec![
+                self.text_row("Recording fps", Field::Fps, cx).into_any_element(),
+                self.toggle_row(
+                    "tog-mic",
+                    "Record microphone by default",
+                    self.cfg.record_mic_default,
+                    cx.listener(|this, _, _, cx| {
+                        this.cfg.record_mic_default = !this.cfg.record_mic_default;
+                        this.open_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            ],
+        ));
+
+        // Keyboard section
+        form = form.child(self.section(
+            "Keyboard",
+            vec![
+                self.hotkey_row("Capture hotkey", Field::CaptureHotkey, cx)
                     .into_any_element(),
-                ],
-            ))
-            .child(self.section(
-                "Keyboard",
-                vec![
-                    self.hotkey_row("Capture hotkey", Field::CaptureHotkey, cx)
-                        .into_any_element(),
-                    self.hotkey_row("Record hotkey", Field::RecordHotkey, cx)
-                        .into_any_element(),
-                ],
-            ));
+                self.hotkey_row("Record hotkey", Field::RecordHotkey, cx)
+                    .into_any_element(),
+                self.hotkey_row("Cancel keybind", Field::CancelKeybind, cx)
+                    .into_any_element(),
+                self.hotkey_row("Confirm keybind", Field::ConfirmKeybind, cx)
+                    .into_any_element(),
+            ],
+        ));
 
         let save = crate::widgets::button("save", "Save", true)
             .on_click(cx.listener(|this, _, _, cx| this.save(cx)))
@@ -317,8 +519,11 @@ impl Render for Settings {
         let content = div().id("settings-scroll").flex_1().overflow_y_scroll().child(form);
         let mut root = div()
             .size_full()
-            .font_family(theme::FONT)
-            .track_focus(&self.focus)
+            .font_family(theme::FONT);
+        if let Some(focus) = &self.focus {
+            root = root.track_focus(focus);
+        }
+        let mut root = root
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 this.on_key(ev, window, cx)
             }))
@@ -387,6 +592,7 @@ impl Settings {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.editing = Some((field, this.field_text(field)));
                 this.recording = None;
+                this.open_dropdown = None;
                 cx.notify();
             }));
         self.row_shell(label, div().w(px(FIELD_W)).flex().child(box_el))
@@ -408,6 +614,7 @@ impl Settings {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.recording = Some(field);
                 this.editing = None;
+                this.open_dropdown = None;
                 cx.notify();
             }));
         self.row_shell(label, div().w(px(FIELD_W)).flex().child(box_el))
@@ -421,5 +628,261 @@ impl Settings {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
         self.row_shell(label, crate::widgets::toggle(id, on).on_click(on_click))
+    }
+
+    fn dropdown_row<F>(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        field: DropdownField,
+        current: String,
+        options: Vec<String>,
+        selected: Option<usize>,
+        cx: &mut Context<Self>,
+        on_select: F,
+    ) -> Div
+    where
+        F: Fn(&mut Self, usize, &mut Window, &mut Context<Self>) + 'static + Clone,
+    {
+        let is_open = self.open_dropdown == Some(field);
+        let btn = crate::widgets::dropdown(id.to_string(), current, is_open)
+            .w_full()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_dropdown = if this.open_dropdown == Some(field) {
+                    None
+                } else {
+                    Some(field)
+                };
+                this.editing = None;
+                this.recording = None;
+                cx.notify();
+            }));
+
+        let mut control = div().w(px(FIELD_W)).relative().child(btn);
+
+        if is_open {
+            let mut menu = crate::widgets::menu()
+                .absolute()
+                .top(px(32.))
+                .right_0()
+                .w(px(FIELD_W));
+            for (i, opt) in options.into_iter().enumerate() {
+                let mark = if selected == Some(i) { "✓ " } else { "   " };
+                let on_select = on_select.clone();
+                let row = crate::widgets::menu_row_owned(
+                    format!("{id}-opt-{i}"),
+                    format!("{mark}{opt}"),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    on_select(this, i, window, cx);
+                    this.open_dropdown = None;
+                    cx.notify();
+                }));
+                menu = menu.child(row);
+            }
+            control = control.child(menu);
+        }
+
+        self.row_shell(label, control)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::prelude::v1::test;
+    #[test]
+    fn commit_edit_updates_fields_and_validates() {
+        let mut s = Settings {
+            cfg: Config::default(),
+            editing: None,
+            recording: None,
+            open_dropdown: None,
+            status: None,
+            focus: None,
+            class: "test".into(),
+        };
+
+        // Storage paths
+        s.editing = Some((Field::ScreenshotsDir, "/tmp/test-shots".into()));
+        assert!(s.commit_edit().is_ok());
+        assert_eq!(s.cfg.screenshots_dir, PathBuf::from("/tmp/test-shots"));
+
+        s.editing = Some((Field::RecordingsDir, "/tmp/test-recs".into()));
+        assert!(s.commit_edit().is_ok());
+        assert_eq!(s.cfg.recordings_dir, PathBuf::from("/tmp/test-recs"));
+
+        s.editing = Some((Field::ScreenshotsDir, "   ".into()));
+        assert!(s.commit_edit().is_err());
+
+        // Template validation
+        s.editing = Some((Field::Template, "shot_{date}_{time}".into()));
+        assert!(s.commit_edit().is_ok());
+        assert_eq!(s.cfg.screenshot_template, "shot_{date}_{time}");
+
+        s.editing = Some((Field::Template, "no_tokens_here".into()));
+        assert!(s.commit_edit().is_err());
+
+        // FPS validation
+        s.editing = Some((Field::Fps, "60".into()));
+        assert!(s.commit_edit().is_ok());
+        assert_eq!(s.cfg.recording_fps, 60);
+
+        s.editing = Some((Field::Fps, "0".into()));
+        assert!(s.commit_edit().is_err());
+
+        s.editing = Some((Field::Fps, "121".into()));
+        assert!(s.commit_edit().is_err());
+
+        s.editing = Some((Field::Fps, "not_a_number".into()));
+        assert!(s.commit_edit().is_err());
+    }
+
+    #[test]
+    fn field_text_covers_all_field_variants() {
+        let mut cfg = Config::default();
+        cfg.screenshots_dir = PathBuf::from("/custom/shots");
+        cfg.recordings_dir = PathBuf::from("/custom/recs");
+        cfg.screenshot_template = "tmpl_{date}".into();
+        cfg.recording_fps = 45;
+        cfg.capture_hotkey = "Ctrl+Shift+3".into();
+        cfg.record_hotkey = "Ctrl+Shift+5".into();
+        cfg.cancel_keybind = "Ctrl+C".into();
+        cfg.confirm_keybind = "Ctrl+Enter".into();
+
+        let s = Settings {
+            cfg,
+            editing: None,
+            recording: None,
+            open_dropdown: None,
+            status: None,
+            focus: None,
+            class: "test".into(),
+        };
+
+        assert_eq!(s.field_text(Field::ScreenshotsDir), "/custom/shots");
+        assert_eq!(s.field_text(Field::RecordingsDir), "/custom/recs");
+        assert_eq!(s.field_text(Field::Template), "tmpl_{date}");
+        assert_eq!(s.field_text(Field::Fps), "45");
+        assert_eq!(s.field_text(Field::CaptureHotkey), "Ctrl+Shift+3");
+        assert_eq!(s.field_text(Field::RecordHotkey), "Ctrl+Shift+5");
+        assert_eq!(s.field_text(Field::CancelKeybind), "Ctrl+C");
+        assert_eq!(s.field_text(Field::ConfirmKeybind), "Ctrl+Enter");
+    }
+
+    #[test]
+    fn format_keystroke_formats_keys_and_modifiers() {
+        let make_event = |key: &str, ctrl: bool, alt: bool, shift: bool, super_key: bool| KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    control: ctrl,
+                    alt,
+                    shift,
+                    platform: super_key,
+                    function: false,
+                },
+                key: key.to_string(),
+                key_char: None,
+            },
+            is_held: false,
+        };
+
+        // Bare modifier is ignored
+        assert_eq!(Settings::format_keystroke(&make_event("control", true, false, false, false)), None);
+        assert_eq!(Settings::format_keystroke(&make_event("shift", false, false, true, false)), None);
+
+        // Named keys
+        assert_eq!(Settings::format_keystroke(&make_event("escape", false, false, false, false)), Some("Escape".into()));
+        assert_eq!(Settings::format_keystroke(&make_event("enter", false, false, false, false)), Some("Enter".into()));
+        assert_eq!(Settings::format_keystroke(&make_event("print", false, false, false, false)), Some("Print".into()));
+        assert_eq!(Settings::format_keystroke(&make_event(" ", false, false, false, false)), Some("Space".into()));
+
+        // Single characters uppercase
+        assert_eq!(Settings::format_keystroke(&make_event("a", false, false, false, false)), Some("A".into()));
+
+        // Function keys capitalized
+        assert_eq!(Settings::format_keystroke(&make_event("f9", false, false, false, false)), Some("F9".into()));
+
+        // Modifier combos
+        assert_eq!(
+            Settings::format_keystroke(&make_event("r", true, false, true, false)),
+            Some("Ctrl+Shift+R".into())
+        );
+        assert_eq!(
+            Settings::format_keystroke(&make_event("s", true, true, false, false)),
+            Some("Ctrl+Alt+S".into())
+        );
+        assert_eq!(
+            Settings::format_keystroke(&make_event("p", false, false, false, true)),
+            Some("Super+P".into())
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn all_eighteen_config_fields_persist_and_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
+        std::env::set_var("XDG_DATA_HOME", dir.path().join("data"));
+
+        let mut s = Settings {
+            cfg: Config::default(),
+            editing: None,
+            recording: None,
+            open_dropdown: None,
+            status: None,
+            focus: None,
+            class: "test".into(),
+        };
+
+        // Edit Storage
+        s.cfg.screenshots_dir = PathBuf::from("/custom/screenshots");
+        s.cfg.recordings_dir = PathBuf::from("/custom/recordings");
+        s.cfg.screenshot_template = "custom_{date}_{time}".into();
+
+        // Edit Capture
+        s.cfg.flash_on_capture = false;
+        s.cfg.sound_on_capture = false;
+        s.cfg.show_toast_after_capture = false;
+        s.cfg.copy_to_clipboard = false;
+
+        // Edit Toast
+        s.cfg.toast_click_action = ToastClickAction::OpenFolder;
+        s.cfg.toast_drag_enabled = false;
+        s.cfg.toast_show_actions = false;
+        s.cfg.toast_duration_ms = 8000;
+        s.cfg.toast_position = ToastPosition::TopLeft;
+
+        // Edit Recording
+        s.cfg.recording_fps = 60;
+        s.cfg.record_mic_default = true;
+
+        // Edit Keyboard
+        s.cfg.capture_hotkey = "Ctrl+Shift+A".into();
+        s.cfg.record_hotkey = "Ctrl+Shift+B".into();
+        s.cfg.cancel_keybind = "Ctrl+Q".into();
+        s.cfg.confirm_keybind = "Ctrl+Space".into();
+
+        assert!(s.cfg.store().is_ok());
+
+        let loaded = Config::load();
+        assert_eq!(loaded.screenshots_dir, PathBuf::from("/custom/screenshots"));
+        assert_eq!(loaded.recordings_dir, PathBuf::from("/custom/recordings"));
+        assert_eq!(loaded.screenshot_template, "custom_{date}_{time}");
+        assert_eq!(loaded.flash_on_capture, false);
+        assert_eq!(loaded.sound_on_capture, false);
+        assert_eq!(loaded.show_toast_after_capture, false);
+        assert_eq!(loaded.copy_to_clipboard, false);
+        assert_eq!(loaded.toast_click_action, ToastClickAction::OpenFolder);
+        assert_eq!(loaded.toast_drag_enabled, false);
+        assert_eq!(loaded.toast_show_actions, false);
+        assert_eq!(loaded.toast_duration_ms, 8000);
+        assert_eq!(loaded.toast_position, ToastPosition::TopLeft);
+        assert_eq!(loaded.recording_fps, 60);
+        assert_eq!(loaded.record_mic_default, true);
+        assert_eq!(loaded.capture_hotkey, "Ctrl+Shift+A");
+        assert_eq!(loaded.record_hotkey, "Ctrl+Shift+B");
+        assert_eq!(loaded.cancel_keybind, "Ctrl+Q");
+        assert_eq!(loaded.confirm_keybind, "Ctrl+Space");
     }
 }
