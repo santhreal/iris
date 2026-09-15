@@ -206,7 +206,8 @@ pub fn pick_window() -> Result<PickedWindow, String> {
 /// allocate a fresh buffer per frame.
 fn bgrx_to_rgba(data: &[u8], pixels: usize, out: &mut Vec<u8>) -> Result<(), String> {
     let bpp = data.len() / pixels.max(1);
-    out.clear();
+    // resize without clear(): once sized, this is a no-op and does not
+    // re-zero a buffer every byte of which the swizzle overwrites.
     out.resize(pixels * 4, 0);
     match bpp {
         4 => {

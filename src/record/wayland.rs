@@ -203,7 +203,8 @@ fn convert_frame(
             src.len()
         ));
     }
-    out.clear();
+    // resize without clear(): once sized, this is a no-op and does not
+    // re-zero a buffer every byte of which the swizzle overwrites.
     out.resize(w * h * 4, 0);
     // Word-level swizzle, same as the X11 grab: a per-pixel
     // extend_from_slice is a visible slice of per-frame latency at

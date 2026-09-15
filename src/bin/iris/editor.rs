@@ -499,7 +499,9 @@ impl Editor {
         // at that point, so later blurs sample through earlier ones,
         // matching the canvas2d implementation. Patches are recomputed
         // here so moved or cropped blurs sample their new location.
-        let mut composite = self.base.clone();
+        // Reuse the composite buffer: it is always the same size as base,
+        // so replay writes into it instead of cloning a fresh image.
+        self.composite.copy_from_slice(&self.base);
         for action in &mut self.actions {
             if action.tool == Tool::Blur {
                 let (x, y) = (
@@ -507,19 +509,18 @@ impl Editor {
                     action.blur_rect.1.max(0.0) as u32,
                 );
                 let (w, h) = (action.blur_rect.2 as u32, action.blur_rect.3 as u32);
-                if w >= 1 && h >= 1 && x < composite.width() && y < composite.height() {
-                    let w = w.min(composite.width() - x);
-                    let h = h.min(composite.height() - y);
-                    if let Ok(patch) = pixelated_patch(&composite, x, y, w, h) {
+                if w >= 1 && h >= 1 && x < self.composite.width() && y < self.composite.height() {
+                    let w = w.min(self.composite.width() - x);
+                    let h = h.min(self.composite.height() - y);
+                    if let Ok(patch) = pixelated_patch(&self.composite, x, y, w, h) {
                         action.blur_patch = Some(patch);
-                        let _ = pixelate_cpu(&mut composite, x, y, w, h);
+                        let _ = pixelate_cpu(&mut self.composite, x, y, w, h);
                     }
                 }
             } else {
-                rasterize(&mut composite, action, 1.0);
+                rasterize(&mut self.composite, action, 1.0);
             }
         }
-        self.composite = composite;
     }
 
     /// Bounding box of one action in image pixels, for hit testing
