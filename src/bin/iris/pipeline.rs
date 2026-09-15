@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use image::ImageEncoder;
+
 use iris_lib::{
     capture::{self, Frame},
     config::Config,
@@ -139,14 +141,25 @@ pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntr
     std::fs::create_dir_all(&cfg.screenshots_dir)
         .map_err(|e| format!("create screenshots dir: {e}"))?;
     let path = unique_path(&cfg);
-    image::save_buffer(
-        &path,
+    // Fast PNG: the default Balanced deflate is ~3x slower than Fast on
+    // a 4K frame, and a screenshot's redundancy means Fast still
+    // compresses well. The capture is durable sooner and the toast's
+    // thumbnail source exists earlier.
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::codecs::png::PngEncoder::new_with_quality(
+        &mut png,
+        image::codecs::png::CompressionType::Fast,
+        image::codecs::png::FilterType::Adaptive,
+    )
+    .write_image(
         img.as_raw(),
         img.width(),
         img.height(),
-        image::ColorType::Rgba8,
+        image::ExtendedColorType::Rgba8,
     )
-    .map_err(|e| format!("save screenshot: {e}"))?;
+    .map_err(|e| format!("encode screenshot: {e}"))?;
+    std::fs::write(&path, png.into_inner())
+        .map_err(|e| format!("save screenshot: {e}"))?;
     // The file is the product; a clipboard failure degrades to a
     // log line, never a lost capture. copy_to_clipboard gates whether
     // the capture lands on the clipboard at all.

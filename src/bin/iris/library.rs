@@ -236,6 +236,16 @@ fn card_morph_rect(ev: &ClickEvent, window: &Window) -> (f32, f32, f32, f32) {
     (wx + mx - CARD_W / 2.0, wy + my - THUMB_H / 2.0, CARD_W, THUMB_H)
 }
 
+/// Open the containing directory of a capture with xdg-open.
+fn open_containing_folder(path: &std::path::Path) {
+    let parent = path.parent().unwrap_or(path).to_path_buf();
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&parent)
+            .spawn();
+    });
+}
+
     fn copy_selection(&mut self, cx: &mut Context<Self>) {
         let result = if self.selected.len() == 1 {
             pipeline::copy_image_file(&self.selected[0])
@@ -596,6 +606,7 @@ impl Library {
         if hovered {
             let annotate_path = entry.path.clone();
             let copy_path = entry.path.clone();
+            let folder_path = entry.path.clone();
             let delete_path = entry.path.clone();
             thumb = thumb.child(
                 div()
@@ -621,6 +632,10 @@ impl Library {
                         );
                         cx.notify();
                     })))
+                    .child(crate::widgets::overlay_icon_button(format!("fld-{index}"), crate::icons::Icon::Folder).on_click(cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        Self::open_containing_folder(&folder_path);
+                    })))
                     .child(crate::widgets::overlay_icon_button(format!("del-{index}"), crate::icons::Icon::Close).on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         if let Err(e) = library::delete(&delete_path) {
@@ -631,6 +646,8 @@ impl Library {
                     }))),
             );
         }
+
+        let card_path = entry.path.clone();
 
         div()
             .id(ElementId::Name(format!("card-{index}").into()))
@@ -652,6 +669,12 @@ impl Library {
             .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                 this.click_card(index, ev, window, cx);
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |_, _, _, _| {
+                    Self::open_containing_folder(&card_path);
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
@@ -744,3 +767,18 @@ impl Library {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::prelude::v1::test;
+
+    #[test]
+    fn containing_folder_path_resolution() {
+        let path = std::path::Path::new("/tmp/iris/captures/screenshot_01.png");
+        let parent = path.parent().unwrap_or(path);
+        assert_eq!(parent, std::path::Path::new("/tmp/iris/captures"));
+
+        let root_file = std::path::Path::new("/file.png");
+        let parent = root_file.parent().unwrap_or(root_file);
+        assert_eq!(parent, std::path::Path::new("/"));
+    }
+}

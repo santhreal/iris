@@ -110,8 +110,21 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
 
 pub fn list() -> Vec<CaptureEntry> {
     let entries = read_store();
-    // Prune entries whose file vanished (user moved/deleted it).
-    let (alive, dead): (Vec<_>, Vec<_>) = entries.into_iter().partition(|e| e.path.exists());
+    // Prune entries whose file vanished (user moved/deleted it). The
+    // stat calls run in parallel: a few hundred sequential exists()
+    // checks on a slow or network-mounted shots dir stall the open.
+    let alive_flags: Vec<bool> = std::thread::scope(|scope| {
+        let handles: Vec<_> = entries
+            .iter()
+            .map(|e| scope.spawn(|| e.path.exists()))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap_or(false)).collect()
+    });
+    let (alive, dead): (Vec<_>, Vec<_>) = entries
+        .into_iter()
+        .zip(alive_flags)
+        .partition(|(_, ok)| *ok);
+    let alive: Vec<_> = alive.into_iter().map(|(e, _)| e).collect();
     if !dead.is_empty() {
         let _ = write_store(&alive);
     }

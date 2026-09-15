@@ -34,6 +34,8 @@ pub enum Icon {
     Viewfinder,
     Grid,
     Gear,
+    Folder,
+    Pin,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.
@@ -232,6 +234,22 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
             }
             push_segment(&mut path, p(9.0, 13.2), p(9.0, 15.4), w);
             push_segment(&mut path, p(6.4, 15.4), p(11.6, 15.4), w);
+        }
+        Icon::Folder => {
+            // Folder outline: top tab, body below.
+            push_segment(&mut path, p(3.2, 5.2), p(7.2, 5.2), w);
+            push_segment(&mut path, p(7.2, 5.2), p(8.8, 7.2), w);
+            push_segment(&mut path, p(8.8, 7.2), p(14.8, 7.2), w);
+            push_segment(&mut path, p(14.8, 7.2), p(14.8, 14.0), w);
+            push_segment(&mut path, p(14.8, 14.0), p(3.2, 14.0), w);
+            push_segment(&mut path, p(3.2, 14.0), p(3.2, 5.2), w);
+        }
+        Icon::Pin => {
+            // Diagonal pushpin: head top-right, needle pointing bottom-left.
+            push_segment(&mut path, p(8.5, 9.5), p(3.5, 14.5), w);
+            push_segment(&mut path, p(6.0, 7.0), p(11.0, 12.0), 1.8 * s);
+            push_segment(&mut path, p(8.5, 9.5), p(13.0, 5.0), 3.0 * s);
+            push_segment(&mut path, p(11.5, 2.5), p(15.5, 6.5), w);
         }
     }
     window.paint_path(path, color);

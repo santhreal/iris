@@ -71,18 +71,41 @@ pub fn icon_button(id: String, glyph: Icon, active: bool, size: f32) -> Stateful
 
 /// Small icon button for card overlays: 26px on a frosted chip.
 pub fn overlay_icon_button(id: String, glyph: Icon) -> Stateful<Div> {
+    overlay_icon_button_active(id, glyph, false)
+}
+
+/// Small icon button for card overlays, with optional active/highlight state.
+pub fn overlay_icon_button_active(id: String, glyph: Icon, active: bool) -> Stateful<Div> {
     div()
         .id(ElementId::Name(id.into()))
         .w(px(26.))
         .h(px(26.))
         .rounded(px(theme::RADIUS_SM))
-        .bg(theme::alpha(theme::BG_ELEV, 0.92))
+        .bg(if active {
+            theme::FG
+        } else {
+            theme::alpha(theme::BG_ELEV, 0.92)
+        })
         .flex()
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .hover(|s| s.bg(theme::SURFACE_HOVER))
-        .child(icons::icon(glyph, theme::FG, 14.0))
+        .hover(move |s| {
+            if active {
+                s
+            } else {
+                s.bg(theme::SURFACE_HOVER)
+            }
+        })
+        .child(icons::icon(
+            glyph,
+            if active {
+                theme::ACCENT_INK
+            } else {
+                theme::FG
+            },
+            14.0,
+        ))
 }
 
 /// Menu geometry, fixed so callers can place and hit-test a menu

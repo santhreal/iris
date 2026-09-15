@@ -143,6 +143,15 @@ pub struct Editor {
     base_ready: bool,
     /// Copy dropdown entrance clock.
     copy_menu_opened: Option<Instant>,
+    /// Zoom multiplier over the fit scale (1.0 = fit). Scroll zooms
+    /// around the cursor; 0 resets.
+    zoom: f32,
+    /// Pan offset in window px, applied on top of the fit origin.
+    pan: (f32, f32),
+    /// Middle-button or space-drag pan in progress: last pointer pos.
+    pan_drag: Option<(f32, f32)>,
+    /// Space held: the stage pans instead of drawing.
+    space_pan: bool,
 }
 
 /// Editor window default placement; morph rects arrive in screen
@@ -292,6 +301,10 @@ pub fn open(
                 closing: None,
                 base_ready: false,
                 copy_menu_opened: None,
+                zoom: 1.0,
+                pan: (0.0, 0.0),
+                pan_drag: None,
+                space_pan: false,
             })
         },
     )
@@ -635,15 +648,48 @@ impl Editor {
         self.selected = None;
     }
 
+    /// Switch tools from a hotkey or the sidebar: settle any open text
+    /// entry first so a typed label is never dropped by the switch.
+    fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
+        self.commit_text(true);
+        self.tool = tool;
+        cx.notify();
+    }
+
     fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.closing.is_some() {
             return;
         }
-        if let Err(e) = self.save() {
-            self.status = Some(e);
+        if !self.base_ready {
+            self.status = Some("still decoding".into());
             cx.notify();
             return;
         }
+        // Bake the pending text/stroke into the composite, then hand the
+        // encode+write+clipboard to a background task and close. The
+        // composite is already current (every commit rasterizes into
+        // it), so save() does not re-run rebuild_all. A 4K PNG encode on
+        // the UI thread would freeze the outro for hundreds of ms.
+        self.commit_text(true);
+        self.commit_current();
+        let img = std::mem::take(&mut self.composite);
+        let path = self.path.clone();
+        cx.spawn(async move |_, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let png = png_bytes(&img)?;
+                    std::fs::write(&path, &png)
+                        .map_err(|e| format!("write {}: {e}", path.display()))?;
+                    pipeline::copy_image(&img)?;
+                    Ok::<(), String>(())
+                })
+                .await;
+            if let Err(e) = result {
+                eprintln!("iris: save: {e}");
+            }
+        })
+        .detach();
         self.begin_close(window, cx);
     }
 
@@ -653,20 +699,6 @@ impl Editor {
             self.closing = Some(Instant::now());
             cx.notify();
         }
-    }
-
-    fn save(&mut self) -> Result<(), String> {
-        if !self.base_ready {
-            return Err("still decoding".into());
-        }
-        self.commit_text(true);
-        self.commit_current();
-        self.rebuild_all();
-        let png = png_bytes(&self.composite)?;
-        std::fs::write(&self.path, &png)
-            .map_err(|e| format!("write {}: {e}", self.path.display()))?;
-        pipeline::copy_image(&self.composite)?;
-        Ok(())
     }
 
     fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -719,20 +751,32 @@ impl Editor {
         }
     }
 
-    /// Stage geometry: the image fit into the window minus chrome.
-    /// Returns (origin_x, origin_y, scale) mapping image -> window px.
+    /// The centered fit origin for a given scale, before pan. Split out
+    /// so scroll-zoom can recompute it at the new scale and solve for
+    /// the pan that keeps the cursor's image point fixed.
+    fn fit_origin(&self, window: &Window, scale: f32) -> (f32, f32) {
+        let size = window.bounds().size;
+        (
+            72.0 + (f32::from(size.width) - 72.0 - self.base.width() as f32 * scale) / 2.0,
+            72.0 + (f32::from(size.height) - 72.0 - self.base.height() as f32 * scale) / 2.0,
+        )
+    }
+
+    /// Stage geometry: the image fit into the window minus chrome, then
+    /// zoomed and panned. Returns (origin_x, origin_y, scale) mapping
+    /// image -> window px.
     fn view(&self, window: &Window) -> (f32, f32, f32) {
         // The chrome floats (12px margin + 48px pill), so the stage
         // keeps a 72px clear zone left and top, 24px right and bottom.
         let size = window.bounds().size;
         let usable_w = (f32::from(size.width) - 72.0 - 24.0).max(100.0);
         let usable_h = (f32::from(size.height) - 72.0 - 24.0).max(100.0);
-        let scale = (usable_w / self.base.width() as f32)
+        let fit = (usable_w / self.base.width() as f32)
             .min(usable_h / self.base.height() as f32)
             .min(4.0);
-        let ox = 72.0 + (f32::from(size.width) - 72.0 - self.base.width() as f32 * scale) / 2.0;
-        let oy = 72.0 + (f32::from(size.height) - 72.0 - self.base.height() as f32 * scale) / 2.0;
-        (ox, oy, scale)
+        let scale = fit * self.zoom;
+        let (fx, fy) = self.fit_origin(window, scale);
+        (fx + self.pan.0, fy + self.pan.1, scale)
     }
 
     fn to_image(&self, pos: Point<Pixels>, window: &Window) -> (f32, f32) {
@@ -1118,9 +1162,44 @@ impl Render for Editor {
                     "?" | "/" => {
                         this.help = !this.help;
                     }
+                    // Tool hotkeys, single letters like Markup/Photoshop.
+                    // No modifier: the editor owns the window's keys.
+                    "v" => this.set_tool(Tool::Select, cx),
+                    "p" => this.set_tool(Tool::Pen, cx),
+                    "l" => this.set_tool(Tool::Line, cx),
+                    "a" => this.set_tool(Tool::Arrow, cx),
+                    "e" => this.set_tool(Tool::Ellipse, cx),
+                    "r" => this.set_tool(Tool::Rect, cx),
+                    "t" => this.set_tool(Tool::Text, cx),
+                    "h" => this.set_tool(Tool::Highlight, cx),
+                    "b" => this.set_tool(Tool::Blur, cx),
+                    "c" => this.set_tool(Tool::Crop, cx),
+                    "1" | "2" | "3" => {
+                        this.stroke = (key.as_bytes()[0] - b'1') as u8;
+                    }
+                    // Zoom: 0 fits, +/- step, space+drag pans.
+                    "0" => {
+                        this.zoom = 1.0;
+                        this.pan = (0.0, 0.0);
+                    }
+                    "=" | "+" => {
+                        this.zoom = (this.zoom * 1.25).min(16.0);
+                    }
+                    "-" => {
+                        this.zoom = (this.zoom / 1.25).max(0.1);
+                    }
+                    "space" => {
+                        this.space_pan = true;
+                    }
                     _ => {}
                 }
                 cx.notify();
+            }))
+            .on_key_up(cx.listener(|this, ev: &KeyUpEvent, _, cx| {
+                if ev.keystroke.key == "space" {
+                    this.space_pan = false;
+                    cx.notify();
+                }
             }))
             // Dim backdrop behind everything; clicking outside the image
             // discards. First child: every other surface stacks above it.
@@ -1496,9 +1575,53 @@ impl Render for Editor {
 
         // Stage input.
         stage = stage
+            // Scroll zooms around the cursor: the image point under the
+            // pointer stays put while the scale changes.
+            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
+                let dy: f32 = match ev.delta {
+                    ScrollDelta::Pixels(p) => f32::from(p.y),
+                    ScrollDelta::Lines(p) => p.y * 20.0,
+                };
+                if dy.abs() < 0.5 {
+                    return;
+                }
+                let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
+                let (ox, oy, scale) = this.view(window);
+                let factor = if dy > 0.0 { 1.12 } else { 1.0 / 1.12 };
+                let new_zoom = (this.zoom * factor).clamp(0.1, 16.0);
+                if (new_zoom - this.zoom).abs() < f32::EPSILON {
+                    return;
+                }
+                // Keep the image point under the cursor fixed:
+                //   img = (m - o) / s  =>  o' = m - img * s'
+                let img_x = (mx - ox) / scale;
+                let img_y = (my - oy) / scale;
+                let fit = scale / this.zoom.max(f32::EPSILON);
+                let nscale = fit * new_zoom;
+                this.zoom = new_zoom;
+                let (fx, fy) = this.fit_origin(window, nscale);
+                this.pan.0 = mx - img_x * nscale - fx;
+                this.pan.1 = my - img_y * nscale - fy;
+                cx.notify();
+            }))
+            // Middle-button drag pans; so does a left drag while space
+            // is held.
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                    this.pan_drag = Some((ev.position.x.into(), ev.position.y.into()));
+                    cx.notify();
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                    if this.space_pan {
+                        this.pan_drag = Some((ev.position.x.into(), ev.position.y.into()));
+                        cx.stop_propagation();
+                        cx.notify();
+                        return;
+                    }
                     let p = this.to_image(ev.position, window);
                     // Mouse events travel the whole hit stack: without this
                     // the backdrop's handler below the stage fires too.
@@ -1550,6 +1673,16 @@ impl Render for Editor {
                 }),
             )
             .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
+                // Pan drag (middle button or space+left) moves the view,
+                // not the image content.
+                if let Some((lx, ly)) = this.pan_drag {
+                    let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
+                    this.pan.0 += mx - lx;
+                    this.pan.1 += my - ly;
+                    this.pan_drag = Some((mx, my));
+                    cx.notify();
+                    return;
+                }
                 if ev.pressed_button != Some(MouseButton::Left) {
                     return;
                 }
@@ -1596,6 +1729,10 @@ impl Render for Editor {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _ev: &MouseUpEvent, _, cx| {
+                    if this.pan_drag.take().is_some() {
+                        cx.notify();
+                        return;
+                    }
                     if let Some((i, _, old)) = this.move_drag.take() {
                         // A drag that changed nothing is not an edit.
                         if i < this.actions.len() && this.actions[i].points != old.points {
@@ -1608,6 +1745,14 @@ impl Render for Editor {
                     this.crop_move = None;
                     this.commit_current();
                     cx.notify();
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(|this, _ev: &MouseUpEvent, _, cx| {
+                    if this.pan_drag.take().is_some() {
+                        cx.notify();
+                    }
                 }),
             );
 
@@ -1650,6 +1795,8 @@ impl Render for Editor {
         if self.help {
             root = root.child(
                 crate::widgets::shortcuts_sheet(vec![
+                    ("Tools", "V P L A E R T H B C".to_string()),
+                    ("Stroke width", "1 / 2 / 3".to_string()),
                     ("Save and close", "Ctrl+S / Enter".to_string()),
                     ("Discard", "Esc".to_string()),
                     ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z".to_string()),

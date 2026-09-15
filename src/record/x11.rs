@@ -211,11 +211,42 @@ fn bgrx_to_rgba(data: &[u8], pixels: usize, out: &mut Vec<u8>) -> Result<(), Str
     out.resize(pixels * 4, 0);
     match bpp {
         4 => {
-            // Word-level swizzle: B,G,R,_ -> R,G,B,255 swaps bytes 0<->2.
-            for (o, px) in out.chunks_exact_mut(4).zip(data.chunks_exact(4)) {
-                let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
-                let rgb = (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-                o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
+            // Parallel word-level swizzle: at 4K a single-threaded
+            // per-pixel loop is a visible slice of the frame budget and
+            // drops frames. B,G,R,_ -> R,G,B,255 swaps bytes 0<->2.
+            const PARALLEL_MIN: usize = 1 << 20; // ~1 MP
+            if pixels < PARALLEL_MIN {
+                for (o, px) in out.chunks_exact_mut(4).zip(data.chunks_exact(4)) {
+                    let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
+                    let rgb = (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
+                    o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
+                }
+            } else {
+                let threads = std::thread::available_parallelism()
+                    .map(|n| n.get().min(8))
+                    .unwrap_or(4);
+                let chunk_px = pixels.div_ceil(threads);
+                std::thread::scope(|scope| {
+                    let mut out_rest = out.as_mut_slice();
+                    let mut in_rest = data;
+                    for _ in 0..threads {
+                        let take_px = chunk_px.min(in_rest.len() / 4);
+                        if take_px == 0 {
+                            break;
+                        }
+                        let (o_chunk, o_rest) = out_rest.split_at_mut(take_px * 4);
+                        let (i_chunk, i_rest) = in_rest.split_at(take_px * 4);
+                        out_rest = o_rest;
+                        in_rest = i_rest;
+                        scope.spawn(move || {
+                            for (o, px) in o_chunk.chunks_exact_mut(4).zip(i_chunk.chunks_exact(4)) {
+                                let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
+                                let rgb = (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
+                                o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
+                            }
+                        });
+                    }
+                });
             }
         }
         3 => {

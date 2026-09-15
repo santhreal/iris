@@ -64,6 +64,7 @@ pub struct ToastStage {
     card_screen: (f32, f32, f32, f32),
     opened: Option<Instant>,
     hover_paused: bool,
+    pinned: bool,
     closing_at: Option<Instant>,
     /// Rightward offset the exit flight starts from, when a swipe
     /// carried the card before the dismiss.
@@ -144,6 +145,7 @@ impl ToastStage {
             card_screen: (0.0, 0.0, 0.0, 0.0),
             opened: None,
             hover_paused: false,
+            pinned: false,
             closing_at: None,
             exit_from: 0.0,
             drag_start: None,
@@ -163,13 +165,16 @@ impl ToastStage {
     /// Start the auto-dismiss countdown. When it fires, hovering pushes
     /// the deadline out instead of dismissing under the pointer.
     fn arm_dismiss(&mut self, cx: &mut Context<Self>) {
-        if self.closing_at.is_some() {
+        if self.pinned || self.closing_at.is_some() {
             return;
         }
         let sit = Duration::from_millis(u64::from(self.cfg.toast_duration_ms));
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(sit).await;
             this.update(cx, |stage, cx| {
+                if stage.pinned {
+                    return;
+                }
                 if stage.hover_paused || stage.menu_at.is_some() {
                     stage.arm_dismiss(cx);
                 } else {
@@ -179,6 +184,16 @@ impl ToastStage {
             .ok();
         })
         .detach();
+    }
+
+    fn toggle_pin(&mut self, cx: &mut Context<Self>) {
+        self.pinned = !self.pinned;
+        if self.pinned {
+            self.closing_at = None;
+        } else {
+            self.arm_dismiss(cx);
+        }
+        cx.notify();
     }
 
     fn begin_close(&mut self, cx: &mut Context<Self>) {
@@ -595,7 +610,7 @@ impl Render for ToastStage {
                 );
 
                 if cfg.toast_show_actions {
-                    let actions = div()
+                    let mut actions = div()
                         .absolute()
                         .bottom(px(6.))
                         .left(px(6.))
@@ -603,7 +618,23 @@ impl Render for ToastStage {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .gap(px(3.))
+                        .gap(px(3.));
+
+                    if cfg.toast_pin_enabled {
+                        actions = actions.child(
+                            crate::widgets::overlay_icon_button_active(
+                                "toast-action-pin".into(),
+                                 crate::icons::Icon::Pin,
+                                self.pinned,
+                            )
+                            .on_click(cx.listener(|stage, _, _, cx| {
+                                cx.stop_propagation();
+                                stage.toggle_pin(cx);
+                            })),
+                        );
+                    }
+
+                    actions = actions
                         .child(
                             crate::widgets::overlay_icon_button(
                                 "toast-action-copy-img".into(),
@@ -902,5 +933,23 @@ mod tests {
         assert_eq!((x, y), (MARGIN, MARGIN));
 
         let _ = Config::default().store();
+    }
+    #[test]
+    #[serial_test::serial]
+    fn toast_pin_state_defaults_false_and_toggles() {
+        let dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("test.png");
+        image::RgbaImage::new(10, 10).save(&img_path).unwrap();
+        let mut stage = ToastStage::new(&img_path, &img_path).unwrap();
+        assert!(!stage.pinned);
+        assert!(stage.closing_at.is_none());
+
+        stage.closing_at = Some(Instant::now());
+        stage.pinned = true;
+        if stage.pinned {
+            stage.closing_at = None;
+        }
+        assert!(stage.closing_at.is_none());
+        assert!(stage.pinned);
     }
 }

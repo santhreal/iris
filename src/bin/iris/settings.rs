@@ -163,6 +163,18 @@ impl Settings {
         });
         cx.notify();
     }
+    fn reset_defaults_state(&mut self) {
+        self.cfg = Config::default();
+        self.editing = None;
+        self.recording = None;
+        self.open_dropdown = None;
+        self.status = Some("Defaults restored — Save to apply".to_string());
+    }
+
+    fn reset_to_defaults(&mut self, cx: &mut Context<Self>) {
+        self.reset_defaults_state();
+        cx.notify();
+    }
 
     /// Format a pressed keystroke the way config.toml stores hotkeys:
     /// "Ctrl+Shift+R", "Print", "Escape", "Enter".
@@ -512,6 +524,17 @@ impl Render for Settings {
                     .into_any_element(),
             ],
         ));
+
+        form = form.child(
+            div()
+                .flex()
+                .justify_start()
+                .pt(px(4.))
+                .child(
+                    crate::widgets::button("reset-defaults", "Reset to defaults", false)
+                        .on_click(cx.listener(|this, _, _, cx| this.reset_to_defaults(cx))),
+                ),
+        );
 
         let save = crate::widgets::button("save", "Save", true)
             .on_click(cx.listener(|this, _, _, cx| this.save(cx)))
@@ -884,5 +907,36 @@ mod tests {
         assert_eq!(loaded.record_hotkey, "Ctrl+Shift+B");
         assert_eq!(loaded.cancel_keybind, "Ctrl+Q");
         assert_eq!(loaded.confirm_keybind, "Ctrl+Space");
+    }
+
+    #[test]
+    fn reset_defaults_restores_default_config_and_status() {
+        let mut s = Settings {
+            cfg: Config::default(),
+            editing: Some((Field::Template, "test_edit".into())),
+            recording: Some(Field::CaptureHotkey),
+            open_dropdown: Some(DropdownField::ToastPosition),
+            status: None,
+            focus: None,
+            class: "test".into(),
+        };
+
+        // Modify some cfg fields
+        s.cfg.screenshots_dir = PathBuf::from("/non/default/dir");
+        s.cfg.recording_fps = 120;
+        s.cfg.flash_on_capture = false;
+        s.cfg.toast_click_action = ToastClickAction::None;
+
+        s.reset_defaults_state();
+
+        let def = Config::default();
+        assert_eq!(s.cfg.screenshots_dir, def.screenshots_dir);
+        assert_eq!(s.cfg.recording_fps, def.recording_fps);
+        assert_eq!(s.cfg.flash_on_capture, def.flash_on_capture);
+        assert_eq!(s.cfg.toast_click_action, def.toast_click_action);
+        assert_eq!(s.editing, None);
+        assert_eq!(s.recording, None);
+        assert_eq!(s.open_dropdown, None);
+        assert_eq!(s.status, Some("Defaults restored — Save to apply".to_string()));
     }
 }

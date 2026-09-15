@@ -19,6 +19,8 @@ pub struct Config {
     pub toast_click_action: ToastClickAction,
     /// Whether dragging the toast starts a file drag-out.
     pub toast_drag_enabled: bool,
+    /// Whether the toast pin button is enabled.
+    pub toast_pin_enabled: bool,
     /// Whether the toast shows a row of action buttons under the thumb.
     pub toast_show_actions: bool,
     /// How long the toast sits before it dismisses itself.
@@ -88,6 +90,7 @@ impl Default for Config {
             sound_on_capture: true,
             toast_click_action: ToastClickAction::Markup,
             toast_drag_enabled: true,
+            toast_pin_enabled: true,
             toast_show_actions: true,
             toast_duration_ms: 5000,
             toast_position: ToastPosition::BottomRight,
@@ -244,6 +247,7 @@ mod tests {
         assert_eq!(back.record_hotkey, cfg.record_hotkey);
         assert_eq!(back.toast_click_action, cfg.toast_click_action);
         assert_eq!(back.toast_position, cfg.toast_position);
+        assert_eq!(back.toast_pin_enabled, cfg.toast_pin_enabled);
         assert_eq!(back.toast_duration_ms, cfg.toast_duration_ms);
         assert_eq!(back.cancel_keybind, cfg.cancel_keybind);
         assert_eq!(back.confirm_keybind, cfg.confirm_keybind);
@@ -262,6 +266,7 @@ mod tests {
         assert_eq!(cfg.recording_fps, 24);
         assert_eq!(cfg.toast_click_action, ToastClickAction::Markup);
         assert_eq!(cfg.toast_position, ToastPosition::BottomRight);
+        assert_eq!(cfg.toast_pin_enabled, true);
         assert_eq!(cfg.toast_duration_ms, 5000);
         assert_eq!(cfg.cancel_keybind, "Escape");
         drop(d);
