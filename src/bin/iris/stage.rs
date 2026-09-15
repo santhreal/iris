@@ -89,6 +89,10 @@ pub struct ToastStage {
     morph_ready_at: Option<Instant>,
     /// Exit duration: full fly-off normally, a fast fade on replace.
     closing_dur: Duration,
+    /// The config snapshot taken at construction: render reads it
+    /// several times a frame, and Config::load() hits the disk each
+    /// call.
+    cfg: iris_lib::config::Config,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -152,6 +156,7 @@ impl ToastStage {
             pending_morph: None,
             morph_ready_at: None,
             closing_dur: EXIT,
+            cfg: iris_lib::config::Config::load(),
         })
     }
 
@@ -161,9 +166,7 @@ impl ToastStage {
         if self.closing_at.is_some() {
             return;
         }
-        let sit = Duration::from_millis(u64::from(
-            iris_lib::config::Config::load().toast_duration_ms,
-        ));
+        let sit = Duration::from_millis(u64::from(self.cfg.toast_duration_ms));
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(sit).await;
             this.update(cx, |stage, cx| {
@@ -265,8 +268,7 @@ impl ToastStage {
     }
 
     fn perform_click_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cfg = iris_lib::config::Config::load();
-        match cfg.toast_click_action {
+        match self.cfg.toast_click_action {
             iris_lib::config::ToastClickAction::Markup => {
                 self.hand_off_to_editor(window, cx);
             }
@@ -330,7 +332,7 @@ fn card_shadow(visibility: f32) -> Vec<BoxShadow> {
 impl Render for ToastStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (w, h) = self.dims;
-        let cfg = iris_lib::config::Config::load();
+        let cfg = &self.cfg;
         let is_left = matches!(
             cfg.toast_position,
             iris_lib::config::ToastPosition::BottomLeft | iris_lib::config::ToastPosition::TopLeft
@@ -513,7 +515,7 @@ impl Render for ToastStage {
                     (ev.position.x.into(), ev.position.y.into());
                 let (dx, dy) = (mx - sx, my - sy);
                 let is_left = matches!(
-                    iris_lib::config::Config::load().toast_position,
+                    stage.cfg.toast_position,
                     iris_lib::config::ToastPosition::BottomLeft | iris_lib::config::ToastPosition::TopLeft
                 );
                 let dismiss_dx = if is_left { -dx } else { dx };
@@ -544,7 +546,7 @@ impl Render for ToastStage {
                         last_dx: dismiss_dx,
                     });
                 } else {
-                    if iris_lib::config::Config::load().toast_drag_enabled {
+                    if stage.cfg.toast_drag_enabled {
                         stage.gesture = Gesture::FileDrag;
                         let icon = iris_lib::dragcopy::DragIcon {
                             width: stage.dims.0 as u32,
