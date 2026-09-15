@@ -9,7 +9,6 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use iris_lib::config::Config;
 use iris_lib::library::{self, CaptureEntry};
 use gpui::*;
 
@@ -44,6 +43,9 @@ pub struct Library {
     focus: FocusHandle,
     /// This window's unique WM_CLASS, for the title-bar drag.
     class: String,
+    /// The config snapshot: render reads the hotkey every frame, and
+    /// Config::load() hits the disk each call.
+    cfg: iris_lib::config::Config,
 }
 
 /// Open the library window.
@@ -93,6 +95,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         status: None,
                         focus,
                         class: win_id.clone(),
+                        cfg: iris_lib::config::Config::load(),
                     };
                     this.arm_refresh(cx);
                     this.prefetch_thumbs(cx);
@@ -268,10 +271,9 @@ fn card_morph_rect(ev: &ClickEvent, window: &Window) -> (f32, f32, f32, f32) {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.focus.focus(window);
+        let hotkey = self.cfg.capture_hotkey.clone();
         let selecting = !self.selected.is_empty();
         let this_help = self.help;
-        let hotkey = Config::load().capture_hotkey;
 
         // Right-side toolbar cluster, handed to the shared frame.
         let mut cluster: Vec<AnyElement> = Vec::new();
