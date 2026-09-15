@@ -48,6 +48,9 @@ pub struct Overlay {
     /// A committed selection being reshaped by a handle: the handle
     /// index (0-7, corners then edges) and the rect at drag start.
     resize: Option<(usize, (f32, f32, f32, f32))>,
+    /// A committed selection being moved by its interior: the pointer
+    /// offset into the rect at grab time.
+    moving: Option<(f32, f32)>,
     current: Option<(f32, f32, f32, f32)>,
     hovered: Option<WinRect>,
     cursor: (f32, f32),
@@ -219,10 +222,11 @@ fn open_shell_opts(
                     frame_img: None,
                     windows,
                     focus,
+                    resize: None,
+                    moving: None,
+                    current: None,
                     dragging: false,
                     anchor: (0.0, 0.0),
-                    resize: None,
-                    current: None,
                     hovered: None,
                     cursor: (0.0, 0.0),
                     loupe: None,
@@ -400,12 +404,12 @@ impl Overlay {
         self.finishing = false;
         self.pending_finish = false;
         self.opened = None;
-        self.hover_in = None;
+        self.resize = None;
+        self.moving = None;
         self.hover_out = None;
         self.flight = None;
         self.landed = None;
         self.finalize_failed = false;
-        self.resize = None;
     }
 
     /// The 8 resize handles of a committed selection, in logical px:
@@ -725,6 +729,15 @@ impl Render for Overlay {
                         cx.notify();
                         return;
                     }
+                    // A press inside the committed rect (not on a
+                    // handle) drags the whole selection.
+                    if let Some((x, y, w, h)) = this.current {
+                        if p.0 >= x && p.0 <= x + w && p.1 >= y && p.1 <= y + h {
+                            this.moving = Some((p.0 - x, p.1 - y));
+                            cx.notify();
+                            return;
+                        }
+                    }
                     this.dragging = true;
                     this.anchor = p;
                     this.current = None;
@@ -742,9 +755,19 @@ impl Render for Overlay {
                 this.cursor = (mx, my);
                 let sf = window.scale_factor();
                 let (sx, sy) = Self::scale(window, this.view);
+                if let Some((ox, oy)) = this.moving {
+                    // Drag the committed rect by its interior, clamped
+                    // to the window.
+                    if let Some((_, _, w, h)) = this.current {
+                        let size = window.bounds().size;
+                        let nx = (mx - ox).clamp(0.0, f32::from(size.width) - w);
+                        let ny = (my - oy).clamp(0.0, f32::from(size.height) - h);
+                        this.current = Some((nx, ny, w, h));
+                    }
+                    cx.notify();
+                    return;
+                }
                 if let Some((h, r0)) = this.resize {
-                    // Reshape the committed rect by the dragged handle.
-                    // Corners move two edges; edge handles move one.
                     let (mut x0, mut y0, mut x1, mut y1) =
                         (r0.0, r0.1, r0.0 + r0.2, r0.1 + r0.3);
                     match h {
@@ -817,8 +840,9 @@ impl Render for Overlay {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseUpEvent, window, cx| {
-                    // A handle release ends the reshape; the rect stays.
-                    if this.resize.take().is_some() {
+                    // A handle or interior release ends the reshape or
+                    // move; the rect stays armed for Enter.
+                    if this.resize.take().is_some() || this.moving.take().is_some() {
                         cx.notify();
                         return;
                     }
