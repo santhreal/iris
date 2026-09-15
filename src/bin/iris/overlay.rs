@@ -76,6 +76,9 @@ pub struct Overlay {
     /// The background finalize's result, parked here when it lands so
     /// the flight's last frame can hand it to the toast.
     landed: Option<(PathBuf, PathBuf, u32, u32)>,
+    /// The config snapshot for this session: render and the key handler
+    /// read it every frame, and Config::load() hits the disk each call.
+    cfg: iris_lib::config::Config,
 }
 
 /// The pooled overlay window: created on the first capture, parked
@@ -238,6 +241,7 @@ fn open_shell_opts(
                     flight: None,
                     landed: None,
                     finalize_failed: false,
+                    cfg: iris_lib::config::Config::load(),
                 })
             },
         )
@@ -410,6 +414,7 @@ impl Overlay {
         self.flight = None;
         self.landed = None;
         self.finalize_failed = false;
+        self.cfg = iris_lib::config::Config::load();
     }
 
     /// The 8 resize handles of a committed selection, in logical px:
@@ -569,7 +574,7 @@ impl Overlay {
             });
         })
         .detach();
-        let show_toast = iris_lib::config::Config::load().show_toast_after_capture;
+        let show_toast = self.cfg.show_toast_after_capture;
         if show_toast {
             // The toast lands on the monitor under the selection's
             // center, in that monitor's own bottom-right corner.
@@ -702,7 +707,7 @@ impl Render for Overlay {
                     cx.notify();
                     return;
                 }
-                let cfg = iris_lib::config::Config::load();
+                let cfg = &this.cfg;
                 let m = &ev.keystroke.modifiers;
                 if iris_lib::config::keybind_matches(
                     &cfg.cancel_keybind, key, m.control, m.shift, m.alt, m.platform,
@@ -1005,7 +1010,7 @@ impl Render for Overlay {
             // dragging the loupe is the feedback; the hint would
             // flicker under it.
             if !self.dragging {
-                let cfg = iris_lib::config::Config::load();
+                let cfg = &self.cfg;
                 root = root.child(
                     div()
                         .absolute()
