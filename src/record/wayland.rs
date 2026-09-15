@@ -176,10 +176,10 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
     if data.frames == 1 {
         // First encoded frame is the observable "recording is live"
         // edge; the QA rig waits on this line before stopping.
-        eprintln!("iris: record: first frame written");
+        crate::ilog!("iris: record: first frame written");
     }
     if let Err(e) = write_result {
-        eprintln!("iris: record: write_frame failed: {e}");
+        crate::ilog!("iris: record: write_frame failed: {e}");
         data.fail(e);
     }
 }
@@ -264,12 +264,12 @@ fn on_param_changed(
     }
     let size = info.size();
     data.format = Some((size.width, size.height, info.format()));
-    eprintln!("iris: record: negotiated format {}x{} {:?}", size.width, size.height, info.format());
+    crate::ilog!("iris: record: negotiated format {}x{} {:?}", size.width, size.height, info.format());
 }
 
 /// Record a portal-selected window until `spec.stop` fires.
 pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
-    eprintln!("iris: record: record_window start -> {}", spec.output.display());
+    crate::ilog!("iris: record: record_window start -> {}", spec.output.display());
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         return Err(
             "Wayland recording needs WAYLAND_DISPLAY; this is not a Wayland session".to_string(),
@@ -343,7 +343,7 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
         .state_changed(|_stream, _data, _old, new| {
             // Streaming is the observable "frames are flowing" edge;
             // the QA rig waits on this line before stopping.
-            eprintln!("iris: record: stream {new:?}");
+            crate::ilog!("iris: record: stream {new:?}");
         })
         .param_changed(on_param_changed)
         .process(on_process)

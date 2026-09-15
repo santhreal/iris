@@ -174,14 +174,14 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
             // Busy mid-session: no stacking. Dead handle: fresh open.
             Ok(false) => return Ok(()),
             Err(e) => {
-                eprintln!("iris: capture: pooled handle dead ({e:?}), reopening");
+                iris_lib::ilog!("iris: capture: pooled handle dead ({e:?}), reopening");
                 overlay::open_shell(cx, &layout)?
             }
         }
     } else {
         overlay::open_shell(cx, &layout)?
     };
-    eprintln!("iris: capture: shell in {:?}", t0.elapsed());
+    iris_lib::ilog!("iris: capture: shell in {:?}", t0.elapsed());
     cx.spawn(async move |cx| {
         let grabbed = cx
             .background_executor()
@@ -191,7 +191,7 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
                 let grab_ms = t_grab.elapsed();
                 let t_slice = Instant::now();
                 let img = overlay::slice_frame(&frame);
-                eprintln!(
+                iris_lib::ilog!(
                     "iris: capture: grab {:?}, slice {:?}",
                     grab_ms,
                     t_slice.elapsed()
@@ -201,14 +201,14 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
             .await;
         let _ = cx.update(|cx| match grabbed {
             Ok((frame, img)) => {
-                eprintln!("iris: capture: frame landed in {:?}", t0.elapsed());
+                iris_lib::ilog!("iris: capture: frame landed in {:?}", t0.elapsed());
                 let _ = handle.update(cx, |overlay, window, cx| {
                     overlay.set_frame(frame, img, window, cx);
                     cx.notify();
                 });
             }
             Err(e) => {
-                eprintln!("iris: capture: {e}");
+                iris_lib::ilog!("iris: capture: {e}");
                 let _ = handle.update(cx, |overlay, window, cx| {
                     overlay.cancel(window, cx);
                 });
@@ -251,11 +251,11 @@ fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
             Ok((path, entry)) => {
                 if Config::load().show_toast_after_capture {
                     if let Err(e) = stage::show_toast(cx, &path, &entry.thumb, entry.width, entry.height) {
-                        eprintln!("iris: capture: {e}");
+                        iris_lib::ilog!("iris: capture: {e}");
                     }
                 }
             }
-            Err(e) => eprintln!("iris: capture: {e}"),
+            Err(e) => iris_lib::ilog!("iris: capture: {e}"),
         });
     })
     .detach();
@@ -311,7 +311,7 @@ fn toggle_recording(cx: &mut App) -> Result<(), String> {
     let mut mgr = RECORDING.lock();
     if mgr.is_active() {
         match mgr.stop()? {
-            Some(path) => eprintln!("iris: recording saved: {}", path.display()),
+            Some(path) => iris_lib::ilog!("iris: recording saved: {}", path.display()),
             None => {}
         }
         chip::close(cx); // defensive: any exit path that missed hide
@@ -602,11 +602,11 @@ mod hotkeys {
                     (&cfg.record_hotkey, Command::RecordToggle),
                 ] {
                     let Some((mods, keysym)) = parse_hotkey(hotkey) else {
-                        eprintln!("iris: cannot parse hotkey {hotkey:?}");
+                        iris_lib::ilog!("iris: cannot parse hotkey {hotkey:?}");
                         continue;
                     };
                     let Some(keycode) = keycode_for(conn, keysym) else {
-                        eprintln!("iris: no keycode for hotkey keysym {keysym:#x}");
+                        iris_lib::ilog!("iris: no keycode for hotkey keysym {keysym:#x}");
                         continue;
                     };
                     let mut ok = true;
@@ -624,7 +624,7 @@ mod hotkeys {
                             .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
                             .is_err()
                         {
-                            eprintln!("iris: cannot grab hotkey keysym {keysym:#x}");
+                            iris_lib::ilog!("iris: cannot grab hotkey keysym {keysym:#x}");
                             ok = false;
                             break;
                         }
@@ -767,7 +767,7 @@ pub fn start(cx: &mut App) {
                         let _ = cx.update(|cx| {
                             for cmd in cmds {
                                 if let Err(e) = dispatch(cx, &cmd) {
-                                    eprintln!("iris: dispatch: {e}");
+                                    iris_lib::ilog!("iris: dispatch: {e}");
                                 }
                             }
                         });
@@ -776,7 +776,7 @@ pub fn start(cx: &mut App) {
             })
             .detach();
         }
-        Err(e) => eprintln!("iris: single-instance socket unavailable: {e}"),
+        Err(e) => iris_lib::ilog!("iris: single-instance socket unavailable: {e}"),
     }
 
     #[cfg(target_os = "linux")]
@@ -786,7 +786,7 @@ pub fn start(cx: &mut App) {
         std::thread::spawn(move || {
             use ksni::blocking::TrayMethods;
             match tray.spawn() {
-                Err(e) => eprintln!("iris: tray unavailable: {e}"),
+                Err(e) => iris_lib::ilog!("iris: tray unavailable: {e}"),
                 Ok(handle) => {
                     // Keep the tray registered for the process lifetime.
                     let _keep = handle;
@@ -805,7 +805,7 @@ pub fn start(cx: &mut App) {
         while let Some(cmd) = rx.next().await {
             let _ = cx.update(|cx| {
                 if let Err(e) = dispatch(cx, &cmd) {
-                    eprintln!("iris: dispatch: {e}");
+                    iris_lib::ilog!("iris: dispatch: {e}");
                 }
             });
         }

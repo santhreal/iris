@@ -34,6 +34,7 @@ mod xwin;
 use gpui::*;
 
 fn main() {
+    iris_lib::log::init();
     // Skip argv[0]; daemon::parse_args handles the flags.
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -61,12 +62,12 @@ fn main() {
                 include_bytes!("../../../assets/fonts/Inter-Bold.otf") as &[u8],
             ),
         ]) {
-            eprintln!("iris: fonts: {e}");
+            iris_lib::ilog!("iris: fonts: {e}");
         }
         daemon::start(cx);
         for cmd in daemon::parse_args(&args) {
             if let Err(e) = daemon::dispatch(cx, &cmd) {
-                eprintln!("iris: {e}");
+                iris_lib::ilog!("iris: {e}");
             }
         }
     });

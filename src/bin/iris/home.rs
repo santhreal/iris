@@ -265,7 +265,7 @@ impl Render for Home {
                                     if let Err(e) =
                                         daemon::dispatch(cx, &daemon::Command::Capture)
                                     {
-                                        eprintln!("iris: {e}");
+                                        iris_lib::ilog!("iris: {e}");
                                     }
                                 })),
                             )
@@ -294,7 +294,7 @@ impl Render for Home {
                                 .on_click(cx.listener(|_, _, window, cx| {
                                     window.remove_window();
                                     if let Err(e) = crate::library::open(cx) {
-                                        eprintln!("iris: {e}");
+                                        iris_lib::ilog!("iris: {e}");
                                     }
                                 })),
                             ),
@@ -317,7 +317,7 @@ impl Render for Home {
                         widgets::icon_button("home-settings".into(), Icon::Gear, false, 30.0).on_click(
                             cx.listener(|_, _, _, cx| {
                                 if let Err(e) = crate::settings::open(cx) {
-                                    eprintln!("iris: {e}");
+                                    iris_lib::ilog!("iris: {e}");
                                 }
                             }),
                         ),

@@ -733,7 +733,7 @@ impl Editor {
                 })
                 .await;
             if let Err(e) = result {
-                eprintln!("iris: save: {e}");
+                iris_lib::ilog!("iris: save: {e}");
             }
         })
         .detach();

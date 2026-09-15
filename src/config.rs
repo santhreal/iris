@@ -166,10 +166,10 @@ impl Config {
                     cfg.expand_dirs();
                     return cfg;
                 }
-                Err(e) => eprintln!("iris: invalid config {}: {e}; using defaults", path.display()),
+                Err(e) => crate::ilog!("iris: invalid config {}: {e}; using defaults", path.display()),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => eprintln!("iris: cannot read {}: {e}; using defaults", path.display()),
+            Err(e) => crate::ilog!("iris: cannot read {}: {e}; using defaults", path.display()),
         }
         let cfg = Self::default();
         if let Some(parent) = path.parent() {

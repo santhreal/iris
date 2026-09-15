@@ -6,6 +6,7 @@ pub mod config;
 pub mod dragcopy;
 pub mod history;
 pub mod library;
+pub mod log;
 pub mod ocr;
 pub mod record;
 

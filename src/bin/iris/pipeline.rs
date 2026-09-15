@@ -21,7 +21,7 @@ pub static CLIPBOARD: std::sync::LazyLock<Option<parking_lot::Mutex<arboard::Cli
     std::sync::LazyLock::new(|| {
         arboard::Clipboard::new()
             .map(parking_lot::Mutex::new)
-            .map_err(|e| eprintln!("iris: clipboard unavailable: {e}"))
+            .map_err(|e| iris_lib::ilog!("iris: clipboard unavailable: {e}"))
             .ok()
     });
 
@@ -165,7 +165,7 @@ pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntr
     // the capture lands on the clipboard at all.
     if cfg.copy_to_clipboard {
         if let Err(e) = copy_image(img) {
-            eprintln!("iris: clipboard: {e}");
+            iris_lib::ilog!("iris: clipboard: {e}");
         }
     }
     let entry = library::add(&path, img)?;

@@ -228,7 +228,7 @@ impl ToastStage {
                 cx.notify();
             }
             Err(e) => {
-                eprintln!("annotate: {e}");
+                iris_lib::ilog!("annotate: {e}");
                 crate::widgets::release_render(&self.thumb, cx);
                 window.remove_window();
             }
@@ -257,14 +257,14 @@ impl ToastStage {
     }
     fn copy_image(&mut self, cx: &mut Context<Self>) {
         if let Err(e) = crate::pipeline::copy_image_file(&self.path) {
-            eprintln!("copy: {e}");
+            iris_lib::ilog!("copy: {e}");
         }
         cx.notify();
     }
 
     fn copy_file(&mut self, cx: &mut Context<Self>) {
         if let Err(e) = iris_lib::dragcopy::copy_file_path(&self.path) {
-            eprintln!("copy file: {e}");
+            iris_lib::ilog!("copy file: {e}");
         }
         cx.notify();
     }
@@ -277,7 +277,7 @@ impl ToastStage {
     fn delete_capture(&mut self, cx: &mut Context<Self>) {
         match iris_lib::library::delete(&self.path) {
             Ok(()) => self.begin_close(cx),
-            Err(e) => eprintln!("delete: {e}"),
+            Err(e) => iris_lib::ilog!("delete: {e}"),
         }
         cx.notify();
     }
@@ -572,7 +572,7 @@ impl Render for ToastStage {
                             vec![stage.path.clone()],
                             Some(icon),
                         ) {
-                            eprintln!("drag: {e}");
+                            iris_lib::ilog!("drag: {e}");
                         }
                     }
                 }

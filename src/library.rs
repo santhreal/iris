@@ -64,7 +64,7 @@ fn read_store() -> Vec<CaptureEntry> {
         return Vec::new();
     };
     serde_json::from_str(&text).unwrap_or_else(|e| {
-        eprintln!("iris: corrupt library.json, starting fresh: {e}");
+        crate::ilog!("iris: corrupt library.json, starting fresh: {e}");
         Vec::new()
     })
 }

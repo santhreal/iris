@@ -552,7 +552,7 @@ impl Overlay {
             Ok(c) => c,
             Err(e) => {
                 // A bad crop loses this capture, never the daemon.
-                eprintln!("iris: capture: {e}");
+                iris_lib::ilog!("iris: capture: {e}");
                 self.cancel(window, cx);
                 return;
             }
@@ -580,7 +580,7 @@ impl Overlay {
                 Err(e) => {
                     // A failed save (full disk, unwritable dir) loses
                     // the capture; the daemon and the overlay recover.
-                    eprintln!("iris: capture: {e}");
+                    iris_lib::ilog!("iris: capture: {e}");
                     this.finalize_failed = true;
                     cx.notify();
                 }
@@ -1188,7 +1188,7 @@ impl Overlay {
                 // A toast that cannot open loses the notification,
                 // not the daemon: the capture is already on disk.
                 if let Err(e) = stage::show_toast_landed(cx, &path, &thumb, w, h, Some(screen)) {
-                    eprintln!("iris: toast: {e}");
+                    iris_lib::ilog!("iris: toast: {e}");
                 }
             });
             self.park(window, cx);
