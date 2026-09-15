@@ -154,6 +154,7 @@ pub fn dropdown(id: String, current: String, open: bool) -> Stateful<Div> {
 /// The floating option list a `dropdown` opens. `selected` is drawn
 /// with a check; the parent wires each row's on_click and positions
 /// the menu absolutely under the field.
+#[allow(dead_code)]
 pub fn dropdown_menu(options: &[String], selected: usize) -> Div {
     let mut m = menu();
     for (i, opt) in options.iter().enumerate() {
@@ -241,6 +242,16 @@ fn swizzle_rgba_bgra(chunk: &mut [u8]) {
 
 pub fn render_image_from_rgba(width: u32, height: u32, rgba: &[u8]) -> std::sync::Arc<gpui::RenderImage> {
     let mut data = vec![0u8; rgba.len()];
+    // Small images (the 152px loupe, rebuilt every mousemove) lose more
+    // to thread-spawn latency than they gain from parallelism. Only
+    // band across threads once the buffer is large enough to matter.
+    const PARALLEL_MIN: usize = 1 << 20; // ~1 MP of RGBA
+    if rgba.len() < PARALLEL_MIN {
+        data.copy_from_slice(rgba);
+        swizzle_rgba_bgra(&mut data);
+        let buf = image::RgbaImage::from_raw(width, height, data).expect("rgba buffer size");
+        return std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]));
+    }
     let row = width as usize * 4;
     let threads = std::thread::available_parallelism()
         .map(|n| n.get().min(8))
