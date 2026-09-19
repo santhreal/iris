@@ -578,7 +578,10 @@ fn record_loop(
                 return Ok(());
             }
         };
-        encoder.write_frame(&rgba)?;
+        // The frame buffer moves to the writer thread; the next frame
+        // fills a recycled one.
+        let frame = std::mem::replace(&mut rgba, encoder.take_buf());
+        encoder.write_frame(frame)?;
         frame_no += 1;
     }
 }

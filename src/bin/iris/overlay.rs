@@ -57,6 +57,9 @@ pub struct Overlay {
     hovered: Option<WinRect>,
     cursor: (f32, f32),
     loupe: Option<(Arc<RenderImage>, String)>,
+    /// Frame pixel the loupe was last built for; a mousemove inside
+    /// the same pixel skips the rebuild.
+    loupe_at: Option<(i64, i64)>,
     finishing: bool,
     /// Enter landed before the background grab did: finish() defers
     /// here and set_frame() completes it once the frame exists.
@@ -235,6 +238,7 @@ fn open_shell_opts(
                     hovered: None,
                     cursor: (0.0, 0.0),
                     loupe: None,
+                    loupe_at: None,
                     finishing: false,
                     pending_finish: false,
                     opened: None,
@@ -411,6 +415,7 @@ impl Overlay {
         self.current = None;
         self.hovered = None;
         self.loupe = None;
+        self.loupe_at = None;
         self.finishing = false;
         self.pending_finish = false;
         self.opened = None;
@@ -526,6 +531,12 @@ impl Overlay {
     /// Rebuild the loupe for a frame-pixel position, releasing the
     /// previous tile. Called on every drag and resize mousemove.
     fn update_loupe(&mut self, fx: i64, fy: i64, cx: &mut Context<Self>) {
+        // A mousemove that stays inside the same frame pixel rebuilds
+        // nothing: the loupe and its hex readout are already correct.
+        if self.loupe_at == Some((fx, fy)) {
+            return;
+        }
+        self.loupe_at = Some((fx, fy));
         if let (Some(img), Some((w, h))) = (&self.frame_img, self.frame_size) {
             // The previous loupe's cache entry goes with it: a drag
             // mints one per mousemove.
@@ -886,6 +897,7 @@ impl Render for Overlay {
                     this.update_loupe(fx, fy, cx);
                 } else {
                     this.loupe = None;
+                    this.loupe_at = None;
                     let new_hover = this.window_at(mx, my, sf, sx, sy);
                     let changed = match (this.hovered, new_hover) {
                         (None, None) => false,
@@ -911,6 +923,7 @@ impl Render for Overlay {
                     // move; the rect stays armed for Enter.
                     if this.resize.take().is_some() || this.moving.take().is_some() {
                         if let Some((img, _)) = this.loupe.take() {
+                            this.loupe_at = None;
                             crate::widgets::release_render(&img, cx);
                         }
                         cx.notify();
@@ -921,6 +934,7 @@ impl Render for Overlay {
                     }
                     this.dragging = false;
                     if let Some((img, _)) = this.loupe.take() {
+                        this.loupe_at = None;
                         crate::widgets::release_render(&img, cx);
                     }
                     let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());

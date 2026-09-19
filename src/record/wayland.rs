@@ -649,7 +649,8 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
             }
         }
     }
-    let write_result = shared.encoder.as_mut().unwrap().write_frame(&data.scratch);
+    let frame = std::mem::replace(&mut data.scratch, shared.encoder.as_mut().unwrap().take_buf());
+    let write_result = shared.encoder.as_mut().unwrap().write_frame(frame);
     drop(shared);
     data.frames += 1;
     if data.frames == 1 {
@@ -681,41 +682,60 @@ fn convert_frame(
         ));
     }
     out.resize(w * h * 4, 0);
-    match format {
-        VideoFormat::BGRx | VideoFormat::BGRA => {
-            for (row_out, row_in) in out
-                .chunks_exact_mut(w * 4)
-                .zip(src.chunks(stride).take(h))
-            {
-                for (o, px) in row_out
-                    .chunks_exact_mut(4)
-                    .zip(row_in[..w * 4].chunks_exact(4))
-                {
-                    let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
-                    let rgb = (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-                    o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
+    let pixels = w * h;
+    // Parallel row-band swizzle: a single-threaded per-pixel loop at
+    // 1080p+ is a visible slice of the frame budget and drops frames.
+    const PARALLEL_MIN: usize = 1 << 20; // ~1 MP
+    let bgrx = matches!(format, VideoFormat::BGRx | VideoFormat::BGRA);
+    let rgbx = matches!(format, VideoFormat::RGBx | VideoFormat::RGBA);
+    if !bgrx && !rgbx {
+        return Err(format!(
+            "unsupported negotiated pixel format {format:?}; expected BGRx/BGRA/RGBx/RGBA"
+        ));
+    }
+    let swizzle_row = |row_out: &mut [u8], row_in: &[u8]| {
+        for (o, px) in row_out.chunks_exact_mut(4).zip(row_in[..w * 4].chunks_exact(4)) {
+            let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
+            let rgb = if bgrx {
+                (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF)
+            } else {
+                v & 0xFF_FFFF
+            };
+            o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
+        }
+    };
+    if pixels < PARALLEL_MIN {
+        for (row_out, row_in) in out.chunks_exact_mut(w * 4).zip(src.chunks(stride).take(h)) {
+            swizzle_row(row_out, row_in);
+        }
+    } else {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get().min(8))
+            .unwrap_or(4)
+            .min(h)
+            .max(1);
+        let band = h.div_ceil(threads);
+        std::thread::scope(|scope| {
+            let mut out_rest = out.as_mut_slice();
+            let mut in_rest = src;
+            for _ in 0..threads {
+                let rows = band.min(in_rest.len() / stride);
+                if rows == 0 {
+                    break;
                 }
+                let (o_chunk, o_rest) = out_rest.split_at_mut(rows * w * 4);
+                let (i_chunk, i_rest) = in_rest.split_at(rows * stride);
+                out_rest = o_rest;
+                in_rest = i_rest;
+                scope.spawn(move || {
+                    for (row_out, row_in) in
+                        o_chunk.chunks_exact_mut(w * 4).zip(i_chunk.chunks(stride).take(rows))
+                    {
+                        swizzle_row(row_out, row_in);
+                    }
+                });
             }
-        }
-        VideoFormat::RGBx | VideoFormat::RGBA => {
-            for (row_out, row_in) in out
-                .chunks_exact_mut(w * 4)
-                .zip(src.chunks(stride).take(h))
-            {
-                for (o, px) in row_out
-                    .chunks_exact_mut(4)
-                    .zip(row_in[..w * 4].chunks_exact(4))
-                {
-                    let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
-                    o.copy_from_slice(&((v & 0xFF_FFFF) | 0xFF00_0000).to_le_bytes());
-                }
-            }
-        }
-        other => {
-            return Err(format!(
-                "unsupported negotiated pixel format {other:?}; expected BGRx/BGRA/RGBx/RGBA"
-            ));
-        }
+        });
     }
     Ok(())
 }

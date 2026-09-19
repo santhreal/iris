@@ -167,6 +167,30 @@ fn request_fullscreen_on(conn: &impl Connection, win: u32) {
     request_state_on(conn, win, b"_NET_WM_STATE_FULLSCREEN");
 }
 
+/// Pin a window above everything: _NET_WM_STATE_ABOVE via a client
+/// message once the window's XID exists. Used by the pin-to-screen
+/// reference window.
+pub fn always_on_top_after_map(class: String) {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        std::thread::spawn(move || {
+            let Ok((conn, _)) = x11rb::connect(None) else {
+                return;
+            };
+            for _ in 0..120 {
+                if let Some(xid) = find_xid_by_class_on(&conn, &class) {
+                    suppress_decorations_on(&conn, xid);
+                    request_state_on(&conn, xid, b"_NET_WM_STATE_ABOVE");
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(15));
+            }
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = class;
+}
+
 /// Span the virtual screen with one window: explicit placement at the
 /// union rect plus _NET_WM_STATE_ABOVE. _NET_WM_STATE_FULLSCREEN pins
 /// a window to a single monitor, so the overlay does not use it.

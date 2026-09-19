@@ -38,6 +38,7 @@ pub enum Icon {
     Pin,
     Pause,
     MicOff,
+    Counter,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.
@@ -263,6 +264,12 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
             push_ring(&mut path, p(9.0, 6.6), 2.6 * s, 3.8 * s, w);
             push_segment(&mut path, p(4.0, 4.0), p(14.0, 14.0), w);
             push_segment(&mut path, p(9.0, 13.2), p(9.0, 15.4), w);
+        }
+        Icon::Counter => {
+            // Numbered badge: filled disc with a "1" stem.
+            push_disc(&mut path, p(9.0, 9.0), 6.4 * s);
+            push_segment(&mut path, p(9.0, 5.6), p(9.0, 12.4), 1.8 * s);
+            push_segment(&mut path, p(7.4, 7.2), p(9.0, 5.6), 1.8 * s);
         }
     }
     window.paint_path(path, color);

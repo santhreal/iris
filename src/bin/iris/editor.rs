@@ -63,9 +63,9 @@ enum Tool {
     Highlight,
     Blur,
     Crop,
+    Counter,
 }
-
-const TOOLS: [(Tool, Icon, &str); 10] = [
+const TOOLS: [(Tool, Icon, &str); 11] = [
     (Tool::Select, Icon::Cursor, "Select"),
     (Tool::Pen, Icon::Pen, "Pen"),
     (Tool::Line, Icon::Line, "Line"),
@@ -76,6 +76,7 @@ const TOOLS: [(Tool, Icon, &str); 10] = [
     (Tool::Highlight, Icon::Highlight, "Highlight"),
     (Tool::Blur, Icon::Blur, "Blur"),
     (Tool::Crop, Icon::Crop, "Crop"),
+    (Tool::Counter, Icon::Counter, "Counter"),
 ];
 
 #[derive(Clone)]
@@ -93,6 +94,8 @@ struct Action {
     /// the composite below this action.
     blur_patch: Option<Arc<RenderImage>>,
     blur_rect: (f32, f32, f32, f32),
+    /// Counter tool: the step number shown in the badge.
+    step: u32,
 }
 
 struct TextEntry {
@@ -445,7 +448,19 @@ impl Editor {
             filled: self.fill,
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
+            step: self.next_step(),
         }
+    }
+
+    /// The next counter number: one past the highest committed step.
+    fn next_step(&self) -> u32 {
+        self.actions
+            .iter()
+            .filter(|a| a.tool == Tool::Counter)
+            .map(|a| a.step)
+            .max()
+            .unwrap_or(0)
+            + 1
     }
 
     /// Commit the in-progress action: rasterize it into the composite,
@@ -454,7 +469,11 @@ impl Editor {
         let Some(mut action) = self.current.take() else {
             return;
         };
-        if action.points.len() < 2 && action.tool != Tool::Pen && action.tool != Tool::Highlight {
+        if action.points.len() < 2
+            && action.tool != Tool::Pen
+            && action.tool != Tool::Highlight
+            && action.tool != Tool::Counter
+        {
             return;
         }
         if action.tool == Tool::Blur {
@@ -540,7 +559,12 @@ impl Editor {
         // Reuse the composite buffer: it is always the same size as base,
         // so replay writes into it instead of cloning a fresh image.
         self.composite.copy_from_slice(&self.base);
+        let mut step = 0u32;
         for action in Rc::make_mut(&mut self.actions) {
+            if action.tool == Tool::Counter {
+                step += 1;
+                action.step = step;
+            }
             if action.tool == Tool::Blur {
                 let (x, y) = (
                     action.blur_rect.0.max(0.0) as u32,
@@ -572,6 +596,11 @@ impl Editor {
                 Some((p.0, p.1 - action.font_size, w.max(8.0), action.font_size * 1.25))
             }
             Tool::Blur => Some(action.blur_rect),
+            Tool::Counter => {
+                let p = action.points.first()?;
+                let r = action.font_size * 0.9;
+                Some((p.0 - r, p.1 - r, r * 2.0, r * 2.0))
+            }
             _ => {
                 if action.points.is_empty() {
                     return None;
@@ -792,6 +821,7 @@ impl Editor {
                 filled: false,
                 blur_patch: None,
                 blur_rect: (0.0, 0.0, 0.0, 0.0),
+                step: 0,
             };
             rasterize(&mut self.composite, &action, 1.0);
             self.push_edit(Edit::Add(action.clone()));
@@ -953,6 +983,17 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
             }
         }
         Tool::Blur => {}
+        Tool::Counter => {
+            // Filled disc at the point, then the step number on top.
+            if let Some(p) = action.points.first() {
+                let r = action.font_size * 0.9;
+                stamp(img, p.0, p.1, r, px);
+                let num = action.step.to_string();
+                let nw = num.chars().count() as f32 * action.font_size * 0.6;
+                let white = image::Rgba([255, 255, 255, px.0[3]]);
+                draw_text(img, (p.0 - nw / 2.0, p.1 + action.font_size * 0.35), action.font_size, &num, white);
+            }
+        }
         Tool::Select | Tool::Crop => {}
     }
 }
@@ -1242,6 +1283,7 @@ impl Render for Editor {
                     "h" => this.set_tool(Tool::Highlight, cx),
                     "b" => this.set_tool(Tool::Blur, cx),
                     "c" => this.set_tool(Tool::Crop, cx),
+                    "n" => this.set_tool(Tool::Counter, cx),
                     "f" => {
                         this.fill = !this.fill;
                     }
@@ -1562,6 +1604,21 @@ impl Render for Editor {
                             .child(SharedString::from(text.clone())),
                     );
                 }
+            } else if action.tool == Tool::Counter {
+                if let Some(p) = action.points.first() {
+                    let num = action.step.to_string();
+                    let nw = num.chars().count() as f32 * action.font_size * 0.6;
+                    stage = stage.child(
+                        div()
+                            .absolute()
+                            .left(px((p.0 - nw / 2.0) * scale))
+                            .top(px((p.1 - action.font_size * 0.55) * scale))
+                            .text_color(theme::FG)
+                            .text_size(px(action.font_size * scale))
+                            .font_weight(FontWeight::BOLD)
+                            .child(SharedString::from(num)),
+                    );
+                }
             }
         }
 
@@ -1803,13 +1860,14 @@ impl Render for Editor {
                     this.crop_rect = Some(moved);
                     this.crop_move = Some((p, moved));
                     cx.notify();
-                    return;
                 }
                 let Some(action) = this.current.as_mut() else {
                     return;
                 };
                 if action.tool == Tool::Pen || action.tool == Tool::Highlight {
                     action.points.push(p);
+                } else if action.tool == Tool::Counter {
+                    action.points = vec![p];
                 } else {
                     action.points = vec![action.points[0], p];
                 }
@@ -1991,6 +2049,11 @@ fn paint_action(
                 }
             }
         }
+        Tool::Counter => {
+            if let Some(p) = action.points.first() {
+                push_disc(&mut path, s(*p), action.font_size * 0.9 * scale);
+            }
+        }
         _ => {}
     }
     window.paint_path(path, color);
@@ -2014,6 +2077,7 @@ mod tests {
             filled,
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
+            step: 0,
         }
     }
 

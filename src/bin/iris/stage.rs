@@ -459,6 +459,17 @@ impl Render for ToastStage {
                     })),
             );
             menu = menu.child(
+                crate::widgets::menu_row("toast-pin", "Pin to screen")
+                    .on_click(cx.listener(|stage, _, _window, cx| {
+                        cx.stop_propagation();
+                        stage.menu_at = None;
+                        if let Err(e) = crate::pin::open(cx, &stage.path) {
+                            iris_lib::ilog!("pin: {e}");
+                        }
+                        stage.begin_close(cx);
+                    })),
+            );
+            menu = menu.child(
                 crate::widgets::menu_row("toast-delete", "Delete")
                     .on_click(cx.listener(|stage, _, _, cx| {
                         cx.stop_propagation();
@@ -489,7 +500,7 @@ impl Render for ToastStage {
                     if let Some((mx, my)) = stage.menu_at {
                         let (px_, py_): (f32, f32) =
                             (ev.position.x.into(), ev.position.y.into());
-                        let menu_h = 4.0 * crate::widgets::MENU_ROW_H + 10.0;
+                        let menu_h = 5.0 * crate::widgets::MENU_ROW_H + 10.0;
                         let inside = px_ >= mx && px_ <= mx + crate::widgets::MENU_W
                             && py_ >= my && py_ <= my + menu_h;
                         if !inside {
