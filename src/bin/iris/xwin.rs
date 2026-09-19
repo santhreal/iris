@@ -7,6 +7,17 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
 use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
+/// A process-shared X connection for the post-map fixup helpers. Each
+/// helper runs on its own thread and pays a ~10ms handshake per call;
+/// one shared connection removes that from the capture hot path.
+/// x11rb serializes requests internally, so concurrent callers are safe.
+#[cfg(target_os = "linux")]
+fn shared_conn() -> Option<&'static x11rb::rust_connection::RustConnection> {
+    static CONN: std::sync::LazyLock<Option<x11rb::rust_connection::RustConnection>> =
+        std::sync::LazyLock::new(|| x11rb::connect(None).ok().map(|(c, _)| c));
+    CONN.as_ref()
+}
+
 /// The primary monitor's rect in root pixels from randr (primary
 /// first in `monitors()`), falling back to GPUI's primary display.
 /// GPUI's X11 primary_display() can span the whole virtual screen
@@ -93,12 +104,12 @@ pub fn fullscreen_after_map(class: String, x: f32, y: f32) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Ok((conn, _)) = x11rb::connect(None) else {
+            let Some(conn) = shared_conn() else {
                 return;
             };
             for _ in 0..120 {
-                if let Some(xid) = find_xid_by_class_on(&conn, &class) {
-                    suppress_decorations_on(&conn, xid);
+                if let Some(xid) = find_xid_by_class_on(conn, &class) {
+                    suppress_decorations_on(conn, xid);
                     let aux = x11rb::protocol::xproto::ConfigureWindowAux::new()
                         .x(x as i32)
                         .y(y as i32);
@@ -109,11 +120,11 @@ pub fn fullscreen_after_map(class: String, x: f32, y: f32) {
                     // window (openbox's anti-overlap cascade).
                     let _ = conn.configure_window(xid, &aux);
                     let _ = conn.flush();
-                    request_fullscreen_on(&conn, xid);
+                    request_fullscreen_on(conn, xid);
                     std::thread::sleep(std::time::Duration::from_millis(200));
                     let _ = conn.configure_window(xid, &aux);
                     let _ = conn.flush();
-                    request_fullscreen_on(&conn, xid);
+                    request_fullscreen_on(conn, xid);
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -209,13 +220,13 @@ pub fn always_on_top_after_map(class: String) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Ok((conn, _)) = x11rb::connect(None) else {
+            let Some(conn) = shared_conn() else {
                 return;
             };
             for _ in 0..120 {
-                if let Some(xid) = find_xid_by_class_on(&conn, &class) {
-                    suppress_decorations_on(&conn, xid);
-                    request_state_on(&conn, xid, b"_NET_WM_STATE_ABOVE");
+                if let Some(xid) = find_xid_by_class_on(conn, &class) {
+                    suppress_decorations_on(conn, xid);
+                    request_state_on(conn, xid, b"_NET_WM_STATE_ABOVE");
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(15));
@@ -233,12 +244,12 @@ pub fn span_after_map(class: String, x: i32, y: i32, w: u32, h: u32) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Ok((conn, _)) = x11rb::connect(None) else {
+            let Some(conn) = shared_conn() else {
                 return;
             };
             for _ in 0..120 {
-                if let Some(xid) = find_xid_by_class_on(&conn, &class) {
-                    suppress_decorations_on(&conn, xid);
+                if let Some(xid) = find_xid_by_class_on(conn, &class) {
+                    suppress_decorations_on(conn, xid);
                     let aux = x11rb::protocol::xproto::ConfigureWindowAux::new()
                         .x(x)
                         .y(y)
@@ -247,13 +258,13 @@ pub fn span_after_map(class: String, x: i32, y: i32, w: u32, h: u32) {
                         .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE);
                     let _ = conn.configure_window(xid, &aux);
                     let _ = conn.flush();
-                    request_state_on(&conn, xid, b"_NET_WM_STATE_ABOVE");
+                    request_state_on(conn, xid, b"_NET_WM_STATE_ABOVE");
                     std::thread::sleep(std::time::Duration::from_millis(200));
                     // The WM's own placement pass may have moved us;
                     // assert the span again.
                     let _ = conn.configure_window(xid, &aux);
                     let _ = conn.flush();
-                    request_state_on(&conn, xid, b"_NET_WM_STATE_ABOVE");
+                    request_state_on(conn, xid, b"_NET_WM_STATE_ABOVE");
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(15));
@@ -318,15 +329,15 @@ pub fn find_xid_by_class_on(conn: &impl Connection, class_substr: &str) -> Optio
 /// the WM's own placement (openbox's anti-overlap cascade) after a
 /// single-shot move has already landed.
 pub fn move_to(class_substr: &str, x: i32, y: i32, notification: bool) {
-    let Ok((conn, _)) = x11rb::connect(None) else {
+    let Some(conn) = shared_conn() else {
         return;
     };
     for _ in 0..120 {
-        if let Some(xid) = find_xid_by_class_on(&conn, class_substr) {
+        if let Some(xid) = find_xid_by_class_on(conn, class_substr) {
             if notification {
-                set_window_type_notification_on(&conn, xid);
+                set_window_type_notification_on(conn, xid);
             }
-            suppress_decorations_on(&conn, xid);
+            suppress_decorations_on(conn, xid);
             let aux = x11rb::protocol::xproto::ConfigureWindowAux::new().x(x).y(y);
             let _ = conn.configure_window(xid, &aux);
             let _ = conn.flush();
@@ -433,10 +444,10 @@ pub fn unpark_span(class: String, x: i32, y: i32, w: u32, h: u32) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Ok((conn, _)) = x11rb::connect(None) else {
+            let Some(conn) = shared_conn() else {
                 return;
             };
-            if let Some(xid) = find_xid_by_class_on(&conn, &class) {
+            if let Some(xid) = find_xid_by_class_on(conn, &class) {
                 let aux = x11rb::protocol::xproto::ConfigureWindowAux::new()
                     .x(x)
                     .y(y)
@@ -446,13 +457,13 @@ pub fn unpark_span(class: String, x: i32, y: i32, w: u32, h: u32) {
                 let _ = conn.configure_window(xid, &aux);
                 let _ = conn.map_window(xid);
                 let _ = conn.flush();
-                request_state_on(&conn, xid, b"_NET_WM_STATE_ABOVE");
+                request_state_on(conn, xid, b"_NET_WM_STATE_ABOVE");
                 // Activate through the WM (_NET_ACTIVE_WINDOW), not a
                 // bare set_input_focus: a reparenting WM applies its own
                 // focus when it processes the map, and a raw grab that
                 // lands first loses the race and the overlay's first
                 // keystrokes go to the root window.
-                activate_window_on(&conn, xid);
+                activate_window_on(conn, xid);
                 let _ = conn.set_input_focus(
                     x11rb::protocol::xproto::InputFocus::POINTER_ROOT,
                     xid,
