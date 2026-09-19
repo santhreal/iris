@@ -161,6 +161,41 @@ fn request_state_on(conn: &impl Connection, win: u32, atom_name: &[u8]) {
     let _ = conn.flush();
 }
 
+/// _NET_ACTIVE_WINDOW client message: the EWMH activation request a
+/// reparenting WM honors. Falls back to nothing under a WM that does
+/// not read it; the caller still sets input focus directly.
+#[cfg(target_os = "linux")]
+fn activate_window_on(conn: &impl Connection, win: u32) {
+    let intern = |name: &[u8]| {
+        conn.intern_atom(false, name)
+            .ok()?
+            .reply()
+            .ok()
+            .map(|r| r.atom)
+    };
+    let Some(active) = intern(b"_NET_ACTIVE_WINDOW") else {
+        return;
+    };
+    let root = conn.setup().roots[0].root;
+    let event = x11rb::protocol::xproto::ClientMessageEvent {
+        response_type: x11rb::protocol::xproto::CLIENT_MESSAGE_EVENT,
+        format: 32,
+        sequence: 0,
+        window: win,
+        type_: active,
+        data: x11rb::protocol::xproto::ClientMessageData::from([
+            1, // source: application
+            x11rb::CURRENT_TIME,
+            0,
+            0,
+            0,
+        ]),
+    };
+    let mask = x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_NOTIFY
+        | x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_REDIRECT;
+    let _ = conn.send_event(false, root, mask, event);
+}
+
 /// _NET_WM_STATE += _NET_WM_STATE_FULLSCREEN via a client message.
 #[cfg(target_os = "linux")]
 fn request_fullscreen_on(conn: &impl Connection, win: u32) {
@@ -407,13 +442,20 @@ pub fn unpark_span(class: String, x: i32, y: i32, w: u32, h: u32) {
                     .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE);
                 let _ = conn.configure_window(xid, &aux);
                 let _ = conn.map_window(xid);
+                let _ = conn.flush();
+                request_state_on(&conn, xid, b"_NET_WM_STATE_ABOVE");
+                // Activate through the WM (_NET_ACTIVE_WINDOW), not a
+                // bare set_input_focus: a reparenting WM applies its own
+                // focus when it processes the map, and a raw grab that
+                // lands first loses the race and the overlay's first
+                // keystrokes go to the root window.
+                activate_window_on(&conn, xid);
                 let _ = conn.set_input_focus(
                     x11rb::protocol::xproto::InputFocus::POINTER_ROOT,
                     xid,
                     x11rb::CURRENT_TIME,
                 );
                 let _ = conn.flush();
-                request_state_on(&conn, xid, b"_NET_WM_STATE_ABOVE");
             }
         });
     }

@@ -402,6 +402,14 @@ impl Overlay {
         }
         self.frame_size = Some((width, height));
         self.frame_img = Some(img);
+        // The prewarmed window maps unfocused and a WM does not
+        // re-focus an unminimized window: without this the first
+        // keystroke after re-arm can land on the root window. By the
+        // time the frame lands the WM has finished its map handling,
+        // so activation here sticks.
+        if !wayland() {
+            window.activate_window();
+        }
         // Enter raced the grab: the selection is already committed,
         // finish it now that there is a frame to crop.
         if self.pending_finish {

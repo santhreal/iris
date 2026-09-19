@@ -11,7 +11,7 @@
 //! runs through `record::x11::record_window_follow` with the chip window
 //! repositioned by XID through `XcbChip`.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -127,6 +127,7 @@ pub fn parse_args(args: &[String]) -> Vec<Command> {
                 }
             }
             "--settings" => cmds.push(Command::Settings),
+            "--library" => cmds.push(Command::Library),
             "--quit" => cmds.push(Command::Quit),
             "--home" => cmds.push(Command::Home),
             "--record-window" => cmds.push(Command::RecordToggle),
@@ -184,6 +185,10 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
             Ok(true) => {
                 let u = &layout.union;
                 crate::xwin::unpark_span(class, u.x, u.y, u.width, u.height);
+                // Re-assert activation on GPUI's own connection: the
+                // WM's map-time focus handling can land after the
+                // helper thread's request.
+                let _ = h.update(cx, |_, window, _| window.activate_window());
                 h
             }
             // Busy mid-session: no stacking. Dead handle: fresh open.
@@ -585,10 +590,41 @@ fn accept_args(listener: &UnixListener) -> Vec<String> {
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // The accepted socket does not inherit O_NONBLOCK, and a
+                // client that connects but never writes or closes would
+                // stall every later command on a blocking read. Bound
+                // the read: 2s of poll, then give up on the peer.
                 let mut buf = String::new();
-                if stream.read_to_string(&mut buf).is_ok() {
-                    args.extend(buf.lines().map(|l| l.to_string()).filter(|l| !l.is_empty()));
+                {
+                    use std::io::Read;
+                    use std::os::unix::io::AsRawFd;
+                    let fd = stream.as_raw_fd();
+                    let mut chunk = [0u8; 4096];
+                    // Read until the peer closes (forward_if_running
+                    // drops its stream after the write) or 2s passes
+                    // with no data. Payloads are argv lines; 1MiB caps
+                    // a hostile flood.
+                    loop {
+                        let mut pfd = libc::pollfd {
+                            fd,
+                            events: libc::POLLIN,
+                            revents: 0,
+                        };
+                        if unsafe { libc::poll(&mut pfd, 1, 2000) } <= 0 {
+                            break;
+                        }
+                        match stream.read(&mut chunk) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                                if buf.len() > (1 << 20) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
+                args.extend(buf.lines().map(|l| l.to_string()).filter(|l| !l.is_empty()));
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(_) => break,

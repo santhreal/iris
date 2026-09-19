@@ -173,6 +173,7 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
 /// register it in the library. The capture is durable and paste-able
 /// before any surface shows it.
 pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry), String> {
+    let t_png = std::time::Instant::now();
     let cfg = Config::load();
     std::fs::create_dir_all(&cfg.screenshots_dir)
         .map_err(|e| format!("create screenshots dir: {e}"))?;
@@ -196,6 +197,7 @@ pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntr
     .map_err(|e| format!("encode screenshot: {e}"))?;
     std::fs::write(&path, png.into_inner())
         .map_err(|e| format!("save screenshot: {e}"))?;
+    iris_lib::ilog!("iris: capture: png written in {:?}", t_png.elapsed());
     // The file is the product; a clipboard failure degrades to a
     // log line, never a lost capture. copy_to_clipboard gates whether
     // the capture lands on the clipboard at all.
@@ -317,5 +319,31 @@ mod tests {
         assert_eq!(out.width(), 2);
         // Top-left of the crop is frame pixel (1,1) = byte offset 20.
         assert_eq!(&out.as_raw()[..4], &[20, 21, 22, 23]);
+    }
+
+    #[test]
+    fn parallel_crop_matches_serial() {
+        // Over the 1MP parallel threshold: every band must land its
+        // rows at the right offset with the same BGRA->RGBA swap.
+        let (w, h) = (1600u32, 1000u32);
+        let mut bgra = vec![0u8; (w * h * 4) as usize];
+        for i in 0..(w * h) as usize {
+            bgra[i * 4] = (i % 251) as u8;
+            bgra[i * 4 + 1] = (i % 253) as u8;
+            bgra[i * 4 + 2] = (i % 255) as u8;
+            bgra[i * 4 + 3] = 255;
+        }
+        let region = Region { x: 300, y: 200, width: 600, height: 450 };
+        let out = crop_bgra(&bgra, w, h, region).unwrap();
+        assert_eq!(out.dimensions(), (600, 450));
+        // Spot-check first, middle and last pixels of the crop.
+        for (dx, dy) in [(0u32, 0u32), (300, 225), (599, 449)] {
+            let src = (((200 + dy) * w + 300 + dx) * 4) as usize;
+            let dst = ((dy * 600 + dx) * 4) as usize;
+            assert_eq!(out.as_raw()[dst], bgra[src + 2], "R at {dx},{dy}");
+            assert_eq!(out.as_raw()[dst + 1], bgra[src + 1], "G at {dx},{dy}");
+            assert_eq!(out.as_raw()[dst + 2], bgra[src], "B at {dx},{dy}");
+            assert_eq!(out.as_raw()[dst + 3], 255, "A at {dx},{dy}");
+        }
     }
 }
