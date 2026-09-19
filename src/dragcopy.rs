@@ -311,11 +311,14 @@ impl IconWindow {
     }
 
     fn follow<C: Connection>(&self, conn: &C, px_x: i32, px_y: i32) {
+        // Parked fully above the pointer: the pointer must never be
+        // inside the icon's rect, or query_pointer returns the icon
+        // itself and the drop target resolves to nothing.
         let _ = conn.configure_window(
             self.win,
             &x11rb::protocol::xproto::ConfigureWindowAux::new()
                 .x(px_x - i32::from(self.width) / 2)
-                .y(px_y - (i32::from(self.height) * 9 / 10)),
+                .y(px_y - i32::from(self.height) - 2),
         );
     }
 
@@ -395,93 +398,74 @@ fn xdnd_target_at<C: Connection>(
     win: x11rb::protocol::xproto::Window,
     aware: x11rb::protocol::xproto::Atom,
     proxy: x11rb::protocol::xproto::Atom,
-    x: i32,
-    y: i32,
     skip: Option<x11rb::protocol::xproto::Window>,
     aware_cache: &mut std::collections::HashMap<
         x11rb::protocol::xproto::Window,
         Option<(x11rb::protocol::xproto::Window, u32)>,
     >,
 ) -> Option<(x11rb::protocol::xproto::Window, u32)> {
-    let self_target = *aware_cache.entry(win).or_insert_with(|| {
-        let mut t = None;
-        if let Some(reply) = conn
-            .get_property(false, win, proxy, AtomEnum::ANY, 0, 2)
-            .ok()
-            .and_then(|c| c.reply().ok())
-        {
-            if let Some(mut it) = reply.value32() {
-                if let (Some(proxy_win), Some(version)) = (it.next(), it.next()) {
-                    t = Some((proxy_win, version.min(5)));
-                }
-            }
+    // The chain from `win` to the deepest window under the pointer:
+    // query_pointer reports the immediate child containing the pointer,
+    // so one round trip per level replaces a query_tree plus a
+    // geometry+attributes pair per sibling. Unmapped windows cannot
+    // contain the pointer, so no map-state check is needed.
+    let mut chain = vec![win];
+    let mut cur = win;
+    for _ in 0..32 {
+        let Some(ptr) = conn.query_pointer(cur).ok().and_then(|c| c.reply().ok()) else {
+            break;
+        };
+        let child = ptr.child;
+        if child == x11rb::NONE || Some(child) == skip {
+            break;
         }
-        if t.is_none() {
+        chain.push(child);
+        cur = child;
+    }
+
+    // XDnD targets the deepest XdndAware window on the chain. Awareness
+    // is cached per window across the 16ms drag polls.
+    let aware_of = |conn: &C,
+                    w: x11rb::protocol::xproto::Window,
+                    cache: &mut std::collections::HashMap<
+        x11rb::protocol::xproto::Window,
+        Option<(x11rb::protocol::xproto::Window, u32)>,
+    >|
+     -> Option<(x11rb::protocol::xproto::Window, u32)> {
+        *cache.entry(w).or_insert_with(|| {
+            let mut t = None;
             if let Some(reply) = conn
-                .get_property(false, win, aware, AtomEnum::ANY, 0, 1)
+                .get_property(false, w, proxy, AtomEnum::ANY, 0, 2)
                 .ok()
                 .and_then(|c| c.reply().ok())
             {
-                if let Some(version) = reply.value32().and_then(|mut it| it.next()) {
-                    t = Some((win, version.min(5)));
-                }
-            }
-        }
-        t
-    });
-
-    if let Some(tree) = conn.query_tree(win).ok().and_then(|c| c.reply().ok()) {
-        // Pipeline the per-child queries: geometry and attributes for
-        // every child go out in one flush, and the replies come back
-        // together. Sequential reply() calls are two round trips per
-        // child per 16ms drag poll.
-        let children: Vec<x11rb::protocol::xproto::Window> = tree
-            .children
-            .into_iter()
-            .rev()
-            .filter(|c| Some(*c) != skip)
-            .collect();
-        let geoms: Vec<_> = children
-            .iter()
-            .map(|c| conn.get_geometry(*c).ok())
-            .collect();
-        let attrs: Vec<_> = children
-            .iter()
-            .map(|c| conn.get_window_attributes(*c).ok())
-            .collect();
-        let _ = conn.flush();
-        for (child, (geom_c, attr_c)) in children.iter().zip(geoms.into_iter().zip(attrs)) {
-            let Some(geom) = geom_c.and_then(|c| c.reply().ok()) else {
-                continue;
-            };
-            let cx = i32::from(geom.x);
-            let cy = i32::from(geom.y);
-            let cw = i32::from(geom.width);
-            let ch = i32::from(geom.height);
-            if x >= cx && y >= cy && x < cx + cw && y < cy + ch {
-                let mapped = attr_c
-                    .and_then(|c| c.reply().ok())
-                    .map(|a| a.map_state == x11rb::protocol::xproto::MapState::VIEWABLE)
-                    .unwrap_or(false);
-                if mapped {
-                    if let Some(target) = xdnd_target_at(
-                        conn,
-                        *child,
-                        aware,
-                        proxy,
-                        x - cx,
-                        y - cy,
-                        skip,
-                        aware_cache,
-                    ) {
-                        return Some(target);
+                if let Some(mut it) = reply.value32() {
+                    if let (Some(proxy_win), Some(version)) = (it.next(), it.next()) {
+                        t = Some((proxy_win, version.min(5)));
                     }
                 }
             }
+            if t.is_none() {
+                if let Some(reply) = conn
+                    .get_property(false, w, aware, AtomEnum::ANY, 0, 1)
+                    .ok()
+                    .and_then(|c| c.reply().ok())
+                {
+                    if let Some(version) = reply.value32().and_then(|mut it| it.next()) {
+                        t = Some((w, version.min(5)));
+                    }
+                }
+            }
+            t
+        })
+    };
+
+    for w in chain.iter().rev() {
+        if let Some(target) = aware_of(conn, *w, aware_cache) {
+            return Some(target);
         }
     }
-
-    self_target
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -592,8 +576,6 @@ fn run_xdnd_drag<C: Connection>(
             root,
             atoms.aware,
             atoms.proxy,
-            px,
-            py,
             icon.as_ref().map(|i| i.win),
             &mut aware_cache,
         );
