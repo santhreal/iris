@@ -345,45 +345,42 @@ struct XdndAtoms {
     utf8: x11rb::protocol::xproto::Atom,
 }
 
+/// Interned atoms shared across drags and clipboard serves: atoms are
+/// server-global constants, so the 13-name XDnD set and the 4-name
+/// clipboard set resolve once per process instead of once per call.
 #[cfg(target_os = "linux")]
+fn atom_cached<C: Connection>(conn: &C, name: &'static [u8]) -> Option<u32> {
+    static CACHE: std::sync::LazyLock<
+        parking_lot::Mutex<std::collections::HashMap<&'static [u8], u32>>,
+    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    if let Some(atom) = CACHE.lock().get(name) {
+        return Some(*atom);
+    }
+    let atom = conn.intern_atom(false, name).ok()?.reply().ok()?.atom;
+    CACHE.lock().insert(name, atom);
+    Some(atom)
+}
+
 impl XdndAtoms {
     fn intern<C: Connection>(conn: &C) -> Result<Self, String> {
-        // Pipeline all 13 interns: sequential reply() calls cost a
-        // round trip each; batched, the whole set is one.
-        let names: [&[u8]; 13] = [
-            b"XdndSelection", b"XdndAware", b"XdndProxy", b"XdndEnter",
-            b"XdndPosition", b"XdndStatus", b"XdndLeave", b"XdndDrop",
-            b"XdndFinished", b"XdndActionCopy", b"text/uri-list",
-            b"TARGETS", b"UTF8_STRING",
-        ];
-        let cookies = names
-            .iter()
-            .map(|n| conn.intern_atom(false, n))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("intern atom: {e}"))?;
-        let mut atoms = Vec::with_capacity(13);
-        for cookie in cookies {
-            atoms.push(
-                cookie
-                    .reply()
-                    .map_err(|e| format!("intern reply: {e}"))?
-                    .atom,
-            );
-        }
+        let get = |name: &'static [u8]| {
+            atom_cached(conn, name)
+                .ok_or_else(|| format!("intern {} failed", String::from_utf8_lossy(name)))
+        };
         Ok(Self {
-            selection: atoms[0],
-            aware: atoms[1],
-            proxy: atoms[2],
-            enter: atoms[3],
-            position: atoms[4],
-            status: atoms[5],
-            leave: atoms[6],
-            drop: atoms[7],
-            finished: atoms[8],
-            action_copy: atoms[9],
-            uri_list: atoms[10],
-            targets: atoms[11],
-            utf8: atoms[12],
+            selection: get(b"XdndSelection")?,
+            aware: get(b"XdndAware")?,
+            proxy: get(b"XdndProxy")?,
+            enter: get(b"XdndEnter")?,
+            position: get(b"XdndPosition")?,
+            status: get(b"XdndStatus")?,
+            leave: get(b"XdndLeave")?,
+            drop: get(b"XdndDrop")?,
+            finished: get(b"XdndFinished")?,
+            action_copy: get(b"XdndActionCopy")?,
+            uri_list: get(b"text/uri-list")?,
+            targets: get(b"TARGETS")?,
+            utf8: get(b"UTF8_STRING")?,
         })
     }
 }
@@ -769,26 +766,11 @@ pub fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), Str
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
-    // Pipeline the atom interns: four sequential reply() calls cost
-    // four round trips; batched, the whole setup is one.
-    let cookies = [b"CLIPBOARD" as &[u8], b"TARGETS", b"text/uri-list", b"UTF8_STRING"]
-        .iter()
-        .map(|name| conn.intern_atom(false, name))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("intern atom: {e}"))?;
-    let mut resolved = Vec::with_capacity(4);
-    for cookie in cookies {
-        resolved.push(
-            cookie
-                .reply()
-                .map_err(|e| format!("intern reply: {e}"))?
-                .atom,
-        );
-    }
-    let clipboard_atom = resolved[0];
-    let targets_atom = resolved[1];
-    let uri_list_atom = resolved[2];
-    let utf8_atom = resolved[3];
+    let clipboard_atom = atom_cached(&conn, b"CLIPBOARD").ok_or("intern CLIPBOARD failed")?;
+    let targets_atom = atom_cached(&conn, b"TARGETS").ok_or("intern TARGETS failed")?;
+    let uri_list_atom =
+        atom_cached(&conn, b"text/uri-list").ok_or("intern text/uri-list failed")?;
+    let utf8_atom = atom_cached(&conn, b"UTF8_STRING").ok_or("intern UTF8_STRING failed")?;
 
     let win = conn
         .generate_id()
