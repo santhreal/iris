@@ -285,10 +285,20 @@ impl ToastStage {
     }
 
     fn delete_capture(&mut self, cx: &mut Context<Self>) {
-        match iris_lib::library::delete(&self.path) {
-            Ok(()) => self.begin_close(cx),
-            Err(e) => iris_lib::ilog!("delete: {e}"),
-        }
+        // File unlink + library.json rewrite off the UI thread: a slow
+        // shots dir would freeze the toast mid-swipe.
+        let path = self.path.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { iris_lib::library::delete(&path) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |stage, cx| match result {
+                Ok(()) => stage.begin_close(cx),
+                Err(e) => iris_lib::ilog!("delete: {e}"),
+            });
+        })
+        .detach();
         cx.notify();
     }
 
