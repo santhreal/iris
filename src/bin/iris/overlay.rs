@@ -340,7 +340,13 @@ fn loupe_image(
     let rgba = scratch.as_mut_slice();
     let half = LOUPE_SRC as i64 / 2;
     let mut center = [0u8, 0u8, 0u8];
+    let row_px = LOUPE_PX as usize;
     for sy in 0..LOUPE_SRC as i64 {
+        // Build one zoomed row (each source pixel becomes LOUPE_ZOOM
+        // horizontal copies), then memcpy it down LOUPE_ZOOM rows:
+        // 19 row builds + 152 row copies instead of 23k pixel writes.
+        let row_start = (sy as u32 * LOUPE_ZOOM) as usize * row_px * 4;
+        let row = &mut rgba[row_start..row_start + row_px * 4];
         for sx in 0..LOUPE_SRC as i64 {
             let px_x = fx + sx - half;
             let px_y = fy + sy - half;
@@ -355,14 +361,15 @@ fn loupe_image(
             if sx == half && sy == half {
                 center = [src[0], src[1], src[2]];
             }
-            let dx = sx as u32 * LOUPE_ZOOM;
-            let dy = sy as u32 * LOUPE_ZOOM;
-            for by in 0..LOUPE_ZOOM {
-                for bx in 0..LOUPE_ZOOM {
-                    let d = (((dy + by) * LOUPE_PX + dx + bx) * 4) as usize;
-                    rgba[d..d + 4].copy_from_slice(&src);
-                }
+            let dx = (sx as u32 * LOUPE_ZOOM) as usize * 4;
+            for bx in 0..LOUPE_ZOOM as usize {
+                row[dx + bx * 4..dx + bx * 4 + 4].copy_from_slice(&src);
             }
+        }
+        for by in 1..LOUPE_ZOOM as usize {
+            let dst = row_start + by * row_px * 4;
+            let (head, tail) = rgba.split_at_mut(dst);
+            tail[..row_px * 4].copy_from_slice(&head[row_start..row_start + row_px * 4]);
         }
     }
     // Crosshair on the center pixel.
