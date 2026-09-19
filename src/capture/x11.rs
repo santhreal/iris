@@ -24,6 +24,21 @@ pub fn shared_conn() -> Result<(&'static x11rb::rust_connection::RustConnection,
 }
 
 
+/// Interned atoms shared across every query: intern_atom is a round
+/// trip, and the same EWMH names resolve on every capture and window
+/// probe.
+fn atom_cached(conn: &impl Connection, name: &'static [u8]) -> Option<u32> {
+    static CACHE: std::sync::LazyLock<
+        parking_lot::Mutex<std::collections::HashMap<&'static [u8], u32>>,
+    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    if let Some(atom) = CACHE.lock().get(name) {
+        return Some(*atom);
+    }
+    let atom = conn.intern_atom(false, name).ok()?.reply().ok()?.atom;
+    CACHE.lock().insert(name, atom);
+    Some(atom)
+}
+
 pub fn monitors() -> Result<Vec<WinRect>, String> {
     let (conn, screen_num) = shared_conn()?;
     let screen = &conn.setup().roots[screen_num];
@@ -115,32 +130,14 @@ fn list_top_level_windows_on(
 ) -> Result<Vec<WinRect>, String> {
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
-    // Pipeline the atom interns: four sequential reply() calls cost
-    // four round trips before the window probes even start.
-    let names = [
-        "_NET_CLIENT_LIST_STACKING",
-        "_NET_WM_PID",
-        "_NET_WM_STATE",
-        "_NET_WM_STATE_HIDDEN",
-    ];
-    let cookies = names
-        .iter()
-        .map(|n| conn.intern_atom(false, n.as_bytes()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("intern atom: {e}"))?;
-    let mut atoms = Vec::with_capacity(4);
-    for (cookie, name) in cookies.into_iter().zip(names) {
-        atoms.push(
-            cookie
-                .reply()
-                .map(|r| r.atom)
-                .map_err(|e| format!("intern {name} reply: {e}"))?,
-        );
-    }
-    let stacking = atoms[0];
-    let wm_pid = atoms[1];
-    let wm_state = atoms[2];
-    let state_hidden = atoms[3];
+    // Cached atoms: the same four names resolve on every capture.
+    let stacking = atom_cached(conn, b"_NET_CLIENT_LIST_STACKING")
+        .ok_or("intern _NET_CLIENT_LIST_STACKING failed")?;
+    let wm_pid = atom_cached(conn, b"_NET_WM_PID").ok_or("intern _NET_WM_PID failed")?;
+    let wm_state =
+        atom_cached(conn, b"_NET_WM_STATE").ok_or("intern _NET_WM_STATE failed")?;
+    let state_hidden = atom_cached(conn, b"_NET_WM_STATE_HIDDEN")
+        .ok_or("intern _NET_WM_STATE_HIDDEN failed")?;
 
     let list = conn
         .get_property(false, root, stacking, AtomEnum::WINDOW, 0, u32::MAX)
@@ -240,12 +237,8 @@ pub fn active_window_rect() -> Result<WinRect, String> {
     let (conn, screen_num) = shared_conn()?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
-    let atom = conn
-        .intern_atom(false, b"_NET_ACTIVE_WINDOW")
-        .map_err(|e| format!("intern _NET_ACTIVE_WINDOW: {e}"))?
-        .reply()
-        .map_err(|e| format!("intern reply: {e}"))?
-        .atom;
+    let atom = atom_cached(conn, b"_NET_ACTIVE_WINDOW")
+        .ok_or("intern _NET_ACTIVE_WINDOW failed")?;
     let reply = conn
         .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
         .map_err(|e| format!("query active window: {e}"))?
