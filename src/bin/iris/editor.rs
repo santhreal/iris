@@ -96,6 +96,15 @@ struct Action {
     blur_rect: (f32, f32, f32, f32),
     /// Counter tool: the step number shown in the badge.
     step: u32,
+    /// The tessellated paint path, keyed on (origin, scale, points
+    /// fingerprint): building it per frame re-tessellates 20-vertex
+    /// discs for every segment of every stroke, while a clone is one
+    /// memcpy. Painted on the UI thread only, so a RefCell suffices.
+    /// The fingerprint (len, first, last) catches every mutation that
+    /// exists: strokes only grow, moves shift every point.
+    cached_path: std::cell::RefCell<
+        Option<(f32, f32, f32, usize, (f32, f32), (f32, f32), Path<Pixels>)>,
+    >,
 }
 
 struct TextEntry {
@@ -451,6 +460,7 @@ impl Editor {
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
             step: self.next_step(),
+            cached_path: std::cell::RefCell::new(None),
         }
     }
 
@@ -830,6 +840,7 @@ impl Editor {
                 blur_patch: None,
                 blur_rect: (0.0, 0.0, 0.0, 0.0),
                 step: 0,
+                cached_path: std::cell::RefCell::new(None),
             };
             rasterize(&mut self.composite, &action, 1.0);
             self.push_edit(Edit::Add(action.clone()));
@@ -1998,7 +2009,27 @@ fn paint_action(
         c
     };
     let w = action.width * scale;
-    let s = move |p: (f32, f32)| point(bounds.origin.x + px(p.0 * scale), bounds.origin.y + px(p.1 * scale));
+    let (ox, oy): (f32, f32) = (bounds.origin.x.into(), bounds.origin.y.into());
+    // Cache hit: the path for these exact points at this origin and
+    // scale is already tessellated; cloning it is one memcpy instead
+    // of re-tessellating every segment's quad and cap discs.
+    let fingerprint = (
+        ox,
+        oy,
+        scale,
+        action.points.len(),
+        *action.points.first().unwrap(),
+        *action.points.last().unwrap(),
+    );
+    if let Some((kox, koy, kscale, klen, kfirst, klast, cached)) =
+        action.cached_path.borrow().as_ref()
+    {
+        if (*kox, *koy, *kscale, *klen, *kfirst, *klast) == fingerprint {
+            window.paint_path(cached.clone(), color);
+            return;
+        }
+    }
+    let s = move |p: (f32, f32)| point(px(ox) + px(p.0 * scale), px(oy) + px(p.1 * scale));
 
     let mut path = Path::new(s(action.points[0]));
     match action.tool {
@@ -2070,6 +2101,15 @@ fn paint_action(
         }
         _ => {}
     }
+    *action.cached_path.borrow_mut() = Some((
+        fingerprint.0,
+        fingerprint.1,
+        fingerprint.2,
+        fingerprint.3,
+        fingerprint.4,
+        fingerprint.5,
+        path.clone(),
+    ));
     window.paint_path(path, color);
 }
 
@@ -2092,6 +2132,7 @@ mod tests {
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
             step: 0,
+            cached_path: std::cell::RefCell::new(None),
         }
     }
 
