@@ -197,6 +197,47 @@ fn list_top_level_windows_on(
     Ok(rects)
 }
 
+/// The focused top-level window's rect in root (frame) pixels, from
+/// EWMH _NET_ACTIVE_WINDOW. Used by --capture-window: the shot is the
+/// window's pixels, borders included, with no overlay round trip.
+pub fn active_window_rect() -> Result<WinRect, String> {
+    let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
+    let screen = &conn.setup().roots[screen_num];
+    let root = screen.root;
+    let atom = conn
+        .intern_atom(false, b"_NET_ACTIVE_WINDOW")
+        .map_err(|e| format!("intern _NET_ACTIVE_WINDOW: {e}"))?
+        .reply()
+        .map_err(|e| format!("intern reply: {e}"))?
+        .atom;
+    let reply = conn
+        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+        .map_err(|e| format!("query active window: {e}"))?
+        .reply()
+        .map_err(|e| format!("query active window reply: {e}"))?;
+    let win = reply
+        .value32()
+        .and_then(|mut v| v.next())
+        .filter(|w| *w != x11rb::NONE)
+        .ok_or("no active window")?;
+    let geom = conn
+        .get_geometry(win)
+        .map_err(|e| format!("get_geometry: {e}"))?
+        .reply()
+        .map_err(|e| format!("get_geometry reply: {e}"))?;
+    let origin = conn
+        .translate_coordinates(win, root, 0, 0)
+        .map_err(|e| format!("translate_coordinates: {e}"))?
+        .reply()
+        .map_err(|e| format!("translate_coordinates reply: {e}"))?;
+    Ok(WinRect {
+        x: i32::from(origin.dst_x) - i32::from(geom.border_width),
+        y: i32::from(origin.dst_y) - i32::from(geom.border_width),
+        width: u32::from(geom.width) + 2 * u32::from(geom.border_width),
+        height: u32::from(geom.height) + 2 * u32::from(geom.border_width),
+    })
+}
+
 /// X11 full-screen capture via GetImage on the root window.
 ///
 /// The root window spans the whole virtual screen, so one grab covers every

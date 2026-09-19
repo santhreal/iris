@@ -91,6 +91,7 @@ pub enum Command {
     Home,
     Capture,
     CaptureFullscreen,
+    CaptureWindow,
     Library,
     Settings,
     Annotate(PathBuf),
@@ -111,6 +112,7 @@ pub fn parse_args(args: &[String]) -> Vec<Command> {
         match args[i].as_str() {
             "--capture" => cmds.push(Command::Capture),
             "--capture-fullscreen" => cmds.push(Command::CaptureFullscreen),
+            "--capture-window" => cmds.push(Command::CaptureWindow),
             "--library" => cmds.push(Command::Library),
             "--settings" => cmds.push(Command::Settings),
             "--quit" => cmds.push(Command::Quit),
@@ -263,12 +265,55 @@ fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
+/// Capture the focused window's rect out of a full-screen grab. X11
+/// only: the Wayland portal cannot name a window, so this reports an
+/// honest error there.
+fn capture_active_window(cx: &mut App) -> Result<(), String> {
+    fn grab_and_finish() -> Result<(PathBuf, iris_lib::library::CaptureEntry), String> {
+        let rect = iris_lib::capture::x11::active_window_rect()?;
+        let frame = pipeline::grab_frame()?;
+        // frame.rgba is RGBA; crop_bgra would swap R and B. A plain
+        // image crop keeps the channels as captured.
+        let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+            .ok_or("frame buffer size mismatch")?;
+        let (x, y) = (rect.x.max(0) as u32, rect.y.max(0) as u32);
+        let w = rect.width.min(frame.width.saturating_sub(x));
+        let h = rect.height.min(frame.height.saturating_sub(y));
+        if w == 0 || h == 0 {
+            return Err("active window is outside the frame".to_string());
+        }
+        let crop = image::imageops::crop_imm(&img, x, y, w, h).to_image();
+        let done = pipeline::finalize(&crop)?;
+        pipeline::play_shutter_sound();
+        Ok(done)
+    }
+    cx.spawn(async move |cx| {
+        let done = cx
+            .background_executor()
+            .spawn(async move { grab_and_finish() })
+            .await;
+        let _ = cx.update(|cx| match done {
+            Ok((path, entry)) => {
+                if Config::load().show_toast_after_capture {
+                    if let Err(e) = stage::show_toast(cx, &path, &entry.thumb, entry.width, entry.height) {
+                        iris_lib::ilog!("iris: capture: {e}");
+                    }
+                }
+            }
+            Err(e) => iris_lib::ilog!("iris: capture: {e}"),
+        });
+    })
+    .detach();
+    Ok(())
+}
+
 /// Run one command against the live app.
 pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
     match cmd {
         Command::Home => crate::home::open(cx),
         Command::Capture => capture_region(cx),
         Command::CaptureFullscreen => capture_fullscreen(cx),
+        Command::CaptureWindow => capture_active_window(cx),
         Command::Library => library::open(cx),
         Command::Settings => settings::open(cx),
         Command::Annotate(path) => crate::editor::open(cx, path, None, None),
@@ -477,6 +522,7 @@ impl Command {
             Command::Home => Command::Home,
             Command::Capture => Command::Capture,
             Command::CaptureFullscreen => Command::CaptureFullscreen,
+            Command::CaptureWindow => Command::CaptureWindow,
             Command::Library => Command::Library,
             Command::Settings => Command::Settings,
             Command::Annotate(p) => Command::Annotate(p.clone()),
