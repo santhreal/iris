@@ -24,8 +24,8 @@ pub struct Home {
     class: String,
     /// Pointer-coupled springs per tile. They reverse mid-flight
     /// when the pointer leaves or the button releases early.
-    hover: [motion::Spring; 2],
-    press: [motion::Spring; 2],
+    hover: [motion::Spring; 3],
+    press: [motion::Spring; 3],
     last_frame: Option<Instant>,
 }
 
@@ -60,8 +60,8 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 opened: None,
                 hovered: None,
                 pressed: None,
-                hover: [motion::Spring::default(); 2],
-                press: [motion::Spring::default(); 2],
+                hover: [motion::Spring::default(); 3],
+                press: [motion::Spring::default(); 3],
                 last_frame: None,
                 class: win_id.clone(),
             })
@@ -183,7 +183,7 @@ impl Render for Home {
             .unwrap_or(1.0 / 60.0);
         self.last_frame = Some(now);
         let mut live = loading_t < 1.0;
-        for ix in 0..2 {
+        for ix in 0..3 {
             let h_target = if self.hovered == Some(ix) { 1.0 } else { 0.0 };
             let p_target = if self.pressed == Some(ix) { 1.0 } else { 0.0 };
             self.hover[ix].to(h_target, dt);
@@ -211,7 +211,8 @@ impl Render for Home {
                 window.request_animation_frame();
             }
             let shot_enter = motion::ease_out_cubic(stagger(0));
-            let lib_enter = motion::ease_out_cubic(stagger(1));
+            let rec_enter = motion::ease_out_cubic(stagger(1));
+            let lib_enter = motion::ease_out_cubic(stagger(2));
             content = content.child(
                 div()
                     .flex()
@@ -271,10 +272,10 @@ impl Render for Home {
                             )
                             .child(
                                 action_tile(
-                                    "act-lib",
-                                    Icon::Grid,
-                                    "Library",
-                                    lib_enter,
+                                    "act-rec",
+                                    Icon::Record,
+                                    "Record Window",
+                                    rec_enter,
                                     self.hover[1].value,
                                     self.press[1].value,
                                     self.hovered == Some(1),
@@ -285,6 +286,37 @@ impl Render for Home {
                                 }))
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
                                     this.pressed = Some(1);
+                                    cx.notify();
+                                }))
+                                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                    this.pressed = None;
+                                    cx.notify();
+                                }))
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.remove_window();
+                                    if let Err(e) =
+                                        daemon::dispatch(cx, &daemon::Command::RecordToggle)
+                                    {
+                                        iris_lib::ilog!("iris: {e}");
+                                    }
+                                })),
+                            )
+                            .child(
+                                action_tile(
+                                    "act-lib",
+                                    Icon::Grid,
+                                    "Library",
+                                    lib_enter,
+                                    self.hover[2].value,
+                                    self.press[2].value,
+                                    self.hovered == Some(2),
+                                )
+                                .on_hover(cx.listener(|this, h: &bool, _, cx| {
+                                    this.hovered = if *h { Some(2) } else { None };
+                                    cx.notify();
+                                }))
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                    this.pressed = Some(2);
                                     cx.notify();
                                 }))
                                 .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {

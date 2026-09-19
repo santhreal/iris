@@ -39,6 +39,7 @@ pub enum Icon {
     Pause,
     MicOff,
     Counter,
+    Record,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.
@@ -270,6 +271,16 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
             push_disc(&mut path, p(9.0, 9.0), 6.4 * s);
             push_segment(&mut path, p(9.0, 5.6), p(9.0, 12.4), 1.8 * s);
             push_segment(&mut path, p(7.4, 7.2), p(9.0, 5.6), 1.8 * s);
+        }
+        Icon::Record => {
+            // Video camera: body rect, lens triangle on the right.
+            push_segment(&mut path, p(3.0, 5.5), p(11.0, 5.5), w);
+            push_segment(&mut path, p(11.0, 5.5), p(11.0, 12.5), w);
+            push_segment(&mut path, p(11.0, 12.5), p(3.0, 12.5), w);
+            push_segment(&mut path, p(3.0, 12.5), p(3.0, 5.5), w);
+            push_segment(&mut path, p(11.0, 7.5), p(15.0, 5.0), w);
+            push_segment(&mut path, p(15.0, 5.0), p(15.0, 13.0), w);
+            push_segment(&mut path, p(15.0, 13.0), p(11.0, 10.5), w);
         }
     }
     window.paint_path(path, color);
