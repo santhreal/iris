@@ -12,7 +12,7 @@ use super::{Frame, WinRect};
 /// window list). The handshake is ~10ms; a daemon that opens one per
 /// capture, toast, and editor pays it on every surface. The connection
 /// is Send+Sync and read-only here, so one serves every caller.
-fn shared_conn() -> Result<(&'static x11rb::rust_connection::RustConnection, usize), String> {
+pub fn shared_conn() -> Result<(&'static x11rb::rust_connection::RustConnection, usize), String> {
     static CONN: std::sync::LazyLock<
         Result<(x11rb::rust_connection::RustConnection, usize), String>,
     > = std::sync::LazyLock::new(|| {

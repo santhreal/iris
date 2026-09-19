@@ -44,7 +44,7 @@ fn command_tx() -> Option<UnboundedSender<Command>> {
 /// tree yet.
 struct XcbChip {
     xid: std::sync::atomic::AtomicU32,
-    conn: Option<x11rb::rust_connection::RustConnection>,
+    conn: Option<&'static x11rb::rust_connection::RustConnection>,
     done: Option<UnboundedSender<Command>>,
 }
 
@@ -433,7 +433,7 @@ fn toggle_recording(cx: &mut App) -> Result<(), String> {
         })
     } else {
         let xid = chip::open(cx, mic)?;
-        let conn = x11rb::connect(None).ok().map(|(c, _)| c);
+        let conn = iris_lib::capture::x11::shared_conn().ok().map(|(c, _)| c);
         let follower = std::sync::Arc::new(XcbChip {
             xid: std::sync::atomic::AtomicU32::new(xid),
             conn,
@@ -560,7 +560,7 @@ fn record_region_start(cx: &mut App, x: i32, y: i32, w: i32, h: i32) -> Result<(
     let mic = cfg.record_mic_default;
     let (format, encoder) = (cfg.recording_format, cfg.recording_encoder);
     let xid = chip::open(cx, mic)?;
-    let conn = x11rb::connect(None).ok().map(|(c, _)| c);
+    let conn = iris_lib::capture::x11::shared_conn().ok().map(|(c, _)| c);
     let follower = std::sync::Arc::new(XcbChip {
         xid: std::sync::atomic::AtomicU32::new(xid),
         conn,
