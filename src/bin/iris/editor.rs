@@ -2040,6 +2040,7 @@ fn paint_action(
     };
     let w = action.width * scale;
     let (ox, oy): (f32, f32) = (bounds.origin.x.into(), bounds.origin.y.into());
+    let s = move |p: (f32, f32)| point(px(ox) + px(p.0 * scale), px(oy) + px(p.1 * scale));
     // Cache hit: the path for these exact points at this origin and
     // scale is already tessellated; cloning it is one memcpy instead
     // of re-tessellating every segment's quad and cap discs.
@@ -2058,8 +2059,32 @@ fn paint_action(
             window.paint_path(cached.clone(), color);
             return;
         }
+        // Incremental: a growing pen/highlight stroke keeps its origin,
+        // scale and first point, so the new segments append onto the
+        // cached path instead of re-tessellating the whole polyline on
+        // every mousemove (O(stroke) per move became O(new segments)).
+        if matches!(action.tool, Tool::Pen | Tool::Highlight)
+            && (*kox, *koy, *kscale, *kfirst) == (ox, oy, scale, fingerprint.4)
+            && *klen >= 2
+            && *klen < action.points.len()
+        {
+            let mut path = cached.clone();
+            for seg in action.points[*klen - 1..].windows(2) {
+                push_segment(&mut path, s(seg[0]), s(seg[1]), w);
+            }
+            *action.cached_path.borrow_mut() = Some((
+                ox,
+                oy,
+                scale,
+                action.points.len(),
+                fingerprint.4,
+                fingerprint.5,
+                path.clone(),
+            ));
+            window.paint_path(path, color);
+            return;
+        }
     }
-    let s = move |p: (f32, f32)| point(px(ox) + px(p.0 * scale), px(oy) + px(p.1 * scale));
 
     let mut path = Path::new(s(action.points[0]));
     match action.tool {
