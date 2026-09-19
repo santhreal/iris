@@ -397,14 +397,23 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
 /// One action for the record hotkey/tray/CLI: stop when active, start a
 /// window-picked recording when idle.
 fn toggle_recording(cx: &mut App) -> Result<(), String> {
-    let mut mgr = RECORDING.lock();
-    if mgr.is_active() {
-        if let Some(path) = mgr.stop()? {
-            iris_lib::ilog!("iris: recording saved: {}", path.display());
-        }
+    if RECORDING.lock().is_active() {
+        // The join (ffmpeg's trailer flush) can take seconds on a long
+        // recording; it runs off the UI thread so hotkeys and socket
+        // commands stay live while the file finishes.
+        RECORDING.lock().stop_async(|result| {
+            match result {
+                Ok(Some(path)) => {
+                    iris_lib::ilog!("iris: recording saved: {}", path.display());
+                }
+                Ok(None) => {}
+                Err(e) => iris_lib::ilog!("iris: recording stop: {e}"),
+            }
+        });
         chip::close(cx); // defensive: any exit path that missed hide
         return Ok(());
     }
+    let mut mgr = RECORDING.lock();
     let cfg = Config::load();
     let ext = match cfg.recording_format {
         iris_lib::config::RecordingFormat::Mp4 => "mp4",

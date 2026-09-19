@@ -400,9 +400,33 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
         return;
     };
 
+    // Follow the target by event, not by polling: StructureNotify on
+    // the target delivers ConfigureNotify on every move/resize, so the
+    // 200ms get_geometry+translate round trips become a poll on the
+    // connection's fd that wakes only when the window actually moves.
+    let _ = conn.change_window_attributes(
+        target,
+        &x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
+            .event_mask(EventMask::STRUCTURE_NOTIFY),
+    );
+    let _ = conn.flush();
+    use std::os::unix::io::AsRawFd;
+    let x_fd = conn.stream().as_raw_fd();
+
     let mut last: Option<Rect> = None;
     loop {
         if stop.try_recv().is_ok() {
+            break;
+        }
+        let mut gone = false;
+        while let Ok(Some(event)) = conn.poll_for_event() {
+            if let Event::DestroyNotify(ev) = event {
+                if ev.window == target {
+                    gone = true;
+                }
+            }
+        }
+        if gone {
             break;
         }
         match root_rect(&conn, root, target) {
@@ -411,13 +435,24 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
                     place_strips(&conn, &strips, rect);
                     last = Some(rect);
                 }
-                // Every poll: the WM may place the chip on first map,
-                // after the initial rect report.
+                // Every wake: the WM may place the chip on first map,
+                // after the initial rect report, or re-place it on a
+                // later re-frame.
                 chip.place(rect);
             }
             Err(_) => break, // target closed; recording ends on its own
         }
-        thread::sleep(Duration::from_millis(200));
+        // Sleep until the next X event or the 200ms re-check: a
+        // ConfigureNotify wakes the poll instantly, so a moved window
+        // re-borders in the same frame instead of up to 200ms late.
+        let mut pfd = libc::pollfd {
+            fd: x_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        unsafe {
+            libc::poll(&mut pfd, 1, 200);
+        }
     }
 
     destroy_strips(&conn, &strips);

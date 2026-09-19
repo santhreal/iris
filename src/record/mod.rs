@@ -139,6 +139,40 @@ impl ActiveRecording {
             }
         }
     }
+
+    /// Signal stop and join on a background thread: the encoder's
+    /// trailer flush can take seconds on a long recording, and joining
+    /// on the UI thread freezes hotkeys and socket commands for the
+    /// whole flush. `done` runs on the joining thread with the result.
+    pub fn stop_async(mut self, done: impl FnOnce(Result<Option<PathBuf>, String>) + Send + 'static) {
+        if let Some(tx) = self.stop.take() {
+            let _ = tx.send(());
+        }
+        let join = self.join.take().expect("stop called twice");
+        let output = self.output.clone();
+        std::thread::spawn(move || {
+            let result = join
+                .join()
+                .map_err(|_| "recording thread panicked".to_string())
+                .and_then(|r| match r {
+                    Ok(path) => Ok(Some(path)),
+                    Err(e) if e.starts_with(CANCELLED_PREFIX) => {
+                        let _ = std::fs::remove_file(&output);
+                        Ok(None)
+                    }
+                    Err(e) => {
+                        let empty = std::fs::metadata(&output)
+                            .map(|m| m.len() == 0)
+                            .unwrap_or(true);
+                        if empty {
+                            let _ = std::fs::remove_file(&output);
+                        }
+                        Err(e)
+                    }
+                });
+            done(result);
+        });
+    }
 }
 
 impl Drop for ActiveRecording {
@@ -168,6 +202,19 @@ impl RecordingManager {
         match self.active.take() {
             Some(rec) => rec.stop(),
             None => Ok(None),
+        }
+    }
+
+    /// Stop the active recording without blocking the caller: the join
+    /// (and ffmpeg's trailer flush) runs on a background thread and the
+    /// result arrives through `done`.
+    pub fn stop_async(
+        &mut self,
+        done: impl FnOnce(Result<Option<PathBuf>, String>) + Send + 'static,
+    ) {
+        match self.active.take() {
+            Some(rec) => rec.stop_async(done),
+            None => done(Ok(None)),
         }
     }
 }
