@@ -836,8 +836,8 @@ pub fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), Str
 
 
 #[cfg(target_os = "linux")]
-fn serve_x11_clipboard<C: Connection>(
-    conn: C,
+fn serve_x11_clipboard(
+    conn: x11rb::rust_connection::RustConnection,
     win: x11rb::protocol::xproto::Window,
     clipboard_atom: x11rb::protocol::xproto::Atom,
     targets_atom: x11rb::protocol::xproto::Atom,
@@ -847,11 +847,24 @@ fn serve_x11_clipboard<C: Connection>(
     abs_str: String,
 ) {
     let deadline = Instant::now() + Duration::from_secs(300);
+    // Event-driven: poll() the connection fd so a paste request is
+    // answered the instant it arrives instead of up to a sleep
+    // interval late, and an idle clipboard costs no wakeups.
+    use std::os::unix::io::AsRawFd;
+    let x_fd = conn.stream().as_raw_fd();
     while Instant::now() < deadline {
         let event = match conn.poll_for_event() {
             Ok(Some(ev)) => ev,
             Ok(None) => {
-                std::thread::sleep(Duration::from_millis(50));
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let mut pfd = libc::pollfd {
+                    fd: x_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                unsafe {
+                    libc::poll(&mut pfd, 1, remaining.as_millis().min(i32::MAX as u128) as i32);
+                }
                 continue;
             }
             Err(_) => break,
