@@ -299,7 +299,11 @@ impl super::CaptureBackend for X11Backend {
         let height = u32::from(geom.height);
 
         let pixels = width as usize * height as usize;
-        let mut rgba = vec![0u8; pixels * 4];
+        // Uninit capacity, not a zeroed vec: the grab writes every byte
+        // and a 33MB memset before a 33MB fill is a wasted pass. On
+        // failure the buffer drops without ever being read.
+        let mut rgba: Vec<u8> = Vec::with_capacity(pixels * 4);
+        unsafe { rgba.set_len(pixels * 4) };
         let depth = grab_pixels_into(&conn, root, geom.width, geom.height, &mut rgba)?;
 
         if depth != 24 {
