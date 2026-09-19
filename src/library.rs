@@ -120,11 +120,13 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
     let _write = store_lock().lock();
     let (width, height) = img.dimensions();
     let scale = THUMB_WIDTH as f64 / width as f64;
-    let thumb_img = image::imageops::resize(
+    // thumbnail() pre-shrinks with a cheap nearest pass before the
+    // convolution resize: on a 4K capture a straight Triangle resize
+    // convolves 33MB to produce 216px.
+    let thumb_img = image::imageops::thumbnail(
         img,
         THUMB_WIDTH,
         (height as f64 * scale).round().max(1.0) as u32,
-        image::imageops::FilterType::Triangle,
     );
     let thumb = thumbs_dir()?.join(format!("{}.png", path_key(path)));
     thumb_img

@@ -705,11 +705,36 @@ fn record_loop(
     }
     let mut guard = GrabGuard { conn, shm: None, named: None };
 
+    // Resize/close tracking is event-driven: StructureNotify delivers
+    // ConfigureNotify and DestroyNotify, so the per-frame probe drains
+    // the event queue instead of paying a get_geometry round trip on
+    // every frame of the recording.
+    let _ = conn.change_window_attributes(
+        picked.id,
+        &x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
+            .event_mask(EventMask::STRUCTURE_NOTIFY),
+    );
+    let _ = conn.flush();
+    let mut dims = conn
+        .get_geometry(picked.id)
+        .ok()
+        .and_then(|c| c.reply().ok())
+        .map(|g| (u32::from(g.width), u32::from(g.height)));
     let probe = || {
-        conn.get_geometry(picked.id)
-            .ok()
-            .and_then(|c| c.reply().ok())
-            .map(|g| (u32::from(g.width), u32::from(g.height)))
+        loop {
+            match conn.poll_for_event() {
+                Ok(Some(Event::ConfigureNotify(ev))) if ev.window == picked.id => {
+                    dims = Some((u32::from(ev.width), u32::from(ev.height)));
+                }
+                Ok(Some(Event::DestroyNotify(ev))) if ev.window == picked.id => {
+                    return None;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(_) => return None, // connection died
+            }
+        }
+        dims
     };
     let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
         grab_pixmap(conn, &mut guard.shm, &mut guard.named, picked.id, w, h, rgba)

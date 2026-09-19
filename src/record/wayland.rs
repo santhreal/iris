@@ -111,6 +111,12 @@ struct GlContext {
     delete_framebuffers: unsafe extern "C" fn(i32, *const u32),
     viewport: unsafe extern "C" fn(i32, i32, i32, i32),
     read_pixels: unsafe extern "C" fn(i32, i32, i32, i32, u32, u32, *mut std::ffi::c_void),
+    /// Texture + FBO reused across frames: creating and destroying the
+    /// pair per frame is driver work the 60fps schedule cannot spare.
+    /// The texture is re-pointed at each frame's EGLImage; the FBO
+    /// stays attached to the texture.
+    texture: u32,
+    fbo: u32,
 }
 
 fn load_proc<T: Copy>(
@@ -251,11 +257,16 @@ impl GlContext {
         )
         .or_else(|_| load_proc(&egl_inst, gles_lib.as_ref(), "glEGLImageTargetTexture2D"))?;
 
-        let gen_textures = load_proc(&egl_inst, gles_lib.as_ref(), "glGenTextures")?;
+        let gen_textures: unsafe extern "C" fn(i32, *mut u32) =
+            load_proc(&egl_inst, gles_lib.as_ref(), "glGenTextures")?;
         let bind_texture = load_proc(&egl_inst, gles_lib.as_ref(), "glBindTexture")?;
         let delete_textures = load_proc(&egl_inst, gles_lib.as_ref(), "glDeleteTextures")?;
-        let gen_framebuffers = load_proc(&egl_inst, gles_lib.as_ref(), "glGenFramebuffers")
-            .or_else(|_| load_proc(&egl_inst, gles_lib.as_ref(), "glGenFramebuffersOES"))?;
+        let gen_framebuffers: unsafe extern "C" fn(i32, *mut u32) = load_proc(
+            &egl_inst,
+            gles_lib.as_ref(),
+            "glGenFramebuffers",
+        )
+        .or_else(|_| load_proc(&egl_inst, gles_lib.as_ref(), "glGenFramebuffersOES"))?;
         let bind_framebuffer = load_proc(&egl_inst, gles_lib.as_ref(), "glBindFramebuffer")
             .or_else(|_| load_proc(&egl_inst, gles_lib.as_ref(), "glBindFramebufferOES"))?;
         let framebuffer_texture_2d = load_proc(&egl_inst, gles_lib.as_ref(), "glFramebufferTexture2D")
@@ -270,6 +281,17 @@ impl GlContext {
             .or_else(|_| load_proc(&egl_inst, gles_lib.as_ref(), "glDeleteFramebuffersOES"))?;
         let viewport = load_proc(&egl_inst, gles_lib.as_ref(), "glViewport")?;
         let read_pixels = load_proc(&egl_inst, gles_lib.as_ref(), "glReadPixels")?;
+
+        // Allocate the reusable texture + FBO while the context is
+        // still current on this thread; read_dma_buf rebinds it on the
+        // stream thread per call.
+        let (texture, fbo) = unsafe {
+            let mut t = 0u32;
+            (gen_textures)(1, &mut t);
+            let mut f = 0u32;
+            (gen_framebuffers)(1, &mut f);
+            (t, f)
+        };
 
         // The context is used from PipeWire's RT thread, not this one:
         // release it here so read_dma_buf can bind it there. An EGL
@@ -296,6 +318,8 @@ impl GlContext {
             delete_framebuffers,
             viewport,
             read_pixels,
+            texture,
+            fbo,
         })
     }
 
@@ -387,36 +411,26 @@ impl GlContext {
         }
 
         let result = (|| unsafe {
-            let mut texture = 0u32;
-            (self.gen_textures)(1, &mut texture);
-            if texture == 0 {
-                return Err("glGenTextures failed".to_string());
+            if self.texture == 0 || self.fbo == 0 {
+                return Err("GL texture/FBO were not allocated at setup".to_string());
             }
-            (self.bind_texture)(GL_TEXTURE_2D, texture);
+            // Re-point the cached texture at this frame's EGLImage and
+            // re-attach it: the objects persist, only the binding
+            // changes per frame.
+            (self.bind_texture)(GL_TEXTURE_2D, self.texture);
             (self.image_target_texture_2d)(GL_TEXTURE_2D, image);
-
-            let mut fbo = 0u32;
-            (self.gen_framebuffers)(1, &mut fbo);
-            if fbo == 0 {
-                (self.bind_texture)(GL_TEXTURE_2D, 0);
-                (self.delete_textures)(1, &texture);
-                return Err("glGenFramebuffers failed".to_string());
-            }
-            (self.bind_framebuffer)(GL_FRAMEBUFFER, fbo);
+            (self.bind_framebuffer)(GL_FRAMEBUFFER, self.fbo);
             (self.framebuffer_texture_2d)(
                 GL_FRAMEBUFFER,
                 GL_COLOR_ATTACHMENT0,
                 GL_TEXTURE_2D,
-                texture,
+                self.texture,
                 0,
             );
 
             let status = (self.check_framebuffer_status)(GL_FRAMEBUFFER);
             if status != GL_FRAMEBUFFER_COMPLETE {
                 (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
-                (self.delete_framebuffers)(1, &fbo);
-                (self.bind_texture)(GL_TEXTURE_2D, 0);
-                (self.delete_textures)(1, &texture);
                 return Err(format!("glCheckFramebufferStatus returned {status:#x}"));
             }
 
@@ -434,9 +448,6 @@ impl GlContext {
             );
 
             (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
-            (self.delete_framebuffers)(1, &fbo);
-            (self.bind_texture)(GL_TEXTURE_2D, 0);
-            (self.delete_textures)(1, &texture);
             Ok(())
         })();
 
@@ -446,8 +457,30 @@ impl GlContext {
 
         result?;
 
-        for px in scratch.chunks_exact_mut(4) {
-            px[3] = 0xFF;
+        // Alpha-stamp in parallel bands: a serial per-pixel pass over a
+        // 4K frame is a visible slice of the frame budget.
+        let pixels = width as usize * height as usize;
+        const PARALLEL_MIN: usize = 1 << 20;
+        if pixels < PARALLEL_MIN {
+            for px in scratch.chunks_exact_mut(4) {
+                px[3] = 0xFF;
+            }
+        } else {
+            let threads = std::thread::available_parallelism()
+                .map(|n| n.get().min(8))
+                .unwrap_or(4)
+                .min(pixels)
+                .max(1);
+            let chunk = pixels.div_ceil(threads) * 4;
+            std::thread::scope(|scope| {
+                for band in scratch.chunks_mut(chunk) {
+                    scope.spawn(move || {
+                        for px in band.chunks_exact_mut(4) {
+                            px[3] = 0xFF;
+                        }
+                    });
+                }
+            });
         }
 
         Ok(())
@@ -456,6 +489,19 @@ impl GlContext {
 
 impl Drop for GlContext {
     fn drop(&mut self) {
+        // The stream is dead by now, so the context can be bound here
+        // to delete the cached GL objects before it is destroyed.
+        let _ = self
+            .egl
+            .make_current(self.display, self.surface, self.surface, Some(self.context));
+        unsafe {
+            if self.fbo != 0 {
+                (self.delete_framebuffers)(1, &self.fbo);
+            }
+            if self.texture != 0 {
+                (self.delete_textures)(1, &self.texture);
+            }
+        }
         let _ = self.egl.make_current(self.display, None, None, None);
         if let Some(surface) = self.surface {
             let _ = self.egl.destroy_surface(self.display, surface);

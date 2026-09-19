@@ -117,7 +117,10 @@ pub struct Editor {
     /// undoable, like Markup. Two stacks; a fresh edit clears redo.
     undos: Vec<Edit<Action>>,
     redos: Vec<Edit<Action>>,
-    current: Option<Action>,
+    /// In-progress action behind an Rc: the canvas prep closure clones
+    /// a refcount per render instead of deep-copying the stroke's
+    /// points every frame of a drag.
+    current: Option<Rc<Action>>,
     tool: Tool,
     /// Stroke width stop 0..2; multiplies the image-relative base.
     stroke: u8,
@@ -463,12 +466,13 @@ impl Editor {
             + 1
     }
 
-    /// Commit the in-progress action: rasterize it into the composite,
-    /// precompute blur patches, push to the undo stack.
     fn commit_current(&mut self) {
-        let Some(mut action) = self.current.take() else {
+        let Some(rc) = self.current.take() else {
             return;
         };
+        // Between frames the paint closure has dropped its clone, so
+        // this unwraps without copying; a mid-frame commit clones once.
+        let mut action = Rc::try_unwrap(rc).unwrap_or_else(|rc| (*rc).clone());
         if action.points.len() < 2
             && action.tool != Tool::Pen
             && action.tool != Tool::Highlight
@@ -1572,7 +1576,7 @@ impl Render for Editor {
             canvas(
                 move |_, _, _| (actions.clone(), current.clone()),
                 move |bounds, (actions, current), window, _cx| {
-                    for action in actions.iter().chain(current.iter()) {
+                    for action in actions.iter().chain(current.as_deref()) {
                         paint_action(action, bounds, scale, base_w, base_h, window);
                     }
                 },
@@ -1582,7 +1586,7 @@ impl Render for Editor {
             .left_0()
             .size_full(),
         );
-        for action in self.actions.iter().chain(self.current.iter()) {
+        for action in self.actions.iter().chain(self.current.as_deref()) {
             if action.tool == Tool::Blur {
                 if let Some(patch) = &action.blur_patch {
                     let (x, y, w, h) = action.blur_rect;
@@ -1817,7 +1821,7 @@ impl Render for Editor {
                         }
                         _ => {
                             this.commit_text(true);
-                            this.current = Some(this.new_action(p));
+                            this.current = Some(Rc::new(this.new_action(p)));
                         }
                     }
                     cx.notify();
@@ -1867,7 +1871,7 @@ impl Render for Editor {
                     cx.notify();
                     return;
                 }
-                let Some(action) = this.current.as_mut() else {
+                let Some(action) = this.current.as_mut().map(Rc::make_mut) else {
                     return;
                 };
                 if action.tool == Tool::Pen || action.tool == Tool::Highlight {
