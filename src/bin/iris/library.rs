@@ -847,16 +847,19 @@ impl Library {
                 } else {
                     vec![entry.path.clone()]
                 };
-                let icon = image::open(&entry.thumb)
-                    .ok()
-                    .map(|img| {
-                        let rgba = img.to_rgba8();
-                        iris_lib::dragcopy::DragIcon {
-                            width: rgba.width(),
-                            height: rgba.height(),
-                            rgba: rgba.into_raw(),
-                        }
-                    });
+                // The cached RenderImage already holds the pixels
+                // (BGRA; the swizzle is symmetric): no disk read or
+                // PNG decode on the drag-start path.
+                let icon = this.thumb_cache.get(&entry.path).and_then(|img| {
+                    let size = img.size(0);
+                    let mut rgba = img.as_bytes(0)?.to_vec();
+                    crate::widgets::swizzle_rgba_bgra(&mut rgba);
+                    Some(iris_lib::dragcopy::DragIcon {
+                        width: size.width.0 as u32,
+                        height: size.height.0 as u32,
+                        rgba,
+                    })
+                });
                 if let Err(e) = iris_lib::dragcopy::start_file_drag_at_cursor(paths, icon) {
                     this.status = Some(e);
                 }

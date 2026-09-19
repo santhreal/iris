@@ -64,14 +64,16 @@ fn connect() -> Result<(RustConnection, usize), String> {
 }
 
 fn root_rect(conn: &RustConnection, root: Window, win: Window) -> Result<Rect, String> {
-    let geom = conn
-        .get_geometry(win)
-        .map_err(|e| e.to_string())?
+    // The two requests are independent: send both before awaiting
+    // either reply, halving the round trips on every border wake.
+    let geom_cookie = conn.get_geometry(win).map_err(|e| e.to_string())?;
+    let trans_cookie = conn
+        .translate_coordinates(win, root, 0, 0)
+        .map_err(|e| e.to_string())?;
+    let geom = geom_cookie
         .reply()
         .map_err(|e| format!("window gone: {e}"))?;
-    let translated = conn
-        .translate_coordinates(win, root, 0, 0)
-        .map_err(|e| e.to_string())?
+    let translated = trans_cookie
         .reply()
         .map_err(|e| format!("translate_coordinates: {e}"))?;
     Ok(Rect {
