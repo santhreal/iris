@@ -80,11 +80,13 @@ impl Encoder {
         }
         match cfg.format {
             RecordingFormat::Mp4 => {
+                // NVENC refuses frames below its minimum dimension
+                // (~145x49); a tiny window falls back to x264.
                 let use_nvenc = match cfg.encoder {
                     RecordingEncoder::Nvenc => true,
                     RecordingEncoder::Libx264 => false,
                     RecordingEncoder::Auto => nvenc_available(),
-                };
+                } && cfg.width >= 145 && cfg.height >= 49;
                 if use_nvenc {
                     args.extend([
                         "-c:v".into(),
