@@ -982,14 +982,18 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
                 let ry = (b.1 - a.1).abs() / 2.0;
                 if rx > 0.0 && ry > 0.0 {
                     if action.filled {
-                        // Scanline fill: stamp every row inside the
-                        // ellipse at its chord width.
+                        // Scanline fill: write each row's chord directly.
+                        // Stamping a disc per pixel was O(w*h*w) blends.
                         let y0 = (cy - ry).max(0.0) as i64;
-                        let y1 = (cy + ry).min(img.height() as f32) as i64;
+                        let y1 = (cy + ry).min(img.height() as f32 - 1.0) as i64;
                         for y in y0..=y1 {
                             let t = (y as f32 - cy) / ry;
                             let half = rx * (1.0 - t * t).max(0.0).sqrt();
-                            stamp_segment(img, (cx - half, y as f32), (cx + half, y as f32), 1.0, px);
+                            let x0 = (cx - half).max(0.0) as i64;
+                            let x1 = (cx + half).min(img.width() as f32 - 1.0) as i64;
+                            for x in x0..=x1 {
+                                blend(img, x, y, px);
+                            }
                         }
                     } else {
                         let n = ((rx + ry) * 0.35).max(24.0) as usize;
@@ -1005,10 +1009,18 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
             if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
                 let (tl, br) = (*a, *b);
                 if action.filled {
+                    // Direct scanline fill: stamping a disc per pixel
+                    // was O(w*h*w) blends for a solid rect.
                     let (x0, x1) = (tl.0.min(br.0), tl.0.max(br.0));
                     let (y0, y1) = (tl.1.min(br.1), tl.1.max(br.1));
-                    for y in y0.max(0.0) as i64..=y1.min(img.height() as f32) as i64 {
-                        stamp_segment(img, (x0, y as f32), (x1, y as f32), 1.0, px);
+                    let y0 = y0.max(0.0) as i64;
+                    let y1 = y1.min(img.height() as f32 - 1.0) as i64;
+                    let x0 = x0.max(0.0) as i64;
+                    let x1 = x1.min(img.width() as f32 - 1.0) as i64;
+                    for y in y0..=y1 {
+                        for x in x0..=x1 {
+                            blend(img, x, y, px);
+                        }
                     }
                 } else {
                     stamp_segment(img, (tl.0, tl.1), (br.0, tl.1), w, px);
@@ -1043,25 +1055,21 @@ fn blend(dst: &mut image::RgbaImage, x: i64, y: i64, src: image::Rgba<u8>) {
     if x < 0 || y < 0 || x >= dst.width() as i64 || y >= dst.height() as i64 {
         return;
     }
+    // Write through the raw buffer: get_pixel+put_pixel bounds-check
+    // twice per pixel and a filled shape calls this per pixel.
+    let i = ((y as u32 * dst.width() + x as u32) * 4) as usize;
+    let buf: &mut [u8] = dst.as_mut();
     let a = src.0[3] as f32 / 255.0;
     if a >= 1.0 {
-        dst.put_pixel(x as u32, y as u32, src);
+        buf[i..i + 4].copy_from_slice(&src.0);
         return;
     }
-    let d = dst.get_pixel(x as u32, y as u32);
     let inv = 1.0 - a;
-    dst.put_pixel(
-        x as u32,
-        y as u32,
-        image::Rgba([
-            (src.0[0] as f32 * a + d.0[0] as f32 * inv) as u8,
-            (src.0[1] as f32 * a + d.0[1] as f32 * inv) as u8,
-            (src.0[2] as f32 * a + d.0[2] as f32 * inv) as u8,
-            d.0[3].max(src.0[3]),
-        ]),
-    );
+    buf[i] = (src.0[0] as f32 * a + buf[i] as f32 * inv) as u8;
+    buf[i + 1] = (src.0[1] as f32 * a + buf[i + 1] as f32 * inv) as u8;
+    buf[i + 2] = (src.0[2] as f32 * a + buf[i + 2] as f32 * inv) as u8;
+    buf[i + 3] = buf[i + 3].max(src.0[3]);
 }
-
 fn stamp(img: &mut image::RgbaImage, cx: f32, cy: f32, r: f32, px: image::Rgba<u8>) {
     let r = r.max(0.5);
     let (x0, y0) = ((cx - r).floor() as i64, (cy - r).floor() as i64);
