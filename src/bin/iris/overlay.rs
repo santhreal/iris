@@ -959,7 +959,12 @@ impl Render for Overlay {
                     let (fx, fy) = this.frame_pos(sf, sx, sy, mx, my);
                     this.update_loupe(fx, fy, cx);
                 } else {
-                    this.loupe = None;
+                    // Releasing the tile matters: a bare None drop
+                    // leaves the loupe's atlas slot allocated until
+                    // the window parks.
+                    if let Some((img, _)) = this.loupe.take() {
+                        crate::widgets::release_render(&img, cx);
+                    }
                     this.loupe_at = None;
                     let new_hover = this.window_at(mx, my, sf, sx, sy);
                     let changed = match (this.hovered, new_hover) {

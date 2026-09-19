@@ -40,6 +40,7 @@ pub enum Icon {
     MicOff,
     Counter,
     Record,
+    Play,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.
@@ -281,6 +282,10 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
             push_segment(&mut path, p(11.0, 7.5), p(15.0, 5.0), w);
             push_segment(&mut path, p(15.0, 5.0), p(15.0, 13.0), w);
             push_segment(&mut path, p(15.0, 13.0), p(11.0, 10.5), w);
+        }
+        Icon::Play => {
+            // Right-pointing triangle.
+            push_filled_triangle(&mut path, p(6.0, 4.0), p(6.0, 14.0), p(14.5, 9.0));
         }
     }
     window.paint_path(path, color);

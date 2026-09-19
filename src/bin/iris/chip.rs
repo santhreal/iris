@@ -30,12 +30,26 @@ static CHIP_HANDLE: parking_lot::Mutex<Option<AnyWindowHandle>> =
 /// frame so these read through without a notify round-trip.
 static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static MIC_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Wall time spent paused, subtracted from the elapsed timer so a
+/// pause does not inflate the recording's clock.
+static PAUSED_MS: AtomicU32 = AtomicU32::new(0);
+static PAUSE_STARTED: parking_lot::Mutex<Option<Instant>> = parking_lot::Mutex::new(None);
 
 pub fn paused() -> bool {
     PAUSED.load(Ordering::Relaxed)
 }
 pub fn set_paused(v: bool) {
-    PAUSED.store(v, Ordering::Relaxed);
+    let was = PAUSED.swap(v, Ordering::Relaxed);
+    let mut started = PAUSE_STARTED.lock();
+    match (was, v) {
+        (false, true) => *started = Some(Instant::now()),
+        (true, false) => {
+            if let Some(t) = started.take() {
+                PAUSED_MS.fetch_add(t.elapsed().as_millis() as u32, Ordering::Relaxed);
+            }
+        }
+        _ => {}
+    }
 }
 pub fn set_mic(v: bool) {
     MIC_ON.store(v, Ordering::Relaxed);
@@ -91,6 +105,8 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
     CHIP_XID.store(xid, Ordering::SeqCst);
     MIC_ON.store(mic, Ordering::Relaxed);
     PAUSED.store(false, Ordering::Relaxed);
+    PAUSED_MS.store(0, Ordering::Relaxed);
+    *PAUSE_STARTED.lock() = None;
     *CHIP_HANDLE.lock() = Some(handle.into());
     Ok(xid)
 }
@@ -119,11 +135,27 @@ pub fn find_chip_xid_on(conn: &impl x11rb::connection::Connection) -> Option<u32
 
 impl Render for Chip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // rAF-driven: the dot pulse and timer both tick every frame.
-        window.request_animation_frame();
         let paused = paused();
+        // Paused: the dot is static and the timer frozen, so no rAF —
+        // a GPU wake per frame for a still pill is wasted. The next
+        // dispatch (resume/stop) re-renders through notify.
+        if !paused {
+            window.request_animation_frame();
+        }
         let mic_on = MIC_ON.load(Ordering::Relaxed);
-        let t = self.started.elapsed().as_secs_f32();
+        // Subtract wall time spent paused: the file has no frames for
+        // that span, so the clock must not count it.
+        let paused_ms = PAUSED_MS.load(Ordering::Relaxed) as u64
+            + PAUSE_STARTED
+                .lock()
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+        let t = self
+            .started
+            .elapsed()
+            .as_millis()
+            .saturating_sub(paused_ms as u128) as f32
+            / 1000.0;
         let pulse = if paused { 0.35 } else { 0.55 + 0.45 * (t * std::f32::consts::TAU / 1.6).sin().abs() };
         let secs = t as u64;
         let timer = format!("{:02}:{:02}", secs / 60, secs % 60);
@@ -165,7 +197,7 @@ impl Render for Chip {
                         let _ = crate::daemon::dispatch(cx, &crate::daemon::Command::RecordPause);
                     }))
                     .child(crate::icons::icon(
-                        if paused { crate::icons::Icon::Check } else { crate::icons::Icon::Pause },
+                        if paused { crate::icons::Icon::Play } else { crate::icons::Icon::Pause },
                         theme::FG_DIM,
                         14.0,
                     )),
