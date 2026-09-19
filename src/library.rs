@@ -152,15 +152,41 @@ pub fn list() -> Vec<CaptureEntry> {
     let _write = store_lock().lock();
     let entries = read_store();
     // Prune entries whose file vanished (user moved/deleted it). The
-    // stat calls run in parallel: a few hundred sequential exists()
-    // checks on a slow or network-mounted shots dir stall the open.
-    let alive_flags: Vec<bool> = std::thread::scope(|scope| {
-        let handles: Vec<_> = entries
-            .iter()
-            .map(|e| scope.spawn(|| e.path.exists()))
+    // stat calls run in parallel over a bounded pool: a few hundred
+    // sequential exists() checks on a slow or network-mounted shots
+    // dir stall the open, but a thread per entry is its own storm.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4)
+        .min(entries.len().max(1));
+    let mut alive_flags: Vec<std::sync::atomic::AtomicBool> =
+        (0..entries.len()).map(|_| std::sync::atomic::AtomicBool::new(false)).collect();
+    std::thread::scope(|scope| {
+        let flags = &alive_flags;
+        let entries_ref = &entries;
+        let next_ref = &next;
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(move || loop {
+                    let i = next_ref.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i >= entries_ref.len() {
+                        break;
+                    }
+                    if entries_ref[i].path.exists() {
+                        flags[i].store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                })
+            })
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap_or(false)).collect()
+        for h in handles {
+            let _ = h.join();
+        }
     });
+    let alive_flags: Vec<bool> = alive_flags
+        .iter_mut()
+        .map(|f| *f.get_mut())
+        .collect();
     let (alive, dead): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .zip(alive_flags)
