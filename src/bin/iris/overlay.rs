@@ -729,15 +729,17 @@ impl Overlay {
         }
     }    /// Release this window's painted images: with the window pooled
     /// across sessions, an unreleased tile would outlive its session.
-    fn release_assets(&self, cx: &mut App) {
-        if let Some(img) = &self.frame_img {
-            crate::widgets::release_render(img, cx);
+    fn release_assets(&mut self, cx: &mut App) {
+        // take() each field: a second park on the same session (a
+        // doubled Escape) must not release the same tile twice.
+        if let Some(img) = self.frame_img.take() {
+            crate::widgets::release_render(&img, cx);
         }
-        if let Some(f) = &self.flight {
+        if let Some(f) = self.flight.take() {
             crate::widgets::release_render(&f.img, cx);
         }
-        if let Some((img, _)) = &self.loupe {
-            crate::widgets::release_render(img, cx);
+        if let Some((img, _)) = self.loupe.take() {
+            crate::widgets::release_render(&img, cx);
         }
     }
 
