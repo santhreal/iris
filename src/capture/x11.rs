@@ -142,16 +142,29 @@ fn list_top_level_windows_on(
     }
 
     let own_pid = std::process::id();
-    let get_prop = |win: u32, atom: u32, typ: x11rb::protocol::xproto::Atom, len: u32| {
-        conn.get_property(false, win, atom, typ, 0, len)
-            .ok()?
-            .reply()
-            .ok()
-    };
-    let mut rects = Vec::with_capacity(windows.len());
+    // Issue every per-window request before reading any reply: ~4
+    // round trips per window serialized is a visible slice of the
+    // overlay's open latency on a busy desktop.
+    struct Probe<'a, C: Connection> {
+        pid: Option<x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::GetPropertyReply>>,
+        state: Option<x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::GetPropertyReply>>,
+        geom: Option<x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::GetGeometryReply>>,
+        trans: Option<x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::TranslateCoordinatesReply>>,
+    }
+    let mut probes = Vec::with_capacity(windows.len());
     for win in windows {
+        probes.push(Probe {
+            pid: conn.get_property(false, win, wm_pid, AtomEnum::CARDINAL, 0, 1).ok(),
+            state: conn.get_property(false, win, wm_state, AtomEnum::ATOM, 0, 32).ok(),
+            geom: conn.get_geometry(win).ok(),
+            trans: conn.translate_coordinates(win, root, 0, 0).ok(),
+        });
+    }
+    let _ = conn.flush();
+    let mut rects = Vec::with_capacity(probes.len());
+    for probe in probes {
         // Own windows (overlay, chips, borders) must never be snappable.
-        if let Some(reply) = get_prop(win, wm_pid, AtomEnum::CARDINAL.into(), 1) {
+        if let Some(reply) = probe.pid.and_then(|c| c.reply().ok()) {
             if let Some(mut it) = reply.value32() {
                 if it.next() == Some(own_pid) {
                     continue;
@@ -159,7 +172,7 @@ fn list_top_level_windows_on(
             }
         }
         // Skip minimized windows.
-        if let Some(reply) = get_prop(win, wm_state, AtomEnum::ATOM.into(), 32) {
+        if let Some(reply) = probe.state.and_then(|c| c.reply().ok()) {
             if reply
                 .value32()
                 .map(|mut v| v.any(|s| s == state_hidden))
@@ -168,19 +181,11 @@ fn list_top_level_windows_on(
                 continue;
             }
         }
-        let geom = match conn
-            .get_geometry(win)
-            .ok()
-            .and_then(|c| c.reply().ok())
-        {
+        let geom = match probe.geom.and_then(|c| c.reply().ok()) {
             Some(g) => g,
             None => continue, // window vanished mid-enumeration
         };
-        let origin = match conn
-            .translate_coordinates(win, root, 0, 0)
-            .ok()
-            .and_then(|c| c.reply().ok())
-        {
+        let origin = match probe.trans.and_then(|c| c.reply().ok()) {
             Some(t) => t,
             None => continue,
         };
@@ -406,20 +411,27 @@ where
         let result = (|| -> Option<u8> {
             let seg = conn.generate_id().ok()?;
             ShmExt::shm_attach(conn, seg, shmid as u32, false).ok()?.check().ok()?;
-            let reply = ShmExt::shm_get_image(
-                conn, root, 0, 0, width, height, !0u32, ImageFormat::Z_PIXMAP.into(), seg, 0,
-            )
-            .ok()?
-            .reply()
-            .ok()?;
-            if reply.depth == 24 {
-                let src = std::slice::from_raw_parts(addr as *const u8, size);
-                let pixels = width as usize * height as usize;
-                let bpp = src.len() / pixels.max(1);
-                convert_to_rgba(src, pixels, bpp, out, u32::from(width), u32::from(height)).ok()?;
-            }
+            // Detach runs on every path after a successful attach: an
+            // early `?` here would leave the server holding a segment
+            // already marked IPC_RMID.
+            let depth = (|| -> Option<u8> {
+                let reply = ShmExt::shm_get_image(
+                    conn, root, 0, 0, width, height, !0u32, ImageFormat::Z_PIXMAP.into(), seg, 0,
+                )
+                .ok()?
+                .reply()
+                .ok()?;
+                if reply.depth == 24 {
+                    let src = std::slice::from_raw_parts(addr as *const u8, size);
+                    let pixels = width as usize * height as usize;
+                    let bpp = src.len() / pixels.max(1);
+                    convert_to_rgba(src, pixels, bpp, out, u32::from(width), u32::from(height))
+                        .ok()?;
+                }
+                Some(reply.depth)
+            })();
             let _ = ShmExt::shm_detach(conn, seg);
-            Some(reply.depth)
+            depth
         })();
         libc::shmdt(addr);
         result

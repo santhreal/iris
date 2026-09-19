@@ -524,7 +524,10 @@ impl Overlay {
         )
     }
 
-    /// A logical-px rect to frame pixels.
+    /// A logical-px rect to frame pixels, intersected with the frame:
+    /// a negative origin (a monitor left of or above the primary) or a
+    /// drag that overshot the edge must not saturate `as u32` into a
+    /// crop anchored at the frame's corner.
     fn rect_to_frame(
         window: &Window,
         origin: (i32, i32),
@@ -533,11 +536,19 @@ impl Overlay {
     ) -> Region {
         let sf = window.scale_factor();
         let (sx, sy) = Self::scale(window, view);
+        let fx0 = origin.0 as f32 + rect.0 * sf * sx;
+        let fy0 = origin.1 as f32 + rect.1 * sf * sy;
+        let fx1 = fx0 + rect.2 * sf * sx;
+        let fy1 = fy0 + rect.3 * sf * sy;
+        let x0 = fx0.clamp(0.0, view.0 as f32);
+        let y0 = fy0.clamp(0.0, view.1 as f32);
+        let x1 = fx1.clamp(0.0, view.0 as f32);
+        let y1 = fy1.clamp(0.0, view.1 as f32);
         Region {
-            x: (origin.0 as f32 + rect.0 * sf * sx) as u32,
-            y: (origin.1 as f32 + rect.1 * sf * sy) as u32,
-            width: (rect.2 * sf * sx) as u32,
-            height: (rect.3 * sf * sy) as u32,
+            x: x0 as u32,
+            y: y0 as u32,
+            width: (x1 - x0).max(0.0) as u32,
+            height: (y1 - y0).max(0.0) as u32,
         }
     }
 
@@ -586,6 +597,12 @@ impl Overlay {
         };
         self.finishing = true;
         let region = Self::rect_to_frame(window, self.origin, self.view, (x, y, w, h));
+        if region.width == 0 || region.height == 0 {
+            // The selection intersected no frame pixels (fully off the
+            // union edge): nothing to crop or record.
+            self.cancel(window, cx);
+            return;
+        }
         if self.mode == OverlayMode::RecordPick {
             // Hand the rect to the daemon; the overlay parks and the
             // recording chip takes over the visual state.
@@ -878,10 +895,19 @@ impl Render for Overlay {
                         _ => { x1 = mx; }
                     }
                     let size = window.bounds().size;
-                    let (nx, nw) = (x0.min(x1).clamp(0.0, f32::from(size.width)),
-                                    (x1 - x0).abs().min(f32::from(size.width)));
-                    let (ny, nh) = (y0.min(y1).clamp(0.0, f32::from(size.height)),
-                                    (y1 - y0).abs().min(f32::from(size.height)));
+                    // Clamp BOTH edges before subtracting: using the
+                    // raw far edge grows the rect past the window when
+                    // the handle is dragged outside it.
+                    let (nx, nw) = {
+                        let lo = x0.min(x1).clamp(0.0, f32::from(size.width));
+                        let hi = x0.max(x1).clamp(0.0, f32::from(size.width));
+                        (lo, hi - lo)
+                    };
+                    let (ny, nh) = {
+                        let lo = y0.min(y1).clamp(0.0, f32::from(size.height));
+                        let hi = y0.max(y1).clamp(0.0, f32::from(size.height));
+                        (lo, hi - lo)
+                    };
                     this.current = Some((nx, ny, nw, nh));
                     // The loupe tracks the edge being dragged so a
                     // resize lands on the exact pixel, same as the
