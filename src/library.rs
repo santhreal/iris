@@ -56,23 +56,50 @@ fn path_key(path: &Path) -> String {
     format!("{hash:016x}")
 }
 
+/// The parsed store behind an mtime+len check: the library window
+/// polls list() every 1.5s, and an unchanged file should not re-parse.
+fn store_cache() -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)> {
+    use std::sync::LazyLock;
+    static CACHE: LazyLock<parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)>> =
+        LazyLock::new(|| parking_lot::Mutex::new((None, 0, Vec::new())));
+    &CACHE
+}
+
 fn read_store() -> Vec<CaptureEntry> {
     let Ok(path) = store_path() else {
         return Vec::new();
     };
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    serde_json::from_str(&text).unwrap_or_else(|e| {
-        crate::ilog!("iris: corrupt library.json, starting fresh: {e}");
-        Vec::new()
-    })
+    let stamp = std::fs::metadata(&path)
+        .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
+        .unwrap_or((None, 0));
+    {
+        let guard = store_cache().lock();
+        if guard.0 == stamp.0 && guard.1 == stamp.1 && stamp.0.is_some() {
+            return guard.2.clone();
+        }
+    }
+    let entries: Vec<CaptureEntry> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| {
+            serde_json::from_str(&text).unwrap_or_else(|e| {
+                crate::ilog!("iris: corrupt library.json, starting fresh: {e}");
+                Some(Vec::new())
+            })
+        })
+        .unwrap_or_default();
+    *store_cache().lock() = (stamp.0, stamp.1, entries.clone());
+    entries
 }
 
 fn write_store(entries: &[CaptureEntry]) -> Result<(), String> {
     let path = store_path()?;
     let text = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| format!("write library.json: {e}"))?;
+    // Write-through: the next read sees the new bytes without a parse.
+    let stamp = std::fs::metadata(&path)
+        .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
+        .unwrap_or((None, 0));
+    *store_cache().lock() = (stamp.0, stamp.1, entries.to_vec());
     Ok(())
 }
 
