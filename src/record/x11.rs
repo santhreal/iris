@@ -416,6 +416,7 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
     let x_fd = conn.stream().as_raw_fd();
 
     let mut last: Option<Rect> = None;
+    let mut settle = 0u32;
     loop {
         if stop.try_recv().is_ok() {
             break;
@@ -433,17 +434,21 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
         }
         match root_rect(&conn, root, target) {
             Ok(rect) => {
-                if last != Some(rect) {
+                let moved = last != Some(rect);
+                if moved {
                     place_strips(&conn, &strips, rect);
                     last = Some(rect);
                 }
-                // Every wake: the WM may place the chip on first map,
-                // after the initial rect report, or re-place it on a
-                // later re-frame.
-                chip.place(rect);
+                // Re-assert the chip for the first ~2s: the WM can
+                // re-place it on map-time re-framing after the initial
+                // rect report. After that, only a real move re-places.
+                if moved || settle < 10 {
+                    chip.place(rect);
+                }
             }
             Err(_) => break, // target closed; recording ends on its own
         }
+        settle += 1;
         // Sleep until the next X event or the 200ms re-check: a
         // ConfigureNotify wakes the poll instantly, so a moved window
         // re-borders in the same frame instead of up to 200ms late.
