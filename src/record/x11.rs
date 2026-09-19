@@ -424,8 +424,52 @@ fn record_target(picked: &PickedWindow, spec: &RecordingSpec) -> Result<(), Stri
     result
 }
 
+/// A persistent MIT-SHM segment for per-frame grabs. Recreated when the
+/// target resizes; falls back to socket GetImage when SHM is absent.
+struct ShmGrab {
+    shmid: i32,
+    addr: *mut u8,
+    seg: u32,
+    size: usize,
+}
+
+impl ShmGrab {
+    fn new(conn: &RustConnection, width: u32, height: u32) -> Option<Self> {
+        use x11rb::protocol::shm::ConnectionExt as ShmExt;
+        let version = ShmExt::shm_query_version(conn).ok()?.reply().ok()?;
+        if version.major_version < 1 {
+            return None;
+        }
+        let size = width as usize * height as usize * 4;
+        unsafe {
+            let shmid = libc::shmget(libc::IPC_PRIVATE, size, libc::IPC_CREAT | 0o600);
+            if shmid < 0 {
+                return None;
+            }
+            libc::shmctl(shmid, libc::IPC_RMID, std::ptr::null_mut());
+            let addr = libc::shmat(shmid, std::ptr::null(), 0);
+            if addr as isize == -1 {
+                return None;
+            }
+            let seg = conn.generate_id().ok()?;
+            ShmExt::shm_attach(conn, seg, shmid as u32, false).ok()?.check().ok()?;
+            Some(Self { shmid, addr: addr as *mut u8, seg, size })
+        }
+    }
+
+    fn detach(&self, conn: &RustConnection) {
+        use x11rb::protocol::shm::ConnectionExt as ShmExt;
+        unsafe {
+            libc::shmdt(self.addr as *const _);
+        }
+        let _ = ShmExt::shm_detach(conn, self.seg);
+        let _ = self.shmid;
+    }
+}
+
 fn grab_pixmap(
     conn: &RustConnection,
+    shm: &mut Option<ShmGrab>,
     win: Window,
     width: u32,
     height: u32,
@@ -436,6 +480,37 @@ fn grab_pixmap(
         .map_err(|e| e.to_string())?
         .check()
         .map_err(|e| format!("name_window_pixmap (window closed?): {e}"))?;
+
+    // SHM path: the server writes the frame into the mapped segment and
+    // the swizzle reads it in place. A 1080p frame over the socket is
+    // ~8MB of protocol traffic per frame; this is none.
+    let need = width as usize * height as usize * 4;
+    if shm.as_ref().map(|s| s.size) != Some(need) {
+        if let Some(old) = shm.take() {
+            old.detach(conn);
+        }
+        *shm = ShmGrab::new(conn, width, height);
+    }
+    if let Some(s) = shm.as_ref() {
+        use x11rb::protocol::shm::ConnectionExt as ShmExt;
+        let grabbed = ShmExt::shm_get_image(
+            conn, pixmap, 0, 0, width as u16, height as u16, !0u32,
+            ImageFormat::Z_PIXMAP.into(), s.seg, 0,
+        )
+        .ok()
+        .and_then(|c| c.reply().ok());
+        if let Some(_reply) = grabbed {
+            let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
+            let r = bgrx_to_rgba(src, width as usize * height as usize, out);
+            conn.free_pixmap(pixmap).map_err(|e| e.to_string())?;
+            return r;
+        }
+        // SHM failed mid-session: drop it and fall through to the socket.
+        if let Some(old) = shm.take() {
+            old.detach(conn);
+        }
+    }
+
     let image = conn
         .get_image(
             ImageFormat::Z_PIXMAP,
@@ -464,6 +539,31 @@ fn record_loop(
     conn: &RustConnection,
     picked: &PickedWindow,
     spec: &RecordingSpec,
+) -> Result<(), String> {
+    // Persistent SHM segment for per-frame grabs; None when the server
+    // lacks MIT-SHM, in which case grab_pixmap uses the socket. The
+    // guard detaches on every exit path, including early returns.
+    struct ShmGuard<'a> {
+        conn: &'a RustConnection,
+        shm: Option<ShmGrab>,
+    }
+    impl Drop for ShmGuard<'_> {
+        fn drop(&mut self) {
+            if let Some(s) = self.shm.take() {
+                s.detach(self.conn);
+            }
+        }
+    }
+    let mut guard = ShmGuard { conn, shm: None };
+
+    record_loop_inner(conn, picked, spec, &mut guard.shm)
+}
+
+fn record_loop_inner(
+    conn: &RustConnection,
+    picked: &PickedWindow,
+    spec: &RecordingSpec,
+    shm: &mut Option<ShmGrab>,
 ) -> Result<(), String> {
     let mut width = picked.width;
     let mut height = picked.height;
@@ -580,7 +680,7 @@ fn record_loop(
             frame_no = ((now - start).as_secs_f64() * f64::from(spec.fps)) as u64;
         }
 
-        match grab_pixmap(conn, picked.id, width, height, &mut rgba) {
+        match grab_pixmap(conn, &mut *shm, picked.id, width, height, &mut rgba) {
             Ok(()) => {}
             Err(_) => {
                 // Window closed mid-grab: keep what we have.
