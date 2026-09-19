@@ -460,6 +460,7 @@ fn record_region_pick(cx: &mut App) -> Result<(), String> {
             Ok(true) => {
                 let u = &layout.union;
                 crate::xwin::unpark_span(class, u.x, u.y, u.width, u.height);
+                let _ = h.update(cx, |_, window, _| window.activate_window());
                 h
             }
             Ok(false) => return Ok(()),

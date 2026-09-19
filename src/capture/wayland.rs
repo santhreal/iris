@@ -40,6 +40,9 @@ async fn portal_screenshot() -> Result<Frame, String> {
     let img = image::open(&path)
         .map_err(|e| format!("read portal screenshot {}: {e}", path.display()))?
         .to_rgba8();
+    // The portal's file is ours once delivered: leave no per-capture
+    // litter in the runtime dir.
+    let _ = std::fs::remove_file(&path);
     let (width, height) = img.dimensions();
     Ok(Frame {
         width,

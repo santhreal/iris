@@ -174,7 +174,10 @@ impl Library {
                     .await;
                 let alive = this.update(cx, |this, cx| {
                     let changed = fresh.len() != this.entries.len()
-                        || fresh.first().map(|e| &e.path) != this.entries.first().map(|e| &e.path);
+                        || !fresh
+                            .iter()
+                            .map(|e| &e.path)
+                            .eq(this.entries.iter().map(|e| &e.path));
                     if changed {
                         this.entries = fresh;
                         this.selected
