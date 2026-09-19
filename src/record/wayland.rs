@@ -631,7 +631,13 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
         return;
     };
 
-    let mut shared = data.shared.borrow_mut();
+    // try_borrow_mut: teardown disconnects the stream first, but a
+    // frame already queued on the data thread can still arrive while
+    // the main thread holds the borrow. Dropping it beats aborting
+    // the process on a RefCell panic in a non-unwinding callback.
+    let Ok(mut shared) = data.shared.try_borrow_mut() else {
+        return;
+    };
     if shared.done {
         return;
     }
@@ -951,7 +957,12 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
 
     mainloop.run();
 
+    // Stop the stream before touching shared: on_process runs on
+    // PipeWire's data thread, and a borrow here racing its borrow_mut
+    // aborts the process (RefCell panic in a non-unwinding callback).
+    stream.disconnect().ok();
     let mut shared = shared.borrow_mut();
+
     shared.done = true;
     if let Some(error) = shared.error.take() {
         return Err(error);
