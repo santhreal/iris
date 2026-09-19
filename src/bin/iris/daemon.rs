@@ -92,6 +92,9 @@ pub enum Command {
     Capture,
     CaptureFullscreen,
     CaptureWindow,
+    /// Fullscreen capture after N seconds: menus and tooltips that
+    /// close on any click survive the wait.
+    Delayed(u64),
     Library,
     Settings,
     Annotate(PathBuf),
@@ -113,7 +116,12 @@ pub fn parse_args(args: &[String]) -> Vec<Command> {
             "--capture" => cmds.push(Command::Capture),
             "--capture-fullscreen" => cmds.push(Command::CaptureFullscreen),
             "--capture-window" => cmds.push(Command::CaptureWindow),
-            "--library" => cmds.push(Command::Library),
+            "--delay" => {
+                if let Some(secs) = args.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
+                    cmds.push(Command::Delayed(secs));
+                    i += 1;
+                }
+            }
             "--settings" => cmds.push(Command::Settings),
             "--quit" => cmds.push(Command::Quit),
             "--home" => cmds.push(Command::Home),
@@ -314,6 +322,21 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::Capture => capture_region(cx),
         Command::CaptureFullscreen => capture_fullscreen(cx),
         Command::CaptureWindow => capture_active_window(cx),
+        Command::Delayed(secs) => {
+            let secs = *secs;
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(Duration::from_secs(secs))
+                    .await;
+                let _ = cx.update(|cx| {
+                    if let Err(e) = capture_fullscreen(cx) {
+                        iris_lib::ilog!("iris: capture: {e}");
+                    }
+                });
+            })
+            .detach();
+            Ok(())
+        }
         Command::Library => library::open(cx),
         Command::Settings => settings::open(cx),
         Command::Annotate(path) => crate::editor::open(cx, path, None, None),
@@ -523,6 +546,7 @@ impl Command {
             Command::Capture => Command::Capture,
             Command::CaptureFullscreen => Command::CaptureFullscreen,
             Command::CaptureWindow => Command::CaptureWindow,
+            Command::Delayed(s) => Command::Delayed(*s),
             Command::Library => Command::Library,
             Command::Settings => Command::Settings,
             Command::Annotate(p) => Command::Annotate(p.clone()),
