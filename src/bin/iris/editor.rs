@@ -126,10 +126,11 @@ pub struct Editor {
     /// undoable, like Markup. Two stacks; a fresh edit clears redo.
     undos: Vec<Edit<Action>>,
     redos: Vec<Edit<Action>>,
-    /// In-progress action behind an Rc: the canvas prep closure clones
-    /// a refcount per render instead of deep-copying the stroke's
-    /// points every frame of a drag.
-    current: Option<Rc<Action>>,
+    /// In-progress action behind an Rc<RefCell>: the canvas prep
+    /// closure clones a refcount per render, and the mousemove handler
+    /// borrows it mutably in place. A plain Rc forced Rc::make_mut to
+    /// deep-copy the stroke's points on every move of a drag.
+    current: Option<Rc<std::cell::RefCell<Action>>>,
     tool: Tool,
     /// Stroke width stop 0..2; multiplies the image-relative base.
     stroke: u8,
@@ -481,7 +482,9 @@ impl Editor {
         };
         // Between frames the paint closure has dropped its clone, so
         // this unwraps without copying; a mid-frame commit clones once.
-        let mut action = Rc::try_unwrap(rc).unwrap_or_else(|rc| (*rc).clone());
+        let mut action = Rc::try_unwrap(rc)
+            .map(std::cell::RefCell::into_inner)
+            .unwrap_or_else(|rc| rc.borrow().clone());
         if action.points.len() < 2
             && action.tool != Tool::Pen
             && action.tool != Tool::Highlight
@@ -1621,7 +1624,8 @@ impl Render for Editor {
             canvas(
                 move |_, _, _| (actions.clone(), current.clone()),
                 move |bounds, (actions, current), window, _cx| {
-                    for action in actions.iter().chain(current.as_deref()) {
+                    let cur = current.as_ref().map(|rc| rc.borrow());
+                    for action in actions.iter().chain(cur.as_deref()) {
                         paint_action(action, bounds, scale, base_w, base_h, window);
                     }
                 },
@@ -1631,7 +1635,8 @@ impl Render for Editor {
             .left_0()
             .size_full(),
         );
-        for action in self.actions.iter().chain(self.current.as_deref()) {
+        let cur = self.current.as_ref().map(|rc| rc.borrow());
+        for action in self.actions.iter().chain(cur.as_deref()) {
             if action.tool == Tool::Blur {
                 if let Some(patch) = &action.blur_patch {
                     let (x, y, w, h) = action.blur_rect;
@@ -1866,7 +1871,7 @@ impl Render for Editor {
                         }
                         _ => {
                             this.commit_text(true);
-                            this.current = Some(Rc::new(this.new_action(p)));
+                            this.current = Some(Rc::new(std::cell::RefCell::new(this.new_action(p))));
                         }
                     }
                     cx.notify();
@@ -1916,9 +1921,10 @@ impl Render for Editor {
                     cx.notify();
                     return;
                 }
-                let Some(action) = this.current.as_mut().map(Rc::make_mut) else {
+                let Some(rc) = this.current.as_ref() else {
                     return;
                 };
+                let mut action = rc.borrow_mut();
                 if action.tool == Tool::Pen || action.tool == Tool::Highlight {
                     action.points.push(p);
                 } else if action.tool == Tool::Counter {
