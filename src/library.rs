@@ -65,6 +65,16 @@ fn store_cache() -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, 
     &CACHE
 }
 
+/// Serializes read-modify-write passes over the store: list()'s prune
+/// and add()'s prepend both read then write, and an unsynchronized
+/// pair can drop a capture that landed between the two calls.
+fn store_lock() -> &'static parking_lot::Mutex<()> {
+    use std::sync::LazyLock;
+    static LOCK: LazyLock<parking_lot::Mutex<()>> =
+        LazyLock::new(|| parking_lot::Mutex::new(()));
+    &LOCK
+}
+
 fn read_store() -> Vec<CaptureEntry> {
     let Ok(path) = store_path() else {
         return Vec::new();
@@ -107,6 +117,7 @@ fn write_store(entries: &[CaptureEntry]) -> Result<(), String> {
 /// The caller passes the already-decoded image so a save does not pay a
 /// second PNG decode just to make the thumbnail.
 pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
+    let _write = store_lock().lock();
     let (width, height) = img.dimensions();
     let scale = THUMB_WIDTH as f64 / width as f64;
     let thumb_img = image::imageops::resize(
@@ -136,6 +147,7 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
 }
 
 pub fn list() -> Vec<CaptureEntry> {
+    let _write = store_lock().lock();
     let entries = read_store();
     // Prune entries whose file vanished (user moved/deleted it). The
     // stat calls run in parallel: a few hundred sequential exists()
@@ -160,6 +172,7 @@ pub fn list() -> Vec<CaptureEntry> {
 
 /// Remove a capture everywhere: entry, thumbnail, and the image file.
 pub fn delete(path: &Path) -> Result<(), String> {
+    let _write = store_lock().lock();
     let mut entries = read_store();
     let before = entries.len();
     entries.retain(|e| e.path != path);

@@ -756,6 +756,12 @@ impl Editor {
                     let png = png_bytes(&img)?;
                     std::fs::write(&path, &png)
                         .map_err(|e| format!("write {}: {e}", path.display()))?;
+                    // The file changed under the library's feet:
+                    // regenerate the thumbnail and refresh the entry,
+                    // or the card shows the pre-edit image forever.
+                    if let Err(e) = iris_lib::library::add(&path, &img) {
+                        iris_lib::ilog!("iris: library refresh after save: {e}");
+                    }
                     pipeline::copy_image(&img)?;
                     Ok::<(), String>(())
                 })
@@ -1859,6 +1865,7 @@ impl Render for Editor {
                     this.crop_rect = Some(moved);
                     this.crop_move = Some((p, moved));
                     cx.notify();
+                    return;
                 }
                 let Some(action) = this.current.as_mut() else {
                     return;

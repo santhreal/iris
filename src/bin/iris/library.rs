@@ -219,7 +219,10 @@ impl Library {
             self.anchor = Some(index);
             cx.notify();
         } else if mods.shift {
-            if let Some(anchor) = self.anchor {
+            // The anchor is an index into entries; a refresh that
+            // removed cards can leave it out of bounds, and a raw
+            // slice range would panic the daemon.
+            if let Some(anchor) = self.anchor.filter(|a| *a < self.entries.len()) {
                 let (lo, hi) = (anchor.min(index), anchor.max(index));
                 for entry in &self.entries[lo..=hi] {
                     if !self.selected.contains(&entry.path) {
@@ -800,12 +803,18 @@ impl Library {
                     return;
                 }
                 this.drag_fired = true;
-                let paths: Vec<PathBuf> = if this.selected.contains(&this.entries[card].path) {
+                // The index was captured at mousedown; a refresh that
+                // shrank entries since then must not panic the drag.
+                let Some(entry) = this.entries.get(card) else {
+                    this.drag_start = None;
+                    return;
+                };
+                let paths: Vec<PathBuf> = if this.selected.contains(&entry.path) {
                     this.selected.clone()
                 } else {
-                    vec![this.entries[card].path.clone()]
+                    vec![entry.path.clone()]
                 };
-                let icon = image::open(&this.entries[card].thumb)
+                let icon = image::open(&entry.thumb)
                     .ok()
                     .map(|img| {
                         let rgba = img.to_rgba8();
