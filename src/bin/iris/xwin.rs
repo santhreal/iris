@@ -12,10 +12,11 @@ use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 /// one shared connection removes that from the capture hot path.
 /// x11rb serializes requests internally, so concurrent callers are safe.
 #[cfg(target_os = "linux")]
-fn shared_conn() -> Option<&'static x11rb::rust_connection::RustConnection> {
-    static CONN: std::sync::LazyLock<Option<x11rb::rust_connection::RustConnection>> =
-        std::sync::LazyLock::new(|| x11rb::connect(None).ok().map(|(c, _)| c));
-    CONN.as_ref()
+fn shared_conn() -> Option<(&'static x11rb::rust_connection::RustConnection, usize)> {
+    static CONN: std::sync::LazyLock<
+        Option<(x11rb::rust_connection::RustConnection, usize)>,
+    > = std::sync::LazyLock::new(|| x11rb::connect(None).ok());
+    CONN.as_ref().map(|(c, s)| (c, *s))
 }
 
 /// The primary monitor's rect in root pixels from randr (primary
@@ -104,7 +105,7 @@ pub fn fullscreen_after_map(class: String, x: f32, y: f32) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Some(conn) = shared_conn() else {
+            let Some((conn, _)) = shared_conn() else {
                 return;
             };
             for _ in 0..120 {
@@ -220,7 +221,7 @@ pub fn always_on_top_after_map(class: String) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Some(conn) = shared_conn() else {
+            let Some((conn, _)) = shared_conn() else {
                 return;
             };
             for _ in 0..120 {
@@ -244,7 +245,7 @@ pub fn span_after_map(class: String, x: i32, y: i32, w: u32, h: u32) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Some(conn) = shared_conn() else {
+            let Some((conn, _)) = shared_conn() else {
                 return;
             };
             for _ in 0..120 {
@@ -329,7 +330,7 @@ pub fn find_xid_by_class_on(conn: &impl Connection, class_substr: &str) -> Optio
 /// the WM's own placement (openbox's anti-overlap cascade) after a
 /// single-shot move has already landed.
 pub fn move_to(class_substr: &str, x: i32, y: i32, notification: bool) {
-    let Some(conn) = shared_conn() else {
+    let Some((conn, _)) = shared_conn() else {
         return;
     };
     for _ in 0..120 {
@@ -361,7 +362,7 @@ pub fn begin_wm_move(class: String, root_x: i32, root_y: i32) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Ok((conn, screen_num)) = x11rb::connect(None) else {
+            let Some((conn, screen_num)) = shared_conn() else {
                 return;
             };
             let root = conn.setup().roots[screen_num].root;
@@ -444,7 +445,7 @@ pub fn unpark_span(class: String, x: i32, y: i32, w: u32, h: u32) {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         std::thread::spawn(move || {
-            let Some(conn) = shared_conn() else {
+            let Some((conn, _)) = shared_conn() else {
                 return;
             };
             if let Some(xid) = find_xid_by_class_on(conn, &class) {
