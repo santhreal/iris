@@ -42,13 +42,16 @@ pub fn spring(t: f32) -> f32 {
     if t <= 0.0 {
         return 0.0;
     }
-    let w: f32 = 280.0f32.sqrt();
-    let zeta: f32 = 30.0 / (2.0 * w);
-    let wd = w * (1.0 - zeta * zeta).sqrt();
+    // k=280, c=30: w=sqrt(280), zeta=c/(2w), wd=w*sqrt(1-zeta^2).
+    // Precomputed: the sqrt/exp chain ran per call, per frame, per
+    // animated element.
+    const W: f32 = 16.733_2; // sqrt(280)
+    const ZETA: f32 = 0.896_421; // 30 / (2*W)
+    const WD: f32 = 7.416_198; // W * sqrt(1 - ZETA^2)
     let time = t * 0.55;
     // zeta<1 overshoots ~0.01%; GPUI's animation driver panics on
     // deltas outside 0..=1, so the curve clamps its output.
-    (1.0 - (-zeta * w * time).exp() * ((wd * time).cos() + (zeta * w / wd) * (wd * time).sin()))
+    (1.0 - (-ZETA * W * time).exp() * ((WD * time).cos() + (ZETA * W / WD) * (WD * time).sin()))
         .clamp(0.0, 1.0)
 }
 
