@@ -286,10 +286,21 @@ fn open_containing_folder(path: &std::path::Path) {
 
     fn delete_selection(&mut self, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = self.selected.drain(..).collect();
-        let errors = library::delete_many(&paths);
-        self.entries = library::list();
-        self.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
-        cx.notify();
+        // delete_many + the follow-up list() stat every file; keep the
+        // disk work off the UI thread.
+        let task = cx.background_executor().spawn(async move {
+            let errors = library::delete_many(&paths);
+            (errors, library::list())
+        });
+        cx.spawn(async move |this, cx| {
+            let (errors, entries) = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.entries = entries;
+                this.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Close the rubber band: a sub-4px drag is a click on empty
@@ -710,7 +721,6 @@ impl Library {
         // Hover actions: annotate / copy / delete, bottom-right.
         // They exist only while hovered, fading in with the lift.
         if hovered {
-            let annotate_path = entry.path.clone();
             let copy_path = entry.path.clone();
             let folder_path = entry.path.clone();
             let delete_path = entry.path.clone();
@@ -722,7 +732,7 @@ impl Library {
                     .flex()
                     .gap(px(4.))
                     .opacity(hover_amt)
-                    .child(crate::widgets::overlay_icon_button(format!("cpy-{index}"), crate::icons::Icon::Copy).on_click(cx.listener(move |this, _, _, cx| {
+                    .child(crate::widgets::overlay_icon_button(format!("cpy-{index}"), crate::icons::Icon::Copy).on_click(cx.listener(move |_this, _, _, cx| {
                         cx.stop_propagation();
                         let path = copy_path.clone();
                         let task = cx.background_executor()
@@ -742,13 +752,24 @@ impl Library {
                         cx.stop_propagation();
                         Self::open_containing_folder(&folder_path);
                     })))
-                    .child(crate::widgets::overlay_icon_button(format!("del-{index}"), crate::icons::Icon::Close).on_click(cx.listener(move |this, _, _, cx| {
+                    .child(crate::widgets::overlay_icon_button(format!("del-{index}"), crate::icons::Icon::Close).on_click(cx.listener(move |_this, _, _, cx| {
                         cx.stop_propagation();
-                        if let Err(e) = library::delete(&delete_path) {
-                            this.status = Some(e);
-                        }
-                        this.entries = library::list();
-                        cx.notify();
+                        let path = delete_path.clone();
+                        let task = cx.background_executor().spawn(async move {
+                            let err = library::delete(&path).err();
+                            (err, library::list())
+                        });
+                        cx.spawn(async move |this, cx| {
+                            let (err, entries) = task.await;
+                            let _ = this.update(cx, |this, cx| {
+                                if let Some(e) = err {
+                                    this.status = Some(e);
+                                }
+                                this.entries = entries;
+                                cx.notify();
+                            });
+                        })
+                        .detach();
                     }))),
             );
         }
