@@ -822,21 +822,37 @@ mod hotkeys {
         key.map(|k| (mods, k))
     }
 
-    /// First keycode producing `keysym` at any shift level.
-    fn keycode_for(conn: &impl Connection, keysym: u32) -> Option<u8> {
-        let setup = conn.setup();
-        let reply = conn
-            .get_keyboard_mapping(setup.min_keycode, setup.max_keycode - setup.min_keycode + 1)
-            .ok()?
-            .reply()
-            .ok()?;
-        let per = reply.keysyms_per_keycode as usize;
-        for (i, chunk) in reply.keysyms.chunks(per).enumerate() {
-            if chunk.contains(&keysym) {
-                return Some(setup.min_keycode + i as u8);
-            }
+    /// The full keyboard mapping, fetched once per regrab: resolving
+    /// each hotkey's keycode against a fresh reply was a round trip
+    /// per key.
+    struct Keymap {
+        lo: u8,
+        per: usize,
+        keysyms: Vec<u32>,
+    }
+    impl Keymap {
+        fn fetch(conn: &impl Connection) -> Option<Self> {
+            let setup = conn.setup();
+            let reply = conn
+                .get_keyboard_mapping(setup.min_keycode, setup.max_keycode - setup.min_keycode + 1)
+                .ok()?
+                .reply()
+                .ok()?;
+            Some(Self {
+                lo: setup.min_keycode,
+                per: reply.keysyms_per_keycode as usize,
+                keysyms: reply.keysyms,
+            })
         }
-        None
+        /// First keycode producing `keysym` at any shift level.
+        fn keycode_for(&self, keysym: u32) -> Option<u8> {
+            for (i, chunk) in self.keysyms.chunks(self.per).enumerate() {
+                if chunk.contains(&keysym) {
+                    return Some(self.lo + i as u8);
+                }
+            }
+            None
+        }
     }
 
     /// Signalled by settings save: ungrab everything, reload config,
@@ -872,7 +888,8 @@ mod hotkeys {
             let mut grabbed: Vec<(u8, ModMask, Command)> = Vec::new();
 
             let grab_all = |conn: &x11rb::rust_connection::RustConnection,
-                                grabbed: &mut Vec<(u8, ModMask, Command)>| {
+                            grabbed: &mut Vec<(u8, ModMask, Command)>| {
+                let keymap = Keymap::fetch(conn);
                 let _ = conn.ungrab_key(0u8, root, ModMask::from(0x8000u16));
                 grabbed.clear();
                 let cfg = Config::load();
@@ -884,7 +901,7 @@ mod hotkeys {
                         iris_lib::ilog!("iris: cannot parse hotkey {hotkey:?}");
                         continue;
                     };
-                    let Some(keycode) = keycode_for(conn, keysym) else {
+                    let Some(keycode) = keymap.as_ref().and_then(|k| k.keycode_for(keysym)) else {
                         iris_lib::ilog!("iris: no keycode for hotkey keysym {keysym:#x}");
                         continue;
                     };
