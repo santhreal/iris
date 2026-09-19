@@ -225,101 +225,122 @@ impl super::CaptureBackend for X11Backend {
         let width = u32::from(geom.width);
         let height = u32::from(geom.height);
 
-        let image = grab_pixels(&conn, root, geom.width, geom.height)?;
+        let pixels = width as usize * height as usize;
+        let mut rgba = vec![0u8; pixels * 4];
+        let depth = grab_pixels_into(&conn, root, geom.width, geom.height, &mut rgba)?;
 
-        if image.depth != 24 {
+        if depth != 24 {
             return Err(format!(
                 "unsupported root depth {}; only 24-bit TrueColor is implemented",
-                image.depth
+                depth
             ));
-        }
-
-        let pixels = width as usize * height as usize;
-        let bpp = image.data.len() / pixels.max(1);
-        let mut rgba = vec![0u8; pixels * 4];
-        match bpp {
-            // XRGB/BGRX little-endian: B, G, R, _ per pixel.
-            4 => {
-                // Parallel u32 swizzle: at 12M pixels a scalar
-                // per-byte loop is a visible slice of the latency.
-                let threads = std::thread::available_parallelism()
-                    .map(|n| n.get().min(8))
-                    .unwrap_or(4);
-                let chunk_px = pixels.div_ceil(threads);
-                std::thread::scope(|scope| {
-                    let mut out_rest = rgba.as_mut_slice();
-                    let mut in_rest = image.data.as_slice();
-                    for _ in 0..threads {
-                        let take_px = chunk_px.min(in_rest.len() / 4);
-                        if take_px == 0 {
-                            break;
-                        }
-                        let (out_chunk, o_rest) = out_rest.split_at_mut(take_px * 4);
-                        let (in_chunk, i_rest) = in_rest.split_at(take_px * 4);
-                        out_rest = o_rest;
-                        in_rest = i_rest;
-                        scope.spawn(move || {
-                            for (o, i) in out_chunk
-                                .chunks_exact_mut(4)
-                                .zip(in_chunk.chunks_exact(4))
-                            {
-                                let v = u32::from_le_bytes([i[0], i[1], i[2], i[3]]);
-                                let rgb = (v & 0xFF00_FF00)
-                                    | ((v & 0xFF) << 16)
-                                    | ((v >> 16) & 0xFF);
-                                o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
-                            }
-                        });
-                    }
-                });
-            }
-            3 => {
-                for (o, px) in rgba.chunks_exact_mut(4).zip(image.data.chunks_exact(3)) {
-                    o.copy_from_slice(&[px[2], px[1], px[0], 255]);
-                }
-            }
-            other => {
-                return Err(format!(
-                    "unsupported bytes-per-pixel {other} for {}x{} grab",
-                    width, height
-                ));
-            }
         }
 
         Ok(Frame { width, height, rgba })
     }
 }
 
-struct RawImage {
-    depth: u8,
-    data: Vec<u8>,
+/// BGRX/BGR/raw-24 to opaque RGBA, banded across threads at 4K sizes.
+/// `src` may be a socket reply or a mapped SHM segment; either way the
+/// conversion writes `out` exactly once.
+fn convert_to_rgba(
+    src: &[u8],
+    pixels: usize,
+    bpp: usize,
+    out: &mut [u8],
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    match bpp {
+        // XRGB/BGRX little-endian: B, G, R, _ per pixel.
+        4 => {
+            // Parallel u32 swizzle: at 12M pixels a scalar
+            // per-byte loop is a visible slice of the latency.
+            let threads = std::thread::available_parallelism()
+                .map(|n| n.get().min(8))
+                .unwrap_or(4);
+            let chunk_px = pixels.div_ceil(threads);
+            std::thread::scope(|scope| {
+                let mut out_rest = out;
+                let mut in_rest = src;
+                for _ in 0..threads {
+                    let take_px = chunk_px.min(in_rest.len() / 4);
+                    if take_px == 0 {
+                        break;
+                    }
+                    let (out_chunk, o_rest) = out_rest.split_at_mut(take_px * 4);
+                    let (in_chunk, i_rest) = in_rest.split_at(take_px * 4);
+                    out_rest = o_rest;
+                    in_rest = i_rest;
+                    scope.spawn(move || {
+                        for (o, i) in out_chunk
+                            .chunks_exact_mut(4)
+                            .zip(in_chunk.chunks_exact(4))
+                        {
+                            let v = u32::from_le_bytes([i[0], i[1], i[2], i[3]]);
+                            let rgb = (v & 0xFF00_FF00)
+                                | ((v & 0xFF) << 16)
+                                | ((v >> 16) & 0xFF);
+                            o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
+                        }
+                    });
+                }
+            });
+        }
+        3 => {
+            for (o, px) in out.chunks_exact_mut(4).zip(src.chunks_exact(3)) {
+                o.copy_from_slice(&[px[2], px[1], px[0], 255]);
+            }
+        }
+        other => {
+            return Err(format!(
+                "unsupported bytes-per-pixel {other} for {}x{} grab",
+                width, height
+            ));
+        }
+    }
+    Ok(())
 }
 
-/// The pixel transfer. A 4K-and-change root is ~200MB: over the X
-/// socket that is seconds, over MIT-SHM it is a page-faulted memcpy.
-/// Falls back to plain GetImage when the server lacks SHM or the
-/// segment cannot be set up.
-fn grab_pixels<C>(
+/// The pixel transfer, converted into `out`. A 4K-and-change root is
+/// ~200MB: over the X socket that is seconds, over MIT-SHM it is a
+/// page-faulted read. The SHM path converts straight out of the mapped
+/// segment — no intermediate copy of the frame ever exists. Falls back
+/// to plain GetImage when the server lacks SHM or the segment cannot
+/// be set up. Returns the image depth.
+fn grab_pixels_into<C>(
     conn: &C,
     root: x11rb::protocol::xproto::Window,
     width: u16,
     height: u16,
-) -> Result<RawImage, String>
+    out: &mut [u8],
+) -> Result<u8, String>
 where
     C: Connection + x11rb::protocol::xproto::ConnectionExt,
 {
-    if let Some(img) = try_shm_grab(conn, root, width, height) {
-        return Ok(img);
+    if let Some(depth) = try_shm_grab_into(conn, root, width, height, out) {
+        return Ok(depth);
     }
     let reply = conn
         .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, width, height, !0u32)
         .map_err(|e| format!("X11 get_image: {e}"))?
         .reply()
         .map_err(|e| format!("X11 get_image reply: {e}"))?;
-    Ok(RawImage { depth: reply.depth, data: reply.data })
+    if reply.depth == 24 {
+        let pixels = width as usize * height as usize;
+        let bpp = reply.data.len() / pixels.max(1);
+        convert_to_rgba(&reply.data, pixels, bpp, out, u32::from(width), u32::from(height))?;
+    }
+    Ok(reply.depth)
 }
 
-fn try_shm_grab<C>(conn: &C, root: x11rb::protocol::xproto::Window, width: u16, height: u16) -> Option<RawImage>
+fn try_shm_grab_into<C>(
+    conn: &C,
+    root: x11rb::protocol::xproto::Window,
+    width: u16,
+    height: u16,
+    out: &mut [u8],
+) -> Option<u8>
 where
     C: Connection + x11rb::protocol::xproto::ConnectionExt,
 {
@@ -341,7 +362,7 @@ where
         if addr as isize == -1 {
             return None;
         }
-        let result = (|| -> Option<RawImage> {
+        let result = (|| -> Option<u8> {
             let seg = conn.generate_id().ok()?;
             ShmExt::shm_attach(conn, seg, shmid as u32, false).ok()?.check().ok()?;
             let reply = ShmExt::shm_get_image(
@@ -350,9 +371,14 @@ where
             .ok()?
             .reply()
             .ok()?;
-            let data = std::slice::from_raw_parts(addr as *const u8, size).to_vec();
+            if reply.depth == 24 {
+                let src = std::slice::from_raw_parts(addr as *const u8, size);
+                let pixels = width as usize * height as usize;
+                let bpp = src.len() / pixels.max(1);
+                convert_to_rgba(src, pixels, bpp, out, u32::from(width), u32::from(height)).ok()?;
+            }
             let _ = ShmExt::shm_detach(conn, seg);
-            Some(RawImage { depth: reply.depth, data })
+            Some(reply.depth)
         })();
         libc::shmdt(addr);
         result
