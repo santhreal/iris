@@ -8,7 +8,7 @@
 //! display-only timer chip — recording state is visible on the window
 //! itself rather than in a floating panel.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -120,8 +120,11 @@ fn escape_keycodes(conn: &RustConnection) -> Result<Vec<u8>, String> {
 }
 
 /// Click-to-pick: grab pointer and keyboard, wait for a click (target) or
-/// Escape (cancel). Returns the top-level window under the click.
-pub fn pick_window() -> Result<PickedWindow, String> {
+/// Escape (cancel). Returns the top-level window under the click. The
+/// stop channel is polled between events: a stop during the pick must
+/// end the wait, or the recording thread never joins and the daemon
+/// wedges on the next command.
+pub fn pick_window(stop: &std::sync::mpsc::Receiver<()>) -> Result<PickedWindow, String> {
     let (conn, screen_num) = connect()?;
     let root = conn.setup().roots[screen_num].root;
     let cursor = make_crosshair(&conn)?;
@@ -150,7 +153,21 @@ pub fn pick_window() -> Result<PickedWindow, String> {
         .reply();
 
     let picked = loop {
-        let event = conn.wait_for_event().map_err(|e| format!("wait_for_event: {e}"))?;
+        // Poll, don't block: wait_for_event would sleep through a stop
+        // signal until the user happens to click or press a key.
+        match stop.try_recv() {
+            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                break Err(format!("{CANCELLED_PREFIX} pick stopped"));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        let Some(event) = conn
+            .poll_for_event()
+            .map_err(|e| format!("poll_for_event: {e}"))?
+        else {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            continue;
+        };
         match event {
             Event::ButtonPress(_) => {
                 let ptr = conn
@@ -434,10 +451,10 @@ fn place_strips(conn: &RustConnection, strips: &[Window; 4], r: Rect) {
 /// Record the picked window until `spec.stop` fires, with the chip owned
 /// by the caller through `chip`. This is the toolkit-independent entry
 /// point used by the GPUI daemon.
-pub fn record_window_follow(spec: RecordingSpec, chip: Arc<dyn ChipFollow>) -> Result<(), String> {
+pub fn record_window_follow(spec: RecordingSpec, chip: Arc<dyn ChipFollow>) -> Result<PathBuf, String> {
     let chip_inner = chip.clone();
     let result = (move || {
-        let picked = pick_window()?;
+        let picked = pick_window(&spec.stop)?;
         let _mark = RecordingMark::show(chip_inner, picked.id);
         record_target(&picked, &spec)
     })();
@@ -446,7 +463,7 @@ pub fn record_window_follow(spec: RecordingSpec, chip: Arc<dyn ChipFollow>) -> R
     result
 }
 
-fn record_target(picked: &PickedWindow, spec: &RecordingSpec) -> Result<(), String> {
+fn record_target(picked: &PickedWindow, spec: &RecordingSpec) -> Result<PathBuf, String> {
     let (conn, _) = connect()?;
 
     // Composite 0.2+ for window redirection + named pixmaps.
@@ -500,11 +517,24 @@ impl ShmGrab {
             if addr as isize == -1 {
                 return None;
             }
-            let seg = conn.generate_id().ok()?;
-            ShmExt::shm_attach(conn, seg, shmid as u32, false).ok()?.check().ok()?;
+            let Some(seg) = conn.generate_id().ok() else {
+                libc::shmdt(addr);
+                return None;
+            };
+            if ShmExt::shm_attach(conn, seg, shmid as u32, false)
+                .ok()
+                .and_then(|c| c.check().ok())
+                .is_none()
+            {
+                // The segment is already marked IPC_RMID, but the
+                // mapping must still be detached or it leaks.
+                libc::shmdt(addr);
+                return None;
+            }
             Some(Self { shmid, addr: addr as *mut u8, seg, size })
         }
     }
+
 
     fn detach(&self, conn: &RustConnection) {
         use x11rb::protocol::shm::ConnectionExt as ShmExt;
@@ -516,19 +546,86 @@ impl ShmGrab {
     }
 }
 
+/// A named composite pixmap for the recording target, cached across
+/// frames: name_window_pixmap + free_pixmap is two round trips per
+/// frame otherwise. Re-keyed on resize; the server frees the storage
+/// when the window is unredirected or dies.
+struct NamedPixmap {
+    win: Window,
+    width: u32,
+    height: u32,
+    depth: u8,
+    pixmap: x11rb::protocol::xproto::Pixmap,
+}
+
+impl NamedPixmap {
+    fn for_window(
+        conn: &RustConnection,
+        win: Window,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, String> {
+        let pixmap = conn.generate_id().map_err(|e| e.to_string())?;
+        conn.composite_name_window_pixmap(win, pixmap)
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| format!("name_window_pixmap (window closed?): {e}"))?;
+        let depth = conn
+            .get_geometry(pixmap)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|g| g.depth)
+            .unwrap_or(24);
+        Ok(Self { win, width, height, depth, pixmap })
+    }
+
+    fn free(&self, conn: &RustConnection) {
+        let _ = conn.free_pixmap(self.pixmap);
+    }
+}
+
+/// Whether the server stores `depth` pixmaps at 32 bits per pixel: the
+/// SHM swizzle reads 4 bytes per pixel, so a depth-24 pixmap packed at
+/// 24bpp would decode as garbage. When the format list says otherwise,
+/// the socket path (which reports its own bpp) must be used instead.
+fn shm_is_32bpp(conn: &RustConnection, depth: u8) -> bool {
+    conn.setup()
+        .pixmap_formats
+        .iter()
+        .any(|f| f.depth == depth && f.bits_per_pixel == 32)
+}
+
 fn grab_pixmap(
     conn: &RustConnection,
     shm: &mut Option<ShmGrab>,
+    named: &mut Option<NamedPixmap>,
     win: Window,
     width: u32,
     height: u32,
     out: &mut Vec<u8>,
 ) -> Result<(), String> {
-    let pixmap = conn.generate_id().map_err(|e| e.to_string())?;
-    conn.composite_name_window_pixmap(win, pixmap)
-        .map_err(|e| e.to_string())?
-        .check()
-        .map_err(|e| format!("name_window_pixmap (window closed?): {e}"))?;
+    // The named pixmap is cached per (window, size): naming and freeing
+    // per frame is two round trips the schedule cannot spare.
+    let stale = named
+        .as_ref()
+        .map(|n| n.win != win || n.width != width || n.height != height)
+        .unwrap_or(true);
+    if stale {
+        if let Some(old) = named.take() {
+            old.free(conn);
+        }
+        *named = Some(NamedPixmap::for_window(conn, win, width, height)?);
+    }
+    let np = named.as_ref().unwrap();
+    // The swizzle reads 4 bytes per pixel; anything but a 24/32bpp
+    // pixmap would swizzle garbage. Fail loudly instead of recording it.
+    if np.depth != 24 && np.depth != 32 {
+        return Err(format!(
+            "window pixmap depth {} unsupported (need 24 or 32)",
+            np.depth
+        ));
+    }
+    let pixmap = np.pixmap;
 
     // SHM path: the server writes the frame into the mapped segment and
     // the swizzle reads it in place. A 1080p frame over the socket is
@@ -548,15 +645,24 @@ fn grab_pixmap(
         )
         .ok()
         .and_then(|c| c.reply().ok());
-        if let Some(_reply) = grabbed {
-            let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
-            let r = bgrx_to_rgba(src, width as usize * height as usize, out);
-            conn.free_pixmap(pixmap).map_err(|e| e.to_string())?;
-            return r;
-        }
-        // SHM failed mid-session: drop it and fall through to the socket.
-        if let Some(old) = shm.take() {
-            old.detach(conn);
+        if let Some(reply) = grabbed {
+            if reply.depth != 24 && reply.depth != 32 {
+                return Err(format!(
+                    "shm grab returned depth {} (need 24 or 32)",
+                    reply.depth
+                ));
+            }
+            if shm_is_32bpp(conn, reply.depth) {
+                let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
+                return bgrx_to_rgba(src, width as usize * height as usize, out);
+            }
+            // Depth is fine but the server packs it at non-32bpp: fall
+            // through to the socket path, which reports its own bpp.
+        } else {
+            // SHM failed mid-session: drop it and fall through to the socket.
+            if let Some(old) = shm.take() {
+                old.detach(conn);
+            }
         }
     }
 
@@ -573,37 +679,31 @@ fn grab_pixmap(
         .map_err(|e| e.to_string())?
         .reply()
         .map_err(|e| format!("get_image on window pixmap: {e}"))?;
-    conn.free_pixmap(pixmap).map_err(|e| e.to_string())?;
     bgrx_to_rgba(&image.data, width as usize * height as usize, out)
 }
-
-
-/// The container extension of the current output path, so a mid-recording
-/// split (resize, mic toggle) keeps the same format.
-fn ext_of(path: &Path) -> &str {
-    path.extension().and_then(|e| e.to_str()).unwrap_or("mp4")
-}
-
 fn record_loop(
     conn: &RustConnection,
     picked: &PickedWindow,
     spec: &RecordingSpec,
-) -> Result<(), String> {
-    // Persistent SHM segment for per-frame grabs; None when the server
-    // lacks MIT-SHM, in which case grab_pixmap uses the socket. The
-    // guard detaches on every exit path, including early returns.
-    struct ShmGuard<'a> {
+) -> Result<PathBuf, String> {
+    // Persistent SHM segment + named pixmap for per-frame grabs; the
+    // guard frees both on every exit path, including early returns.
+    struct GrabGuard<'a> {
         conn: &'a RustConnection,
         shm: Option<ShmGrab>,
+        named: Option<NamedPixmap>,
     }
-    impl Drop for ShmGuard<'_> {
+    impl Drop for GrabGuard<'_> {
         fn drop(&mut self) {
             if let Some(s) = self.shm.take() {
                 s.detach(self.conn);
             }
+            if let Some(n) = self.named.take() {
+                n.free(self.conn);
+            }
         }
     }
-    let mut guard = ShmGuard { conn, shm: None };
+    let mut guard = GrabGuard { conn, shm: None, named: None };
 
     let probe = || {
         conn.get_geometry(picked.id)
@@ -612,7 +712,7 @@ fn record_loop(
             .map(|g| (u32::from(g.width), u32::from(g.height)))
     };
     let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
-        grab_pixmap(conn, &mut guard.shm, picked.id, w, h, rgba)
+        grab_pixmap(conn, &mut guard.shm, &mut guard.named, picked.id, w, h, rgba)
     };
     record_loop_inner(spec, probe, grab)
 }
@@ -620,12 +720,11 @@ fn record_loop(
 /// Record a fixed screen region until `spec.stop` fires. The overlay
 /// picks the rect; this grabs it straight off the root window through
 /// the same SHM path, with a static border and the chip parked at the
-/// region's top-right corner.
 pub fn record_region(
     spec: RecordingSpec,
     chip: Arc<dyn ChipFollow>,
     rect: Rect,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     let chip_inner = chip.clone();
     let result = (move || {
         let (conn, screen_num) = connect()?;
@@ -680,12 +779,24 @@ fn grab_root_rect(
         )
         .ok()
         .and_then(|c| c.reply().ok());
-        if grabbed.is_some() {
-            let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
-            return bgrx_to_rgba(src, width as usize * height as usize, out);
-        }
-        if let Some(old) = shm.take() {
-            old.detach(conn);
+        if let Some(reply) = grabbed {
+            // The swizzle reads 4 bytes per pixel; a non-24/32bpp root
+            // would swizzle garbage out of the segment.
+            if reply.depth != 24 && reply.depth != 32 {
+                return Err(format!(
+                    "root depth {} unsupported (need 24 or 32)",
+                    reply.depth
+                ));
+            }
+            if shm_is_32bpp(conn, reply.depth) {
+                let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
+                return bgrx_to_rgba(src, width as usize * height as usize, out);
+            }
+            // Non-32bpp packing: the socket path reports its own bpp.
+        } else {
+            if let Some(old) = shm.take() {
+                old.detach(conn);
+            }
         }
     }
     let image = conn
@@ -707,15 +818,20 @@ fn grab_root_rect(
 /// The shared recording loop: chip controls, the absolute frame
 /// schedule, encoder splits on resize, and the zero-copy frame queue.
 /// `probe` reports the source's current dimensions (None = source
-/// gone, a clean end); `grab` fills `rgba` with one frame.
+/// gone, a clean end); `grab` fills `rgba` with one frame. Returns the
+/// path of the LAST segment written: splits rename the output, and the
+/// caller must report the file that actually holds the tail.
 fn record_loop_inner(
     spec: &RecordingSpec,
     mut probe: impl FnMut() -> Option<(u32, u32)>,
     mut grab: impl FnMut(u32, u32, &mut Vec<u8>) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     let Some((mut width, mut height)) = probe() else {
         return Err("recording source gone before first frame".to_string());
     };
+    if width == 0 || height == 0 {
+        return Err("recording source has zero size".to_string());
+    }
     let mut output: PathBuf = spec.output.clone();
     let mut encoder = Encoder::start(&EncoderConfig {
         output: output.clone(),
@@ -735,10 +851,37 @@ fn record_loop_inner(
     // w*h*4 buffer on every frame.
     let mut rgba: Vec<u8> = Vec::new();
 
-    loop {
-        if spec.stop.try_recv().is_ok() {
+    // A stop is a send OR a disconnect: a dropped ActiveRecording must
+    // still end the loop, or the recording runs forever detached.
+    let stopped = |stop: &std::sync::mpsc::Receiver<()>| -> bool {
+        !matches!(stop.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
+    };
+    // Split the file at the current dimensions/format and start a new
+    // segment under a fresh unique name.
+    macro_rules! split_encoder {
+        () => {{
             encoder.finish()?;
-            return Ok(());
+            let dir = output
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            output = unique_recording_path(&dir, super::ext_of(&output));
+            encoder = Encoder::start(&EncoderConfig {
+                output: output.clone(),
+                width,
+                height,
+                fps: spec.fps,
+                mic,
+                format: spec.format,
+                encoder: spec.encoder,
+            })?;
+        }};
+    }
+
+    loop {
+        if stopped(&spec.stop) {
+            encoder.finish()?;
+            return Ok(output);
         }
 
         // Chip controls: pause blocks the schedule (the mp4 simply has
@@ -749,18 +892,15 @@ fn record_loop_inner(
                 super::RecControl::Pause => {
                     let paused_at = Instant::now();
                     loop {
-                        if spec.stop.try_recv().is_ok() {
+                        if stopped(&spec.stop) {
                             encoder.finish()?;
-                            return Ok(());
+                            return Ok(output);
                         }
                         match spec.control.recv_timeout(Duration::from_millis(100)) {
                             Ok(super::RecControl::Resume) => break,
                             Ok(super::RecControl::ToggleMic) => {
                                 mic = !mic;
-                                encoder.finish()?;
-                                let dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
-                                output = unique_recording_path(&dir, ext_of(&output));
-                                encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic, format: spec.format, encoder: spec.encoder })?;
+                                split_encoder!();
                             }
                             Ok(super::RecControl::Pause) => {}
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -774,44 +914,31 @@ fn record_loop_inner(
                 super::RecControl::Resume => {}
                 super::RecControl::ToggleMic => {
                     mic = !mic;
-                    encoder.finish()?;
-                    let dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
-                    output = unique_recording_path(&dir, ext_of(&output));
-                    encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic, format: spec.format, encoder: spec.encoder })?;
+                    split_encoder!();
                 }
             }
         }
 
-
         // Detect resize / close each frame. A vanished source is a clean
-        // end of the recording, not an error.
+        // end of the recording, not an error; so is a zero-size probe
+        // (a minimized window reports 0x0 and would kill the encoder).
         let Some((w, h)) = probe() else {
             encoder.finish()?;
-            return Ok(());
+            return Ok(output);
         };
-        if w != width || h != height {
+        if w == 0 || h == 0 {
             encoder.finish()?;
+            return Ok(output);
+        }
+        if w != width || h != height {
             width = w;
             height = h;
-            let dir = output
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."));
-            output = unique_recording_path(&dir, ext_of(&output));
-            encoder = Encoder::start(&EncoderConfig {
-                output: output.clone(),
-                width,
-                height,
-                fps: spec.fps,
-                mic,
-                format: spec.format,
-                encoder: spec.encoder,
-            })?;
+            split_encoder!();
         }
 
         // Absolute schedule: frame n is due at start + n/fps. On overrun,
         // skip the counter forward (drop) instead of bursting.
-        let due = start + frame_interval * frame_no as u32;
+        let due = start + frame_interval.mul_f64(frame_no as f64);
         let now = Instant::now();
         if now < due {
             thread::sleep(due - now);
@@ -824,13 +951,18 @@ fn record_loop_inner(
             Err(_) => {
                 // Source closed mid-grab: keep what we have.
                 encoder.finish()?;
-                return Ok(());
+                return Ok(output);
             }
         };
         // The frame buffer moves to the writer thread; the next frame
         // fills a recycled one.
         let frame = std::mem::replace(&mut rgba, encoder.take_buf());
-        encoder.write_frame(frame)?;
+        if let Err(e) = encoder.write_frame(frame) {
+            // Salvage the buffered frames before reporting: a write
+            // failure must not also lose the minutes already encoded.
+            let _ = encoder.finish();
+            return Err(e);
+        }
         frame_no += 1;
     }
 }

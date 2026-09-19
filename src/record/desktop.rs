@@ -9,7 +9,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-pub fn record_desktop(spec: RecordingSpec) -> Result<(), String> {
+pub fn record_desktop(spec: RecordingSpec) -> Result<std::path::PathBuf, String> {
     #[cfg(windows)]
     let input = crate::capture::windows::capture_args();
     #[cfg(target_os = "macos")]
@@ -78,9 +78,23 @@ pub fn record_desktop(spec: RecordingSpec) -> Result<(), String> {
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(b"q");
     }
-    match child.wait() {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!("ffmpeg exited {status} during finalize")),
-        Err(e) => Err(format!("ffmpeg wait: {e}")),
+    // A stuck device can hang finalize; bound the wait, then kill.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(spec.output.clone()),
+            Ok(Some(status)) => {
+                return Err(format!("ffmpeg exited {status} during finalize"));
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("ffmpeg did not finalize within 10s; killed".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("ffmpeg wait: {e}")),
+        }
     }
 }

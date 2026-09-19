@@ -56,7 +56,7 @@ pub struct ActiveRecording {
     pub phase: Phase,
     stop: Option<Sender<()>>,
     control: Option<Sender<RecControl>>,
-    join: Option<JoinHandle<Result<(), String>>>,
+    join: Option<JoinHandle<Result<PathBuf, String>>>,
 }
 
 impl ActiveRecording {
@@ -69,7 +69,7 @@ impl ActiveRecording {
         source: F,
     ) -> Self
     where
-        F: FnOnce(RecordingSpec) -> Result<(), String> + Send + 'static,
+        F: FnOnce(RecordingSpec) -> Result<PathBuf, String> + Send + 'static,
     {
         let (tx, rx) = channel();
         let (ctx, crx) = channel();
@@ -115,15 +115,39 @@ impl ActiveRecording {
             .join()
             .map_err(|_| "recording thread panicked".to_string())?;
         match result {
-            Ok(()) => Ok(Some(self.output)),
+            // The source reports the LAST segment it wrote: a
+            // mid-recording split (resize, mic toggle) renames the
+            // output, and reporting spec.output would name a middle
+            // segment as "the recording".
+            Ok(path) => Ok(Some(path)),
             Err(e) if e.starts_with(CANCELLED_PREFIX) => {
                 let _ = std::fs::remove_file(&self.output);
                 Ok(None)
             }
             Err(e) => {
-                let _ = std::fs::remove_file(&self.output);
+                // Keep a non-empty file: a mid-recording split (resize,
+                // mic toggle) can fail on the SECOND segment while the
+                // first is a complete, valid video. Only an empty stub
+                // is removed.
+                let empty = std::fs::metadata(&self.output)
+                    .map(|m| m.len() == 0)
+                    .unwrap_or(true);
+                if empty {
+                    let _ = std::fs::remove_file(&self.output);
+                }
                 Err(e)
             }
+        }
+    }
+}
+
+impl Drop for ActiveRecording {
+    /// A dropped recording still signals its source: the stop channel
+    /// disconnects, and every source loop treats a disconnected stop
+    /// as a stop. Without this a leaked ActiveRecording records forever.
+    fn drop(&mut self) {
+        if let Some(tx) = self.stop.take() {
+            let _ = tx.send(());
         }
     }
 }
@@ -146,6 +170,12 @@ impl RecordingManager {
             None => Ok(None),
         }
     }
+}
+
+/// The container extension of a recording path, so a mid-recording
+/// split (resize, mic toggle, renegotiation) keeps the same format.
+pub fn ext_of(path: &Path) -> &str {
+    path.extension().and_then(|e| e.to_str()).unwrap_or("mp4")
 }
 
 /// Path for a new recording inside `dir`, using the {date}_{time} template
@@ -193,7 +223,7 @@ mod tests {
         let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
             spec.stop.recv().unwrap();
             std::fs::write(&spec.output, b"mp4").unwrap();
-            Ok(())
+            Ok(spec.output.clone())
         });
         assert_eq!(rec.stop().unwrap(), Some(out));
     }
@@ -212,7 +242,22 @@ mod tests {
     }
 
     #[test]
-    fn failed_source_removes_output_and_errors() {
+    fn failed_source_removes_empty_stub_and_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("r.mp4");
+        std::fs::write(&out, b"").unwrap();
+        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
+            spec.stop.recv().unwrap();
+            Err("encoder died".to_string())
+        });
+        assert!(rec.stop().is_err());
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn failed_source_keeps_nonempty_segment() {
+        // A split can fail on the SECOND segment while the first is a
+        // complete video: a non-empty file on error is kept, not deleted.
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
         std::fs::write(&out, b"partial").unwrap();
@@ -221,7 +266,7 @@ mod tests {
             Err("encoder died".to_string())
         });
         assert!(rec.stop().is_err());
-        assert!(!out.exists());
+        assert!(out.exists());
     }
 
     #[test]
@@ -243,7 +288,7 @@ mod tests {
             crate::config::RecordingEncoder::Libx264,
             |spec| {
                 spec.stop.recv().unwrap();
-                Ok(())
+                Ok(spec.output.clone())
             },
         ));
         assert!(mgr.is_active());

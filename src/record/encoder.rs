@@ -34,6 +34,8 @@ pub struct Encoder {
     /// Emptied buffers back from the writer thread.
     recycle: Receiver<Vec<u8>>,
     writer: Option<JoinHandle<Result<(), String>>>,
+    /// Frames dropped because the queue was full; logged at finish.
+    dropped: u64,
 }
 
 /// Frames in flight between the capture thread and the writer. At 60fps
@@ -186,7 +188,7 @@ impl Encoder {
             .ok_or_else(|| "ffmpeg stdin not piped".to_string())?;
         let (tx, rx) = sync_channel::<Vec<u8>>(QUEUE_DEPTH);
         let (rtx, recycle) = std::sync::mpsc::channel::<Vec<u8>>();
-        let writer = std::thread::Builder::new()
+        let writer = match std::thread::Builder::new()
             .name("iris-enc-writer".into())
             .spawn(move || {
                 let mut stdin = std::io::BufWriter::new(stdin);
@@ -201,8 +203,16 @@ impl Encoder {
                 stdin
                     .flush()
                     .map_err(|e| format!("flush ffmpeg stdin: {e}"))
-            })
-            .map_err(|e| format!("spawn encoder writer: {e}"))?;
+            }) {
+            Ok(w) => w,
+            Err(e) => {
+                // No writer means ffmpeg would block on stdin forever:
+                // kill it instead of orphaning a headless encoder.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("spawn encoder writer: {e}"));
+            }
+        };
 
         Ok(Self {
             child: Some(child),
@@ -211,6 +221,7 @@ impl Encoder {
             tx: Some(tx),
             recycle,
             writer: Some(writer),
+            dropped: 0,
         })
     }
 
@@ -224,7 +235,10 @@ impl Encoder {
 
     /// Queue one tightly packed RGBA frame for the writer thread. The
     /// buffer moves into the queue and returns through take_buf once
-    /// written, so no frame bytes are ever copied.
+    /// written, so no frame bytes are ever copied. A full queue drops
+    /// the frame rather than stalling the capture thread: a blocked
+    /// grab loop slips the absolute frame schedule and the video plays
+    /// fast-forwarded, while a dropped frame keeps real-time pacing.
     pub fn write_frame(&mut self, buf: Vec<u8>) -> Result<(), String> {
         if buf.len() != self.frame_bytes {
             return Err(format!(
@@ -244,15 +258,32 @@ impl Encoder {
                     .unwrap_err());
             }
         }
-        self.tx
+        let tx = self
+            .tx
             .as_ref()
-            .ok_or_else(|| "encoder already finished".to_string())?
-            .send(buf)
-            .map_err(|_| "encoder writer gone".to_string())
+            .ok_or_else(|| "encoder already finished".to_string())?;
+        match tx.try_send(buf) {
+            Ok(()) => Ok(()),
+            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                self.dropped += 1;
+                if self.dropped == 1 || self.dropped % 120 == 0 {
+                    crate::ilog!(
+                        "iris: record: encoder behind, {} frame(s) dropped",
+                        self.dropped
+                    );
+                }
+                Ok(())
+            }
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                Err("encoder writer gone".to_string())
+            }
+        }
     }
 
     /// Close the frame queue, wait for the writer and ffmpeg to flush,
-    /// and verify the output file exists and is non-empty.
+    /// and verify the output file exists and is non-empty. The ffmpeg
+    /// wait is bounded: a wedged encoder is killed rather than hanging
+    /// the recording stop path (and with it, the daemon).
     pub fn finish(mut self) -> Result<PathBuf, String> {
         drop(self.tx.take());
         if let Some(w) = self.writer.take() {
@@ -267,20 +298,42 @@ impl Encoder {
             .take()
             .ok_or_else(|| "encoder already finished".to_string())?;
         drop(child.stdin.take());
-        let out = child
-            .wait_with_output()
-            .map_err(|e| format!("wait on ffmpeg: {e}"))?;
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
+        // Poll try_wait: wait_with_output blocks forever on a wedged
+        // child, and a recording stop must always come back.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break s,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("ffmpeg did not exit within 10s of stdin close; killed".into());
+                }
+                Err(e) => return Err(format!("wait on ffmpeg: {e}")),
+            }
+        };
+        let mut stderr = String::new();
+        if let Some(mut err) = child.stderr.take() {
+            use std::io::Read;
+            let _ = err.read_to_string(&mut stderr);
+        }
+        if !status.success() {
             return Err(format!(
                 "ffmpeg exited with {}: {}",
-                out.status,
+                status,
                 stderr.trim()
             ));
         }
         let meta = std::fs::metadata(&self.output)
             .map_err(|e| format!("output {} missing after encode: {e}", self.output.display()))?;
-        crate::ilog!("iris: record: encoder finished, {} bytes", meta.len());
+        crate::ilog!(
+            "iris: record: encoder finished, {} bytes, {} dropped",
+            meta.len(),
+            self.dropped
+        );
         if meta.len() == 0 {
             return Err(format!("output {} is empty", self.output.display()));
         }
@@ -288,30 +341,42 @@ impl Encoder {
     }
 }
 
-/// Best-effort cleanup if the session dies without finish(): kill the child
-/// so a headless ffmpeg does not outlive the app.
+/// Best-effort cleanup if the session dies without finish(): kill the
+/// child BEFORE joining the writer — a writer blocked on a full pipe
+/// only unblocks once ffmpeg is dead, so joining first deadlocks.
 impl Drop for Encoder {
     fn drop(&mut self) {
         drop(self.tx.take());
-        if let Some(w) = self.writer.take() {
-            let _ = w.join();
-        }
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
             let _ = c.wait();
         }
+        if let Some(w) = self.writer.take() {
+            let _ = w.join();
+        }
     }
 }
 
-/// Whether this ffmpeg build has h264_nvenc. Probed once per process:
-/// `ffmpeg -encoders` is a subprocess, so the result is cached.
+/// Whether h264_nvenc actually works on this machine. `-encoders` only
+/// says the binary was built with it; a missing GPU or driver makes the
+/// first real encode fail. Probe by encoding one black frame, once per
+/// process, and cache the verdict.
 fn nvenc_available() -> bool {
     use std::sync::LazyLock;
     static HAS: LazyLock<bool> = LazyLock::new(|| {
         Command::new("ffmpeg")
-            .args(["-hide_banner", "-encoders"])
+            .args([
+                "-hide_banner",
+                "-loglevel", "error",
+                "-f", "lavfi",
+                "-i", "color=black:s=256x256:d=0.1:r=1",
+                "-frames:v", "1",
+                "-c:v", "h264_nvenc",
+                "-f", "null",
+                "-",
+            ])
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("h264_nvenc"))
+            .map(|o| o.status.success())
             .unwrap_or(false)
     });
     *HAS

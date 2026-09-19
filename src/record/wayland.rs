@@ -271,6 +271,12 @@ impl GlContext {
         let viewport = load_proc(&egl_inst, gles_lib.as_ref(), "glViewport")?;
         let read_pixels = load_proc(&egl_inst, gles_lib.as_ref(), "glReadPixels")?;
 
+        // The context is used from PipeWire's RT thread, not this one:
+        // release it here so read_dma_buf can bind it there. An EGL
+        // context current on the wrong thread makes every GL call a
+        // silent no-op.
+        let _ = egl_inst.make_current(display, None, None, None);
+
         Ok(Self {
             egl: egl_inst,
             display,
@@ -305,6 +311,11 @@ impl GlContext {
         if planes.is_empty() {
             return Err("empty DMA-buf planes".to_string());
         }
+        // GL calls run on PipeWire's RT thread; the context was
+        // released at setup so it can be bound here.
+        self.egl
+            .make_current(self.display, self.surface, self.surface, Some(self.context))
+            .map_err(|e| format!("eglMakeCurrent on stream thread: {e}"))?;
         let fourcc = drm_fourcc_for_format(format)?;
         let mut attribs: Vec<egl::Int> = Vec::with_capacity(32);
         attribs.push(egl::WIDTH);
@@ -502,6 +513,13 @@ async fn portal_negotiate() -> Result<(OwnedFd, u32), String> {
 
 struct Shared {
     encoder: Option<Encoder>,
+    /// The dimensions the live encoder was opened with; a renegotiated
+    /// stream size splits the file rather than dying on a frame-size
+    /// mismatch.
+    enc_size: (u32, u32),
+    /// The path of the segment currently being written: splits rename
+    /// the output, and the caller reports the last one.
+    output: PathBuf,
     error: Option<String>,
     quit: Option<pipewire::main_loop::WeakMainLoop>,
     /// Set once the encoder is taken for finish(): on_process can fire
@@ -510,7 +528,6 @@ struct Shared {
 }
 
 struct StreamData {
-    output: PathBuf,
     fps: u32,
     mic: bool,
     rec_format: crate::config::RecordingFormat,
@@ -643,7 +660,7 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
     }
     if shared.encoder.is_none() {
         match Encoder::start(&EncoderConfig {
-            output: data.output.clone(),
+            output: shared.output.clone(),
             width,
             height,
             fps: data.fps,
@@ -651,13 +668,56 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
             format: data.rec_format,
             encoder: data.rec_encoder,
         }) {
-            Ok(encoder) => shared.encoder = Some(encoder),
+            Ok(encoder) => {
+                shared.enc_size = (width, height);
+                shared.encoder = Some(encoder);
+            }
             Err(e) => {
                 drop(shared);
                 data.fail(e);
                 return;
             }
         }
+    } else if shared.enc_size != (width, height) {
+        // The compositor renegotiated (window resized): finish this
+        // segment and open the next at the new size, the same split
+        // the X11 loop performs on a resize.
+        let old = shared.encoder.take().unwrap();
+        drop(shared);
+        if let Err(e) = old.finish() {
+            data.fail(format!("encoder split on resize: {e}"));
+            return;
+        }
+        let next = {
+            let mut shared = data.shared.borrow_mut();
+            let dir = shared
+                .output
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            shared.output = super::unique_recording_path(&dir, super::ext_of(&shared.output));
+            shared.output.clone()
+        };
+        match Encoder::start(&EncoderConfig {
+            output: next,
+            width,
+            height,
+            fps: data.fps,
+            mic: data.mic,
+            format: data.rec_format,
+            encoder: data.rec_encoder,
+        }) {
+            Ok(encoder) => {
+                let mut shared = data.shared.borrow_mut();
+                shared.enc_size = (width, height);
+                shared.encoder = Some(encoder);
+            }
+            Err(e) => {
+                data.fail(e);
+                return;
+            }
+        }
+        return;
     }
     let frame = std::mem::replace(&mut data.scratch, shared.encoder.as_mut().unwrap().take_buf());
     let write_result = shared.encoder.as_mut().unwrap().write_frame(frame);
@@ -667,7 +727,6 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
         crate::ilog!("iris: record: first frame written");
     }
     if let Err(e) = write_result {
-        crate::ilog!("iris: record: write_frame failed: {e}");
         data.fail(e);
     }
 }
@@ -850,15 +909,36 @@ fn build_param_pods() -> Result<Vec<Vec<u8>>, String> {
     Ok(params)
 }
 
+/// `portal_negotiate` driven to completion on its own thread: the
+/// caller polls the stop channel while the dialog is up.
+fn portal_negotiate_blocking() -> Result<(OwnedFd, u32), String> {
+    futures::executor::block_on(portal_negotiate())
+}
+
 /// Record a portal-selected window until `spec.stop` fires.
-pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
+pub fn record_window(spec: RecordingSpec) -> Result<PathBuf, String> {
     crate::ilog!("iris: record: record_window start -> {}", spec.output.display());
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         return Err(
             "Wayland recording needs WAYLAND_DISPLAY; this is not a Wayland session".to_string(),
         );
     }
-    let (fd, node_id) = futures::executor::block_on(portal_negotiate())?;
+    // The portal dialog can sit unanswered for minutes; poll the stop
+    // channel while negotiating so a stop during the pick still joins.
+    let negotiate = std::thread::spawn(portal_negotiate_blocking);
+    let (fd, node_id) = loop {
+        if negotiate.is_finished() {
+            break negotiate
+                .join()
+                .map_err(|_| "portal negotiate panicked".to_string())??;
+        }
+        if !matches!(spec.stop.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)) {
+            // The negotiate thread finishes on its own once the user
+            // answers; the recording ends as a cancel either way.
+            return Err(format!("{CANCELLED_PREFIX} stopped during source pick"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
 
     pipewire::init();
     let mainloop = pipewire::main_loop::MainLoop::new(None)
@@ -871,11 +951,12 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
 
     let shared = Rc::new(RefCell::new(Shared {
         encoder: None,
+        enc_size: (0, 0),
+        output: spec.output.clone(),
         error: None,
         quit: Some(mainloop.downgrade()),
         done: false,
     }));
-
     let stream = pipewire::stream::Stream::new(
         &core,
         "iris-rec",
@@ -900,7 +981,6 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
     };
 
     let data = StreamData {
-        output: spec.output.clone(),
         fps: spec.fps,
         mic: spec.mic,
         rec_format: spec.format,
@@ -916,7 +996,9 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
     let stop = spec.stop;
     let weak = mainloop.downgrade();
     let _stop_timer = mainloop.loop_().add_timer(move |_| {
-        if stop.try_recv().is_ok() {
+        // A send OR a disconnect means stop: a dropped ActiveRecording
+        // must still end the stream, not record forever detached.
+        if !matches!(stop.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)) {
             if let Some(mainloop) = weak.upgrade() {
                 mainloop.quit();
             }
@@ -971,8 +1053,10 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
         .encoder
         .take()
         .ok_or_else(|| "stream ended before any frame was captured".to_string())?;
+    let output = shared.output.clone();
+    drop(shared);
     encoder.finish()?;
-    Ok(())
+    Ok(output)
 }
 
 // WHY: DMA-buf screencasting requires parameter negotiation and pixel conversion:

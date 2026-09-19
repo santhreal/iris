@@ -440,6 +440,13 @@ fn toggle_recording(cx: &mut App) -> Result<(), String> {
 /// frozen frame is not needed for picking, so the shell opens on the
 /// live desktop and the grab still runs behind it for the loupe.
 fn record_region_pick(cx: &mut App) -> Result<(), String> {
+    // Same dead end as record_region_start: the picked rect feeds an
+    // X11-only source, so on Wayland-only fail before the overlay opens.
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none()
+    {
+        return Err("region recording needs X11; on Wayland record a window".to_string());
+    }
     let mgr = RECORDING.lock();
     if mgr.is_active() {
         return Err("a recording is already active".to_string());
@@ -520,6 +527,14 @@ fn record_region_pick(cx: &mut App) -> Result<(), String> {
 /// Region recording, step two: the overlay committed a rect. Open the
 /// chip at the rect's top-right and spawn the region source.
 fn record_region_start(cx: &mut App, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
+    // Region recording reads the root window through X11 SHM; the
+    // portal cannot name a rect, so on a Wayland-only session this
+    // would open the chip and die on the first frame.
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none()
+    {
+        return Err("region recording needs X11; on Wayland record a window".to_string());
+    }
     let mut mgr = RECORDING.lock();
     if mgr.is_active() {
         return Err("a recording is already active".to_string());
@@ -606,7 +621,7 @@ fn accept_args(listener: &UnixListener) -> Vec<String> {
                     use std::os::unix::io::AsRawFd;
                     let fd = stream.as_raw_fd();
                     let mut chunk = [0u8; 4096];
-                    // Read until the peer closes (forward_if_running
+                    let started = std::time::Instant::now();
                     // drops its stream after the write) or 2s passes
                     // with no data. Payloads are argv lines; 1MiB caps
                     // a hostile flood.
@@ -623,7 +638,12 @@ fn accept_args(listener: &UnixListener) -> Vec<String> {
                             Ok(0) | Err(_) => break,
                             Ok(n) => {
                                 buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                                if buf.len() > (1 << 20) {
+                                // 1MiB caps a hostile flood; the 5s
+                                // total deadline caps a slow drip that
+                                // keeps poll() fed forever.
+                                if buf.len() > (1 << 20)
+                                    || started.elapsed() > Duration::from_secs(5)
+                                {
                                     break;
                                 }
                             }
