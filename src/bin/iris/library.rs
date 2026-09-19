@@ -285,7 +285,7 @@ fn open_containing_folder(path: &std::path::Path) {
     }
 
     fn delete_selection(&mut self, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self.selected.drain(..).collect();
+        let paths: Vec<PathBuf> = std::mem::take(&mut self.selected);
         // delete_many + the follow-up list() stat every file; keep the
         // disk work off the UI thread.
         let task = cx.background_executor().spawn(async move {
