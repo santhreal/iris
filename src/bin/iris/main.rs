@@ -13,6 +13,8 @@
 //!   --delay <secs>       full-screen capture after a countdown
 //!   --record-window      toggle a window-picked recording
 //!   --record-region      pick a screen region and record it
+//!   --record-pause       pause/resume the active recording
+//!   --record-mic         toggle the mic on the active recording
 //!   --library            open the library panel
 //!   --settings           open the settings window
 //!   --home               open the home surface

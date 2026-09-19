@@ -132,6 +132,8 @@ pub fn parse_args(args: &[String]) -> Vec<Command> {
             "--home" => cmds.push(Command::Home),
             "--record-window" => cmds.push(Command::RecordToggle),
             "--record-region" => cmds.push(Command::RecordRegionPick),
+            "--record-pause" => cmds.push(Command::RecordPause),
+            "--record-mic" => cmds.push(Command::RecordMic),
             "--annotate" => {
                 if let Some(path) = args.get(i + 1) {
                     cmds.push(Command::Annotate(PathBuf::from(path)));
