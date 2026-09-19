@@ -114,26 +114,29 @@ impl ActiveRecording {
             .expect("stop called twice")
             .join()
             .map_err(|_| "recording thread panicked".to_string())?;
+        Self::finish_result(result, &self.output)
+    }
+
+    /// Map a source's join result to the public stop result: the
+    /// source reports the LAST segment it wrote (a mid-recording split
+    /// renames the output), a `cancelled:` error becomes Ok(None) with
+    /// the stub removed, and a real error keeps a non-empty file.
+    fn finish_result(
+        result: Result<PathBuf, String>,
+        output: &Path,
+    ) -> Result<Option<PathBuf>, String> {
         match result {
-            // The source reports the LAST segment it wrote: a
-            // mid-recording split (resize, mic toggle) renames the
-            // output, and reporting spec.output would name a middle
-            // segment as "the recording".
             Ok(path) => Ok(Some(path)),
             Err(e) if e.starts_with(CANCELLED_PREFIX) => {
-                let _ = std::fs::remove_file(&self.output);
+                let _ = std::fs::remove_file(output);
                 Ok(None)
             }
             Err(e) => {
-                // Keep a non-empty file: a mid-recording split (resize,
-                // mic toggle) can fail on the SECOND segment while the
-                // first is a complete, valid video. Only an empty stub
-                // is removed.
-                let empty = std::fs::metadata(&self.output)
+                let empty = std::fs::metadata(output)
                     .map(|m| m.len() == 0)
                     .unwrap_or(true);
                 if empty {
-                    let _ = std::fs::remove_file(&self.output);
+                    let _ = std::fs::remove_file(output);
                 }
                 Err(e)
             }
@@ -154,25 +157,11 @@ impl ActiveRecording {
             let result = join
                 .join()
                 .map_err(|_| "recording thread panicked".to_string())
-                .and_then(|r| match r {
-                    Ok(path) => Ok(Some(path)),
-                    Err(e) if e.starts_with(CANCELLED_PREFIX) => {
-                        let _ = std::fs::remove_file(&output);
-                        Ok(None)
-                    }
-                    Err(e) => {
-                        let empty = std::fs::metadata(&output)
-                            .map(|m| m.len() == 0)
-                            .unwrap_or(true);
-                        if empty {
-                            let _ = std::fs::remove_file(&output);
-                        }
-                        Err(e)
-                    }
-                });
+                .and_then(|r| Self::finish_result(r, &output));
             done(result);
         });
     }
+
 }
 
 impl Drop for ActiveRecording {
