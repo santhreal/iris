@@ -2,7 +2,7 @@
 name = "iris"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.80"
 license = "MIT OR Apache-2.0"
 authors = ["Santh <64453045+santhreal@users.noreply.github.com>"]
 description = "Screenshot and screen-recording utility"

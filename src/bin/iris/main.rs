@@ -9,8 +9,13 @@
 //! CLI:
 //!   --capture            region capture: frozen-frame overlay, then toast
 //!   --capture-fullscreen full-screen grab with no overlay, then toast
+//!   --capture-window     capture the focused window, then toast
+//!   --delay <secs>       full-screen capture after a countdown
+//!   --record-window      toggle a window-picked recording
+//!   --record-region      pick a screen region and record it
 //!   --library            open the library panel
 //!   --settings           open the settings window
+//!   --home               open the home surface
 //!   --annotate <file>    edit an existing capture
 //!   --toast <file.png>   debug: show the toast stage for an existing file
 //!   --quit               ask the daemon to exit

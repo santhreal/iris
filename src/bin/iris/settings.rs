@@ -170,7 +170,7 @@ impl Settings {
         self.editing = None;
         self.recording = None;
         self.open_dropdown = None;
-        self.status = Some("Defaults restored — Save to apply".to_string());
+        self.status = Some("Defaults restored; Save to apply".to_string());
     }
 
     fn reset_to_defaults(&mut self, cx: &mut Context<Self>) {
@@ -208,10 +208,8 @@ impl Settings {
             k if k.len() == 1 => k.to_uppercase(),
             k => {
                 let mut c = k.chars();
-                match c.next() {
-                    Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
-                    None => return None,
-                }
+                let first = c.next()?;
+                first.to_uppercase().collect::<String>() + c.as_str()
             }
         };
         parts.push(&named);
@@ -1004,6 +1002,6 @@ mod tests {
         assert_eq!(s.editing, None);
         assert_eq!(s.recording, None);
         assert_eq!(s.open_dropdown, None);
-        assert_eq!(s.status, Some("Defaults restored — Save to apply".to_string()));
+        assert_eq!(s.status, Some("Defaults restored; Save to apply".to_string()));
     }
 }
