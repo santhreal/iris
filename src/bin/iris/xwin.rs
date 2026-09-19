@@ -136,20 +136,34 @@ pub fn fullscreen_after_map(class: String, x: f32, y: f32) {
     let _ = (class, x, y);
 }
 
+/// Interned atoms shared across every post-map fixup: intern_atom is
+/// a round trip, and the same handful of EWMH names is resolved on
+/// every window that maps.
+#[cfg(target_os = "linux")]
+fn atom_cached(conn: &impl Connection, name: &'static [u8]) -> Option<u32> {
+    static CACHE: std::sync::LazyLock<
+        parking_lot::Mutex<std::collections::HashMap<&'static [u8], u32>>,
+    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    if let Some(atom) = CACHE.lock().get(name) {
+        return Some(*atom);
+    }
+    let atom = conn
+        .intern_atom(false, name)
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    CACHE.lock().insert(name, atom);
+    Some(atom)
+}
+
 /// _NET_WM_STATE += the named state via a client message.
 #[cfg(target_os = "linux")]
-fn request_state_on(conn: &impl Connection, win: u32, atom_name: &[u8]) {
-    let intern = |name: &[u8]| {
-        conn.intern_atom(false, name)
-            .ok()?
-            .reply()
-            .ok()
-            .map(|r| r.atom)
-    };
-    let Some(state) = intern(b"_NET_WM_STATE") else {
+fn request_state_on(conn: &impl Connection, win: u32, atom_name: &'static [u8]) {
+    let Some(state) = atom_cached(conn, b"_NET_WM_STATE") else {
         return;
     };
-    let Some(property) = intern(atom_name) else {
+    let Some(property) = atom_cached(conn, atom_name) else {
         return;
     };
     let root = conn.setup().roots[0].root;
@@ -178,14 +192,7 @@ fn request_state_on(conn: &impl Connection, win: u32, atom_name: &[u8]) {
 /// not read it; the caller still sets input focus directly.
 #[cfg(target_os = "linux")]
 fn activate_window_on(conn: &impl Connection, win: u32) {
-    let intern = |name: &[u8]| {
-        conn.intern_atom(false, name)
-            .ok()?
-            .reply()
-            .ok()
-            .map(|r| r.atom)
-    };
-    let Some(active) = intern(b"_NET_ACTIVE_WINDOW") else {
+    let Some(active) = atom_cached(conn, b"_NET_ACTIVE_WINDOW") else {
         return;
     };
     let root = conn.setup().roots[0].root;
@@ -284,12 +291,7 @@ pub fn span_after_map(class: String, x: i32, y: i32, w: u32, h: u32) {
 /// map order, so take the LAST match.
 pub fn find_xid_by_class_on(conn: &impl Connection, class_substr: &str) -> Option<u32> {
     let root = conn.setup().roots[0].root;
-    let client_list = conn
-        .intern_atom(false, b"_NET_CLIENT_LIST")
-        .ok()?
-        .reply()
-        .ok()?
-        .atom;
+    let client_list = atom_cached(conn, b"_NET_CLIENT_LIST")?;
     let windows = conn
         .get_property(false, root, client_list, AtomEnum::WINDOW, 0, 1024)
         .ok()?
@@ -418,22 +420,18 @@ pub fn begin_wm_move(class: String, root_x: i32, root_y: i32) {
 
 #[cfg(target_os = "linux")]
 pub fn set_window_type_notification_on(conn: &impl Connection, win: u32) {
-    let Ok(ty) = conn.intern_atom(false, b"_NET_WM_WINDOW_TYPE").map(|r| r.reply()) else {
+    let (Some(ty), Some(notif)) = (
+        atom_cached(conn, b"_NET_WM_WINDOW_TYPE"),
+        atom_cached(conn, b"_NET_WM_WINDOW_TYPE_NOTIFICATION"),
+    ) else {
         return;
     };
-    let Ok(notif) = conn
-        .intern_atom(false, b"_NET_WM_WINDOW_TYPE_NOTIFICATION")
-        .map(|r| r.reply())
-    else {
-        return;
-    };
-    let (Ok(ty), Ok(notif)) = (ty, notif) else { return };
     let _ = conn.change_property32(
         x11rb::protocol::xproto::PropMode::REPLACE,
         win,
-        ty.atom,
+        ty,
         AtomEnum::ATOM,
-        &[notif.atom],
+        &[notif],
     );
     let _ = conn.flush();
 }
@@ -482,17 +480,16 @@ pub fn unpark_span(class: String, x: i32, y: i32, w: u32, h: u32) {
 /// decorations when no compositor is present, and WMs like openbox
 /// then titlebar even notification windows. Set the hint directly.
 pub fn suppress_decorations_on(conn: &impl Connection, win: u32) {
-    let Ok(motif) = conn.intern_atom(false, b"_MOTIF_WM_HINTS") else {
+    let Some(motif) = atom_cached(conn, b"_MOTIF_WM_HINTS") else {
         return;
     };
-    let Ok(motif) = motif.reply() else { return };
     // flags=2 (decorations), functions=0, decorations=0, input=0, status=0
     let hints: [u32; 5] = [2, 0, 0, 0, 0];
     let _ = conn.change_property32(
         x11rb::protocol::xproto::PropMode::REPLACE,
         win,
-        motif.atom,
-        motif.atom,
+        motif,
+        motif,
         &hints,
     );
     let _ = conn.flush();
