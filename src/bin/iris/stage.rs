@@ -255,10 +255,15 @@ impl ToastStage {
         cx.notify();
     }
     fn copy_image(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = crate::pipeline::copy_image_file(&self.path) {
-            iris_lib::ilog!("copy: {e}");
-        }
-        cx.notify();
+        // PNG decode of a large capture is too slow for the UI thread.
+        let path = self.path.clone();
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(e) = crate::pipeline::copy_image_file(&path) {
+                    iris_lib::ilog!("copy: {e}");
+                }
+            })
+            .detach();
     }
 
     fn copy_file(&mut self, cx: &mut Context<Self>) {

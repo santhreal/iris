@@ -801,26 +801,48 @@ impl Editor {
 
     fn copy_text_ocr(&mut self, cx: &mut Context<Self>) {
         let path = self.path.clone();
-        match pipeline::copy_ocr_text(&path) {
-            Ok(text) => self.status = Some(format!("{} chars copied", text.len())),
-            Err(e) => self.status = Some(e),
-        }
-        cx.notify();
+        // Tesseract takes hundreds of ms on a large capture; run it
+        // off the UI thread and report through the status line.
+        let task = cx
+            .background_executor()
+            .spawn(async move { pipeline::copy_ocr_text(&path) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.status = Some(match result {
+                    Ok(text) => format!("{} chars copied", text.len()),
+                    Err(e) => e,
+                });
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn copy_variant(&mut self, variant: &str, cx: &mut Context<Self>) {
-        let result = match variant {
-            "image" => pipeline::copy_image_file(&self.path),
-            "file" => pipeline::copy_file(&self.path),
-            "path" => pipeline::copy_path_text(&self.path),
-            _ => return,
-        };
         self.copy_menu = false;
-        self.status = Some(match result {
-            Ok(()) => "Copied".to_string(),
-            Err(e) => e,
+        let path = self.path.clone();
+        let variant = variant.to_string();
+        // The image variant decodes a PNG; keep that off the UI thread.
+        let task = cx.background_executor().spawn(async move {
+            match variant.as_str() {
+                "image" => pipeline::copy_image_file(&path),
+                "file" => pipeline::copy_file(&path),
+                "path" => pipeline::copy_path_text(&path),
+                _ => Err("unknown copy variant".to_string()),
+            }
         });
-        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.status = Some(match result {
+                    Ok(()) => "Copied".to_string(),
+                    Err(e) => e,
+                });
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn commit_text(&mut self, keep: bool) {

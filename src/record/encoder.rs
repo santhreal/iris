@@ -188,10 +188,15 @@ impl Encoder {
             .ok_or_else(|| "ffmpeg stdin not piped".to_string())?;
         let (tx, rx) = sync_channel::<Vec<u8>>(QUEUE_DEPTH);
         let (rtx, recycle) = std::sync::mpsc::channel::<Vec<u8>>();
+        // The buffer must hold a whole frame or the 4MB pipe is never
+        // used: an 8KB BufWriter still emits ~1000 writes per 8MB
+        // frame. Cap at the pipe size so a huge frame degrades to a
+        // few writes, not thousands.
+        let buf_cap = (cfg.width as usize * cfg.height as usize * 4).min(4 * 1024 * 1024);
         let writer = match std::thread::Builder::new()
             .name("iris-enc-writer".into())
             .spawn(move || {
-                let mut stdin = std::io::BufWriter::new(stdin);
+                let mut stdin = std::io::BufWriter::with_capacity(buf_cap, stdin);
                 for frame in rx.iter() {
                     if let Err(e) = stdin.write_all(&frame) {
                         return Err(format!("write frame to ffmpeg: {e}"));

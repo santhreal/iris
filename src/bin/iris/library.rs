@@ -261,25 +261,32 @@ fn open_containing_folder(path: &std::path::Path) {
 }
 
     fn copy_selection(&mut self, cx: &mut Context<Self>) {
-        let result = if self.selected.len() == 1 {
-            pipeline::copy_image_file(&self.selected[0])
-        } else {
-            pipeline::copy_files(&self.selected)
-        };
-        self.status = Some(match result {
-            Ok(()) => format!("{} copied", self.selected.len()),
-            Err(e) => e,
+        let paths = self.selected.clone();
+        // Single-image copy decodes the PNG; keep it off the UI thread.
+        let task = cx.background_executor().spawn(async move {
+            if paths.len() == 1 {
+                pipeline::copy_image_file(&paths[0])
+            } else {
+                pipeline::copy_files(&paths)
+            }
         });
-        cx.notify();
+        let count = self.selected.len();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.status = Some(match result {
+                    Ok(()) => format!("{count} copied"),
+                    Err(e) => e,
+                });
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn delete_selection(&mut self, cx: &mut Context<Self>) {
-        let mut errors = 0;
-        for path in self.selected.drain(..) {
-            if library::delete(&path).is_err() {
-                errors += 1;
-            }
-        }
+        let paths: Vec<PathBuf> = self.selected.drain(..).collect();
+        let errors = library::delete_many(&paths);
         self.entries = library::list();
         self.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
         cx.notify();
@@ -715,21 +722,21 @@ impl Library {
                     .flex()
                     .gap(px(4.))
                     .opacity(hover_amt)
-                    .child(crate::widgets::overlay_icon_button(format!("ann-{index}"), crate::icons::Icon::Pen).on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        if let Err(e) = editor::open(cx, &annotate_path, Some(Library::card_morph_rect(ev, window)), None) {
-                            this.status = Some(e);
-                        }
-                        cx.notify();
-                    })))
                     .child(crate::widgets::overlay_icon_button(format!("cpy-{index}"), crate::icons::Icon::Copy).on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        this.status = Some(
-                            pipeline::copy_image_file(&copy_path)
-                                .map(|_| "copied".to_string())
-                                .unwrap_or_else(|e| e),
-                        );
-                        cx.notify();
+                        let path = copy_path.clone();
+                        let task = cx.background_executor()
+                            .spawn(async move { pipeline::copy_image_file(&path) });
+                        cx.spawn(async move |this, cx| {
+                            let result = task.await;
+                            let _ = this.update(cx, |this, cx| {
+                                this.status = Some(
+                                    result.map(|_| "copied".to_string()).unwrap_or_else(|e| e),
+                                );
+                                cx.notify();
+                            });
+                        })
+                        .detach();
                     })))
                     .child(crate::widgets::overlay_icon_button(format!("fld-{index}"), crate::icons::Icon::Folder).on_click(cx.listener(move |_, _, _, cx| {
                         cx.stop_propagation();

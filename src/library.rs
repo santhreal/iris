@@ -189,6 +189,25 @@ pub fn delete(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove several captures with one store write. A per-file delete()
+/// serializes and rewrites library.json for every selection member.
+/// Returns the number of files that failed to delete.
+pub fn delete_many(paths: &[PathBuf]) -> usize {
+    let _write = store_lock().lock();
+    let mut entries = read_store();
+    let set: std::collections::HashSet<&Path> = paths.iter().map(|p| p.as_path()).collect();
+    entries.retain(|e| !set.contains(e.path.as_path()));
+    let _ = write_store(&entries);
+    let mut errors = 0;
+    for path in paths {
+        let _ = std::fs::remove_file(thumbs_dir().unwrap_or_default().join(format!("{}.png", path_key(path))));
+        if path.exists() && std::fs::remove_file(path).is_err() {
+            errors += 1;
+        }
+    }
+    errors
+}
+
 // WHY: the class closed here is "the library loses or corrupts captures":
 // a store that does not round-trip, a delete that leaves the file, a cap
 // that keeps the wrong end, or a path_key that collides all surface as
