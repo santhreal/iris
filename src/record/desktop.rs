@@ -58,11 +58,13 @@ pub fn record_desktop(spec: RecordingSpec) -> Result<std::path::PathBuf, String>
         .spawn()
         .map_err(|e| format!("ffmpeg start (is ffmpeg on PATH?): {e}"))?;
 
-    // Poll the stop channel; exit promptly when ffmpeg dies on its own.
+    // Wait on the stop channel; a stop lands immediately instead of
+    // up to a poll interval late. ffmpeg dying on its own still exits
+    // promptly through try_wait.
     loop {
-        match spec.stop.try_recv() {
-            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        match spec.stop.recv_timeout(Duration::from_millis(120)) {
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -71,7 +73,6 @@ pub fn record_desktop(spec: RecordingSpec) -> Result<std::path::PathBuf, String>
             Ok(None) => {}
             Err(e) => return Err(format!("ffmpeg poll: {e}")),
         }
-        std::thread::sleep(Duration::from_millis(120));
     }
 
     // 'q' on stdin makes ffmpeg finalize the MP4 trailer and exit cleanly.

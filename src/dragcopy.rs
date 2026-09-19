@@ -345,20 +345,42 @@ struct XdndAtoms {
 #[cfg(target_os = "linux")]
 impl XdndAtoms {
     fn intern<C: Connection>(conn: &C) -> Result<Self, String> {
+        // Pipeline all 13 interns: sequential reply() calls cost a
+        // round trip each; batched, the whole set is one.
+        let names: [&[u8]; 13] = [
+            b"XdndSelection", b"XdndAware", b"XdndProxy", b"XdndEnter",
+            b"XdndPosition", b"XdndStatus", b"XdndLeave", b"XdndDrop",
+            b"XdndFinished", b"XdndActionCopy", b"text/uri-list",
+            b"TARGETS", b"UTF8_STRING",
+        ];
+        let cookies = names
+            .iter()
+            .map(|n| conn.intern_atom(false, n))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("intern atom: {e}"))?;
+        let mut atoms = Vec::with_capacity(13);
+        for cookie in cookies {
+            atoms.push(
+                cookie
+                    .reply()
+                    .map_err(|e| format!("intern reply: {e}"))?
+                    .atom,
+            );
+        }
         Ok(Self {
-            selection: intern(conn, b"XdndSelection")?,
-            aware: intern(conn, b"XdndAware")?,
-            proxy: intern(conn, b"XdndProxy")?,
-            enter: intern(conn, b"XdndEnter")?,
-            position: intern(conn, b"XdndPosition")?,
-            status: intern(conn, b"XdndStatus")?,
-            leave: intern(conn, b"XdndLeave")?,
-            drop: intern(conn, b"XdndDrop")?,
-            finished: intern(conn, b"XdndFinished")?,
-            action_copy: intern(conn, b"XdndActionCopy")?,
-            uri_list: intern(conn, b"text/uri-list")?,
-            targets: intern(conn, b"TARGETS")?,
-            utf8: intern(conn, b"UTF8_STRING")?,
+            selection: atoms[0],
+            aware: atoms[1],
+            proxy: atoms[2],
+            enter: atoms[3],
+            position: atoms[4],
+            status: atoms[5],
+            leave: atoms[6],
+            drop: atoms[7],
+            finished: atoms[8],
+            action_copy: atoms[9],
+            uri_list: atoms[10],
+            targets: atoms[11],
+            utf8: atoms[12],
         })
     }
 }
@@ -765,10 +787,26 @@ pub fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), Str
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
-    let clipboard_atom = intern(&conn, b"CLIPBOARD")?;
-    let targets_atom = intern(&conn, b"TARGETS")?;
-    let uri_list_atom = intern(&conn, b"text/uri-list")?;
-    let utf8_atom = intern(&conn, b"UTF8_STRING")?;
+    // Pipeline the atom interns: four sequential reply() calls cost
+    // four round trips; batched, the whole setup is one.
+    let cookies = [b"CLIPBOARD" as &[u8], b"TARGETS", b"text/uri-list", b"UTF8_STRING"]
+        .iter()
+        .map(|name| conn.intern_atom(false, name))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("intern atom: {e}"))?;
+    let mut resolved = Vec::with_capacity(4);
+    for cookie in cookies {
+        resolved.push(
+            cookie
+                .reply()
+                .map_err(|e| format!("intern reply: {e}"))?
+                .atom,
+        );
+    }
+    let clipboard_atom = resolved[0];
+    let targets_atom = resolved[1];
+    let uri_list_atom = resolved[2];
+    let utf8_atom = resolved[3];
 
     let win = conn
         .generate_id()
@@ -832,15 +870,6 @@ pub fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), Str
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn intern<C: Connection>(conn: &C, name: &[u8]) -> Result<x11rb::protocol::xproto::Atom, String> {
-    Ok(conn
-        .intern_atom(false, name)
-        .map_err(|e| format!("intern atom: {e}"))?
-        .reply()
-        .map_err(|e| format!("intern atom reply: {e}"))?
-        .atom)
-}
 
 #[cfg(target_os = "linux")]
 fn serve_x11_clipboard<C: Connection>(
