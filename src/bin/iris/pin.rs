@@ -19,12 +19,39 @@ pub struct PinStage {
     class: String,
 }
 
-/// Open a pinned window showing `path`'s image at native scale.
+/// Open a pinned window showing `path`'s image at native scale. The
+/// PNG read + decode run on the background executor: a 4K decode on
+/// the UI thread stalls every other surface for ~100ms.
 pub fn open(cx: &mut App, path: &std::path::Path) -> Result<(), String> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("read {}: {e}", path.display()))?;
-    let img = crate::widgets::render_image_from_png(&bytes)
-        .ok_or_else(|| format!("decode {}: not a supported image", path.display()))?;
+    let path = path.to_path_buf();
+    cx.spawn(async move |cx| {
+        let decoded = cx
+            .background_executor()
+            .spawn(async move {
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| format!("read {}: {e}", path.display()))?;
+                crate::widgets::render_image_from_png(&bytes)
+                    .ok_or_else(|| format!("decode {}: not a supported image", path.display()))
+            })
+            .await;
+        let img = match decoded {
+            Ok(img) => img,
+            Err(e) => {
+                iris_lib::ilog!("pin: {e}");
+                return;
+            }
+        };
+        let _ = cx.update(|cx| {
+            if let Err(e) = open_with_image(cx, img) {
+                iris_lib::ilog!("pin: {e}");
+            }
+        });
+    })
+    .detach();
+    Ok(())
+}
+
+fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
     let (w, h) = {
         let s = img.size(0);
         (s.width.0 as f32, s.height.0 as f32)

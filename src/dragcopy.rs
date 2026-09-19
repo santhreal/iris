@@ -409,11 +409,27 @@ fn xdnd_target_at<C: Connection>(
     });
 
     if let Some(tree) = conn.query_tree(win).ok().and_then(|c| c.reply().ok()) {
-        for child in tree.children.into_iter().rev() {
-            if Some(child) == skip {
-                continue;
-            }
-            let Some(geom) = conn.get_geometry(child).ok().and_then(|c| c.reply().ok()) else {
+        // Pipeline the per-child queries: geometry and attributes for
+        // every child go out in one flush, and the replies come back
+        // together. Sequential reply() calls are two round trips per
+        // child per 16ms drag poll.
+        let children: Vec<x11rb::protocol::xproto::Window> = tree
+            .children
+            .into_iter()
+            .rev()
+            .filter(|c| Some(*c) != skip)
+            .collect();
+        let geoms: Vec<_> = children
+            .iter()
+            .map(|c| conn.get_geometry(*c).ok())
+            .collect();
+        let attrs: Vec<_> = children
+            .iter()
+            .map(|c| conn.get_window_attributes(*c).ok())
+            .collect();
+        let _ = conn.flush();
+        for (child, (geom_c, attr_c)) in children.iter().zip(geoms.into_iter().zip(attrs)) {
+            let Some(geom) = geom_c.and_then(|c| c.reply().ok()) else {
                 continue;
             };
             let cx = i32::from(geom.x);
@@ -421,16 +437,14 @@ fn xdnd_target_at<C: Connection>(
             let cw = i32::from(geom.width);
             let ch = i32::from(geom.height);
             if x >= cx && y >= cy && x < cx + cw && y < cy + ch {
-                let mapped = conn
-                    .get_window_attributes(child)
-                    .ok()
+                let mapped = attr_c
                     .and_then(|c| c.reply().ok())
                     .map(|a| a.map_state == x11rb::protocol::xproto::MapState::VIEWABLE)
                     .unwrap_or(false);
                 if mapped {
                     if let Some(target) = xdnd_target_at(
                         conn,
-                        child,
+                        *child,
                         aware,
                         proxy,
                         x - cx,

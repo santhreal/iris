@@ -209,7 +209,6 @@ pub fn open(
     let (bw, bh) = png_dimensions(&png)
         .ok_or_else(|| format!("not a PNG: {}", path.display()))?;
     let base = image::RgbaImage::new(bw, bh);
-    let decode_png = png.clone();
     // Blank until the background decode lands; previously GPUI's own
     // async decode of these PNG bytes filled the same gap.
     let base_img = crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0]);
@@ -333,33 +332,34 @@ pub fn open(
     // Decode the base behind the open window. Vector actions drawn in
     // the gap replay onto the real pixels via rebuild_all; blur and
     // save, which bake composite pixels, refuse until this lands.
+    // The RenderImage is built in the same task: its copy+swizzle of
+    // the decoded frame is a 33MB memcpy at 4K, too big for the UI
+    // thread while the morph is mid-flight.
     handle
         .update(cx, |_, _, cx| {
             cx.spawn(async move |this, cx| {
                 let decoded = cx
                     .background_executor()
                     .spawn(async move {
-                        image::load_from_memory(&decode_png).map(|i| {
+                        image::load_from_memory(&png).map(|i| {
                             let img = i.to_rgba8();
                             // Clone for `base` here, off the UI thread:
                             // a 4K memcpy on the main thread stalls the
                             // morph that is mid-flight when this lands.
                             let base = img.clone();
-                            (img, base)
+                            let render = crate::widgets::render_image_from_rgba(
+                                img.width(),
+                                img.height(),
+                                img.as_raw(),
+                            );
+                            (img, base, render)
                         })
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     match decoded {
-                        Ok((img, base)) => {
-                            let old = std::mem::replace(
-                                &mut this.base_img,
-                                crate::widgets::render_image_from_rgba(
-                                    img.width(),
-                                    img.height(),
-                                    img.as_raw(),
-                                ),
-                            );
+                        Ok((img, base, render)) => {
+                            let old = std::mem::replace(&mut this.base_img, render);
                             crate::widgets::release_render(&old, cx);
                             this.base = base;
                             this.composite = img;
@@ -376,7 +376,6 @@ pub fn open(
             .detach();
         })
         .map_err(|e| format!("editor decode: {e}"))?;
-    crate::xwin::place_after_map(win_id, origin.0, origin.1);
     Ok(())
 }
 
@@ -1104,12 +1103,17 @@ fn draw_text(
     text: &str,
     px: image::Rgba<u8>,
 ) {
-    let font_data = std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-        .or_else(|_| std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"));
-    let Ok(font_data) = font_data else {
-        return;
-    };
-    let Ok(font) = ab_glyph::FontVec::try_from_vec(font_data) else {
+    // The font is read and parsed once per process: rasterize replays
+    // this for every text action on every rebuild, and a disk read +
+    // font parse per replay is pure waste.
+    static FONT: std::sync::LazyLock<Option<ab_glyph::FontVec>> =
+        std::sync::LazyLock::new(|| {
+            let data = std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+                .or_else(|_| std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+                .ok()?;
+            ab_glyph::FontVec::try_from_vec(data).ok()
+        });
+    let Some(font) = FONT.as_ref() else {
         return;
     };
     imageproc::drawing::draw_text_mut(
@@ -1118,7 +1122,7 @@ fn draw_text(
         p.0 as i32,
         (p.1 - size) as i32,
         ab_glyph::PxScale::from(size),
-        &font,
+        font,
         text,
     );
 }
