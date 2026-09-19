@@ -70,6 +70,10 @@ pub struct Overlay {
     /// Frame pixel the loupe was last built for; a mousemove inside
     /// the same pixel skips the rebuild.
     loupe_at: Option<(i64, i64)>,
+    /// Reused loupe pixel buffer: a drag mints one 92KB image per
+    /// mousemove; keeping the allocation across rebuilds removes the
+    /// per-move alloc/free churn.
+    loupe_scratch: Vec<u8>,
     finishing: bool,
     /// Enter landed before the background grab did: finish() defers
     /// here and set_frame() completes it once the frame exists.
@@ -250,6 +254,7 @@ fn open_shell_opts(
                     cursor: (0.0, 0.0),
                     loupe: None,
                     loupe_at: None,
+                    loupe_scratch: Vec::new(),
                     finishing: false,
                     pending_finish: false,
                     opened: None,
@@ -321,11 +326,18 @@ fn close_other_overlays(cx: &mut App, keep: Option<AnyWindowHandle>) {
 /// BMP for the monitor slices, written straight from the frame: a
 /// 32bpp BI_RGB header plus bottom-up BGRA rows. One pass over the
 /// the cursor, plus the crosshair-free info line (coords + hex).
-/// `img` is the frame's RenderImage; its buffer is BGRA (the swizzle
-/// is symmetric, so reading R and B swapped restores RGBA).
-fn loupe_image(img: &Arc<RenderImage>, width: u32, height: u32, fx: i64, fy: i64) -> (Arc<RenderImage>, String) {
+fn loupe_image(
+    img: &Arc<RenderImage>,
+    width: u32,
+    height: u32,
+    fx: i64,
+    fy: i64,
+    scratch: &mut Vec<u8>,
+) -> (Arc<RenderImage>, String) {
     let bgra = img.as_bytes(0).unwrap_or(&[]);
-    let mut rgba = vec![0u8; (LOUPE_PX * LOUPE_PX * 4) as usize];
+    scratch.clear();
+    scratch.resize((LOUPE_PX * LOUPE_PX * 4) as usize, 0);
+    let rgba = scratch.as_mut_slice();
     let half = LOUPE_SRC as i64 / 2;
     let mut center = [0u8, 0u8, 0u8];
     for sy in 0..LOUPE_SRC as i64 {
@@ -369,7 +381,7 @@ fn loupe_image(img: &Arc<RenderImage>, width: u32, height: u32, fx: i64, fy: i64
     }
     // Straight into a RenderImage: this rebuilds on every drag
     // mousemove, so an encode/decode round trip is out of the question.
-    let img = crate::widgets::render_image_from_rgba(LOUPE_PX, LOUPE_PX, &rgba);
+    let img = crate::widgets::render_image_from_rgba(LOUPE_PX, LOUPE_PX, rgba);
     let info = format!(
         "{fx}, {fy}  #{:02x}{:02x}{:02x}",
         center[0], center[1], center[2]
@@ -559,20 +571,21 @@ impl Overlay {
             self.origin.1 as i64 + (ly * sf * sy) as i64,
         )
     }
-
-    /// Rebuild the loupe for a frame-pixel position, releasing the
-    /// previous tile. Called on every drag and resize mousemove.
+    /// Rebuild the loupe for frame pixel (fx, fy). The scratch buffer
+    /// is reused across rebuilds so a drag does not alloc/free a 92KB
+    /// image per mousemove.
     fn update_loupe(&mut self, fx: i64, fy: i64, cx: &mut Context<Self>) {
-        // A mousemove that stays inside the same frame pixel rebuilds
-        // nothing: the loupe and its hex readout are already correct.
         if self.loupe_at == Some((fx, fy)) {
             return;
         }
         self.loupe_at = Some((fx, fy));
         if let (Some(img), Some((w, h))) = (&self.frame_img, self.frame_size) {
-            // The previous loupe's cache entry goes with it: a drag
+            let img = img.clone();
+            let (w, h) = (w, h);
+            let built = loupe_image(&img, w, h, fx, fy, &mut self.loupe_scratch);
+            // The previous loupe's atlas tile goes with it: a drag
             // mints one per mousemove.
-            let old = self.loupe.replace(loupe_image(img, w, h, fx, fy));
+            let old = self.loupe.replace(built);
             if let Some((img, _)) = old {
                 crate::widgets::release_render(&img, cx);
             }
