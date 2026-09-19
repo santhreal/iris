@@ -299,7 +299,7 @@ impl ToastStage {
 
 fn reveal_in_folder(path: &Path) {
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let uri = format!("file://{}", abs.to_string_lossy());
+    let uri = format!("file://{}", iris_lib::dragcopy::uri_encode_path(&abs.to_string_lossy()));
     let parent = abs.parent().unwrap_or(path).to_path_buf();
     std::thread::spawn(move || {
         let dbus_status = std::process::Command::new("dbus-send")
@@ -910,7 +910,7 @@ fn show_toast_kind(
         )
         .map_err(|e| format!("open toast window: {e}"))?;
 
-    if let Some(previous) = TOAST_HANDLE.lock().replace(handle.clone()) {
+    if let Some(previous) = TOAST_HANDLE.lock().replace(handle) {
         let _ = previous.update(cx, |stage, _window, cx| {
             stage.fade_out_quick(cx);
         });

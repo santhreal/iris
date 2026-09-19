@@ -59,7 +59,23 @@ fn build_uri_list(paths: &[PathBuf]) -> String {
     let mut out = String::new();
     for pb in paths {
         let abs = std::fs::canonicalize(pb).unwrap_or_else(|_| pb.clone());
-        out.push_str(&format!("file://{}\r\n", abs.to_string_lossy()));
+        out.push_str(&format!("file://{}\r\n", uri_encode_path(&abs.to_string_lossy())));
+    }
+    out
+}
+
+/// Percent-encode a filesystem path for a file:// URI: unreserved
+/// characters and '/' pass through, everything else (spaces, UTF-8,
+/// '%' itself) is %XX. Without this a path with a space produces a
+/// URI every file manager rejects.
+pub fn uri_encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+            | b'-' | b'_' | b'.' | b'~' | b'/' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
     }
     out
 }
@@ -284,7 +300,9 @@ impl IconWindow {
         conn.free_gc(gc).ok()?;
         conn.free_gc(mgc).ok()?;
         conn.free_pixmap(mask).ok()?;
-        let _ = conn.flush();
+        // The window's background_pixmap attribute holds its own
+        // server-side reference; ours is freed or it leaks per drag.
+        conn.free_pixmap(pixmap).ok()?;
         Some(Self {
             win,
             width: w16,
@@ -346,7 +364,9 @@ impl XdndAtoms {
 }
 
 /// Deepest XdndAware window containing (x, y) in root coordinates, and
-/// its protocol version.
+/// its protocol version. `aware_cache` memoizes per-window awareness:
+/// the drag polls this every 16ms and a get_property per window per
+/// poll is a round-trip storm over a busy desktop.
 #[cfg(target_os = "linux")]
 fn xdnd_target_at<C: Connection>(
     conn: &C,
@@ -356,32 +376,37 @@ fn xdnd_target_at<C: Connection>(
     x: i32,
     y: i32,
     skip: Option<x11rb::protocol::xproto::Window>,
+    aware_cache: &mut std::collections::HashMap<
+        x11rb::protocol::xproto::Window,
+        Option<(x11rb::protocol::xproto::Window, u32)>,
+    >,
 ) -> Option<(x11rb::protocol::xproto::Window, u32)> {
-    let mut self_target = None;
-
-    if let Some(reply) = conn
-        .get_property(false, win, proxy, AtomEnum::ANY, 0, 2)
-        .ok()
-        .and_then(|c| c.reply().ok())
-    {
-        if let Some(mut it) = reply.value32() {
-            if let (Some(proxy_win), Some(version)) = (it.next(), it.next()) {
-                self_target = Some((proxy_win, version.min(5)));
-            }
-        }
-    }
-
-    if self_target.is_none() {
+    let self_target = *aware_cache.entry(win).or_insert_with(|| {
+        let mut t = None;
         if let Some(reply) = conn
-            .get_property(false, win, aware, AtomEnum::ANY, 0, 1)
+            .get_property(false, win, proxy, AtomEnum::ANY, 0, 2)
             .ok()
             .and_then(|c| c.reply().ok())
         {
-            if let Some(version) = reply.value32().and_then(|mut it| it.next()) {
-                self_target = Some((win, version.min(5)));
+            if let Some(mut it) = reply.value32() {
+                if let (Some(proxy_win), Some(version)) = (it.next(), it.next()) {
+                    t = Some((proxy_win, version.min(5)));
+                }
             }
         }
-    }
+        if t.is_none() {
+            if let Some(reply) = conn
+                .get_property(false, win, aware, AtomEnum::ANY, 0, 1)
+                .ok()
+                .and_then(|c| c.reply().ok())
+            {
+                if let Some(version) = reply.value32().and_then(|mut it| it.next()) {
+                    t = Some((win, version.min(5)));
+                }
+            }
+        }
+        t
+    });
 
     if let Some(tree) = conn.query_tree(win).ok().and_then(|c| c.reply().ok()) {
         for child in tree.children.into_iter().rev() {
@@ -403,9 +428,16 @@ fn xdnd_target_at<C: Connection>(
                     .map(|a| a.map_state == x11rb::protocol::xproto::MapState::VIEWABLE)
                     .unwrap_or(false);
                 if mapped {
-                    if let Some(target) =
-                        xdnd_target_at(conn, child, aware, proxy, x - cx, y - cy, skip)
-                    {
+                    if let Some(target) = xdnd_target_at(
+                        conn,
+                        child,
+                        aware,
+                        proxy,
+                        x - cx,
+                        y - cy,
+                        skip,
+                        aware_cache,
+                    ) {
                         return Some(target);
                     }
                 }
@@ -448,6 +480,7 @@ fn run_xdnd_drag<C: Connection>(
     let mut accepted = false;
     let mut dropped = false;
     let mut last_pos = (i32::MIN, i32::MIN);
+    let mut aware_cache = std::collections::HashMap::new();
     let icon = icon.and_then(|icon| IconWindow::show(&conn, root, icon));
 
     while Instant::now() < deadline {
@@ -459,6 +492,11 @@ fn run_xdnd_drag<C: Connection>(
                         // asks for idle position updates.
                         accepted = ev.data.as_data32()[1] & 1 != 0;
                     } else if ev.type_ == atoms.finished {
+                        // l[0] is the accepted flag: a refused drop
+                        // still ends the drag, but the log distinguishes
+                        // "target rejected" from a real copy.
+                        let ok = ev.data.as_data32()[0] != 0;
+                        crate::ilog!("iris: dragcopy: XdndFinished accepted={ok}");
                         if let Some(icon) = &icon {
                             icon.destroy(&conn);
                         }
@@ -513,7 +551,6 @@ fn run_xdnd_drag<C: Connection>(
             }
             break;
         }
-
         let under = xdnd_target_at(
             &conn,
             root,
@@ -522,6 +559,7 @@ fn run_xdnd_drag<C: Connection>(
             px,
             py,
             icon.as_ref().map(|i| i.win),
+            &mut aware_cache,
         );
         let under_win = under.map(|(w, _)| w);
         if under_win != target {
@@ -698,7 +736,7 @@ pub fn copy_file_path(path: &std::path::Path) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        serve_uri_list(format!("file://{abs_str}\r\n"), abs_str)
+        serve_uri_list(format!("file://{}\r\n", uri_encode_path(&abs_str)), abs_str)
     }
 }
 
