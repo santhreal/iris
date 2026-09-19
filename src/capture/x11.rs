@@ -237,7 +237,7 @@ fn list_top_level_windows_on(
 /// EWMH _NET_ACTIVE_WINDOW. Used by --capture-window: the shot is the
 /// window's pixels, borders included, with no overlay round trip.
 pub fn active_window_rect() -> Result<WinRect, String> {
-    let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
+    let (conn, screen_num) = shared_conn()?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
     let atom = conn
@@ -256,14 +256,18 @@ pub fn active_window_rect() -> Result<WinRect, String> {
         .and_then(|mut v| v.next())
         .filter(|w| *w != x11rb::NONE)
         .ok_or("no active window")?;
-    let geom = conn
+    // The geometry and the root-space origin are independent: send
+    // both before awaiting either, halving the round trips.
+    let geom_cookie = conn
         .get_geometry(win)
-        .map_err(|e| format!("get_geometry: {e}"))?
+        .map_err(|e| format!("get_geometry: {e}"))?;
+    let trans_cookie = conn
+        .translate_coordinates(win, root, 0, 0)
+        .map_err(|e| format!("translate_coordinates: {e}"))?;
+    let geom = geom_cookie
         .reply()
         .map_err(|e| format!("get_geometry reply: {e}"))?;
-    let origin = conn
-        .translate_coordinates(win, root, 0, 0)
-        .map_err(|e| format!("translate_coordinates: {e}"))?
+    let origin = trans_cookie
         .reply()
         .map_err(|e| format!("translate_coordinates reply: {e}"))?;
     Ok(WinRect {
