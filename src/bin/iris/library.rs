@@ -5,8 +5,8 @@
 //! starts a region capture or opens settings. The grid re-reads
 //! library.json on a slow timer so captures taken while the panel is
 //! open appear without a restart.
-
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iris_lib::library::{self, CaptureEntry};
@@ -675,7 +675,14 @@ impl Library {
                 .child(
                     img(ImageSource::Render(
                         self.thumb_cache.get(&entry.path).cloned().unwrap_or_else(|| {
-                            crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0])
+                            // One shared transparent tile: minting a
+                            // RenderImage per missing thumb per frame
+                            // allocates an atlas slot on every paint.
+                            static BLANK: std::sync::LazyLock<Arc<RenderImage>> =
+                                std::sync::LazyLock::new(|| {
+                                    crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0])
+                                });
+                            BLANK.clone()
                         }),
                     ))
                     .size_full()
