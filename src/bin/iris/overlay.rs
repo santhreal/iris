@@ -436,17 +436,17 @@ impl Overlay {
         self.finalize_failed = false;
         self.mode = OverlayMode::Capture;
         self.cfg = iris_lib::config::Config::load();
+        self.loupe = None;
         self.loupe_at = None;
         self.finishing = false;
         self.pending_finish = false;
         self.opened = None;
         self.resize = None;
         self.moving = None;
+        self.hovered = None;
+        self.hover_in = None;
         self.hover_out = None;
         self.flight = None;
-        self.landed = None;
-        self.finalize_failed = false;
-        self.cfg = iris_lib::config::Config::load();
     }
 
     /// The 8 resize handles of a committed selection, in logical px:

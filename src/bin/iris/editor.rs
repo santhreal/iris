@@ -497,9 +497,7 @@ impl Editor {
                 Ok(patch) => {
                     // The composite itself is pixelated in place so later
                     // blurs sample through earlier ones, matching canvas2d.
-                    if let Ok(raw) = pixelate_cpu(&mut self.composite, x, y, w, h) {
-                        let _ = raw;
-                    }
+                    let _ = pixelate_cpu(&mut self.composite, x, y, w, h);
                     action.blur_patch = Some(patch);
                     action.blur_rect = (x as f32, y as f32, w as f32, h as f32);
                 }
@@ -508,6 +506,7 @@ impl Editor {
         } else {
             rasterize(&mut self.composite, &action, 1.0);
         }
+        self.push_edit(Edit::Add(action.clone()));
         Rc::make_mut(&mut self.actions).push(action);
         self.selected = None;
     }
@@ -1288,7 +1287,7 @@ impl Render for Editor {
                         this.fill = !this.fill;
                     }
                     "1" | "2" | "3" => {
-                        this.stroke = (key.as_bytes()[0] - b'1') as u8;
+                        this.stroke = key.as_bytes()[0] - b'1';
                     }
                     // Zoom: 0 fits, +/- step, space+drag pans.
                     "0" => {

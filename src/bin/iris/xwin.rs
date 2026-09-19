@@ -283,19 +283,22 @@ pub fn find_xid_by_class_on(conn: &impl Connection, class_substr: &str) -> Optio
         .ok()?
         .reply()
         .ok()?;
-    let mut newest = None;
-    for win in windows
+    // Pipeline the WM_CLASS reads: one request per client window, all
+    // sent before the first reply is awaited. Sequential reply() calls
+    // cost a round trip per window; batched, the whole scan is one.
+    let pending: Vec<(u32, _)> = windows
         .value
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-    {
-        let Ok(class) = conn
-            .get_property(false, win, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
-            .map(|c| c.reply())
-        else {
-            continue;
-        };
-        let Ok(class) = class else { continue };
+        .filter_map(|win| {
+            conn.get_property(false, win, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
+                .ok()
+                .map(|cookie| (win, cookie))
+        })
+        .collect();
+    let mut newest = None;
+    for (win, cookie) in pending {
+        let Ok(class) = cookie.reply() else { continue };
         if class
             .value
             .windows(class_substr.len())

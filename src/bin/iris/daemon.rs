@@ -393,9 +393,8 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
 fn toggle_recording(cx: &mut App) -> Result<(), String> {
     let mut mgr = RECORDING.lock();
     if mgr.is_active() {
-        match mgr.stop()? {
-            Some(path) => iris_lib::ilog!("iris: recording saved: {}", path.display()),
-            None => {}
+        if let Some(path) = mgr.stop()? {
+            iris_lib::ilog!("iris: recording saved: {}", path.display());
         }
         chip::close(cx); // defensive: any exit path that missed hide
         return Ok(());
@@ -547,7 +546,7 @@ fn record_region_start(cx: &mut App, x: i32, y: i32, w: i32, h: i32) -> Result<(
 fn socket_path() -> PathBuf {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .or_else(|| directories::BaseDirs::new().map(|b| b.runtime_dir().map(|r| r.to_path_buf())).flatten())
+        .or_else(|| directories::BaseDirs::new().and_then(|b| b.runtime_dir().map(|r| r.to_path_buf())))
         .unwrap_or_else(std::env::temp_dir);
     base.join("iris.sock")
 }
@@ -830,10 +829,12 @@ mod hotkeys {
                 ModMask::LOCK,
                 ModMask::M2 | ModMask::LOCK,
             ];
-            let mut grabbed: Vec<(u8, Command)> = Vec::new();
+            // (keycode, modifier mask, command): the mask matters when
+            // two hotkeys share a key, e.g. "R" and "Ctrl+R".
+            let mut grabbed: Vec<(u8, ModMask, Command)> = Vec::new();
 
             let grab_all = |conn: &x11rb::rust_connection::RustConnection,
-                                grabbed: &mut Vec<(u8, Command)>| {
+                                grabbed: &mut Vec<(u8, ModMask, Command)>| {
                 let _ = conn.ungrab_key(0u8, root, ModMask::from(0x8000u16));
                 grabbed.clear();
                 let cfg = Config::load();
@@ -870,7 +871,7 @@ mod hotkeys {
                         }
                     }
                     if ok {
-                        grabbed.push((keycode, cmd));
+                        grabbed.push((keycode, mods, cmd));
                     }
                 }
                 let _ = conn.flush();
@@ -892,7 +893,19 @@ mod hotkeys {
                 loop {
                     match conn.poll_for_event() {
                         Ok(Some(x11rb::protocol::Event::KeyPress(ev))) => {
-                            if let Some((_, cmd)) = grabbed.iter().find(|(kc, _)| *kc == ev.detail)
+                            // Match keycode AND modifier mask: two
+                            // hotkeys can share a key ("R" vs "Ctrl+R")
+                            // and the grab fires per (key, mods) pair.
+                            // Lock bits (NumLock M2, CapsLock LOCK) are
+                            // masked out: they are grabbed as variants
+                            // but are not part of the configured mask.
+                            let ev_state: u16 = ev.state.into();
+                            let ev_mods = ModMask::from(
+                                ev_state & !(u16::from(ModMask::M2) | u16::from(ModMask::LOCK)),
+                            );
+                            if let Some((_, _, cmd)) = grabbed
+                                .iter()
+                                .find(|(kc, m, _)| *kc == ev.detail && *m == ev_mods)
                             {
                                 if tx.unbounded_send(cmd.clone_for_menu()).is_err() {
                                     return;

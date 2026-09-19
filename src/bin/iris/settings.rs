@@ -233,12 +233,10 @@ impl Settings {
             cx.notify();
             return;
         }
-        if self.open_dropdown.is_some() {
-            if ev.keystroke.key == "escape" {
-                self.open_dropdown = None;
-                cx.notify();
-                return;
-            }
+        if self.open_dropdown.is_some() && ev.keystroke.key == "escape" {
+            self.open_dropdown = None;
+            cx.notify();
+            return;
         }
         if self.editing.is_none() {
             if ev.keystroke.key == "escape" {

@@ -158,7 +158,7 @@ impl GlContext {
                 unsafe { egl_inst.get_display(egl::DEFAULT_DISPLAY) }
                     .ok_or_else(|| "eglGetDisplay returned None".to_string())?
             } else {
-                unsafe { std::mem::transmute(raw_display) }
+                unsafe { egl::Display::from_ptr(raw_display) }
             }
         } else {
             unsafe { egl_inst.get_display(egl::DEFAULT_DISPLAY) }
@@ -214,7 +214,7 @@ impl GlContext {
                 if raw_ctx.is_null() {
                     return Err("eglCreateContext failed without EGLConfig".to_string());
                 }
-                unsafe { std::mem::transmute(raw_ctx) }
+                unsafe { egl::Context::from_ptr(raw_ctx) }
             }
         };
 
@@ -577,7 +577,7 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
                     let chunk = d.chunk();
                     planes.push(PlaneInfo {
                         fd: raw.fd as i32,
-                        offset: (chunk.offset() + raw.mapoffset) as u32,
+                        offset: chunk.offset() + raw.mapoffset,
                         stride: chunk.stride() as u32,
                     });
                 }

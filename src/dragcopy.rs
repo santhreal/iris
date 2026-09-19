@@ -472,15 +472,13 @@ fn run_xdnd_drag<C: Connection>(
                         serve_drag_request(&conn, &atoms, &uri_list, &ev);
                     }
                 }
-                Event::SelectionClear(ev) => {
-                    if ev.selection == atoms.selection {
-                        if let Some(icon) = &icon {
-                            icon.destroy(&conn);
-                        }
-                        let _ = conn.destroy_window(win);
-                        let _ = conn.flush();
-                        return;
+                Event::SelectionClear(ev) if ev.selection == atoms.selection => {
+                    if let Some(icon) = &icon {
+                        icon.destroy(&conn);
                     }
+                    let _ = conn.destroy_window(win);
+                    let _ = conn.flush();
+                    return;
                 }
                 _ => {}
             }
@@ -825,70 +823,67 @@ fn serve_x11_clipboard<C: Connection>(
                     break;
                 }
             }
-            Event::SelectionRequest(ev) => {
-                if ev.selection == clipboard_atom {
-                    let property = if ev.property == x11rb::NONE {
-                        ev.target
-                    } else {
-                        ev.property
-                    };
+            Event::SelectionRequest(ev) if ev.selection == clipboard_atom => {
+                let property = if ev.property == x11rb::NONE {
+                    ev.target
+                } else {
+                    ev.property
+                };
 
-                    let mut satisfied = false;
-                    if ev.target == targets_atom {
-                        let targets = [targets_atom, uri_list_atom, utf8_atom];
-                        if conn
-                            .change_property32(
-                                PropMode::REPLACE,
-                                ev.requestor,
-                                property,
-                                AtomEnum::ATOM,
-                                &targets,
-                            )
-                            .is_ok()
-                        {
-                            satisfied = true;
-                        }
-                    } else if ev.target == uri_list_atom {
-                        if conn
-                            .change_property8(
-                                PropMode::REPLACE,
-                                ev.requestor,
-                                property,
-                                uri_list_atom,
-                                uri_list.as_bytes(),
-                            )
-                            .is_ok()
-                        {
-                            satisfied = true;
-                        }
-                    } else if ev.target == utf8_atom {
-                        if conn
-                            .change_property8(
-                                PropMode::REPLACE,
-                                ev.requestor,
-                                property,
-                                utf8_atom,
-                                abs_str.as_bytes(),
-                            )
-                            .is_ok()
-                        {
-                            satisfied = true;
-                        }
+                let mut satisfied = false;
+                if ev.target == targets_atom {
+                    let targets = [targets_atom, uri_list_atom, utf8_atom];
+                    if conn
+                        .change_property32(
+                            PropMode::REPLACE,
+                            ev.requestor,
+                            property,
+                            AtomEnum::ATOM,
+                            &targets,
+                        )
+                        .is_ok()
+                    {
+                        satisfied = true;
                     }
-
-                    let notify = SelectionNotifyEvent {
-                        response_type: SELECTION_NOTIFY_EVENT,
-                        sequence: 0,
-                        time: ev.time,
-                        requestor: ev.requestor,
-                        selection: ev.selection,
-                        target: ev.target,
-                        property: if satisfied { property } else { x11rb::NONE },
-                    };
-
-                    let _ = conn.send_event(false, ev.requestor, EventMask::NO_EVENT, notify);
-                    let _ = conn.flush();
+                } else if ev.target == uri_list_atom {
+                    if conn
+                        .change_property8(
+                            PropMode::REPLACE,
+                            ev.requestor,
+                            property,
+                            uri_list_atom,
+                            uri_list.as_bytes(),
+                        )
+                        .is_ok()
+                    {
+                        satisfied = true;
+                    }
+                } else if ev.target == utf8_atom
+                    && conn
+                        .change_property8(
+                            PropMode::REPLACE,
+                            ev.requestor,
+                            property,
+                            utf8_atom,
+                            abs_str.as_bytes(),
+                        )
+                        .is_ok()
+                {
+                    satisfied = true;
                 }
+
+                let notify = SelectionNotifyEvent {
+                    response_type: SELECTION_NOTIFY_EVENT,
+                    sequence: 0,
+                    time: ev.time,
+                    requestor: ev.requestor,
+                    selection: ev.selection,
+                    target: ev.target,
+                    property: if satisfied { property } else { x11rb::NONE },
+                };
+
+                let _ = conn.send_event(false, ev.requestor, EventMask::NO_EVENT, notify);
+                let _ = conn.flush();
             }
             _ => {}
         }
