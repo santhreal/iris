@@ -319,12 +319,18 @@ fn toggle_recording(cx: &mut App) -> Result<(), String> {
         return Ok(());
     }
     let cfg = Config::load();
-    let output = record::unique_recording_path(&cfg.recordings_dir);
+    let ext = match cfg.recording_format {
+        iris_lib::config::RecordingFormat::Mp4 => "mp4",
+        iris_lib::config::RecordingFormat::Gif => "gif",
+        iris_lib::config::RecordingFormat::Webm => "webm",
+    };
+    let output = record::unique_recording_path(&cfg.recordings_dir, ext);
     let mic = cfg.record_mic_default;
+    let (format, encoder) = (cfg.recording_format, cfg.recording_encoder);
     let wayland_only = std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::env::var_os("DISPLAY").is_none();
     let active = if wayland_only {
-        record::ActiveRecording::spawn(output, cfg.recording_fps, mic, move |spec| {
+        record::ActiveRecording::spawn(output, cfg.recording_fps, mic, format, encoder, move |spec| {
             record::wayland::record_window(spec)
         })
     } else {
@@ -335,7 +341,7 @@ fn toggle_recording(cx: &mut App) -> Result<(), String> {
             conn,
             done: command_tx(),
         });
-        record::ActiveRecording::spawn(output, cfg.recording_fps, mic, move |spec| {
+        record::ActiveRecording::spawn(output, cfg.recording_fps, mic, format, encoder, move |spec| {
             record::x11::record_window_follow(spec, follower)
         })
     };

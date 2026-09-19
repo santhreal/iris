@@ -11,6 +11,8 @@ pub struct EncoderConfig {
     pub height: u32,
     pub fps: u32,
     pub mic: bool,
+    pub format: crate::config::RecordingFormat,
+    pub encoder: crate::config::RecordingEncoder,
 }
 
 /// Raw RGBA frames in, H.264/AAC mp4 out, via a piped ffmpeg child.
@@ -52,44 +54,109 @@ impl Encoder {
                 .map_err(|e| format!("create recordings dir {}: {e}", parent.display()))?;
         }
 
+        use crate::config::{RecordingEncoder, RecordingFormat};
         let size = format!("{}x{}", cfg.width, cfg.height);
         let fps = cfg.fps.to_string();
-        let mut args: Vec<&str> = vec![
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgba",
-            "-s",
-            &size,
-            "-r",
-            &fps,
-            "-i",
-            "pipe:0",
+        // GIF carries no audio; webm does, through opus.
+        let mic = cfg.mic && cfg.format != RecordingFormat::Gif;
+        let mut args: Vec<String> = vec![
+            "-hide_banner".into(),
+            "-loglevel".into(),
+            "error".into(),
+            "-y".into(),
+            "-f".into(),
+            "rawvideo".into(),
+            "-pix_fmt".into(),
+            "rgba".into(),
+            "-s".into(),
+            size,
+            "-r".into(),
+            fps,
+            "-i".into(),
+            "pipe:0".into(),
         ];
-        if cfg.mic {
-            args.extend(["-f", "pulse", "-i", "default"]);
+        if mic {
+            args.extend(["-f".into(), "pulse".into(), "-i".into(), "default".into()]);
         }
-        args.extend([
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            "-vf",
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        ]);
-        if cfg.mic {
-            args.extend(["-c:a", "aac", "-shortest"]);
+        match cfg.format {
+            RecordingFormat::Mp4 => {
+                let use_nvenc = match cfg.encoder {
+                    RecordingEncoder::Nvenc => true,
+                    RecordingEncoder::Libx264 => false,
+                    RecordingEncoder::Auto => nvenc_available(),
+                };
+                if use_nvenc {
+                    args.extend([
+                        "-c:v".into(),
+                        "h264_nvenc".into(),
+                        "-preset".into(),
+                        "p4".into(),
+                        "-cq".into(),
+                        "23".into(),
+                        "-pix_fmt".into(),
+                        "yuv420p".into(),
+                    ]);
+                } else {
+                    args.extend([
+                        "-c:v".into(),
+                        "libx264".into(),
+                        "-preset".into(),
+                        "veryfast".into(),
+                        "-crf".into(),
+                        "23".into(),
+                        "-pix_fmt".into(),
+                        "yuv420p".into(),
+                    ]);
+                }
+                args.extend([
+                    "-vf".into(),
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2".into(),
+                ]);
+            }
+            RecordingFormat::Gif => {
+                // Per-frame palettes keep memory bounded on long
+                // recordings; a single global palette would buffer
+                // every frame before writing. GIF fps is capped: the
+                // format's cost scales with frame count.
+                let gif_fps = cfg.fps.min(20).to_string();
+                args.extend([
+                    "-vf".into(),
+                    format!(
+                        "fps={gif_fps},scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=single[p];[s1][p]paletteuse=new=1"
+                    ),
+                    "-f".into(),
+                    "gif".into(),
+                ]);
+            }
+            RecordingFormat::Webm => {
+                args.extend([
+                    "-c:v".into(),
+                    "libvpx-vp9".into(),
+                    "-deadline".into(),
+                    "realtime".into(),
+                    "-cpu-used".into(),
+                    "5".into(),
+                    "-crf".into(),
+                    "32".into(),
+                    "-b:v".into(),
+                    "0".into(),
+                    "-pix_fmt".into(),
+                    "yuv420p".into(),
+                    "-vf".into(),
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2".into(),
+                ]);
+            }
+        }
+        if mic {
+            let codec = if cfg.format == RecordingFormat::Webm {
+                "libopus"
+            } else {
+                "aac"
+            };
+            args.extend(["-c:a".into(), codec.into(), "-shortest".into()]);
         }
         let output = cfg.output.to_string_lossy().into_owned();
-        args.push(&output);
+        args.push(output.clone());
 
         crate::ilog!("iris: record: spawning ffmpeg -> {output}");
         let mut child = Command::new("ffmpeg")
@@ -232,4 +299,18 @@ impl Drop for Encoder {
             let _ = c.wait();
         }
     }
+}
+
+/// Whether this ffmpeg build has h264_nvenc. Probed once per process:
+/// `ffmpeg -encoders` is a subprocess, so the result is cached.
+fn nvenc_available() -> bool {
+    use std::sync::LazyLock;
+    static HAS: LazyLock<bool> = LazyLock::new(|| {
+        Command::new("ffmpeg")
+            .args(["-hide_banner", "-encoders"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("h264_nvenc"))
+            .unwrap_or(false)
+    });
+    *HAS
 }

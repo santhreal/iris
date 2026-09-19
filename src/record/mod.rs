@@ -31,6 +31,8 @@ pub struct RecordingSpec {
     pub output: PathBuf,
     pub fps: u32,
     pub mic: bool,
+    pub format: crate::config::RecordingFormat,
+    pub encoder: crate::config::RecordingEncoder,
     pub stop: Receiver<()>,
     pub control: Receiver<RecControl>,
 }
@@ -58,9 +60,14 @@ pub struct ActiveRecording {
 }
 
 impl ActiveRecording {
-    /// Spawn a platform source on its own thread. `source` must honor
-    /// `spec.stop` promptly and return after the encoder has finished.
-    pub fn spawn<F>(output: PathBuf, fps: u32, mic: bool, source: F) -> Self
+    pub fn spawn<F>(
+        output: PathBuf,
+        fps: u32,
+        mic: bool,
+        format: crate::config::RecordingFormat,
+        encoder: crate::config::RecordingEncoder,
+        source: F,
+    ) -> Self
     where
         F: FnOnce(RecordingSpec) -> Result<(), String> + Send + 'static,
     {
@@ -70,6 +77,8 @@ impl ActiveRecording {
             output: output.clone(),
             fps,
             mic,
+            format,
+            encoder,
             stop: rx,
             control: crx,
         };
@@ -140,21 +149,22 @@ impl RecordingManager {
 }
 
 /// Path for a new recording inside `dir`, using the {date}_{time} template
-/// and de-duplicating with a numeric suffix.
-pub fn unique_recording_path(dir: &Path) -> PathBuf {
+/// and de-duplicating with a numeric suffix. `ext` is the container
+/// extension without a dot ("mp4", "gif", "webm").
+pub fn unique_recording_path(dir: &Path, ext: &str) -> PathBuf {
     let now = chrono::Local::now();
     let stem = format!("{}_{}", now.format("%Y-%m-%d"), now.format("%H-%M-%S"));
-    let candidate = dir.join(format!("{stem}.mp4"));
+    let candidate = dir.join(format!("{stem}.{ext}"));
     if !candidate.exists() {
         return candidate;
     }
     for n in 2..1000 {
-        let candidate = dir.join(format!("{stem}_{n}.mp4"));
+        let candidate = dir.join(format!("{stem}_{n}.{ext}"));
         if !candidate.exists() {
             return candidate;
         }
     }
-    dir.join(format!("{stem}_{}.mp4", now.timestamp_millis()))
+    dir.join(format!("{stem}_{}.{ext}", now.timestamp_millis()))
 }
 
 // WHY: the class closed here is "a recording leaks or double-stops": a
@@ -169,9 +179,9 @@ mod tests {
     #[test]
     fn unique_path_dedupes_with_numeric_suffix() {
         let dir = tempfile::tempdir().unwrap();
-        let first = unique_recording_path(dir.path());
+        let first = unique_recording_path(dir.path(), "mp4");
         std::fs::write(&first, b"x").unwrap();
-        let second = unique_recording_path(dir.path());
+        let second = unique_recording_path(dir.path(), "mp4");
         assert_ne!(first, second);
         assert!(second.to_string_lossy().ends_with("_2.mp4"));
     }
@@ -180,7 +190,7 @@ mod tests {
     fn stop_returns_output_on_clean_source() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
-        let rec = ActiveRecording::spawn(out.clone(), 30, false, |spec| {
+        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
             spec.stop.recv().unwrap();
             std::fs::write(&spec.output, b"mp4").unwrap();
             Ok(())
@@ -193,7 +203,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
         std::fs::write(&out, b"partial").unwrap();
-        let rec = ActiveRecording::spawn(out.clone(), 30, false, |spec| {
+        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
             spec.stop.recv().unwrap();
             Err(format!("{}user escaped the pick", CANCELLED_PREFIX))
         });
@@ -206,7 +216,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
         std::fs::write(&out, b"partial").unwrap();
-        let rec = ActiveRecording::spawn(out.clone(), 30, false, |spec| {
+        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
             spec.stop.recv().unwrap();
             Err("encoder died".to_string())
         });
@@ -229,6 +239,8 @@ mod tests {
             dir.path().join("r.mp4"),
             30,
             false,
+            crate::config::RecordingFormat::Mp4,
+            crate::config::RecordingEncoder::Libx264,
             |spec| {
                 spec.stop.recv().unwrap();
                 Ok(())

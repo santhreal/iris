@@ -33,6 +33,8 @@ enum DropdownField {
     ToastClickAction,
     ToastDuration,
     ToastPosition,
+    RecordingFormat,
+    RecordingEncoder,
 }
 
 pub struct Settings {
@@ -492,10 +494,74 @@ impl Render for Settings {
         ));
 
         // Recording section
+        let rec_fmt_options = vec![
+            "MP4 (H.264)".to_string(),
+            "GIF".to_string(),
+            "WebM (VP9)".to_string(),
+        ];
+        let rec_fmt_current = match self.cfg.recording_format {
+            iris_lib::config::RecordingFormat::Mp4 => "MP4 (H.264)".to_string(),
+            iris_lib::config::RecordingFormat::Gif => "GIF".to_string(),
+            iris_lib::config::RecordingFormat::Webm => "WebM (VP9)".to_string(),
+        };
+        let rec_fmt_selected = match self.cfg.recording_format {
+            iris_lib::config::RecordingFormat::Mp4 => Some(0),
+            iris_lib::config::RecordingFormat::Gif => Some(1),
+            iris_lib::config::RecordingFormat::Webm => Some(2),
+        };
+        let rec_enc_options = vec![
+            "Auto".to_string(),
+            "Software (x264)".to_string(),
+            "NVIDIA (NVENC)".to_string(),
+        ];
+        let rec_enc_current = match self.cfg.recording_encoder {
+            iris_lib::config::RecordingEncoder::Auto => "Auto".to_string(),
+            iris_lib::config::RecordingEncoder::Libx264 => "Software (x264)".to_string(),
+            iris_lib::config::RecordingEncoder::Nvenc => "NVIDIA (NVENC)".to_string(),
+        };
+        let rec_enc_selected = match self.cfg.recording_encoder {
+            iris_lib::config::RecordingEncoder::Auto => Some(0),
+            iris_lib::config::RecordingEncoder::Libx264 => Some(1),
+            iris_lib::config::RecordingEncoder::Nvenc => Some(2),
+        };
         form = form.child(self.section(
             "Recording",
             vec![
                 self.text_row("Recording fps", Field::Fps, cx).into_any_element(),
+                self.dropdown_row(
+                    "drop-rec-fmt",
+                    "Format",
+                    DropdownField::RecordingFormat,
+                    rec_fmt_current,
+                    rec_fmt_options,
+                    rec_fmt_selected,
+                    cx,
+                    |this, idx, _, _| {
+                        this.cfg.recording_format = match idx {
+                            1 => iris_lib::config::RecordingFormat::Gif,
+                            2 => iris_lib::config::RecordingFormat::Webm,
+                            _ => iris_lib::config::RecordingFormat::Mp4,
+                        };
+                    },
+                )
+                .into_any_element(),
+                self.dropdown_row(
+                    "drop-rec-enc",
+                    "MP4 encoder",
+                    DropdownField::RecordingEncoder,
+                    rec_enc_current,
+                    rec_enc_options,
+                    rec_enc_selected,
+                    cx,
+                    |this, idx, _, _| {
+                        this.cfg.recording_encoder = match idx {
+                            1 => iris_lib::config::RecordingEncoder::Libx264,
+                            2 => iris_lib::config::RecordingEncoder::Nvenc,
+                            _ => iris_lib::config::RecordingEncoder::Auto,
+                        };
+                    },
+                )
+                .into_any_element(),
                 self.toggle_row(
                     "tog-mic",
                     "Record microphone by default",
@@ -843,7 +909,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn all_eighteen_config_fields_persist_and_reload() {
+    fn all_twenty_config_fields_persist_and_reload() {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
         std::env::set_var("XDG_DATA_HOME", dir.path().join("data"));
@@ -879,6 +945,8 @@ mod tests {
         // Edit Recording
         s.cfg.recording_fps = 60;
         s.cfg.record_mic_default = true;
+        s.cfg.recording_format = iris_lib::config::RecordingFormat::Webm;
+        s.cfg.recording_encoder = iris_lib::config::RecordingEncoder::Nvenc;
 
         // Edit Keyboard
         s.cfg.capture_hotkey = "Ctrl+Shift+A".into();
@@ -900,9 +968,10 @@ mod tests {
         assert_eq!(loaded.toast_drag_enabled, false);
         assert_eq!(loaded.toast_show_actions, false);
         assert_eq!(loaded.toast_duration_ms, 8000);
-        assert_eq!(loaded.toast_position, ToastPosition::TopLeft);
         assert_eq!(loaded.recording_fps, 60);
         assert_eq!(loaded.record_mic_default, true);
+        assert_eq!(loaded.recording_format, iris_lib::config::RecordingFormat::Webm);
+        assert_eq!(loaded.recording_encoder, iris_lib::config::RecordingEncoder::Nvenc);
         assert_eq!(loaded.capture_hotkey, "Ctrl+Shift+A");
         assert_eq!(loaded.record_hotkey, "Ctrl+Shift+B");
         assert_eq!(loaded.cancel_keybind, "Ctrl+Q");

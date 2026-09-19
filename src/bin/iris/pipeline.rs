@@ -126,13 +126,46 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
     }
     let mut out = image::RgbaImage::new(region.width, region.height);
     let raw: &mut [u8] = &mut *out.as_mut();
-    for row in 0..region.height {
-        let src = ((region.y + row) * width + region.x) as usize * 4;
-        let dst = (row * region.width) as usize * 4;
-        let len = region.width as usize * 4;
-        raw[dst..dst + len].copy_from_slice(&bgra[src..src + len]);
+    let row_len = region.width as usize * 4;
+    // Fused copy+swizzle per row: one pass, and banded across threads
+    // once the crop is big enough to matter (a 4K crop is 33MB).
+    let crop_rows = |dst: &mut [u8], row0: u32, rows: u32| {
+        for r in 0..rows {
+            let src = ((region.y + row0 + r) * width + region.x) as usize * 4;
+            let dst_row = &mut dst[r as usize * row_len..(r as usize + 1) * row_len];
+            for (d, s) in dst_row
+                .chunks_exact_mut(4)
+                .zip(bgra[src..src + row_len].chunks_exact(4))
+            {
+                let v = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
+                let rgb = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
+                d.copy_from_slice(&rgb.to_le_bytes());
+            }
+        }
+    };
+    const PARALLEL_MIN: usize = 1 << 20;
+    if region.width as usize * region.height as usize * 4 < PARALLEL_MIN {
+        crop_rows(raw, 0, region.height);
+    } else {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get().min(8))
+            .unwrap_or(4)
+            .min(region.height as usize)
+            .max(1);
+        let band = (region.height as usize).div_ceil(threads);
+        std::thread::scope(|scope| {
+            let mut rest: &mut [u8] = raw;
+            let mut row0 = 0u32;
+            while !rest.is_empty() {
+                let rows = (band as u32).min(region.height - row0);
+                let (head, tail) = rest.split_at_mut(rows as usize * row_len);
+                rest = tail;
+                let r0 = row0;
+                row0 += rows;
+                scope.spawn(move || crop_rows(head, r0, rows));
+            }
+        });
     }
-    crate::widgets::swizzle_rgba_bgra(&mut *out.as_mut());
     Ok(out)
 }
 

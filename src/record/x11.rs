@@ -8,7 +8,7 @@
 //! display-only timer chip — recording state is visible on the window
 //! itself rather than in a floating panel.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -454,6 +454,12 @@ fn grab_pixmap(
 }
 
 
+/// The container extension of the current output path, so a mid-recording
+/// split (resize, mic toggle) keeps the same format.
+fn ext_of(path: &Path) -> &str {
+    path.extension().and_then(|e| e.to_str()).unwrap_or("mp4")
+}
+
 fn record_loop(
     conn: &RustConnection,
     picked: &PickedWindow,
@@ -468,6 +474,8 @@ fn record_loop(
         height,
         fps: spec.fps,
         mic: spec.mic,
+        format: spec.format,
+        encoder: spec.encoder,
     })?;
 
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(spec.fps));
@@ -502,8 +510,8 @@ fn record_loop(
                                 mic = !mic;
                                 encoder.finish()?;
                                 let dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
-                                output = unique_recording_path(&dir);
-                                encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic })?;
+                                output = unique_recording_path(&dir, ext_of(&output));
+                                encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic, format: spec.format, encoder: spec.encoder })?;
                             }
                             Ok(super::RecControl::Pause) => {}
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -519,8 +527,8 @@ fn record_loop(
                     mic = !mic;
                     encoder.finish()?;
                     let dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
-                    output = unique_recording_path(&dir);
-                    encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic })?;
+                    output = unique_recording_path(&dir, ext_of(&output));
+                    encoder = Encoder::start(&EncoderConfig { output: output.clone(), width, height, fps: spec.fps, mic, format: spec.format, encoder: spec.encoder })?;
                 }
             }
         }
@@ -550,13 +558,15 @@ fn record_loop(
                 .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("."));
-            output = unique_recording_path(&dir);
+            output = unique_recording_path(&dir, ext_of(&output));
             encoder = Encoder::start(&EncoderConfig {
                 output: output.clone(),
                 width,
                 height,
                 fps: spec.fps,
                 mic: spec.mic,
+                format: spec.format,
+                encoder: spec.encoder,
             })?;
         }
 

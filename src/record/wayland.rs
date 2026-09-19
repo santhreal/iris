@@ -513,6 +513,8 @@ struct StreamData {
     output: PathBuf,
     fps: u32,
     mic: bool,
+    rec_format: crate::config::RecordingFormat,
+    rec_encoder: crate::config::RecordingEncoder,
     format: Option<(u32, u32, VideoFormat, u64)>,
     shared: Rc<RefCell<Shared>>,
     unsupported_reported: bool,
@@ -640,6 +642,8 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
             height,
             fps: data.fps,
             mic: data.mic,
+            format: data.rec_format,
+            encoder: data.rec_encoder,
         }) {
             Ok(encoder) => shared.encoder = Some(encoder),
             Err(e) => {
@@ -893,6 +897,8 @@ pub fn record_window(spec: RecordingSpec) -> Result<(), String> {
         output: spec.output.clone(),
         fps: spec.fps,
         mic: spec.mic,
+        rec_format: spec.format,
+        rec_encoder: spec.encoder,
         format: None,
         shared: shared.clone(),
         unsupported_reported: false,

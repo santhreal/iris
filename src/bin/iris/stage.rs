@@ -21,8 +21,7 @@ use std::{
 };
 
 use gpui::*;
-
-use crate::{motion, theme};
+use crate::{motion, pipeline, theme};
 
 const MAX_W: f32 = 200.0;
 const MAX_H: f32 = 140.0;
@@ -459,6 +458,23 @@ impl Render for ToastStage {
                     })),
             );
             menu = menu.child(
+                crate::widgets::menu_row("toast-ocr", "Copy text (OCR)")
+                    .on_click(cx.listener(|stage, _, _window, cx| {
+                        cx.stop_propagation();
+                        stage.menu_at = None;
+                        let path = stage.path.clone();
+                        // tesseract is a subprocess; never the UI thread.
+                        cx.background_executor()
+                            .spawn(async move {
+                                if let Err(e) = pipeline::copy_ocr_text(&path) {
+                                    iris_lib::ilog!("iris: ocr: {e}");
+                                }
+                            })
+                            .detach();
+                        stage.begin_close(cx);
+                    })),
+            );
+            menu = menu.child(
                 crate::widgets::menu_row("toast-pin", "Pin to screen")
                     .on_click(cx.listener(|stage, _, _window, cx| {
                         cx.stop_propagation();
@@ -500,7 +516,7 @@ impl Render for ToastStage {
                     if let Some((mx, my)) = stage.menu_at {
                         let (px_, py_): (f32, f32) =
                             (ev.position.x.into(), ev.position.y.into());
-                        let menu_h = 5.0 * crate::widgets::MENU_ROW_H + 10.0;
+                        let menu_h = 6.0 * crate::widgets::MENU_ROW_H + 10.0;
                         let inside = px_ >= mx && px_ <= mx + crate::widgets::MENU_W
                             && py_ >= my && py_ <= my + menu_h;
                         if !inside {
@@ -718,7 +734,7 @@ impl Render for ToastStage {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(|stage, ev: &MouseDownEvent, _, cx| {
-                        let menu_h = 4.0 * crate::widgets::MENU_ROW_H + 10.0;
+                        let menu_h = 6.0 * crate::widgets::MENU_ROW_H + 10.0;
                         let win_w = stage.dims.0 + BLEED + MARGIN;
                         let win_h = stage.dims.1 + BLEED + MARGIN;
                         let mx: f32 = ev.position.x.into();

@@ -10,6 +10,11 @@ pub struct Config {
     pub screenshot_template: String,
     pub record_mic_default: bool,
     pub recording_fps: u32,
+    /// Container+codec for recordings: mp4 (H.264), gif, or webm (VP9).
+    pub recording_format: RecordingFormat,
+    /// H.264 encoder for mp4 recordings: auto probes ffmpeg for
+    /// h264_nvenc (GPU offload) and falls back to libx264.
+    pub recording_encoder: RecordingEncoder,
     pub show_toast_after_capture: bool,
     pub capture_hotkey: String,
     pub record_hotkey: String,
@@ -61,6 +66,32 @@ pub enum ToastPosition {
     TopLeft,
 }
 
+/// Container and codec for screen recordings.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecordingFormat {
+    /// H.264 in mp4: audio-capable, plays everywhere.
+    #[default]
+    Mp4,
+    /// Animated GIF: no audio, large files, paste-able anywhere.
+    Gif,
+    /// VP9 in webm: smaller than mp4 at equal quality, no mic track.
+    Webm,
+}
+
+/// The H.264 encoder used for mp4 recordings.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecordingEncoder {
+    /// Probe ffmpeg for h264_nvenc once and use it when present.
+    #[default]
+    Auto,
+    /// Software x264: works on every host.
+    Libx264,
+    /// NVIDIA hardware encoder: frees the CPU during capture.
+    Nvenc,
+}
+
 impl Default for Config {
     fn default() -> Self {
         let user_dirs = directories::UserDirs::new();
@@ -83,6 +114,8 @@ impl Default for Config {
             screenshot_template: "{date}_{time}".to_string(),
             record_mic_default: false,
             recording_fps: 30,
+            recording_format: RecordingFormat::Mp4,
+            recording_encoder: RecordingEncoder::Auto,
             show_toast_after_capture: true,
             capture_hotkey: "Print".to_string(),
             record_hotkey: "Ctrl+Shift+R".to_string(),
