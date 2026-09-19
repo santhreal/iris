@@ -8,8 +8,24 @@ use super::{Frame, WinRect};
 /// The overlay opens one window per monitor, each showing its slice
 /// of the frozen frame at native scale. Falls back to the whole
 /// root when the WM reports no monitors.
+/// A process-shared X connection for read-only queries (monitors,
+/// window list). The handshake is ~10ms; a daemon that opens one per
+/// capture, toast, and editor pays it on every surface. The connection
+/// is Send+Sync and read-only here, so one serves every caller.
+fn shared_conn() -> Result<(&'static x11rb::rust_connection::RustConnection, usize), String> {
+    static CONN: std::sync::LazyLock<
+        Result<(x11rb::rust_connection::RustConnection, usize), String>,
+    > = std::sync::LazyLock::new(|| {
+        x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))
+    });
+    CONN.as_ref()
+        .map(|(c, s)| (c, *s))
+        .map_err(|e| e.clone())
+}
+
+
 pub fn monitors() -> Result<Vec<WinRect>, String> {
-    let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
+    let (conn, screen_num) = shared_conn()?;
     let screen = &conn.setup().roots[screen_num];
     let reply = conn
         .randr_get_monitors(screen.root, true)
@@ -47,7 +63,7 @@ pub fn monitors() -> Result<Vec<WinRect>, String> {
 /// path queries both back to back, and a connection handshake is
 /// tens of ms of dead latency before the overlay can open.
 pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
-    let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
+    let (conn, screen_num) = shared_conn()?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
     let reply = conn
@@ -79,7 +95,7 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
             height: screen.height_in_pixels as u32,
         });
     }
-    let windows = list_top_level_windows_on(&conn, screen_num)?;
+    let windows = list_top_level_windows_on(conn, screen_num)?;
     Ok((primary, windows))
 }
 
@@ -89,8 +105,8 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
 /// this for hover-snap: the last rect containing the cursor is the
 /// topmost candidate.
 pub fn list_top_level_windows() -> Result<Vec<WinRect>, String> {
-    let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
-    list_top_level_windows_on(&conn, screen_num)
+    let (conn, screen_num) = shared_conn()?;
+    list_top_level_windows_on(conn, screen_num)
 }
 
 fn list_top_level_windows_on(
@@ -99,17 +115,32 @@ fn list_top_level_windows_on(
 ) -> Result<Vec<WinRect>, String> {
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
-    let intern = |name: &str| {
-        conn.intern_atom(false, name.as_bytes())
-            .map_err(|e| format!("intern {name}: {e}"))?
-            .reply()
-            .map(|r| r.atom)
-            .map_err(|e| format!("intern {name} reply: {e}"))
-    };
-    let stacking = intern("_NET_CLIENT_LIST_STACKING")?;
-    let wm_pid = intern("_NET_WM_PID")?;
-    let wm_state = intern("_NET_WM_STATE")?;
-    let state_hidden = intern("_NET_WM_STATE_HIDDEN")?;
+    // Pipeline the atom interns: four sequential reply() calls cost
+    // four round trips before the window probes even start.
+    let names = [
+        "_NET_CLIENT_LIST_STACKING",
+        "_NET_WM_PID",
+        "_NET_WM_STATE",
+        "_NET_WM_STATE_HIDDEN",
+    ];
+    let cookies = names
+        .iter()
+        .map(|n| conn.intern_atom(false, n.as_bytes()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("intern atom: {e}"))?;
+    let mut atoms = Vec::with_capacity(4);
+    for (cookie, name) in cookies.into_iter().zip(names) {
+        atoms.push(
+            cookie
+                .reply()
+                .map(|r| r.atom)
+                .map_err(|e| format!("intern {name} reply: {e}"))?,
+        );
+    }
+    let stacking = atoms[0];
+    let wm_pid = atoms[1];
+    let wm_state = atoms[2];
+    let state_hidden = atoms[3];
 
     let list = conn
         .get_property(false, root, stacking, AtomEnum::WINDOW, 0, u32::MAX)
