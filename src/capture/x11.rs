@@ -289,8 +289,7 @@ impl X11Backend {
 
 impl super::CaptureBackend for X11Backend {
     fn grab_screen(&self) -> Result<Frame, String> {
-        let (conn, screen_num) =
-            x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
+        let (conn, screen_num) = shared_conn()?;
         let screen = &conn.setup().roots[screen_num];
         let root = screen.root;
 
