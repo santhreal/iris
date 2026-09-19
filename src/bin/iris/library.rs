@@ -173,12 +173,27 @@ impl Library {
                     .spawn(async move { library::list() })
                     .await;
                 let alive = this.update(cx, |this, cx| {
+                    // Path AND timestamp: an editor re-save keeps the
+                    // path but bumps created_ms, and a path-only diff
+                    // would keep showing the stale thumbnail.
                     let changed = fresh.len() != this.entries.len()
                         || !fresh
                             .iter()
-                            .map(|e| &e.path)
-                            .eq(this.entries.iter().map(|e| &e.path));
+                            .map(|e| (&e.path, e.created_ms))
+                            .eq(this.entries.iter().map(|e| (&e.path, e.created_ms)));
                     if changed {
+                        // Drop cached thumbs whose entry changed under
+                        // the same path so prefetch re-decodes them.
+                        let stale: std::collections::HashSet<&std::path::Path> = fresh
+                            .iter()
+                            .filter(|e| {
+                                this.entries
+                                    .iter()
+                                    .any(|o| o.path == e.path && o.created_ms != e.created_ms)
+                            })
+                            .map(|e| e.path.as_path())
+                            .collect();
+                        this.thumb_cache.retain(|p, _| !stale.contains(p.as_path()));
                         this.entries = fresh;
                         this.selected
                             .retain(|p| this.entries.iter().any(|e| &e.path == p));
