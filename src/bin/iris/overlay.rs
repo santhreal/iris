@@ -1001,6 +1001,18 @@ impl Render for Overlay {
                         this.hover_in = new_hover.map(|_| Instant::now());
                         this.hovered = new_hover;
                     }
+                    // The idle coordinate readout, the loupe, and the
+                    // hover highlight all track the cursor; a committed
+                    // selection with none of those does not, so a move
+                    // over it skips the render entirely.
+                    if changed
+                        || this.loupe.is_some()
+                        || this.hovered.is_some()
+                        || this.current.is_none()
+                    {
+                        cx.notify();
+                    }
+                    return;
                 }
                 cx.notify();
             }))
