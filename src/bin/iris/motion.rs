@@ -1,10 +1,10 @@
 //! Motion: the damped-spring curve every iris surface shares.
 //!
 //! Closed form, k=280, c=30, zeta ~0.9 (DESIGN.md). Normalized time
-//! 0..1 maps to a ~0.55s settle; the output overshoots past 1 briefly
-//! before settling, which is the point: callers drive it manually per
-//! frame. GPUI's own animation driver panics on deltas outside 0..=1,
-//! so nothing here goes through `with_animation`.
+//! 0..1 maps to a ~0.55s settle. The raw curve overshoots past 1
+//! briefly; the output is clamped to 0..=1 because GPUI's animation
+//! driver panics on deltas outside that range, and callers drive it
+//! manually per frame.
 
 use std::time::Duration;
 

@@ -382,6 +382,12 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             Ok(())
         }
         Command::Quit => {
+            // Flush an in-flight recording before the process exits:
+            // quitting with the encoder live orphans ffmpeg mid-write
+            // and leaves a truncated file.
+            if let Ok(Some(path)) = RECORDING.lock().stop() {
+                iris_lib::ilog!("iris: recording saved: {}", path.display());
+            }
             cx.quit();
             Ok(())
         }
