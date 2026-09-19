@@ -115,6 +115,22 @@ struct GlContext {
     /// stays attached to the texture.
     texture: u32,
     fbo: u32,
+    /// Double-buffered pixel pack buffers: readPixels writes into one
+    /// while the previous frame's is mapped out, so the RT thread never
+    /// blocks on the GPU finishing a readback. Empty on ES2.
+    pbos: [u32; 2],
+    /// Which PBO the last readPixels targeted; the next call maps it.
+    pbo_pending: Option<usize>,
+    /// PBO size the buffers were allocated for; a resize reallocates.
+    pbo_bytes: usize,
+    gen_buffers: Option<unsafe extern "C" fn(i32, *mut u32)>,
+    bind_buffer: Option<unsafe extern "C" fn(u32, u32)>,
+    buffer_data: Option<unsafe extern "C" fn(u32, isize, *const std::ffi::c_void, u32)>,
+    map_buffer_range: Option<
+        unsafe extern "C" fn(u32, isize, isize, u32) -> *mut std::ffi::c_void,
+    >,
+    unmap_buffer: Option<unsafe extern "C" fn(u32) -> u8>,
+    delete_buffers: Option<unsafe extern "C" fn(i32, *const u32)>,
 }
 
 fn load_proc<T: Copy>(
@@ -189,10 +205,14 @@ impl GlContext {
         let _ = egl_inst.choose_config(display, &config_attribs, &mut configs);
         let config = configs.first().copied();
 
-        let ctx_attribs = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
+        // ES3 first: GL_PIXEL_PACK_BUFFER (async readback) needs it.
+        // ES2 stays the fallback; the PBO path is skipped there.
+        let ctx_attribs3 = [egl::CONTEXT_CLIENT_VERSION, 3, egl::NONE];
+        let ctx_attribs2 = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
         let context = match config {
             Some(cfg) => egl_inst
-                .create_context(display, cfg, None, &ctx_attribs)
+                .create_context(display, cfg, None, &ctx_attribs3)
+                .or_else(|_| egl_inst.create_context(display, cfg, None, &ctx_attribs2))
                 .map_err(|e| format!("eglCreateContext: {e}"))?,
             None => {
                 let raw_ctx = unsafe {
@@ -209,7 +229,7 @@ impl GlContext {
                             display.as_ptr(),
                             std::ptr::null_mut(),
                             std::ptr::null_mut(),
-                            ctx_attribs.as_ptr(),
+                            ctx_attribs3.as_ptr(),
                         )
                     } else {
                         std::ptr::null_mut()
@@ -280,15 +300,44 @@ impl GlContext {
         let viewport = load_proc(&egl_inst, gles_lib.as_ref(), "glViewport")?;
         let read_pixels = load_proc(&egl_inst, gles_lib.as_ref(), "glReadPixels")?;
 
-        // Allocate the reusable texture + FBO while the context is
-        // still current on this thread; read_dma_buf rebinds it on the
-        // stream thread per call.
-        let (texture, fbo) = unsafe {
+        // PBO procs are ES3 / GL 2.1+: optional, the readback falls
+        // back to a synchronous glReadPixels without them.
+        let gen_buffers: Option<unsafe extern "C" fn(i32, *mut u32)> =
+            load_proc(&egl_inst, gles_lib.as_ref(), "glGenBuffers").ok();
+        let bind_buffer: Option<unsafe extern "C" fn(u32, u32)> =
+            load_proc(&egl_inst, gles_lib.as_ref(), "glBindBuffer").ok();
+        let buffer_data: Option<
+            unsafe extern "C" fn(u32, isize, *const std::ffi::c_void, u32),
+        > = load_proc(&egl_inst, gles_lib.as_ref(), "glBufferData").ok();
+        let map_buffer_range: Option<
+            unsafe extern "C" fn(u32, isize, isize, u32) -> *mut std::ffi::c_void,
+        > = load_proc(&egl_inst, gles_lib.as_ref(), "glMapBufferRange").ok();
+        let unmap_buffer: Option<unsafe extern "C" fn(u32) -> u8> =
+            load_proc(&egl_inst, gles_lib.as_ref(), "glUnmapBuffer").ok();
+        let delete_buffers: Option<unsafe extern "C" fn(i32, *const u32)> =
+            load_proc(&egl_inst, gles_lib.as_ref(), "glDeleteBuffers").ok();
+        let has_pbo = gen_buffers.is_some()
+            && bind_buffer.is_some()
+            && buffer_data.is_some()
+            && map_buffer_range.is_some()
+            && unmap_buffer.is_some()
+            && delete_buffers.is_some();
+
+        // Allocate the reusable texture + FBO + PBOs while the context
+        // is still current on this thread; read_dma_buf rebinds it on
+        // the stream thread per call.
+        let (texture, fbo, pbos) = unsafe {
             let mut t = 0u32;
             (gen_textures)(1, &mut t);
             let mut f = 0u32;
             (gen_framebuffers)(1, &mut f);
-            (t, f)
+            let mut p = [0u32; 2];
+            if has_pbo {
+                if let Some(gen) = gen_buffers {
+                    (gen)(2, p.as_mut_ptr());
+                }
+            }
+            (t, f, p)
         };
 
         // The context is used from PipeWire's RT thread, not this one:
@@ -316,9 +365,21 @@ impl GlContext {
             read_pixels,
             texture,
             fbo,
+            pbos,
+            pbo_pending: None,
+            pbo_bytes: 0,
+            gen_buffers,
+            bind_buffer,
+            buffer_data,
+            map_buffer_range,
+            unmap_buffer,
+            delete_buffers,
         })
     }
 
+    /// Read one DMA-buf frame into `scratch`. Returns Ok(false) when
+    /// the PBO pipeline primed but produced no pixels yet (the first
+    /// frame only): the caller skips the encode for that call.
     pub fn read_dma_buf(
         &mut self,
         width: u32,
@@ -327,7 +388,7 @@ impl GlContext {
         modifier: u64,
         planes: &[PlaneInfo],
         scratch: &mut Vec<u8>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if planes.is_empty() {
             return Err("empty DMA-buf planes".to_string());
         }
@@ -433,6 +494,81 @@ impl GlContext {
             (self.viewport)(0, 0, width as i32, height as i32);
             let total_bytes = (width as usize) * (height as usize) * 4;
             scratch.resize(total_bytes, 0);
+
+            // Double-buffered PBO readback when ES3 procs resolved:
+            // readPixels targets a pixel pack buffer (returns
+            // immediately), and the PREVIOUS frame's PBO is mapped and
+            // copied out. The GPU's transfer overlaps the next frame's
+            // capture instead of stalling the RT thread. Without PBOs
+            // the readPixels is synchronous into scratch.
+            const GL_PIXEL_PACK_BUFFER: u32 = 0x88EB;
+            const GL_STREAM_READ: u32 = 0x88E1;
+            const GL_MAP_READ_BIT: u32 = 0x0001;
+            let use_pbo = self
+                .gen_buffers
+                .zip(self.bind_buffer)
+                .zip(self.buffer_data)
+                .zip(self.map_buffer_range)
+                .zip(self.unmap_buffer)
+                .is_some()
+                && self.pbos[0] != 0;
+            if use_pbo {
+                let bind_buffer = self.bind_buffer.unwrap();
+                let buffer_data = self.buffer_data.unwrap();
+                let map_buffer_range = self.map_buffer_range.unwrap();
+                let unmap_buffer = self.unmap_buffer.unwrap();
+                if self.pbo_bytes != total_bytes {
+                    for pbo in self.pbos {
+                        (bind_buffer)(GL_PIXEL_PACK_BUFFER, pbo);
+                        (buffer_data)(
+                            GL_PIXEL_PACK_BUFFER,
+                            total_bytes as isize,
+                            std::ptr::null(),
+                            GL_STREAM_READ,
+                        );
+                    }
+                    self.pbo_bytes = total_bytes;
+                    self.pbo_pending = None;
+                }
+                let cur = self.pbo_pending.map(|i| 1 - i).unwrap_or(0);
+                (bind_buffer)(GL_PIXEL_PACK_BUFFER, self.pbos[cur]);
+                (self.read_pixels)(
+                    0,
+                    0,
+                    width as i32,
+                    height as i32,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    std::ptr::null_mut(),
+                );
+                // produced = whether a PREVIOUS readback exists to map:
+                // the first call primes the pipeline and yields nothing.
+                let produced = self.pbo_pending.is_some();
+                if let Some(prev) = self.pbo_pending {
+                    (bind_buffer)(GL_PIXEL_PACK_BUFFER, self.pbos[prev]);
+                    let ptr = (map_buffer_range)(
+                        GL_PIXEL_PACK_BUFFER,
+                        0,
+                        total_bytes as isize,
+                        GL_MAP_READ_BIT,
+                    );
+                    if ptr.is_null() {
+                        (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
+                        (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
+                        return Err("glMapBufferRange failed".to_string());
+                    }
+                    std::ptr::copy_nonoverlapping(
+                        ptr as *const u8,
+                        scratch.as_mut_ptr(),
+                        total_bytes,
+                    );
+                    (unmap_buffer)(GL_PIXEL_PACK_BUFFER);
+                }
+                (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
+                self.pbo_pending = Some(cur);
+                (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
+                return Ok(produced);
+            }
             (self.read_pixels)(
                 0,
                 0,
@@ -444,14 +580,17 @@ impl GlContext {
             );
 
             (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
-            Ok(())
+            Ok(true)
         })();
 
         unsafe {
             (self.destroy_image)(self.display.as_ptr(), image);
         }
 
-        result?;
+        let produced = result?;
+        if !produced {
+            return Ok(false);
+        }
 
         // Alpha-stamp in parallel bands: a serial per-pixel pass over a
         // 4K frame is a visible slice of the frame budget.
@@ -479,7 +618,7 @@ impl GlContext {
             });
         }
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -491,6 +630,11 @@ impl Drop for GlContext {
             .egl
             .make_current(self.display, self.surface, self.surface, Some(self.context));
         unsafe {
+            if let Some(del) = self.delete_buffers {
+                if self.pbos[0] != 0 {
+                    (del)(2, self.pbos.as_ptr());
+                }
+            }
             if self.fbo != 0 {
                 (self.delete_framebuffers)(1, &self.fbo);
             }
@@ -640,7 +784,7 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
                         stride: chunk.stride() as u32,
                     });
                 }
-                if let Err(e) = gl.read_dma_buf(
+                match gl.read_dma_buf(
                     width,
                     height,
                     format,
@@ -648,8 +792,14 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
                     &planes,
                     &mut data.scratch,
                 ) {
-                    data.fail(format!("DMA-buf EGL import failed: {e}"));
-                    return;
+                    Ok(true) => {}
+                    // The PBO pipeline primed but produced no pixels
+                    // this call; skip the encode for it.
+                    Ok(false) => return,
+                    Err(e) => {
+                        data.fail(format!("DMA-buf EGL import failed: {e}"));
+                        return;
+                    }
                 }
             } else {
                 let (offset, stride, size) = {

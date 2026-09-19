@@ -452,7 +452,12 @@ impl Render for Library {
         let cascade = self.opened.elapsed().as_secs_f32() < 1.6;
         // The cache fills from the background prefetch; a card whose
         // thumb has not landed draws without its image until then.
-        self.thumb_cache.retain(|p, _| self.entries.iter().any(|e| e.path == *p));
+        // A set, not a nested scan: retain() over the cache against a
+        // per-entry linear probe is O(cache * entries) PathBuf
+        // compares every frame.
+        let live_paths: std::collections::HashSet<&std::path::Path> =
+            self.entries.iter().map(|e| e.path.as_path()).collect();
+        self.thumb_cache.retain(|p, _| live_paths.contains(p.as_path()));
         // Advance pointer-coupled springs by the real frame delta;
         // keep rendering until everything settles.
         let now = Instant::now();
