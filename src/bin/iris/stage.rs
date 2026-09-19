@@ -134,9 +134,15 @@ fn prepare_thumb(
 }
 
 impl ToastStage {
-    pub fn new(path: &Path, thumb: &Path) -> Result<Self, String> {
-        let (thumb, thumb_rgba, dims) = prepare_thumb(thumb)?;
-        Ok(Self {
+    /// Build the stage from an already-decoded thumbnail. The decode
+    /// itself runs on the background executor in show_toast_kind.
+    fn from_parts(
+        path: &Path,
+        thumb: Arc<RenderImage>,
+        thumb_rgba: Arc<Vec<u8>>,
+        dims: (f32, f32),
+    ) -> Self {
+        Self {
             path: path.to_path_buf(),
             thumb,
             thumb_rgba,
@@ -158,7 +164,7 @@ impl ToastStage {
             morph_ready_at: None,
             closing_dur: EXIT,
             cfg: iris_lib::config::Config::load(),
-        })
+        }
     }
 
     /// Start the auto-dismiss countdown. When it fires, hovering pushes
@@ -831,7 +837,40 @@ fn show_toast_kind(
     anchor: Option<(f32, f32, f32, f32)>,
 ) -> Result<(), String> {
     let _ = (width, height);
-    let mut stage = ToastStage::new(path, thumb)?;
+    let path = path.to_path_buf();
+    let thumb = thumb.to_path_buf();
+    // The PNG decode + Lanczos resize is too slow for the UI thread on
+    // a full-size capture; the window opens once the pixels are ready.
+    let decoded = cx.background_executor().spawn({
+        let thumb = thumb.clone();
+        async move { prepare_thumb(&thumb) }
+    });
+    cx.spawn(async move |cx| {
+        let parts = match decoded.await {
+            Ok(p) => p,
+            Err(e) => {
+                iris_lib::ilog!("toast: {e}");
+                return;
+            }
+        };
+        let _ = cx.update(|cx| {
+            if let Err(e) = open_toast_window(cx, &path, parts, landed, anchor) {
+                iris_lib::ilog!("toast: {e}");
+            }
+        });
+    })
+    .detach();
+    Ok(())
+}
+
+fn open_toast_window(
+    cx: &mut App,
+    path: &Path,
+    parts: (Arc<RenderImage>, Arc<Vec<u8>>, (f32, f32)),
+    landed: bool,
+    anchor: Option<(f32, f32, f32, f32)>,
+) -> Result<(), String> {
+    let mut stage = ToastStage::from_parts(path, parts.0, parts.1, parts.2);
     if landed {
         // Pretend the entrance finished long ago.
         stage.opened = Some(Instant::now() - motion::tempo(ENTER));
@@ -972,7 +1011,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let img_path = dir.path().join("test.png");
         image::RgbaImage::new(10, 10).save(&img_path).unwrap();
-        let mut stage = ToastStage::new(&img_path, &img_path).unwrap();
+        let (thumb, thumb_rgba, dims) = prepare_thumb(&img_path).unwrap();
+        let mut stage = ToastStage::from_parts(&img_path, thumb, thumb_rgba, dims);
         assert!(!stage.pinned);
         assert!(stage.closing_at.is_none());
 
