@@ -286,11 +286,8 @@ pub fn render_image_from_rgba(width: u32, height: u32, rgba: &[u8]) -> std::sync
     std::thread::scope(|scope| {
         for (dst, src) in data.chunks_mut(band).zip(rgba.chunks(band)) {
             scope.spawn(move || {
-                for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-                    let v = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
-                    let bgr = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-                    d.copy_from_slice(&bgr.to_le_bytes());
-                }
+                dst.copy_from_slice(src);
+                swizzle_rgba_bgra(dst);
             });
         }
     });

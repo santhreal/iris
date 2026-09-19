@@ -803,7 +803,7 @@ fn record_loop_inner(
                 width,
                 height,
                 fps: spec.fps,
-                mic: spec.mic,
+                mic,
                 format: spec.format,
                 encoder: spec.encoder,
             })?;
