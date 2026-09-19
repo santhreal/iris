@@ -100,6 +100,10 @@ pub enum Command {
     Annotate(PathBuf),
     Toast(PathBuf),
     RecordToggle,
+    /// Open the overlay in region-pick mode for a region recording.
+    RecordRegionPick,
+    /// The overlay committed a rect; start recording it.
+    RecordRegion { x: i32, y: i32, w: i32, h: i32 },
     RecordPause,
     RecordMic,
     ChipHide,
@@ -126,6 +130,7 @@ pub fn parse_args(args: &[String]) -> Vec<Command> {
             "--quit" => cmds.push(Command::Quit),
             "--home" => cmds.push(Command::Home),
             "--record-window" => cmds.push(Command::RecordToggle),
+            "--record-region" => cmds.push(Command::RecordRegionPick),
             "--annotate" => {
                 if let Some(path) = args.get(i + 1) {
                     cmds.push(Command::Annotate(PathBuf::from(path)));
@@ -342,6 +347,10 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::Annotate(path) => crate::editor::open(cx, path, None, None),
         Command::Toast(path) => stage::show_toast(cx, path, path, 0, 0),
         Command::RecordToggle => toggle_recording(cx),
+        Command::RecordRegionPick => record_region_pick(cx),
+        Command::RecordRegion { x, y, w, h } => {
+            record_region_start(cx, *x, *y, *w, *h)
+        },
         Command::RecordPause => {
             let mgr = RECORDING.lock();
             if let Some(rec) = &mgr.active {
@@ -413,6 +422,84 @@ fn toggle_recording(cx: &mut App) -> Result<(), String> {
             record::x11::record_window_follow(spec, follower)
         })
     };
+    mgr.active = Some(active);
+    Ok(())
+}
+
+/// Region recording, step one: open the overlay in pick mode. The
+/// frozen frame is not needed for picking, so the shell opens on the
+/// live desktop and the grab still runs behind it for the loupe.
+fn record_region_pick(cx: &mut App) -> Result<(), String> {
+    let mgr = RECORDING.lock();
+    if mgr.is_active() {
+        return Err("a recording is already active".to_string());
+    }
+    drop(mgr);
+    let grab = cx
+        .background_executor()
+        .spawn(async move { pipeline::grab_frame() });
+    let layout = overlay::layout();
+    let handle = overlay::open_shell(cx, &layout)?;
+    handle.update(cx, |o, _, cx| {
+        o.mode = overlay::OverlayMode::RecordPick;
+        cx.notify();
+    }).map_err(|e| format!("set pick mode: {e}"))?;
+    cx.spawn(async move |cx| {
+        let grabbed = cx
+            .background_executor()
+            .spawn(async move {
+                let frame = grab.await?;
+                let (width, height) = (frame.width, frame.height);
+                let img = overlay::slice_frame(frame);
+                Ok::<(Arc<gpui::RenderImage>, u32, u32), String>((img, width, height))
+            })
+            .await;
+        let _ = cx.update(|cx| match grabbed {
+            Ok((img, width, height)) => {
+                let _ = handle.update(cx, |overlay, window, cx| {
+                    overlay.set_frame(img, width, height, window, cx);
+                    cx.notify();
+                });
+            }
+            Err(e) => {
+                iris_lib::ilog!("iris: record-region: {e}");
+                let _ = handle.update(cx, |overlay, window, cx| {
+                    overlay.cancel(window, cx);
+                });
+            }
+        });
+    })
+    .detach();
+    Ok(())
+}
+
+/// Region recording, step two: the overlay committed a rect. Open the
+/// chip at the rect's top-right and spawn the region source.
+fn record_region_start(cx: &mut App, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
+    let mut mgr = RECORDING.lock();
+    if mgr.is_active() {
+        return Err("a recording is already active".to_string());
+    }
+    let cfg = Config::load();
+    let ext = match cfg.recording_format {
+        iris_lib::config::RecordingFormat::Mp4 => "mp4",
+        iris_lib::config::RecordingFormat::Gif => "gif",
+        iris_lib::config::RecordingFormat::Webm => "webm",
+    };
+    let output = record::unique_recording_path(&cfg.recordings_dir, ext);
+    let mic = cfg.record_mic_default;
+    let (format, encoder) = (cfg.recording_format, cfg.recording_encoder);
+    let xid = chip::open(cx, mic)?;
+    let conn = x11rb::connect(None).ok().map(|(c, _)| c);
+    let follower = std::sync::Arc::new(XcbChip {
+        xid: std::sync::atomic::AtomicU32::new(xid),
+        conn,
+        done: command_tx(),
+    });
+    let rect = record::x11::Rect { x: x as i16, y: y as i16, w: w as u16, h: h as u16 };
+    let active = record::ActiveRecording::spawn(output, cfg.recording_fps, mic, format, encoder, move |spec| {
+        record::x11::record_region(spec, follower, rect)
+    });
     mgr.active = Some(active);
     Ok(())
 }
@@ -552,6 +639,13 @@ impl Command {
             Command::Annotate(p) => Command::Annotate(p.clone()),
             Command::Toast(p) => Command::Toast(p.clone()),
             Command::RecordToggle => Command::RecordToggle,
+            Command::RecordRegionPick => Command::RecordRegionPick,
+            Command::RecordRegion { x, y, w, h } => Command::RecordRegion {
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+            },
             Command::RecordPause => Command::RecordPause,
             Command::RecordMic => Command::RecordMic,
             Command::ChipHide => Command::ChipHide,

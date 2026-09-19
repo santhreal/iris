@@ -24,10 +24,20 @@ const HOVER_FADE: Duration = Duration::from_millis(90);
 /// Edge of a selection resize handle, in logical px.
 const HANDLE_PX: f32 = 10.0;
 
+/// What a committed selection does. Capture crops and saves; RecordPick
+/// reports the rect to the daemon and starts a region recording.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OverlayMode {
+    Capture,
+    RecordPick,
+}
+
 pub struct Overlay {
     /// Parked (minimized): the window stays alive with its renderer,
     /// and the next capture reuses it.
     pub hidden: bool,
+    /// What finish() does with the committed selection.
+    pub mode: OverlayMode,
     /// None until the background grab lands: the window maps at once,
     /// transparent over the live desktop with crosshair and snap
     /// already live, and the frozen frame fades in behind it.
@@ -223,6 +233,7 @@ fn open_shell_opts(
             move |_, cx| {
                 cx.new(|_| Overlay {
                     hidden: false,
+                    mode: OverlayMode::Capture,
                     frame_size: None,
                     origin: (ux, uy),
                     view: (uw, uh),
@@ -413,8 +424,10 @@ impl Overlay {
         self.windows = layout.windows.clone();
         self.dragging = false;
         self.current = None;
-        self.hovered = None;
-        self.loupe = None;
+        self.landed = None;
+        self.finalize_failed = false;
+        self.mode = OverlayMode::Capture;
+        self.cfg = iris_lib::config::Config::load();
         self.loupe_at = None;
         self.finishing = false;
         self.pending_finish = false;
@@ -565,6 +578,22 @@ impl Overlay {
         };
         self.finishing = true;
         let region = Self::rect_to_frame(window, self.origin, self.view, (x, y, w, h));
+        if self.mode == OverlayMode::RecordPick {
+            // Hand the rect to the daemon; the overlay parks and the
+            // recording chip takes over the visual state.
+            let _ = crate::daemon::dispatch(
+                cx,
+                &crate::daemon::Command::RecordRegion {
+                    x: region.x as i32,
+                    y: region.y as i32,
+                    w: region.width as i32,
+                    h: region.height as i32,
+                },
+            );
+            close_other_overlays(cx, Some(window.window_handle()));
+            self.park(window, cx);
+            return;
+        }
         let bgra = frame_img.as_bytes(0).unwrap_or(&[]);
         let crop = match pipeline::crop_bgra(bgra, fw, fh, region) {
             Ok(c) => c,

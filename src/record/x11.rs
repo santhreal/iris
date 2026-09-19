@@ -279,6 +279,18 @@ impl RecordingMark {
             join: Some(join),
         })
     }
+
+    /// Draw the border around a fixed rect once; no follow thread, so
+    /// the mark lives until dropped. The chip is placed once at the
+    /// rect's top-right corner.
+    pub fn show_static(chip: Arc<dyn ChipFollow>, root: Window, rect: Rect) -> Result<Self, String> {
+        let (tx, rx) = channel::<()>();
+        let join = thread::spawn(move || static_border_thread(chip, root, rect, rx));
+        Ok(Self {
+            stop: tx,
+            join: Some(join),
+        })
+    }
 }
 
 impl Drop for RecordingMark {
@@ -290,16 +302,12 @@ impl Drop for RecordingMark {
     }
 }
 
-fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mpsc::Receiver<()>) {
-    let Ok((conn, screen_num)) = connect() else {
-        return;
-    };
-    let root = conn.setup().roots[screen_num].root;
-
-    // Four override-redirect strips with an empty input shape.
+/// Create the four override-redirect border strips on `root`. Returns
+/// the strip windows; the caller destroys them.
+fn make_strips(conn: &RustConnection, root: Window) -> Option<[Window; 4]> {
     let mut strips = [0u32; 4];
     for strip in &mut strips {
-        let Ok(win) = conn.generate_id() else { return };
+        let win = conn.generate_id().ok()?;
         let aux = CreateWindowAux::new()
             .background_pixel(BORDER_COLOR)
             .override_redirect(1);
@@ -319,7 +327,7 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
             )
             .is_err()
         {
-            return;
+            return None;
         }
         // Empty input region: clicks pass through to whatever is beneath.
         let _ = conn
@@ -330,6 +338,50 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
         *strip = win;
     }
     let _ = conn.flush();
+    Some(strips)
+}
+
+fn destroy_strips(conn: &RustConnection, strips: &[Window; 4]) {
+    for strip in strips {
+        let _ = conn.destroy_window(*strip);
+    }
+    let _ = conn.flush();
+}
+
+/// Static variant: strips around a fixed rect, chip placed once, then
+/// the thread only waits for stop.
+fn static_border_thread(
+    chip: Arc<dyn ChipFollow>,
+    root: Window,
+    rect: Rect,
+    stop: std::sync::mpsc::Receiver<()>,
+) {
+    let Ok((conn, _)) = connect() else {
+        return;
+    };
+    let Some(strips) = make_strips(&conn, root) else {
+        return;
+    };
+    place_strips(&conn, &strips, rect);
+    chip.place(rect);
+    loop {
+        if stop.try_recv().is_ok() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    destroy_strips(&conn, &strips);
+}
+
+fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mpsc::Receiver<()>) {
+    let Ok((conn, screen_num)) = connect() else {
+        return;
+    };
+    let root = conn.setup().roots[screen_num].root;
+
+    let Some(strips) = make_strips(&conn, root) else {
+        return;
+    };
 
     let mut last: Option<Rect> = None;
     loop {
@@ -351,10 +403,7 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
         thread::sleep(Duration::from_millis(200));
     }
 
-    for strip in strips {
-        let _ = conn.destroy_window(strip);
-    }
-    let _ = conn.flush();
+    destroy_strips(&conn, &strips);
 }
 
 fn place_strips(conn: &RustConnection, strips: &[Window; 4], r: Rect) {
@@ -556,17 +605,117 @@ fn record_loop(
     }
     let mut guard = ShmGuard { conn, shm: None };
 
-    record_loop_inner(conn, picked, spec, &mut guard.shm)
+    let probe = || {
+        conn.get_geometry(picked.id)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|g| (u32::from(g.width), u32::from(g.height)))
+    };
+    let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
+        grab_pixmap(conn, &mut guard.shm, picked.id, w, h, rgba)
+    };
+    record_loop_inner(spec, probe, grab)
 }
 
-fn record_loop_inner(
-    conn: &RustConnection,
-    picked: &PickedWindow,
-    spec: &RecordingSpec,
-    shm: &mut Option<ShmGrab>,
+/// Record a fixed screen region until `spec.stop` fires. The overlay
+/// picks the rect; this grabs it straight off the root window through
+/// the same SHM path, with a static border and the chip parked at the
+/// region's top-right corner.
+pub fn record_region(
+    spec: RecordingSpec,
+    chip: Arc<dyn ChipFollow>,
+    rect: Rect,
 ) -> Result<(), String> {
-    let mut width = picked.width;
-    let mut height = picked.height;
+    let chip_inner = chip.clone();
+    let result = (move || {
+        let (conn, screen_num) = connect()?;
+        let root = conn.setup().roots[screen_num].root;
+        let _mark = RecordingMark::show_static(chip_inner, root, rect);
+        struct ShmGuard<'a> {
+            conn: &'a RustConnection,
+            shm: Option<ShmGrab>,
+        }
+        impl Drop for ShmGuard<'_> {
+            fn drop(&mut self) {
+                if let Some(s) = self.shm.take() {
+                    s.detach(self.conn);
+                }
+            }
+        }
+        let mut guard = ShmGuard { conn: &conn, shm: None };
+        let probe = || Some((rect.w as u32, rect.h as u32));
+        let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
+            grab_root_rect(&conn, &mut guard.shm, root, rect, w, h, rgba)
+        };
+        record_loop_inner(&spec, probe, grab)
+    })();
+    chip.hide();
+    result
+}
+
+/// Grab a rect of the root window through SHM (or the socket when SHM
+/// is absent). No composite pixmap: the region is read live, so other
+/// windows moving through it appear in the recording.
+fn grab_root_rect(
+    conn: &RustConnection,
+    shm: &mut Option<ShmGrab>,
+    root: Window,
+    rect: Rect,
+    width: u32,
+    height: u32,
+    out: &mut Vec<u8>,
+) -> Result<(), String> {
+    let need = width as usize * height as usize * 4;
+    if shm.as_ref().map(|s| s.size) != Some(need) {
+        if let Some(old) = shm.take() {
+            old.detach(conn);
+        }
+        *shm = ShmGrab::new(conn, width, height);
+    }
+    if let Some(s) = shm.as_ref() {
+        use x11rb::protocol::shm::ConnectionExt as ShmExt;
+        let grabbed = ShmExt::shm_get_image(
+            conn, root, rect.x, rect.y, width as u16, height as u16, !0u32,
+            ImageFormat::Z_PIXMAP.into(), s.seg, 0,
+        )
+        .ok()
+        .and_then(|c| c.reply().ok());
+        if grabbed.is_some() {
+            let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
+            return bgrx_to_rgba(src, width as usize * height as usize, out);
+        }
+        if let Some(old) = shm.take() {
+            old.detach(conn);
+        }
+    }
+    let image = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            root,
+            rect.x,
+            rect.y,
+            width as u16,
+            height as u16,
+            !0u32,
+        )
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| format!("get_image on root region: {e}"))?;
+    bgrx_to_rgba(&image.data, width as usize * height as usize, out)
+}
+
+/// The shared recording loop: chip controls, the absolute frame
+/// schedule, encoder splits on resize, and the zero-copy frame queue.
+/// `probe` reports the source's current dimensions (None = source
+/// gone, a clean end); `grab` fills `rgba` with one frame.
+fn record_loop_inner(
+    spec: &RecordingSpec,
+    mut probe: impl FnMut() -> Option<(u32, u32)>,
+    mut grab: impl FnMut(u32, u32, &mut Vec<u8>) -> Result<(), String>,
+) -> Result<(), String> {
+    let Some((mut width, mut height)) = probe() else {
+        return Err("recording source gone before first frame".to_string());
+    };
     let mut output: PathBuf = spec.output.clone();
     let mut encoder = Encoder::start(&EncoderConfig {
         output: output.clone(),
@@ -634,22 +783,12 @@ fn record_loop_inner(
         }
 
 
-        // Detect resize / close each frame. A vanished window is a clean
+        // Detect resize / close each frame. A vanished source is a clean
         // end of the recording, not an error.
-        let geom = match conn.get_geometry(picked.id) {
-            Ok(cookie) => match cookie.reply() {
-                Ok(g) => g,
-                Err(_) => {
-                    encoder.finish()?;
-                    return Ok(());
-                }
-            },
-            Err(_) => {
-                encoder.finish()?;
-                return Ok(());
-            }
+        let Some((w, h)) = probe() else {
+            encoder.finish()?;
+            return Ok(());
         };
-        let (w, h) = (u32::from(geom.width), u32::from(geom.height));
         if w != width || h != height {
             encoder.finish()?;
             width = w;
@@ -680,10 +819,10 @@ fn record_loop_inner(
             frame_no = ((now - start).as_secs_f64() * f64::from(spec.fps)) as u64;
         }
 
-        match grab_pixmap(conn, &mut *shm, picked.id, width, height, &mut rgba) {
+        match grab(width, height, &mut rgba) {
             Ok(()) => {}
             Err(_) => {
-                // Window closed mid-grab: keep what we have.
+                // Source closed mid-grab: keep what we have.
                 encoder.finish()?;
                 return Ok(());
             }
