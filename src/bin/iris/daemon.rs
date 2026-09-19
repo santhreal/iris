@@ -169,7 +169,7 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
     // Reuse the pooled window when there is one: GPUI window init is
     // ~65% of keypress-to-overlay latency, and a parked window skips
     // all of it. A live session (visible overlay) swallows the press.
-    let pooled = overlay::POOL.lock().unwrap().clone();
+    let pooled = overlay::POOL.lock().clone();
     let handle = if let Some((h, class)) = pooled {
         let session = h.update(cx, |o, _, cx| {
             if o.hidden {
@@ -434,16 +434,49 @@ fn record_region_pick(cx: &mut App) -> Result<(), String> {
     if mgr.is_active() {
         return Err("a recording is already active".to_string());
     }
-    drop(mgr);
     let grab = cx
         .background_executor()
         .spawn(async move { pipeline::grab_frame() });
     let layout = overlay::layout();
-    let handle = overlay::open_shell(cx, &layout)?;
-    handle.update(cx, |o, _, cx| {
-        o.mode = overlay::OverlayMode::RecordPick;
-        cx.notify();
-    }).map_err(|e| format!("set pick mode: {e}"))?;
+    // Same pool path as capture_region: a parked window skips GPUI's
+    // init, and reset() re-arms it before the mode flips to pick.
+    let pooled = overlay::POOL.lock().clone();
+    let handle = if let Some((h, class)) = pooled {
+        let session = h.update(cx, |o, _, cx| {
+            if o.hidden {
+                o.reset(&layout);
+                o.mode = overlay::OverlayMode::RecordPick;
+                cx.notify();
+                true
+            } else {
+                false
+            }
+        });
+        match session {
+            Ok(true) => {
+                let u = &layout.union;
+                crate::xwin::unpark_span(class, u.x, u.y, u.width, u.height);
+                h
+            }
+            Ok(false) => return Ok(()),
+            Err(e) => {
+                iris_lib::ilog!("iris: record-region: pooled handle dead ({e:?}), reopening");
+                let h = overlay::open_shell(cx, &layout)?;
+                h.update(cx, |o, _, cx| {
+                    o.mode = overlay::OverlayMode::RecordPick;
+                    cx.notify();
+                }).map_err(|e| format!("set pick mode: {e}"))?;
+                h
+            }
+        }
+    } else {
+        let h = overlay::open_shell(cx, &layout)?;
+        h.update(cx, |o, _, cx| {
+            o.mode = overlay::OverlayMode::RecordPick;
+            cx.notify();
+        }).map_err(|e| format!("set pick mode: {e}"))?;
+        h
+    };
     cx.spawn(async move |cx| {
         let grabbed = cx
             .background_executor()

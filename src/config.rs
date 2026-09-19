@@ -142,10 +142,10 @@ impl Config {
 
     /// The shared parsed-config cache, keyed on the file's mtime+len.
     /// `load` reads through it; `store` writes through it.
-    fn cache() -> &'static std::sync::Mutex<(Option<std::time::SystemTime>, u64, Config)> {
+    fn cache() -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Config)> {
         use std::sync::LazyLock;
-        static CACHE: LazyLock<std::sync::Mutex<(Option<std::time::SystemTime>, u64, Config)>> =
-            LazyLock::new(|| std::sync::Mutex::new((None, 0, Config::default())));
+        static CACHE: LazyLock<parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Config)>> =
+            LazyLock::new(|| parking_lot::Mutex::new((None, 0, Config::default())));
         &CACHE
     }
 
@@ -162,13 +162,13 @@ impl Config {
             .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
             .unwrap_or((None, 0));
         {
-            let guard = cache.lock().unwrap();
+            let guard = cache.lock();
             if guard.0 == stamp.0 && guard.1 == stamp.1 && stamp.0.is_some() {
                 return guard.2.clone();
             }
         }
         let cfg = Self::load_uncached();
-        let mut guard = cache.lock().unwrap();
+        let mut guard = cache.lock();
         *guard = (stamp.0, stamp.1, cfg.clone());
         cfg
     }
@@ -243,7 +243,7 @@ impl Config {
         let stamp = std::fs::metadata(&path)
             .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
             .unwrap_or((None, 0));
-        *Self::cache().lock().unwrap() = (stamp.0, stamp.1, self.clone());
+        *Self::cache().lock() = (stamp.0, stamp.1, self.clone());
         Ok(())
     }
 }

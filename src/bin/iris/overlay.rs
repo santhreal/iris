@@ -100,8 +100,8 @@ pub struct Overlay {
 /// off-screen (never destroyed) afterwards. GPUI window init is the
 /// largest single chunk of keypress-to-overlay latency (~130ms), and
 /// a parked window skips all of it. The string is the window's class.
-pub static POOL: std::sync::Mutex<Option<(WindowHandle<Overlay>, String)>> =
-    std::sync::Mutex::new(None);
+pub static POOL: parking_lot::Mutex<Option<(WindowHandle<Overlay>, String)>> =
+    parking_lot::Mutex::new(None);
 
 #[derive(Clone)]
 struct Flight {
@@ -267,7 +267,7 @@ fn open_shell_opts(
     // Pooling needs minimize+restore, which Wayland cannot do; the
     // window is destroyed on park there instead.
     if !wayland() {
-        *POOL.lock().unwrap() = Some((handle, win_id));
+        *POOL.lock() = Some((handle, win_id));
     }
     Ok(handle)
 }
@@ -282,7 +282,7 @@ pub fn warmup(cx: &mut App) {
     if wayland() {
         return;
     }
-    if POOL.lock().unwrap().is_some() {
+    if POOL.lock().is_some() {
         return;
     }
     let layout = layout();

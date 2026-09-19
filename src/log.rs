@@ -5,7 +5,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 static LOG_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
 const MAX_LOG: u64 = 256 * 1024;
@@ -35,14 +35,14 @@ pub fn init() {
         }
     }
     if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
-        *LOG_FILE.lock().unwrap() = Some(f);
+        *LOG_FILE.lock() = Some(f);
     }
 }
 
 /// Write one line to stderr and the log file.
 pub fn line(msg: &str) {
     eprintln!("{msg}");
-    if let Some(f) = LOG_FILE.lock().unwrap().as_mut() {
+    if let Some(f) = LOG_FILE.lock().as_mut() {
         let now = chrono::Local::now().format("%H:%M:%S%.3f");
         let _ = writeln!(f, "[{now}] {msg}");
     }
