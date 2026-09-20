@@ -72,6 +72,9 @@ pub struct Library {
     band: Option<(f32, f32, f32, f32)>,
     /// Scroll offset of the card grid, so band math stays in
     /// document space while the user drags.
+    /// A refresh already in flight: the 1.5s poll must not stack
+    /// overlapping list() passes on a slow or network shots dir.
+    refresh_in_flight: bool,
     scroll: gpui::ScrollHandle,
 }
 
@@ -117,6 +120,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         )),
                         entries: Vec::new(),
                         selected: Vec::new(),
+                        refresh_in_flight: false,
                         sel_set: std::collections::HashSet::new(),
                         sel_dirty: false,
                         anchor: None,
@@ -222,13 +226,20 @@ impl Library {
 
     /// One background list + apply: the open path and the refresh
     /// poll share it so neither stats the store on the UI thread.
+    /// A pass already in flight skips the poll: on a slow store the
+    /// 1.5s timer would otherwise stack overlapping scans.
     fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        if self.refresh_in_flight {
+            return;
+        }
+        self.refresh_in_flight = true;
         cx.spawn(async move |this, cx| {
             let fresh = cx
                 .background_executor()
                 .spawn(async move { library::list() })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                this.refresh_in_flight = false;
                 // Path AND timestamp: an editor re-save keeps the
                 // path but bumps created_ms, and a path-only diff
                 // would keep showing the stale thumbnail.
