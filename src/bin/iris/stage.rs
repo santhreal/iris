@@ -64,6 +64,11 @@ pub struct ToastStage {
     opened: Option<Instant>,
     hover_paused: bool,
     pinned: bool,
+    /// Dismiss-arm generation: each arm_dismiss bumps it, and a timer
+    /// task that wakes on an older generation is a no-op. Without it
+    /// every hover-out spawned a live timer and the earliest one won,
+    /// dismissing the toast ahead of the last hover's deadline.
+    dismiss_gen: u64,
     closing_at: Option<Instant>,
     /// Rightward offset the exit flight starts from, when a swipe
     /// carried the card before the dismiss.
@@ -153,6 +158,7 @@ impl ToastStage {
             opened: None,
             hover_paused: false,
             pinned: false,
+            dismiss_gen: 0,
             closing_at: None,
             exit_from: 0.0,
             drag_start: None,
@@ -175,11 +181,13 @@ impl ToastStage {
         if self.pinned || self.closing_at.is_some() {
             return;
         }
+        self.dismiss_gen += 1;
+        let gen = self.dismiss_gen;
         let sit = Duration::from_millis(u64::from(self.cfg.toast_duration_ms));
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(sit).await;
             this.update(cx, |stage, cx| {
-                if stage.pinned {
+                if stage.dismiss_gen != gen || stage.pinned {
                     return;
                 }
                 if stage.hover_paused || stage.menu_at.is_some() {
