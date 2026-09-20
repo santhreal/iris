@@ -398,6 +398,24 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
     }
 }
 
+/// The recording parameters every source shares: output path under
+/// the configured template, mic default, container and codec.
+fn recording_params(
+    cfg: &Config,
+) -> (PathBuf, bool, iris_lib::config::RecordingFormat, iris_lib::config::RecordingEncoder) {
+    let ext = match cfg.recording_format {
+        iris_lib::config::RecordingFormat::Mp4 => "mp4",
+        iris_lib::config::RecordingFormat::Gif => "gif",
+        iris_lib::config::RecordingFormat::Webm => "webm",
+    };
+    (
+        record::unique_recording_path(&cfg.recordings_dir, ext),
+        cfg.record_mic_default,
+        cfg.recording_format,
+        cfg.recording_encoder,
+    )
+}
+
 /// One action for the record hotkey/tray/CLI: stop when active, start a
 /// window-picked recording when idle.
 fn toggle_recording(cx: &mut App) -> Result<(), String> {
@@ -419,14 +437,7 @@ fn toggle_recording(cx: &mut App) -> Result<(), String> {
     }
     let mut mgr = RECORDING.lock();
     let cfg = Config::load();
-    let ext = match cfg.recording_format {
-        iris_lib::config::RecordingFormat::Mp4 => "mp4",
-        iris_lib::config::RecordingFormat::Gif => "gif",
-        iris_lib::config::RecordingFormat::Webm => "webm",
-    };
-    let output = record::unique_recording_path(&cfg.recordings_dir, ext);
-    let mic = cfg.record_mic_default;
-    let (format, encoder) = (cfg.recording_format, cfg.recording_encoder);
+    let (output, mic, format, encoder) = recording_params(&cfg);
     let wayland_only = std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::env::var_os("DISPLAY").is_none();
     let active = if wayland_only {
@@ -553,14 +564,7 @@ fn record_region_start(cx: &mut App, x: i32, y: i32, w: i32, h: i32) -> Result<(
         return Err("a recording is already active".to_string());
     }
     let cfg = Config::load();
-    let ext = match cfg.recording_format {
-        iris_lib::config::RecordingFormat::Mp4 => "mp4",
-        iris_lib::config::RecordingFormat::Gif => "gif",
-        iris_lib::config::RecordingFormat::Webm => "webm",
-    };
-    let output = record::unique_recording_path(&cfg.recordings_dir, ext);
-    let mic = cfg.record_mic_default;
-    let (format, encoder) = (cfg.recording_format, cfg.recording_encoder);
+    let (output, mic, format, encoder) = recording_params(&cfg);
     let xid = chip::open(cx, mic)?;
     let conn = iris_lib::capture::x11::shared_conn().ok().map(|(c, _)| c);
     let follower = std::sync::Arc::new(XcbChip {
