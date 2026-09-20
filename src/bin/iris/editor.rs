@@ -416,9 +416,11 @@ pub fn open(
                         let i = image::load_from_memory(&png)
                             .map_err(|e| format!("decode {}: {e}", decode_path.display()))?;
                         let img = i.to_rgba8();
-                        // base and composite each get their own Arc:
-                        // sharing one buffer would make the first
-                        // stroke commit clone 33MB through make_mut.
+                        // base and composite share one buffer: the
+                        // eager clone this replaced copied 33MB on
+                        // the decode thread for a split the first
+                        // mutation pays through make_mut anyway —
+                        // and a crop-then-save never pays it at all.
                         let base = Arc::new(img.clone());
                         let composite = Arc::new(img);
                         let render = crate::widgets::render_image_from_rgba(
@@ -786,8 +788,15 @@ fn clamp_region(
         // here so moved or cropped blurs sample their new location.
         // Reuse the composite buffer: it is always the same size as base,
         // so replay writes into it instead of cloning a fresh image.
-        Arc::make_mut(&mut self.composite).copy_from_slice(&self.base);
-        Self::replay_actions(Arc::make_mut(&mut self.composite), &mut self.actions.borrow_mut(), 0);
+        // When base and composite still share one buffer (post-decode,
+        // pre-first-edit) the restore is a no-op: the pixels are
+        // already identical, so only the make_mut split is needed.
+        let needs_restore = !Arc::ptr_eq(&self.base, &self.composite);
+        let composite = Arc::make_mut(&mut self.composite);
+        if needs_restore {
+            composite.copy_from_slice(&self.base);
+        }
+        Self::replay_actions(composite, &mut self.actions.borrow_mut(), 0);
     }
     /// The union of two (x, y, w, h) rects.
     fn union_rect(
