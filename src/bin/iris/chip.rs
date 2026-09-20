@@ -59,6 +59,11 @@ pub struct Chip {
     started: Instant,
     /// The 30Hz repaint timer is armed on first render.
     timer_started: bool,
+    /// The last rendered timer text and its second: formatting
+    /// "MM:SS" per repaint allocates a String 30x a second for a
+    /// value that changes once a second.
+    timer_at: u64,
+    timer_text: SharedString,
 }
 
 /// Open the chip. Returns the X11 window id on X11, 0 elsewhere.
@@ -90,6 +95,8 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
                 cx.new(|_| Chip {
                     started: Instant::now(),
                     timer_started: false,
+                    timer_at: u64::MAX,
+                    timer_text: SharedString::from("00:00"),
                 })
             },
         )
@@ -178,7 +185,11 @@ impl Render for Chip {
             / 1000.0;
         let pulse = if paused { 0.35 } else { 0.55 + 0.45 * (t * std::f32::consts::TAU / 1.6).sin().abs() };
         let secs = t as u64;
-        let timer = format!("{:02}:{:02}", secs / 60, secs % 60);
+        if self.timer_at != secs {
+            self.timer_at = secs;
+            self.timer_text = SharedString::from(format!("{:02}:{:02}", secs / 60, secs % 60));
+        }
+        let timer = self.timer_text.clone();
 
         div()
             .absolute()
