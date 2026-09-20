@@ -118,6 +118,9 @@ struct Action {
 struct TextEntry {
     point: (f32, f32),
     buffer: String,
+    /// buffer + caret glyph, rebuilt on each edit: formatting it per
+    /// render allocates a String a frame while the caret blinks.
+    caret: SharedString,
 }
 
 pub struct Editor {
@@ -1585,6 +1588,7 @@ impl Render for Editor {
                         "backspace" => {
                             if let Some(entry) = &mut this.text_entry {
                                 entry.buffer.pop();
+                                entry.caret = SharedString::from(format!("{}▏", entry.buffer));
                             }
                         }
                         _ => {
@@ -1593,6 +1597,8 @@ impl Render for Editor {
                                 if let Some(ch) = &ev.keystroke.key_char {
                                     if let Some(entry) = &mut this.text_entry {
                                         entry.buffer.push_str(ch);
+                                        entry.caret =
+                                            SharedString::from(format!("{}▏", entry.buffer));
                                         this.caret_started = Instant::now();
                                     }
                                 }
@@ -2011,9 +2017,9 @@ impl Render for Editor {
                     .text_color(hex_rgba(self.color))
                     .text_size(px(size * scale))
                     .child(if blink_on {
-                        format!("{}▏", entry.buffer)
+                        entry.caret.clone()
                     } else {
-                        entry.buffer.clone()
+                        SharedString::from(entry.buffer.clone())
                     }),
             );
         }
@@ -2185,6 +2191,7 @@ impl Render for Editor {
                             this.text_entry = Some(TextEntry {
                                 point: p,
                                 buffer: String::new(),
+                                caret: SharedString::from("▏"),
                             });
                             this.caret_started = Instant::now();
                         }
