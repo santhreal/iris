@@ -154,20 +154,30 @@ pub fn pick_window(stop: &std::sync::mpsc::Receiver<()>) -> Result<PickedWindow,
         .map_err(|e| e.to_string())?
         .reply();
 
+    use std::os::unix::io::AsRawFd;
+    let x_fd = conn.stream().as_raw_fd();
     let picked = loop {
-        // Poll, don't block: wait_for_event would sleep through a stop
-        // signal until the user happens to click or press a key.
         match stop.try_recv() {
             Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 break Err(format!("{CANCELLED_PREFIX} pick stopped"));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
+        // Sleep on the connection fd: an X event wakes the poll
+        // instantly, and the 50ms timeout re-checks the stop channel.
+        // A bare sleep would burn a wake every 10ms for nothing.
+        let mut pfd = libc::pollfd {
+            fd: x_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        unsafe {
+            libc::poll(&mut pfd, 1, 50);
+        }
         let Some(event) = conn
             .poll_for_event()
             .map_err(|e| format!("poll_for_event: {e}"))?
         else {
-            std::thread::sleep(std::time::Duration::from_millis(10));
             continue;
         };
         match event {
