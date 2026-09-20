@@ -426,8 +426,8 @@ pub fn open(
                         // the decode thread for a split the first
                         // mutation pays through make_mut anyway —
                         // and a crop-then-save never pays it at all.
-                        let base = Arc::new(img.clone());
-                        let composite = Arc::new(img);
+                        let base = Arc::new(img);
+                        let composite = base.clone();
                         let render = crate::widgets::render_image_from_rgba(
                             composite.width(),
                             composite.height(),
