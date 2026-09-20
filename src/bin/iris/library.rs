@@ -6,6 +6,7 @@
 //! library.json on a slow timer so captures taken while the panel is
 //! open appear without a restart.
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,9 @@ const GAP: f32 = 16.0;
 const REFRESH: Duration = Duration::from_millis(1500);
 
 pub struct Library {
-    entries: Vec<CaptureEntry>,
+    /// Cards share their entry: render closures capture an Rc bump
+    /// instead of cloning the path strings per card per frame.
+    entries: Vec<Rc<CaptureEntry>>,
     selected: Vec<PathBuf>,
     anchor: Option<usize>,
     hovered: Option<usize>,
@@ -231,9 +234,9 @@ impl Library {
                         .map(|e| e.path.as_path())
                         .collect();
                     this.thumb_cache.retain(|p, _| !stale.contains(p.as_path()));
-                    this.entries = fresh;
+                    this.entries = fresh.into_iter().map(Rc::new).collect();
                     this.entries_dirty = true;
-                    this.entry_names = this.entries.iter().map(Self::entry_name).collect();
+                    this.entry_names = this.entries.iter().map(|e| Self::entry_name(e)).collect();
                     this.selected
                         .retain(|p| this.entries.iter().any(|e| &e.path == p));
                     this.prefetch_thumbs(cx);
@@ -362,9 +365,9 @@ fn open_containing_folder(path: &std::path::Path) {
         cx.spawn(async move |this, cx| {
             let (errors, entries) = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.entries = entries;
+                this.entries = entries.into_iter().map(Rc::new).collect();
                 this.entries_dirty = true;
-                this.entry_names = this.entries.iter().map(Self::entry_name).collect();
+                this.entry_names = this.entries.iter().map(|e| Self::entry_name(e)).collect();
                 this.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
                 cx.notify();
             });
@@ -699,7 +702,7 @@ impl Render for Library {
 }
 
 impl Library {
-    fn card(&self, index: usize, entry: &CaptureEntry, hover_amt: f32, enter: f32, sel_set: &std::collections::HashSet<&std::path::Path>, cx: &mut Context<Self>) -> impl IntoElement {
+    fn card(&self, index: usize, entry: &Rc<CaptureEntry>, hover_amt: f32, enter: f32, sel_set: &std::collections::HashSet<&std::path::Path>, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = sel_set.contains(entry.path.as_path());
         let hovered = self.hovered == Some(index);
         let sel_amt = self.sel_springs.get(&index).map(|s| s.value).unwrap_or(0.0);
@@ -708,7 +711,9 @@ impl Library {
         } else {
             0.0
         };
-        let path = entry.path.clone();
+        // One Rc bump feeds every closure below; the alternative is a
+        // PathBuf clone per closure per render.
+        let entry = entry.clone();
 
         let mut thumb = div()
             .w_full()
@@ -769,19 +774,19 @@ impl Library {
             .justify_center()
             .cursor_pointer();
         let circle = if selected {
-            let p = path.clone();
+            let p = entry.clone();
             circle
                 .bg(theme::ACCENT)
                 .border_color(theme::ACCENT)
                 .child(crate::icons::icon(crate::icons::Icon::Check, theme::ACCENT_INK, 11.0))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.toggle_select(p.clone());
+                    this.toggle_select(p.path.clone());
                     this.anchor = Some(index);
                     cx.notify();
                 }))
         } else {
-            let p = path.clone();
+            let p = entry.clone();
             let c = circle
                 .bg(theme::alpha(theme::BG, 0.35))
                 .border_color(theme::alpha(theme::FG, 0.45 + 0.55 * hover_amt));
@@ -789,7 +794,7 @@ impl Library {
             if circle_vis > 0.0 {
                 c.on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.toggle_select(p.clone());
+                    this.toggle_select(p.path.clone());
                     this.anchor = Some(index);
                     cx.notify();
                 }))
@@ -802,9 +807,9 @@ impl Library {
         // Hover actions: annotate / copy / delete, bottom-right.
         // They exist only while hovered, fading in with the lift.
         if hovered {
-            let copy_path = entry.path.clone();
-            let folder_path = entry.path.clone();
-            let delete_path = entry.path.clone();
+            let copy_path = entry.clone();
+            let folder_path = entry.clone();
+            let delete_path = entry.clone();
             thumb = thumb.child(
                 div()
                     .absolute()
@@ -815,7 +820,7 @@ impl Library {
                     .opacity(hover_amt)
                     .child(crate::widgets::overlay_icon_button(ElementId::NamedInteger("cpy".into(), index as u64), crate::icons::Icon::Copy).on_click(cx.listener(move |_this, _, _, cx| {
                         cx.stop_propagation();
-                        let path = copy_path.clone();
+                        let path = copy_path.path.clone();
                         let task = cx.background_executor()
                             .spawn(async move { pipeline::copy_image_file(&path) });
                         cx.spawn(async move |this, cx| {
@@ -831,11 +836,11 @@ impl Library {
                     })))
                     .child(crate::widgets::overlay_icon_button(ElementId::NamedInteger("fld".into(), index as u64), crate::icons::Icon::Folder).on_click(cx.listener(move |_, _, _, cx| {
                         cx.stop_propagation();
-                        Self::open_containing_folder(&folder_path);
+                        Self::open_containing_folder(&folder_path.path);
                     })))
                     .child(crate::widgets::overlay_icon_button(ElementId::NamedInteger("del".into(), index as u64), crate::icons::Icon::Close).on_click(cx.listener(move |_this, _, _, cx| {
                         cx.stop_propagation();
-                        let path = delete_path.clone();
+                        let path = delete_path.path.clone();
                         let task = cx.background_executor().spawn(async move {
                             let err = library::delete(&path).err();
                             (err, library::list())
@@ -846,9 +851,9 @@ impl Library {
                                 if let Some(e) = err {
                                     this.status = Some(e);
                                 }
-                                this.entries = entries;
+                                this.entries = entries.into_iter().map(Rc::new).collect();
                                 this.entries_dirty = true;
-                                this.entry_names = this.entries.iter().map(Self::entry_name).collect();
+                                this.entry_names = this.entries.iter().map(|e| Self::entry_name(e)).collect();
                                 cx.notify();
                             });
                         })
@@ -857,7 +862,7 @@ impl Library {
             );
         }
 
-        let card_path = entry.path.clone();
+        let card_path = entry.clone();
 
         div()
             .id(ElementId::NamedInteger("card".into(), index as u64))
@@ -882,7 +887,7 @@ impl Library {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |_, _, _, _| {
-                    Self::open_containing_folder(&card_path);
+                    Self::open_containing_folder(&card_path.path);
                 }),
             )
             .on_mouse_down(

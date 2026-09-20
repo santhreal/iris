@@ -85,7 +85,7 @@ struct Action {
     color: &'static str,
     width: f32,
     points: Vec<(f32, f32)>,
-    text: Option<String>,
+    text: Option<SharedString>,
     font_size: f32,
     /// Rect/Ellipse fill: when set the shape paints its interior, not
     /// just the outline.
@@ -96,6 +96,9 @@ struct Action {
     blur_rect: (f32, f32, f32, f32),
     /// Counter tool: the step number shown in the badge.
     step: u32,
+    /// Its display string, cached at commit: to_string() per counter
+    /// per frame was an allocation a frame.
+    step_label: SharedString,
     /// Bounding box in image px, computed at commit and translated by
     /// move drags: hit-testing every committed action per click and
     /// the selected outline per frame would otherwise rescan every
@@ -122,6 +125,10 @@ pub struct Editor {
     /// Display name for the topbar: the path's file name, computed
     /// once at open instead of allocating per render.
     filename: String,
+    /// The topbar's "name · WxH" label, rebuilt only when the base
+    /// image changes: formatting it per frame allocates a String a
+    /// frame.
+    title: SharedString,
     base: image::RgbaImage,
     base_img: Arc<RenderImage>,
     /// CPU composite: base plus every committed action, used to sample
@@ -317,11 +324,18 @@ pub fn open(
             tabbing_identifier: None,
         },
         |_, cx| {
-            cx.new(|_| Editor {
-                filename: path
+            cx.new(|_| {
+                let filename = path
                     .file_name()
                     .map(|f| f.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "capture.png".to_string()),
+                    .unwrap_or_else(|| "capture.png".to_string());
+                Editor {
+                title: SharedString::from(format!(
+                    "{filename} · {}×{}",
+                    base.width(),
+                    base.height()
+                )),
+                filename,
                 path: path.to_path_buf(),
                 composite: base.clone(),
                 base,
@@ -356,6 +370,7 @@ pub fn open(
                 pan_drag: None,
                 space_pan: false,
                 fill: false,
+                }
             })
         },
     )
@@ -399,6 +414,12 @@ pub fn open(
                             let old = std::mem::replace(&mut this.base_img, render);
                             crate::widgets::release_render(&old, cx);
                             this.base = base;
+                            this.title = SharedString::from(format!(
+                                "{} · {}×{}",
+                                this.filename,
+                                this.base.width(),
+                                this.base.height()
+                            ));
                             this.composite = img;
                             this.base_ready = true;
                             this.rebuild_all();
@@ -461,6 +482,7 @@ impl Editor {
     }
 
     fn new_action(&self, p: (f32, f32)) -> Action {
+        let step = self.next_step();
         Action {
             tool: self.tool,
             color: self.color,
@@ -475,7 +497,8 @@ impl Editor {
             filled: self.fill,
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
-            step: self.next_step(),
+            step,
+            step_label: SharedString::from(step.to_string()),
             bbox: None,
             cached_path: std::cell::RefCell::new(None),
         }
@@ -600,6 +623,7 @@ impl Editor {
             if action.tool == Tool::Counter {
                 step += 1;
                 action.step = step;
+                action.step_label = SharedString::from(step.to_string());
             }
             if action.tool == Tool::Blur {
                 let (x, y) = (
@@ -732,6 +756,12 @@ impl Editor {
         );
         crate::widgets::release_render(&old, cx);
         self.base = cropped.clone();
+        self.title = SharedString::from(format!(
+            "{} · {}×{}",
+            self.filename,
+            self.base.width(),
+            self.base.height()
+        ));
         self.composite = cropped;
         self.actions.borrow_mut().clear();
         self.undos.clear();
@@ -762,6 +792,12 @@ impl Editor {
         );
         crate::widgets::release_render(&old, cx);
         self.base = out.clone();
+        self.title = SharedString::from(format!(
+            "{} · {}×{}",
+            self.filename,
+            self.base.width(),
+            self.base.height()
+        ));
         self.composite = out;
         self.actions.borrow_mut().clear();
         self.undos.clear();
@@ -890,12 +926,13 @@ impl Editor {
                 color: self.color,
                 width: stroke_base(self.img_w()),
                 points: vec![entry.point],
-                text: Some(value),
+                text: Some(SharedString::from(value)),
                 font_size: text_size(self.img_w()),
                 filled: false,
                 blur_patch: None,
                 blur_rect: (0.0, 0.0, 0.0, 0.0),
                 step: 0,
+                step_label: SharedString::from("0"),
                 bbox: None,
                 cached_path: std::cell::RefCell::new(None),
             };
@@ -1062,10 +1099,10 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
             if let Some(p) = action.points.first() {
                 let r = action.font_size * 0.9;
                 stamp(img, p.0, p.1, r, px);
-                let num = action.step.to_string();
+                let num = &action.step_label;
                 let nw = num.chars().count() as f32 * action.font_size * 0.6;
                 let white = image::Rgba([255, 255, 255, px.0[3]]);
-                draw_text(img, (p.0 - nw / 2.0, p.1 + action.font_size * 0.35), action.font_size, &num, white);
+                draw_text(img, (p.0 - nw / 2.0, p.1 + action.font_size * 0.35), action.font_size, num, white);
             }
         }
         Tool::Select | Tool::Crop => {}
@@ -1326,7 +1363,7 @@ impl Render for Editor {
                 window.request_animation_frame();
             }
         }
-        let filename = &self.filename;
+        let title = self.title.clone();
 
         let mut root = div()
             .id("editor")
@@ -1496,11 +1533,7 @@ impl Render for Editor {
                         div()
                             .text_sm()
                             .text_color(theme::FG_DIM)
-                            .child(format!(
-                                "{filename} · {}×{}",
-                                self.base.width(),
-                                self.base.height()
-                            )),
+                            .child(title),
                     )
                     .child({
                         let mut buttons = div().flex().items_center().gap(px(6.));
@@ -1743,12 +1776,12 @@ impl Render for Editor {
                             .text_color(hex_rgba(action.color))
                             .text_size(px(action.font_size * scale))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(SharedString::from(text.clone())),
+                            .child(text.clone()),
                     );
                 }
             } else if action.tool == Tool::Counter {
                 if let Some(p) = action.points.first() {
-                    let num = action.step.to_string();
+                    let num = action.step_label.clone();
                     let nw = num.chars().count() as f32 * action.font_size * 0.6;
                     stage = stage.child(
                         div()
@@ -1758,7 +1791,7 @@ impl Render for Editor {
                             .text_color(theme::FG)
                             .text_size(px(action.font_size * scale))
                             .font_weight(FontWeight::BOLD)
-                            .child(SharedString::from(num)),
+                            .child(num),
                     );
                 }
             }
@@ -2279,6 +2312,7 @@ mod tests {
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
             step: 0,
+            step_label: "0".into(),
             bbox: None,
             cached_path: std::cell::RefCell::new(None),
         }

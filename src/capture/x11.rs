@@ -381,7 +381,6 @@ where
 /// marked IPC_RMID at creation, so it dies with the process on any
 /// exit path.
 struct CaptureShm {
-    shmid: i32,
     addr: *mut u8,
     seg: u32,
     size: usize,
@@ -460,7 +459,7 @@ where
                     libc::shmdt(addr);
                     return None;
                 }
-                Some(CaptureShm { shmid, addr: addr as *mut u8, seg, size })
+                Some(CaptureShm { addr: addr as *mut u8, seg, size })
             }
         })();
     }
