@@ -53,9 +53,43 @@ pub fn icon(kind: Icon, color: Rgba, size: f32) -> impl IntoElement {
     .h(px(size))
 }
 
+/// Tessellated icon geometry, keyed on (kind, origin, size): a paint
+/// during a hover spring rebuilds the identical vertex list every
+/// frame otherwise. Paths are cloned out of the cache; the color is
+/// supplied at paint time and is not part of the key.
+fn cached_path(
+    kind: Icon,
+    ox: f32,
+    oy: f32,
+    size: f32,
+) -> Option<Path<Pixels>> {
+    static CACHE: std::sync::LazyLock<
+        parking_lot::Mutex<std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>>,
+    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    let key = (kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits());
+    CACHE.lock().get(&key).cloned()
+}
+
+fn store_path(kind: Icon, ox: f32, oy: f32, size: f32, path: &Path<Pixels>) {
+    static CACHE: std::sync::LazyLock<
+        parking_lot::Mutex<std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>>,
+    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    let mut cache = CACHE.lock();
+    // Bound the map: origins vary with window position, so an
+    // unbounded cache grows one entry per pixel moved.
+    if cache.len() > 512 {
+        cache.clear();
+    }
+    cache.insert((kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits()), path.clone());
+}
+
 fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Window) {
     let (ox, oy): (f32, f32) = (bounds.origin.x.into(), bounds.origin.y.into());
     let s: f32 = f32::from(bounds.size.width) / 18.0;
+    if let Some(path) = cached_path(kind, ox, oy, s) {
+        window.paint_path(path, color);
+        return;
+    }
     let p = move |x: f32, y: f32| point(px(ox + x * s), px(oy + y * s));
     let w = 1.6 * s;
 
@@ -288,6 +322,7 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
             push_filled_triangle(&mut path, p(6.0, 4.0), p(6.0, 14.0), p(14.5, 9.0));
         }
     }
+    store_path(kind, ox, oy, s, &path);
     window.paint_path(path, color);
 }
 
