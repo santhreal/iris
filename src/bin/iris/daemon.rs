@@ -86,7 +86,7 @@ impl record::x11::ChipFollow for XcbChip {
 }
 
 /// One command line, forwarded to or invoked on the daemon.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Command {
     Home,
     Capture,
@@ -725,7 +725,7 @@ impl ksni::Tray for IrisTray {
             StandardItem {
                 label: label.to_string(),
                 activate: Box::new(move |_| {
-                    let _ = tx.unbounded_send(cmd.clone_for_menu());
+                    let _ = tx.unbounded_send(cmd.clone());
                 }),
                 ..Default::default()
             }
@@ -742,34 +742,6 @@ impl ksni::Tray for IrisTray {
     }
 }
 
-impl Command {
-    /// Menu closures need 'static sends; Command is small, clone it.
-    fn clone_for_menu(&self) -> Command {
-        match self {
-            Command::Home => Command::Home,
-            Command::Capture => Command::Capture,
-            Command::CaptureFullscreen => Command::CaptureFullscreen,
-            Command::CaptureWindow => Command::CaptureWindow,
-            Command::Delayed(s) => Command::Delayed(*s),
-            Command::Library => Command::Library,
-            Command::Settings => Command::Settings,
-            Command::Annotate(p) => Command::Annotate(p.clone()),
-            Command::Toast(p) => Command::Toast(p.clone()),
-            Command::RecordToggle => Command::RecordToggle,
-            Command::RecordRegionPick => Command::RecordRegionPick,
-            Command::RecordRegion { x, y, w, h } => Command::RecordRegion {
-                x: *x,
-                y: *y,
-                w: *w,
-                h: *h,
-            },
-            Command::RecordPause => Command::RecordPause,
-            Command::RecordMic => Command::RecordMic,
-            Command::ChipHide => Command::ChipHide,
-            Command::Quit => Command::Quit,
-        }
-    }
-}
 
 // ---- global hotkeys (X11) --------------------------------------------
 
@@ -977,7 +949,7 @@ mod hotkeys {
                                 .iter()
                                 .find(|(kc, m, _)| *kc == ev.detail && *m == ev_mods)
                             {
-                                if tx.unbounded_send(cmd.clone_for_menu()).is_err() {
+                                if tx.unbounded_send(cmd.clone()).is_err() {
                                     return;
                                 }
                             }
