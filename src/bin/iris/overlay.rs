@@ -101,6 +101,13 @@ pub struct Overlay {
     /// The committed-selection hint line, built once per session from
     /// cfg: formatting it per frame allocates a String a frame.
     hint: SharedString,
+    /// Idle coordinate chip: the frame pixel it was built for, and the
+    /// label. A mousemove inside the same pixel reuses it.
+    coord_at: Option<(i64, i64)>,
+    coord_label: SharedString,
+    /// Selection size label: the physical (w, h) it was built for.
+    size_at: Option<(u32, u32)>,
+    size_label: SharedString,
 }
 
 /// The pooled overlay window: created on the first capture, parked
@@ -265,6 +272,10 @@ fn open_shell_opts(
                     loupe_scratch: Vec::new(),
                     finishing: false,
                     pending_finish: false,
+                    coord_at: None,
+                    coord_label: SharedString::default(),
+                    size_at: None,
+                    size_label: SharedString::default(),
                     opened: None,
                     hover_in: None,
                     hover_out: None,
@@ -483,6 +494,8 @@ impl Overlay {
         self.opened = None;
         self.resize = None;
         self.moving = None;
+        self.coord_at = None;
+        self.size_at = None;
         self.hovered = None;
         self.hover_in = None;
         self.hover_out = None;
@@ -1119,6 +1132,11 @@ impl Render for Overlay {
             let sf = window.scale_factor();
             let win = window.bounds().size;
             let (fx, fy) = self.frame_pos(sf, sx, sy, self.cursor.0, self.cursor.1);
+            if self.coord_at != Some((fx, fy)) {
+                self.coord_at = Some((fx, fy));
+                self.coord_label = SharedString::from(format!("{fx}, {fy}"));
+            }
+            let coord_label = self.coord_label.clone();
             let lx = if self.cursor.0 + 90.0 > f32::from(win.width) {
                 self.cursor.0 - 82.0
             } else {
@@ -1139,8 +1157,7 @@ impl Render for Overlay {
                     .rounded(px(6.))
                     .bg(theme::alpha(theme::BG_ELEV, 0.9))
                     .text_xs()
-                    .text_color(theme::FG_DIM)
-                    .child(format!("{fx}, {fy}")),
+                    .child(coord_label),
             );
         }
 
@@ -1186,11 +1203,15 @@ impl Render for Overlay {
         // Committed or in-progress selection.
         if let Some((x, y, w, h)) = self.current {
             let sf = window.scale_factor();
-            let size_label = format!(
-                "{} × {}",
+            let phys = (
                 (w * sf * sx).round() as u32,
-                (h * sf * sy).round() as u32
+                (h * sf * sy).round() as u32,
             );
+            if self.size_at != Some(phys) {
+                self.size_at = Some(phys);
+                self.size_label = SharedString::from(format!("{} × {}", phys.0, phys.1));
+            }
+            let size_label = self.size_label.clone();
             if let Some(fi) = self.frame_img.clone() {
                 root = root.child(reveal(fi, x, y, w, h, window));
             }
