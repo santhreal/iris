@@ -264,7 +264,11 @@ pub(crate) fn swizzle_rgba_bgra(chunk: &mut [u8]) {
 }
 
 pub fn render_image_from_rgba(width: u32, height: u32, rgba: &[u8]) -> std::sync::Arc<gpui::RenderImage> {
-    let mut data = vec![0u8; rgba.len()];
+    // Uninit capacity, not a zeroed vec: the fused copy+swizzle writes
+    // every byte, and a multi-MB memset before a multi-MB fill is a
+    // wasted pass. On failure the buffer drops without being read.
+    let mut data: Vec<u8> = Vec::with_capacity(rgba.len());
+    unsafe { data.set_len(rgba.len()) };
     // Fused copy+swizzle, banded across threads once the buffer is
     // large enough to pay for the spawn (the 152px loupe, rebuilt
     // every mousemove, stays inline).
