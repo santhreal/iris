@@ -474,8 +474,6 @@ fn png_bytes(img: &image::RgbaImage) -> Result<Vec<u8>, String> {
     Ok(out.into_inner())
 }
 
-/// Pixelate a region of the composite (the blur tool's mark).
-
 impl Editor {
     fn img_w(&self) -> u32 {
         self.base.width()
@@ -622,27 +620,34 @@ fn replay_actions(
     skip: usize,
 ) {
     for action in actions.iter_mut().skip(skip) {
-        if action.tool == Tool::Blur {
-            let (x, y) = (
-                action.blur_rect.0.max(0.0) as u32,
-                action.blur_rect.1.max(0.0) as u32,
-            );
-            let (w, h) = (action.blur_rect.2 as u32, action.blur_rect.3 as u32);
-            if w >= 1 && h >= 1 && x < composite.width() && y < composite.height() {
-                let w = w.min(composite.width() - x);
-                let h = h.min(composite.height() - y);
-                // One resample serves the GPU tile and the CPU
-                // pixelation; computing it twice per replayed blur
-                // was two crop+resize+resize chains.
-                if let Ok(patch) = pixelated_patch_rgba(composite, x, y, w, h) {
-                    let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
-                    image::imageops::overlay(composite, &patch, x as i64, y as i64);
-                    action.blur_patch = Some(render);
-                }
+        Self::replay_one(composite, action);
+    }
+}
+
+/// Replay one action onto `composite`. Blur resamples the pixels
+/// under its rect at this point in the order, so a moved or cropped
+/// blur pixelates its new location.
+fn replay_one(composite: &mut image::RgbaImage, action: &mut Action) {
+    if action.tool == Tool::Blur {
+        let (x, y) = (
+            action.blur_rect.0.max(0.0) as u32,
+            action.blur_rect.1.max(0.0) as u32,
+        );
+        let (w, h) = (action.blur_rect.2 as u32, action.blur_rect.3 as u32);
+        if w >= 1 && h >= 1 && x < composite.width() && y < composite.height() {
+            let w = w.min(composite.width() - x);
+            let h = h.min(composite.height() - y);
+            // One resample serves the GPU tile and the CPU
+            // pixelation; computing it twice per replayed blur
+            // was two crop+resize+resize chains.
+            if let Ok(patch) = pixelated_patch_rgba(composite, x, y, w, h) {
+                let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
+                image::imageops::overlay(composite, &patch, x as i64, y as i64);
+                action.blur_patch = Some(render);
             }
-        } else {
-            rasterize(composite, action, 1.0);
         }
+    } else {
+        rasterize(composite, action, 1.0);
     }
 }
 
@@ -663,28 +668,86 @@ fn restore_region(
     }
 }
 
-/// Index of the first action that could have painted inside `rect`:
-/// its padded bbox intersects. Text and counter ink can overflow the
-/// estimated bbox, so the test pads by the font size; a skipped action
-/// can then never have painted inside the dirty rect.
-fn first_intersecting(actions: &[Action], rect: (f32, f32, f32, f32)) -> Option<usize> {
-    let (dx, dy, dw, dh) = rect;
-    actions.iter().position(|a| {
-        let pad = if matches!(a.tool, Tool::Text | Tool::Counter) {
-            a.font_size
-        } else {
-            0.0
-        };
-        match a.bbox {
-            Some((bx, by, bw, bh)) => {
-                bx - pad < dx + dw
-                    && bx + bw + pad > dx
-                    && by - pad < dy + dh
-                    && by + bh + pad > dy
+/// The rect an action can paint or sample, in image pixels: its
+/// stored bbox, padded by the font size for text and counters whose
+/// ink overflows the estimate. `None` means the action could have
+/// painted anywhere and forces a full rebuild.
+fn footprint(action: &Action) -> Option<(f32, f32, f32, f32)> {
+    let (x, y, w, h) = action.bbox?;
+    let pad = if matches!(action.tool, Tool::Text | Tool::Counter) {
+        action.font_size
+    } else {
+        0.0
+    };
+    Some((x - pad, y - pad, w + 2.0 * pad, h + 2.0 * pad))
+}
+
+/// Do two (x, y, w, h) rects overlap?
+fn intersects(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> bool {
+    a.0 < b.0 + b.2 && a.0 + a.2 > b.0 && a.1 < b.1 + b.3 && a.1 + a.3 > b.1
+}
+
+/// Grow `region` until it covers the footprint of every action that
+/// intersects it, and return the replay mask. A replayed action
+/// repaints its whole footprint: pixels outside the region keep the
+/// old ink, so repainting there compounds alpha, and a blur samples
+/// stale composite. Any action whose footprint intersects the region
+/// must therefore be replayed, which pulls its footprint into the
+/// region, which can pull in further actions. Iterate to the fixpoint;
+/// a footprint-less action could have painted anywhere, so it widens
+/// the region to the whole image.
+fn replay_closure(
+    actions: &[Action],
+    mut region: (f32, f32, f32, f32),
+    iw: f32,
+    ih: f32,
+) -> ((f32, f32, f32, f32), Vec<bool>) {
+    let mut mark = vec![false; actions.len()];
+    loop {
+        let mut grew = false;
+        for (i, a) in actions.iter().enumerate() {
+            if mark[i] {
+                continue;
             }
-            None => true,
+            match Self::footprint(a) {
+                Some(f) if Self::intersects(f, region) => {
+                    mark[i] = true;
+                    // Grow only when the footprint spills outside the
+                    // region; a contained footprint changes nothing.
+                    if f.0 < region.0
+                        || f.1 < region.1
+                        || f.0 + f.2 > region.0 + region.2
+                        || f.1 + f.3 > region.1 + region.3
+                    {
+                        region = Self::union_rect(region, f);
+                    }
+                    grew = true;
+                }
+                Some(_) => {}
+                None => {
+                    mark[i] = true;
+                    region = (0.0, 0.0, iw, ih);
+                    grew = true;
+                }
+            }
         }
-    })
+        if !grew {
+            return (region, mark);
+        }
+    }
+}
+
+/// Clamp a float (x, y, w, h) region to the image, as pixel bounds.
+fn clamp_region(
+    region: (f32, f32, f32, f32),
+    iw: u32,
+    ih: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let x0 = (region.0.max(0.0) as u32).min(iw);
+    let y0 = (region.1.max(0.0) as u32).min(ih);
+    let x1 = ((region.0 + region.2).ceil().max(0.0) as u32).min(iw);
+    let y1 = ((region.1 + region.3).ceil().max(0.0) as u32).min(ih);
+    (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
 }
 
     fn rebuild_all(&mut self) {
@@ -706,43 +769,73 @@ fn first_intersecting(actions: &[Action], rect: (f32, f32, f32, f32)) -> Option<
         (x, y, (a.0 + a.2).max(b.0 + b.2) - x, (a.1 + a.3).max(b.1 + b.3) - y)
     }
 
-    /// Rebuild only the pixels an edit touched: restore the dirty rect
-    /// from base, then replay from the first action whose padded bbox
-    /// intersects it. Actions before that index never wrote inside the
-    /// rect, and replaying the tail in commit order reproduces the full
-    /// rebuild's result while skipping the 33MB base copy and every
-    /// earlier action's rasterize.
-    fn rebuild_dirty(&mut self, region: (f32, f32, f32, f32)) {
-        let (iw, ih) = (self.composite.width(), self.composite.height());
-        let x = (region.0.max(0.0) as u32).min(iw);
-        let y = (region.1.max(0.0) as u32).min(ih);
-        let w = (region.2.ceil() as u32).min(iw - x);
-        let h = (region.3.ceil() as u32).min(ih - y);
-        if w == 0 || h == 0 {
-            return;
-        }
-        Self::restore_region(&self.base, &mut self.composite, (x, y, w, h));
-        // Steps are commit-order across every counter, so renumbering
-        // runs over all actions even when the replay is partial.
+    /// Plan a partial rebuild: renumber counters (steps are
+    /// commit-order across every counter, so this runs over all
+    /// actions even when the replay is partial), seed the dirty
+    /// region with the footprints of counters whose number changed
+    /// (they paint different ink), then close the region over every
+    /// action it touches. Returns the closed region and replay mask.
+    fn dirty_plan(
+        actions: &mut [Action],
+        region: (f32, f32, f32, f32),
+        iw: f32,
+        ih: f32,
+    ) -> ((f32, f32, f32, f32), Vec<bool>) {
         let mut step = 0u32;
-        for action in self.actions.borrow_mut().iter_mut() {
+        let mut seeded = region;
+        for action in actions.iter_mut() {
             if action.tool == Tool::Counter {
                 step += 1;
-                action.step = step;
-                action.step_label = SharedString::from(step.to_string());
+                if action.step != step {
+                    action.step = step;
+                    action.step_label = SharedString::from(step.to_string());
+                    if let Some(f) = Self::footprint(action) {
+                        seeded = Self::union_rect(seeded, f);
+                    }
+                }
             }
         }
-        let Some(first) =
-            Self::first_intersecting(&self.actions.borrow(), (x as f32, y as f32, w as f32, h as f32))
-        else {
-            return;
-        };
-        Self::replay_actions(&mut self.composite, &mut self.actions.borrow_mut(), first);
+        Self::replay_closure(actions, seeded, iw, ih)
     }
 
-    /// Rebuild after an undo/redo/delete: the dirty rect is the union
-    /// of the bboxes the edit carries. A stored action without a bbox
-    /// falls back to the full rebuild.
+    /// Apply a plan from `dirty_plan`: restore the closed region from
+    /// base, then replay the marked actions in commit order.
+    fn apply_plan(
+        base: &image::RgbaImage,
+        composite: &mut image::RgbaImage,
+        actions: &mut [Action],
+        closed: (f32, f32, f32, f32),
+        mark: &[bool],
+    ) {
+        let Some(r) = Self::clamp_region(closed, composite.width(), composite.height()) else {
+            return;
+        };
+        Self::restore_region(base, composite, r);
+        for (i, action) in actions.iter_mut().enumerate() {
+            if mark[i] {
+                Self::replay_one(composite, action);
+            }
+        }
+    }
+
+    /// Rebuild only the pixels an edit touched. See `replay_closure`
+    /// for why the region must cover every replayed footprint.
+    fn rebuild_dirty(&mut self, region: (f32, f32, f32, f32)) {
+        let (iw, ih) = (self.composite.width(), self.composite.height());
+        let (closed, mark) = Self::dirty_plan(
+            &mut self.actions.borrow_mut(),
+            region,
+            iw as f32,
+            ih as f32,
+        );
+        Self::apply_plan(
+            &self.base,
+            &mut self.composite,
+            &mut self.actions.borrow_mut(),
+            closed,
+            &mark,
+        );
+    }
     fn rebuild_for_edit(&mut self, edit: &Edit<Action>) {
         let region = match edit {
             Edit::Add(a) | Edit::Remove(_, a) => a.bbox,
@@ -1088,7 +1181,6 @@ fn first_intersecting(actions: &[Action], rect: (f32, f32, f32, f32)) -> Option<
 }
 
 /// Pixelate a region of a CPU image in place.
-
 fn pixelated_patch_rgba(
     img: &image::RgbaImage,
     x: u32,
@@ -2467,19 +2559,22 @@ mod tests {
 }
 
 // WHY: rebuild_dirty must produce byte-identical composites to
-// rebuild_all while touching only the edited region; a wrong "first
-// intersecting" index or a missed restore leaves stale ink or erases
-// live ink. Not covered: blur patches (they replay identically).
+// rebuild_all while touching only the edited region. The class closed
+// here: a replayed action repaints its whole footprint, so a dirty
+// region that does not cover every replayed footprint either
+// compounds alpha over surviving ink or lets a blur sample stale
+// composite. Not covered: the rasterizer's pixel math, which the
+// tests above cover.
 #[cfg(test)]
 mod dirty_tests {
     use super::{Action, Editor, Tool};
 
-    fn stroke(points: Vec<(f32, f32)>, bbox: (f32, f32, f32, f32)) -> Action {
+    fn base_action(tool: Tool) -> Action {
         Action {
-            tool: Tool::Pen,
+            tool,
             color: "#ff0000",
             width: 2.0,
-            points,
+            points: Vec::new(),
             text: None,
             font_size: 16.0,
             filled: false,
@@ -2487,9 +2582,67 @@ mod dirty_tests {
             blur_rect: (0.0, 0.0, 0.0, 0.0),
             step: 0,
             step_label: "0".into(),
-            bbox: Some(bbox),
+            bbox: None,
             cached_path: std::cell::RefCell::new(None),
         }
+    }
+
+    fn stroke(points: Vec<(f32, f32)>, bbox: (f32, f32, f32, f32)) -> Action {
+        let mut a = base_action(Tool::Pen);
+        a.points = points;
+        a.bbox = Some(bbox);
+        a
+    }
+
+    fn highlight(points: Vec<(f32, f32)>, bbox: (f32, f32, f32, f32)) -> Action {
+        let mut a = base_action(Tool::Highlight);
+        a.points = points;
+        a.bbox = Some(bbox);
+        a
+    }
+
+    fn blur(rect: (f32, f32, f32, f32)) -> Action {
+        let mut a = base_action(Tool::Blur);
+        a.blur_rect = rect;
+        a.bbox = Some(rect);
+        a
+    }
+
+    fn counter(at: (f32, f32), step: u32) -> Action {
+        let mut a = base_action(Tool::Counter);
+        a.points = vec![at];
+        a.step = step;
+        a.step_label = step.to_string().into();
+        let r = a.font_size * 0.9;
+        a.bbox = Some((at.0 - r, at.1 - r, r * 2.0, r * 2.0));
+        a
+    }
+
+    /// Full-rebuild reference: base plus every action in commit order.
+    fn full_rebuild(
+        base: &image::RgbaImage,
+        actions: &mut [Action],
+    ) -> image::RgbaImage {
+        let mut img = base.clone();
+        Editor::replay_actions(&mut img, actions, 0);
+        img
+    }
+
+    /// The dirty path: plan against `region`, apply to a composite
+    /// that already holds the pre-edit render.
+    fn dirty_rebuild(
+        base: &image::RgbaImage,
+        composite: &mut image::RgbaImage,
+        actions: &mut [Action],
+        region: (f32, f32, f32, f32),
+    ) {
+        let (closed, mark) = Editor::dirty_plan(
+            actions,
+            region,
+            composite.width() as f32,
+            composite.height() as f32,
+        );
+        Editor::apply_plan(base, composite, actions, closed, &mark);
     }
 
     #[test]
@@ -2499,40 +2652,174 @@ mod dirty_tests {
         let b = stroke(vec![(30.0, 30.0), (38.0, 38.0)], (26.0, 26.0, 16.0, 16.0));
         let base = image::RgbaImage::from_pixel(40, 40, image::Rgba([10, 20, 30, 255]));
 
-        // Full rebuild reference.
-        let mut full = base.clone();
-        Editor::replay_actions(&mut full, &mut [a.clone(), b.clone()], 0);
+        let mut full = full_rebuild(&base, &mut [a.clone(), b.clone()]);
 
-        // Dirty rebuild for an edit inside b's bbox only.
+        // Remove b: the dirty region is its bbox; a must survive.
         let mut dirty = full.clone();
-        Editor::restore_region(&base, &mut dirty, (26, 26, 14, 14));
-        let first = Editor::first_intersecting(&[a.clone(), b.clone()], (26.0, 26.0, 14.0, 14.0));
-        assert_eq!(first, Some(1), "only the second stroke intersects");
-        Editor::replay_actions(&mut dirty, &mut [a.clone(), b.clone()], 1);
-
+        let mut remaining = [a.clone()];
+        dirty_rebuild(&base, &mut dirty, &mut remaining, (26.0, 26.0, 16.0, 16.0));
+        full = full_rebuild(&base, &mut [a.clone()]);
         assert_eq!(dirty.as_raw(), full.as_raw(), "dirty rebuild must equal full rebuild");
         // The skipped stroke's pixels survived: they were never restored.
         assert_eq!(dirty.get_pixel(5, 2), full.get_pixel(5, 2));
     }
 
     #[test]
+    fn alpha_does_not_compound_outside_dirty() {
+        // A highlight stroke whose footprint spills past the dirty
+        // rect: replaying it over its own surviving ink doubles the
+        // 0.35 alpha outside the rect. The region must grow to cover
+        // the whole footprint.
+        let a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
+        let h = highlight(vec![(4.0, 20.0), (36.0, 20.0)], (0.0, 15.0, 40.0, 10.0));
+        let base = image::RgbaImage::from_pixel(40, 40, image::Rgba([10, 20, 30, 255]));
+
+        let mut dirty = full_rebuild(&base, &mut [a.clone(), h.clone()]);
+        // Remove a; h stays and intersects the dirty rect at its left.
+        let mut remaining = [h.clone()];
+        dirty_rebuild(&base, &mut dirty, &mut remaining, (0.0, 0.0, 14.0, 6.0));
+
+        let full = full_rebuild(&base, &mut [h.clone()]);
+        assert_eq!(
+            dirty.as_raw(),
+            full.as_raw(),
+            "highlight ink outside the dirty rect must not be repainted over itself"
+        );
+    }
+
+    #[test]
+    fn blur_resamples_restored_base() {
+        // A blur whose rect spills past the dirty rect: replaying it
+        // while the spill still holds the old blur output samples
+        // blur-of-blur. The region must cover the blur's whole rect.
+        let a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
+        let b = blur((0.0, 0.0, 40.0, 40.0));
+        let base = image::RgbaImage::from_pixel(40, 40, image::Rgba([10, 20, 30, 255]));
+
+        let mut dirty = full_rebuild(&base, &mut [a.clone(), b.clone()]);
+        let mut remaining = [b.clone()];
+        dirty_rebuild(&base, &mut dirty, &mut remaining, (0.0, 0.0, 14.0, 6.0));
+
+        let full = full_rebuild(&base, &mut [b.clone()]);
+        assert_eq!(
+            dirty.as_raw(),
+            full.as_raw(),
+            "blur must resample restored base, not its own stale output"
+        );
+    }
+
+    #[test]
+    fn transitive_pull_in_replays_chain() {
+        // Removing a pulls in the blur that samples its ink; the
+        // blur's footprint pulls in the counter stamped inside it.
+        let a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
+        let b = blur((0.0, 0.0, 30.0, 30.0));
+        let c = counter((20.0, 20.0), 1);
+        let base = image::RgbaImage::from_pixel(40, 40, image::Rgba([10, 20, 30, 255]));
+
+        let mut dirty = full_rebuild(&base, &mut [a.clone(), b.clone(), c.clone()]);
+        let mut remaining = [b.clone(), c.clone()];
+        dirty_rebuild(&base, &mut dirty, &mut remaining, (0.0, 0.0, 14.0, 6.0));
+
+        let full = full_rebuild(&base, &mut [b.clone(), c.clone()]);
+        assert_eq!(
+            dirty.as_raw(),
+            full.as_raw(),
+            "the closure must replay every action the region transitively touches"
+        );
+    }
+
+    #[test]
+    fn renumbered_counter_repaints() {
+        // Removing counter 1 renumbers counter 2 to 1: its ink
+        // changes even though its footprint never intersected the
+        // dirty rect.
+        let c1 = counter((5.0, 5.0), 1);
+        let c2 = counter((30.0, 30.0), 2);
+        let base = image::RgbaImage::from_pixel(40, 40, image::Rgba([10, 20, 30, 255]));
+
+        let mut dirty = full_rebuild(&base, &mut [c1.clone(), c2.clone()]);
+        let mut remaining = [c2.clone()];
+        dirty_rebuild(&base, &mut dirty, &mut remaining, c1.bbox.unwrap());
+
+        let mut c2_renumbered = c2.clone();
+        c2_renumbered.step = 1;
+        c2_renumbered.step_label = "1".into();
+        let full = full_rebuild(&base, &mut [c2_renumbered]);
+        assert_eq!(
+            dirty.as_raw(),
+            full.as_raw(),
+            "a renumbered counter must repaint its new digit"
+        );
+    }
+
+    #[test]
     fn no_intersecting_action_leaves_composite_alone() {
         let a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
-        assert_eq!(
-            Editor::first_intersecting(&[a], (30.0, 30.0, 8.0, 8.0)),
-            None,
-            "a far-away region intersects nothing"
-        );
+        let (region, mark) =
+            Editor::replay_closure(&[a], (30.0, 30.0, 8.0, 8.0), 40.0, 40.0);
+        assert!(mark.iter().all(|m| !*m), "a far-away region marks nothing");
+        assert_eq!(region, (30.0, 30.0, 8.0, 8.0), "the region stays put");
     }
 
     #[test]
     fn missing_bbox_replays_everything() {
         let mut a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
         a.bbox = None;
-        assert_eq!(
-            Editor::first_intersecting(&[a], (30.0, 30.0, 8.0, 8.0)),
-            Some(0),
-            "a bbox-less action conservatively intersects"
+        let (region, mark) =
+            Editor::replay_closure(&[a], (30.0, 30.0, 8.0, 8.0), 40.0, 40.0);
+        assert_eq!(mark, [true], "a bbox-less action conservatively replays");
+        assert_eq!(region, (0.0, 0.0, 40.0, 40.0), "and widens to the full image");
+    }
+
+    /// The pre-closure algorithm: restore only the edit's rect, then
+    /// replay the suffix from the first intersecting action. Kept to
+    /// prove the regression tests above observe the bug it produced.
+    fn legacy_dirty(
+        base: &image::RgbaImage,
+        composite: &mut image::RgbaImage,
+        actions: &mut [Action],
+        region: (f32, f32, f32, f32),
+    ) {
+        let (iw, ih) = (composite.width(), composite.height());
+        let Some(r) = Editor::clamp_region(region, iw, ih) else {
+            return;
+        };
+        Editor::restore_region(base, composite, r);
+        let first = actions.iter().position(|a| {
+            Editor::footprint(a).map_or(true, |f| Editor::intersects(f, region))
+        });
+        if let Some(first) = first {
+            Editor::replay_actions(composite, actions, first);
+        }
+    }
+
+    #[test]
+    fn legacy_algorithm_is_observably_wrong() {
+        // Alpha compounding: the old suffix replay repaints the
+        // highlight over its own ink outside the dirty rect.
+        let a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
+        let h = highlight(vec![(4.0, 20.0), (36.0, 20.0)], (0.0, 15.0, 40.0, 10.0));
+        let base = image::RgbaImage::from_pixel(40, 40, image::Rgba([10, 20, 30, 255]));
+        let mut legacy = full_rebuild(&base, &mut [a.clone(), h.clone()]);
+        legacy_dirty(&base, &mut legacy, &mut [a.clone(), h.clone()], (0.0, 0.0, 14.0, 6.0));
+        let full = full_rebuild(&base, &mut [h.clone()]);
+        assert_ne!(
+            legacy.as_raw(),
+            full.as_raw(),
+            "the old algorithm must compound alpha outside the dirty rect"
+        );
+
+        // Stale blur sampling: the old restore leaves the blur's own
+        // output under the spill, so the resample blurs blur.
+        let b = blur((0.0, 0.0, 40.0, 40.0));
+        let mut legacy = full_rebuild(&base, &mut [a.clone(), b.clone()]);
+        legacy_dirty(&base, &mut legacy, &mut [a.clone(), b.clone()], (0.0, 0.0, 14.0, 6.0));
+        let full = full_rebuild(&base, &mut [b.clone()]);
+        assert_ne!(
+            legacy.as_raw(),
+            full.as_raw(),
+            "the old algorithm must sample its own stale blur output"
         );
     }
 }
