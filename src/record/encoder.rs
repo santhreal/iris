@@ -64,8 +64,8 @@ pub struct Encoder {
     child: Option<Child>,
     output: PathBuf,
     frame_bytes: usize,
-    /// Full frames bound for ffmpeg's stdin.
-    tx: Option<SyncSender<Vec<u8>>>,
+    /// Full frames and repeat markers bound for ffmpeg's stdin.
+    tx: Option<SyncSender<FrameMsg>>,
     /// Emptied buffers back from the writer thread.
     recycle: Receiver<Vec<u8>>,
     writer: Option<JoinHandle<Result<(), String>>>,
@@ -77,6 +77,14 @@ pub struct Encoder {
 /// this is ~1/6s of slack; deeper means ffmpeg cannot keep up and the
 /// capture thread should wait rather than grow memory.
 const QUEUE_DEPTH: usize = 10;
+
+/// One unit of writer work: a fresh frame buffer, or an instruction
+/// to resend the buffer the writer already holds (an unchanged frame
+/// costs no grab and no copy upstream).
+enum FrameMsg {
+    Buf(Vec<u8>),
+    Repeat,
+}
 
 impl Encoder {
     pub fn start(cfg: &EncoderConfig) -> Result<Self, String> {
@@ -224,7 +232,7 @@ impl Encoder {
             .stdin
             .take()
             .ok_or_else(|| "ffmpeg stdin not piped".to_string())?;
-        let (tx, rx) = sync_channel::<Vec<u8>>(QUEUE_DEPTH);
+        let (tx, rx) = sync_channel::<FrameMsg>(QUEUE_DEPTH);
         let (rtx, recycle) = std::sync::mpsc::channel::<Vec<u8>>();
         // The buffer must hold a whole frame or the 4MB pipe is never
         // used: an 8KB BufWriter still emits ~1000 writes per 8MB
@@ -236,13 +244,31 @@ impl Encoder {
             .name("iris-enc-writer".into())
             .spawn(move || {
                 let mut stdin = std::io::BufWriter::with_capacity(buf_cap, stdin);
-                for frame in rx.iter() {
-                    if let Err(e) = stdin.write_all(&frame) {
-                        return Err(format!("write frame to ffmpeg: {e}"));
+                // The last written buffer stays here so a Repeat can
+                // resend it: an unchanged frame then costs no grab and
+                // no copy anywhere upstream.
+                let mut last: Option<Vec<u8>> = None;
+                for msg in rx.iter() {
+                    match msg {
+                        FrameMsg::Buf(frame) => {
+                            if let Err(e) = stdin.write_all(&frame) {
+                                return Err(format!("write frame to ffmpeg: {e}"));
+                            }
+                            if let Some(old) = last.replace(frame) {
+                                let mut buf = old;
+                                buf.clear();
+                                let _ = rtx.send(buf);
+                            }
+                        }
+                        FrameMsg::Repeat => {
+                            let Some(frame) = &last else {
+                                continue;
+                            };
+                            if let Err(e) = stdin.write_all(frame) {
+                                return Err(format!("write frame to ffmpeg: {e}"));
+                            }
+                        }
                     }
-                    let mut buf = frame;
-                    buf.clear();
-                    let _ = rtx.send(buf);
                 }
                 stdin
                     .flush()
@@ -291,6 +317,19 @@ impl Encoder {
                 self.frame_bytes
             ));
         }
+        self.send(FrameMsg::Buf(buf))
+    }
+
+    /// Resend the frame the writer last wrote: the source did not
+    /// change, so the grab and the frame copy are both skipped. Same
+    /// drop-on-full backpressure as write_frame.
+    pub fn repeat_frame(&mut self) -> Result<(), String> {
+        self.send(FrameMsg::Repeat)
+    }
+
+    /// Shared send path: writer-liveness check, then try_send with
+    /// drop-on-full backpressure.
+    fn send(&mut self, msg: FrameMsg) -> Result<(), String> {
         // A dead writer means ffmpeg's stdin is gone; surface its error
         // rather than queueing into the void.
         if let Some(w) = &self.writer {
@@ -306,7 +345,7 @@ impl Encoder {
             .tx
             .as_ref()
             .ok_or_else(|| "encoder already finished".to_string())?;
-        match tx.try_send(buf) {
+        match tx.try_send(msg) {
             Ok(()) => Ok(()),
             Err(std::sync::mpsc::TrySendError::Full(_)) => {
                 self.dropped += 1;

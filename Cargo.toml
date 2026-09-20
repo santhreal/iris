@@ -25,7 +25,7 @@ directories = "6"
 image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = "0.25"
 ab_glyph = "0.2"
-x11rb = { version = "0.13", features = ["composite", "randr", "xfixes", "shape", "shm"] }
+x11rb = { version = "0.13", features = ["composite", "damage", "randr", "xfixes", "shape", "shm"] }
 libc = "0.2"
 arboard = "3"
 gpui = "0.2.2"

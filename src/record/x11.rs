@@ -14,8 +14,9 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use x11rb::connection::Connection;
+use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::composite::{ConnectionExt as CompositeExt, Redirect};
+use x11rb::protocol::damage::{self, ConnectionExt as DamageExt, ReportLevel};
 use x11rb::protocol::shape::SK as ShapeKind;
 use x11rb::protocol::xfixes::ConnectionExt as XfixesExt;
 use x11rb::protocol::xproto::{
@@ -774,6 +775,75 @@ fn grab_pixmap(
     copy_frame_bytes(&image.data, need, out)
 }
 
+/// XDamage subscription for the recording source. RAW_RECTANGLES
+/// delivers one Notify per damaged region with its area, so the dirty
+/// flag is exact: set by an event intersecting the record rect,
+/// cleared after the grab. `None` when the extension is absent, which
+/// degrades to grabbing every frame.
+struct DamageWatch {
+    id: damage::Damage,
+    /// Damage outside this rect does not dirty the frame; None means
+    /// the whole drawable counts (window recording).
+    rect: Option<Rect>,
+    dirty: bool,
+}
+
+impl DamageWatch {
+    /// Subscribe to `drawable`. Returns None when the extension or the
+    /// create request fails: the caller then grabs every frame.
+    fn arm(conn: &RustConnection, drawable: x11rb::protocol::xproto::Drawable, rect: Option<Rect>) -> Option<Self> {
+        conn.extension_information(damage::X11_EXTENSION_NAME).ok()??;
+        DamageExt::damage_query_version(conn, 1, 1).ok()?.reply().ok()?;
+        let id = conn.generate_id().ok()?;
+        DamageExt::damage_create(conn, id, drawable, ReportLevel::RAW_RECTANGLES)
+            .ok()?
+            .check()
+            .ok()?;
+        // First frame always grabs.
+        Some(Self { id, rect, dirty: true })
+    }
+
+    /// Fold one DamageNotify into the dirty flag. Called from the
+    /// same drain that tracks ConfigureNotify, so events are consumed
+    /// exactly once.
+    fn note(&mut self, ev: &damage::NotifyEvent) {
+        if ev.damage != self.id {
+            return;
+        }
+        if let Some(r) = self.rect {
+            let a = &ev.area;
+            let (ax, ay) = (i32::from(a.x), i32::from(a.y));
+            let (aw, ah) = (i32::from(a.width), i32::from(a.height));
+            let (rx, ry) = (i32::from(r.x), i32::from(r.y));
+            let (rw, rh) = (i32::from(r.w), i32::from(r.h));
+            let hit = ax < rx + rw && ax + aw > rx && ay < ry + rh && ay + ah > ry;
+            if !hit {
+                return;
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// True when the source changed since the last call. The subtract
+    /// keeps the server-side region from growing without bound; it is
+    /// hygiene, not correctness, since RAW_RECTANGLES events do not
+    /// depend on the accumulated region.
+    fn take_dirty(&mut self, conn: &RustConnection) -> bool {
+        if !self.dirty {
+            return false;
+        }
+        self.dirty = false;
+        let _ = DamageExt::damage_subtract(conn, self.id, x11rb::NONE, x11rb::NONE);
+        let _ = conn.flush();
+        true
+    }
+
+    fn release(&self, conn: &RustConnection) {
+        let _ = DamageExt::damage_destroy(conn, self.id);
+    }
+}
+
+
 fn record_loop(
     conn: &RustConnection,
     screen_num: usize,
@@ -816,7 +886,23 @@ fn record_loop(
         .ok()
         .and_then(|c| c.reply().ok())
         .map(|g| (u32::from(g.width), u32::from(g.height)));
-    let probe = || {
+    // Damage subscription on the window: an idle window repeats the
+    // writer's last buffer instead of paying a grab + frame copy for
+    // identical output.
+    let mut watch = DamageWatch::arm(conn, picked.id, None);
+    struct WatchGuard<'a> {
+        conn: &'a RustConnection,
+        watch: Option<DamageWatch>,
+    }
+    impl Drop for WatchGuard<'_> {
+        fn drop(&mut self) {
+            if let Some(w) = self.watch.take() {
+                w.release(self.conn);
+            }
+        }
+    }
+    let mut watch_guard = WatchGuard { conn, watch: watch.take() };
+    let probe_events = move || {
         loop {
             match conn.poll_for_event() {
                 Ok(Some(Event::ConfigureNotify(ev))) if ev.window == picked.id => {
@@ -825,17 +911,27 @@ fn record_loop(
                 Ok(Some(Event::DestroyNotify(ev))) if ev.window == picked.id => {
                     return None;
                 }
+                Ok(Some(Event::DamageNotify(ev))) => {
+                    if let Some(w) = watch_guard.watch.as_mut() {
+                        w.note(&ev);
+                    }
+                }
                 Ok(Some(_)) => {}
                 Ok(None) => break,
                 Err(_) => return None, // connection died
             }
         }
-        dims
+        let dirty = watch_guard
+            .watch
+            .as_mut()
+            .map(|w| w.take_dirty(conn))
+            .unwrap_or(true);
+        dims.map(|d| (d, dirty))
     };
     let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
         grab_pixmap(conn, &mut guard.shm, &mut guard.named, picked.id, w, h, depth, bpp, rgba)
     };
-    record_loop_inner(spec, pix_fmt, probe, grab)
+    record_loop_inner(spec, pix_fmt, probe_events, grab)
 }
 
 /// Record a fixed screen region until `spec.stop` fires. The overlay
@@ -865,7 +961,41 @@ pub fn record_region(
             }
         }
         let mut guard = ShmGuard { conn: &conn, shm: None };
-        let probe = || Some((rect.w as u32, rect.h as u32));
+        // Damage on the root window, filtered to the record rect: a
+        // quiet region repeats the writer's last buffer.
+        let mut watch = DamageWatch::arm(&conn, root, Some(rect));
+        struct WatchGuard<'a> {
+            conn: &'a RustConnection,
+            watch: Option<DamageWatch>,
+        }
+        impl Drop for WatchGuard<'_> {
+            fn drop(&mut self) {
+                if let Some(w) = self.watch.take() {
+                    w.release(self.conn);
+                }
+            }
+        }
+        let mut watch_guard = WatchGuard { conn: &conn, watch: watch.take() };
+        let probe = || {
+            loop {
+                match conn.poll_for_event() {
+                    Ok(Some(Event::DamageNotify(ev))) => {
+                        if let Some(w) = watch_guard.watch.as_mut() {
+                            w.note(&ev);
+                        }
+                    }
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    Err(_) => return None,
+                }
+            }
+            let dirty = watch_guard
+                .watch
+                .as_mut()
+                .map(|w| w.take_dirty(&conn))
+                .unwrap_or(true);
+            Some(((rect.w as u32, rect.h as u32), dirty))
+        };
         let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
             grab_root_rect(&conn, &mut guard.shm, root, rect, w, h, depth, bpp, rgba)
         };
@@ -942,22 +1072,22 @@ fn grab_root_rect(
 
 /// The shared recording loop: chip controls, the absolute frame
 /// schedule, encoder splits on resize, and the zero-copy frame queue.
-/// `probe` reports the source's current dimensions (None = source
-/// gone, a clean end); `grab` fills `rgba` with one frame. Returns the
-/// path of the LAST segment written: splits rename the output, and the
-/// caller must report the file that actually holds the tail.
+/// `events` drains the source's event state and reports its current
+/// dimensions plus whether its pixels changed since the last call
+/// (None = source gone, a clean end); `grab` fills `rgba` with one
+/// frame. An unchanged source repeats the writer's last buffer: the
+/// grab and the frame copy both skip. Returns the path of the LAST
+/// segment written: splits rename the output, and the caller must
+/// report the file that actually holds the tail.
 fn record_loop_inner(
     spec: &RecordingSpec,
     pix_fmt: super::encoder::PixFmt,
-    mut probe: impl FnMut() -> Option<(u32, u32)>,
+    mut events: impl FnMut() -> Option<((u32, u32), bool)>,
     mut grab: impl FnMut(u32, u32, &mut Vec<u8>) -> Result<(), String>,
 ) -> Result<PathBuf, String> {
-    let Some((mut width, mut height)) = probe() else {
+    let Some(((mut width, mut height), _)) = events() else {
         return Err("recording source gone before first frame".to_string());
     };
-    if width == 0 || height == 0 {
-        return Err("recording source has zero size".to_string());
-    }
     let mut output: PathBuf = spec.output.clone();
     let mut encoder = Encoder::start(&EncoderConfig {
         output: output.clone(),
@@ -1013,7 +1143,9 @@ fn record_loop_inner(
 
         // Chip controls: pause blocks the schedule (the mp4 simply has
         // no frames for the paused span), mic toggle splits the file the
-        // same way a resize does.
+        // same way a resize does. Any split must grab the next frame:
+        // the new writer's `last` is empty, so a Repeat writes nothing.
+        let mut force_grab = false;
         while let Ok(ctl) = spec.control.try_recv() {
             match ctl {
                 super::RecControl::Pause => {
@@ -1028,6 +1160,7 @@ fn record_loop_inner(
                             Ok(super::RecControl::ToggleMic) => {
                                 mic = !mic;
                                 split_encoder!();
+                                force_grab = true;
                             }
                             Ok(super::RecControl::Pause) => {}
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -1042,6 +1175,7 @@ fn record_loop_inner(
                 super::RecControl::ToggleMic => {
                     mic = !mic;
                     split_encoder!();
+                    force_grab = true;
                 }
             }
         }
@@ -1049,7 +1183,7 @@ fn record_loop_inner(
         // Detect resize / close each frame. A vanished source is a clean
         // end of the recording, not an error; so is a zero-size probe
         // (a minimized window reports 0x0 and would kill the encoder).
-        let Some((w, h)) = probe() else {
+        let Some(((w, h), dirty_early)) = events() else {
             encoder.finish()?;
             return Ok(output);
         };
@@ -1057,10 +1191,13 @@ fn record_loop_inner(
             encoder.finish()?;
             return Ok(output);
         }
+        // A resize split must grab the first frame of the new segment:
+        // the writer's `last` belongs to the old encoder's queue.
         if w != width || h != height {
             width = w;
             height = h;
             split_encoder!();
+            force_grab = true;
         }
 
         // Absolute schedule: frame n is due at start + n/fps. On overrun,
@@ -1071,6 +1208,22 @@ fn record_loop_inner(
             thread::sleep(due - now);
         } else if now - due > frame_interval * 2 {
             frame_no = ((now - start).as_secs_f64() * f64::from(spec.fps)) as u64;
+        }
+
+        // Sample the dirty flag after the sleep so damage that landed
+        // while waiting is caught; a source that never changed repeats
+        // the writer's last buffer and skips the grab entirely.
+        let Some((_, dirty_late)) = events() else {
+            encoder.finish()?;
+            return Ok(output);
+        };
+        if !dirty_early && !dirty_late && !force_grab {
+            if let Err(e) = encoder.repeat_frame() {
+                let _ = encoder.finish();
+                return Err(e);
+            }
+            frame_no += 1;
+            continue;
         }
 
         match grab(width, height, &mut rgba) {
