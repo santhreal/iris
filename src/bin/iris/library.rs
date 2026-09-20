@@ -39,6 +39,11 @@ pub struct Library {
     /// live-path set and prunes `thumb_cache`, instead of rebuilding
     /// the set every frame.
     entries_dirty: bool,
+    /// Display names (truncated file names) parallel to `entries`:
+    /// rebuilding the string per card per frame is an allocation a
+    /// frame per card for a value that only changes with the entry.
+    /// SharedString so the per-frame clone is an Arc bump.
+    entry_names: Vec<SharedString>,
     drag_fired: bool,
     help: bool,
     /// First-render clock for the open cascade.
@@ -87,8 +92,10 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             },
             |_, cx| {
                 cx.new(|cx| {
+                    let entries = library::list();
                     let mut this = Library {
-                        entries: library::list(),
+                        entry_names: entries.iter().map(Library::entry_name).collect(),
+                        entries,
                         selected: Vec::new(),
                         anchor: None,
                         hovered: None,
@@ -132,6 +139,22 @@ pub fn open(cx: &mut App) -> Result<(), String> {
 }
 
 impl Library {
+    /// The card's display name: the file name truncated to ~19 chars.
+    /// GPUI's text_ellipsis only fires on wrapped text; nowrap clips,
+    /// so the truncation happens here, once per entry.
+    fn entry_name(e: &CaptureEntry) -> SharedString {
+        let name = e
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.chars().count() > 19 {
+            let cut: String = name.chars().take(18).collect();
+            SharedString::from(format!("{cut}\u{2026}"))
+        } else {
+            SharedString::from(name)
+        }
+    }
     /// Read thumbnails off the main thread and fill the cache in one
     /// delivery: a first paint that blocks on N disk reads stutters.
     fn prefetch_thumbs(&mut self, cx: &mut Context<Self>) {
@@ -201,6 +224,7 @@ impl Library {
                         this.thumb_cache.retain(|p, _| !stale.contains(p.as_path()));
                         this.entries = fresh;
                         this.entries_dirty = true;
+                        this.entry_names = this.entries.iter().map(Self::entry_name).collect();
                         this.selected
                             .retain(|p| this.entries.iter().any(|e| &e.path == p));
                         this.prefetch_thumbs(cx);
@@ -318,6 +342,7 @@ fn open_containing_folder(path: &std::path::Path) {
             let _ = this.update(cx, |this, cx| {
                 this.entries = entries;
                 this.entries_dirty = true;
+                this.entry_names = this.entries.iter().map(Self::entry_name).collect();
                 this.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
                 cx.notify();
             });
@@ -801,6 +826,7 @@ impl Library {
                                 }
                                 this.entries = entries;
                                 this.entries_dirty = true;
+                                this.entry_names = this.entries.iter().map(Self::entry_name).collect();
                                 cx.notify();
                             });
                         })
@@ -914,18 +940,7 @@ impl Library {
                             .whitespace_nowrap()
                             .text_xs()
                             .text_color(theme::FG)
-                            .child({
-                                let name = entry.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                                // GPUI's text_ellipsis only fires on wrapped
-                                // text; nowrap clips, so truncate by hand.
-                                // ~140px beside the dims label at 12px.
-                                if name.chars().count() > 19 {
-                                    let cut: String = name.chars().take(18).collect();
-                                    format!("{cut}\u{2026}")
-                                } else {
-                                    name
-                                }
-                            }),
+                            .child(self.entry_names.get(index).cloned().unwrap_or_default()),
                     )
                     .child(
                         div()
