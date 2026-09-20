@@ -1636,7 +1636,7 @@ impl Render for Editor {
                             .text_color(hex_rgba(action.color))
                             .text_size(px(action.font_size * scale))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(SharedString::from(text.clone())),
+                            .child(SharedString::from(text.as_str())),
                     );
                 }
             } else if action.tool == Tool::Counter {
