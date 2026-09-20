@@ -148,9 +148,41 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
     Ok(entry)
 }
 
+/// Parent-directory mtimes from the last full stat pass. A file
+/// cannot appear, vanish, or be replaced without bumping its
+/// directory's mtime, so an unchanged stamp set means the per-entry
+/// exists() sweep would find nothing: the 1.5s library poll then
+/// costs one stat per parent dir instead of one per capture.
+fn dir_stamps() -> &'static parking_lot::Mutex<Vec<(PathBuf, Option<std::time::SystemTime>)>> {
+    use std::sync::LazyLock;
+    static STAMPS: LazyLock<parking_lot::Mutex<Vec<(PathBuf, Option<std::time::SystemTime>)>>> =
+        LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+    &STAMPS
+}
+
 pub fn list() -> Vec<CaptureEntry> {
     let _write = store_lock().lock();
     let entries = read_store();
+    // Fast path: every entry's parent dir unchanged since the last
+    // sweep means no capture file appeared or vanished.
+    let mut dirs: Vec<PathBuf> = entries
+        .iter()
+        .filter_map(|e| e.path.parent().map(|p| p.to_path_buf()))
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    let stamps: Vec<(PathBuf, Option<std::time::SystemTime>)> = dirs
+        .iter()
+        .map(|d| {
+            (
+                d.clone(),
+                std::fs::metadata(d).and_then(|m| m.modified()).ok(),
+            )
+        })
+        .collect();
+    if !entries.is_empty() && *dir_stamps().lock() == stamps {
+        return entries;
+    }
     // Prune entries whose file vanished (user moved/deleted it). The
     // stat calls run in parallel over a bounded pool: a few hundred
     // sequential exists() checks on a slow or network-mounted shots
@@ -195,6 +227,7 @@ pub fn list() -> Vec<CaptureEntry> {
     if !dead.is_empty() {
         let _ = write_store(&alive);
     }
+    *dir_stamps().lock() = stamps;
     alive
 }
 

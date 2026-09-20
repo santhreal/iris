@@ -342,12 +342,8 @@ impl Render for Settings {
         ));
 
         // Toast section
-        let toast_click_options = vec![
-            "Markup".to_string(),
-            "Copy".to_string(),
-            "Open folder".to_string(),
-            "Nothing".to_string(),
-        ];
+        const TOAST_CLICK_OPTIONS: &[&str] = &["Markup", "Copy", "Open folder", "Nothing"];
+        let toast_click_options = TOAST_CLICK_OPTIONS;
         let toast_click_current = match self.cfg.toast_click_action {
             ToastClickAction::Markup => "Markup".to_string(),
             ToastClickAction::Copy => "Copy".to_string(),
@@ -361,13 +357,8 @@ impl Render for Settings {
             ToastClickAction::None => Some(3),
         };
 
-        let toast_duration_options = vec![
-            "2s".to_string(),
-            "3s".to_string(),
-            "5s".to_string(),
-            "8s".to_string(),
-            "10s".to_string(),
-        ];
+        const TOAST_DURATION_OPTIONS: &[&str] = &["2s", "3s", "5s", "8s", "10s"];
+        let toast_duration_options = TOAST_DURATION_OPTIONS;
         let toast_duration_current = match self.cfg.toast_duration_ms {
             2000 => "2s".to_string(),
             3000 => "3s".to_string(),
@@ -386,12 +377,9 @@ impl Render for Settings {
             _ => None,
         };
 
-        let toast_pos_options = vec![
-            "Bottom right".to_string(),
-            "Bottom left".to_string(),
-            "Top right".to_string(),
-            "Top left".to_string(),
-        ];
+        const TOAST_POS_OPTIONS: &[&str] =
+            &["Bottom right", "Bottom left", "Top right", "Top left"];
+        let toast_pos_options = TOAST_POS_OPTIONS;
         let toast_pos_current = match self.cfg.toast_position {
             ToastPosition::BottomRight => "Bottom right".to_string(),
             ToastPosition::BottomLeft => "Bottom left".to_string(),
@@ -490,11 +478,8 @@ impl Render for Settings {
         ));
 
         // Recording section
-        let rec_fmt_options = vec![
-            "MP4 (H.264)".to_string(),
-            "GIF".to_string(),
-            "WebM (VP9)".to_string(),
-        ];
+        const REC_FMT_OPTIONS: &[&str] = &["MP4 (H.264)", "GIF", "WebM (VP9)"];
+        let rec_fmt_options = REC_FMT_OPTIONS;
         let rec_fmt_current = match self.cfg.recording_format {
             iris_lib::config::RecordingFormat::Mp4 => "MP4 (H.264)".to_string(),
             iris_lib::config::RecordingFormat::Gif => "GIF".to_string(),
@@ -505,11 +490,8 @@ impl Render for Settings {
             iris_lib::config::RecordingFormat::Gif => Some(1),
             iris_lib::config::RecordingFormat::Webm => Some(2),
         };
-        let rec_enc_options = vec![
-            "Auto".to_string(),
-            "Software (x264)".to_string(),
-            "NVIDIA (NVENC)".to_string(),
-        ];
+        const REC_ENC_OPTIONS: &[&str] = &["Auto", "Software (x264)", "NVIDIA (NVENC)"];
+        let rec_enc_options = REC_ENC_OPTIONS;
         let rec_enc_current = match self.cfg.recording_encoder {
             iris_lib::config::RecordingEncoder::Auto => "Auto".to_string(),
             iris_lib::config::RecordingEncoder::Libx264 => "Software (x264)".to_string(),
@@ -721,7 +703,7 @@ impl Settings {
         label: &'static str,
         field: DropdownField,
         current: String,
-        options: Vec<String>,
+        options: &'static [&'static str],
         selected: Option<usize>,
         cx: &mut Context<Self>,
         on_select: F,
@@ -751,7 +733,7 @@ impl Settings {
                 .top(px(32.))
                 .right_0()
                 .w(px(FIELD_W));
-            for (i, opt) in options.into_iter().enumerate() {
+            for (i, opt) in options.iter().enumerate() {
                 let mark = if selected == Some(i) { "✓ " } else { "   " };
                 let on_select = on_select.clone();
                 let row = crate::widgets::menu_row_owned(
