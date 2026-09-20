@@ -384,10 +384,11 @@ fn static_border_thread(
     place_strips(&conn, &strips, rect);
     chip.place(rect);
     loop {
-        if stop.try_recv().is_ok() {
+        // recv_timeout wakes the instant stop fires; a bare sleep
+        // would leave the strips up for up to 200ms past it.
+        if stop.recv_timeout(Duration::from_millis(200)).is_ok() {
             break;
         }
-        thread::sleep(Duration::from_millis(200));
     }
     destroy_strips(&conn, &strips);
 }
