@@ -565,6 +565,7 @@ impl GlContext {
                     crate::par::par_bands_mut(scratch.as_mut_slice(), 4096, |dst, start| {
                         dst.copy_from_slice(&src[start..start + dst.len()]);
                     });
+                    (unmap_buffer)(GL_PIXEL_PACK_BUFFER);
                 }
                 (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
                 self.pbo_pending = Some(cur);

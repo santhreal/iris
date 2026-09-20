@@ -605,8 +605,7 @@ struct ShmGrab {
 impl ShmGrab {
     fn new(conn: &RustConnection, width: u32, height: u32, bpp: usize) -> Option<Self> {
         use x11rb::protocol::shm::ConnectionExt as ShmExt;
-        let version = ShmExt::shm_query_version(conn).ok()?.reply().ok()?;
-        if version.major_version < 1 {
+        if !crate::capture::x11::shm_supported() {
             return None;
         }
         let size = width as usize * height as usize * bpp;

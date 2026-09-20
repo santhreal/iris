@@ -399,7 +399,7 @@ fn capture_shm() -> &'static parking_lot::Mutex<Option<CaptureShm>> {
 
 /// Whether the server speaks MIT-SHM at all, queried once per process:
 /// the version cannot change over a connection's life.
-fn shm_supported() -> bool {
+pub(crate) fn shm_supported() -> bool {
     use x11rb::protocol::shm::ConnectionExt as ShmExt;
     static VERDICT: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
         shared_conn()
