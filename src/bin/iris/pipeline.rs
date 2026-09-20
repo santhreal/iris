@@ -169,6 +169,55 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
     Ok(out)
 }
 
+/// Crop an already-RGBA frame: same banded parallel copy as
+/// `crop_bgra` without the channel swizzle. The active-window path
+/// captures RGBA directly, so a swizzling crop would swap R and B.
+pub fn crop_rgba(rgba: &[u8], width: u32, height: u32, region: Region) -> Result<image::RgbaImage, String> {
+    if region.width == 0 || region.height == 0 {
+        return Err("empty capture region".to_string());
+    }
+    if region.x + region.width > width || region.y + region.height > height {
+        return Err(format!(
+            "region {}x{}+{}+{} outside frame {}x{}",
+            region.width, region.height, region.x, region.y, width, height
+        ));
+    }
+    let mut out = image::RgbaImage::new(region.width, region.height);
+    let raw: &mut [u8] = &mut *out.as_mut();
+    let row_len = region.width as usize * 4;
+    let crop_rows = |dst: &mut [u8], row0: u32, rows: u32| {
+        for r in 0..rows {
+            let src = ((region.y + row0 + r) * width + region.x) as usize * 4;
+            dst[r as usize * row_len..(r as usize + 1) * row_len]
+                .copy_from_slice(&rgba[src..src + row_len]);
+        }
+    };
+    const PARALLEL_MIN: usize = 1 << 20;
+    if region.width as usize * region.height as usize * 4 < PARALLEL_MIN {
+        crop_rows(raw, 0, region.height);
+    } else {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get().min(8))
+            .unwrap_or(4)
+            .min(region.height as usize)
+            .max(1);
+        let band = (region.height as usize).div_ceil(threads);
+        std::thread::scope(|scope| {
+            let mut rest: &mut [u8] = raw;
+            let mut row0 = 0u32;
+            while !rest.is_empty() {
+                let rows = (band as u32).min(region.height - row0);
+                let (head, tail) = rest.split_at_mut(rows as usize * row_len);
+                rest = tail;
+                let r0 = row0;
+                row0 += rows;
+                scope.spawn(move || crop_rows(head, r0, rows));
+            }
+        });
+    }
+    Ok(out)
+}
+
 /// Save an RGBA image to the screenshots dir, put it on the clipboard and
 /// register it in the library. The capture is durable and paste-able
 /// before any surface shows it.
