@@ -53,68 +53,110 @@ pub fn icon(kind: Icon, color: Rgba, size: f32) -> impl IntoElement {
     .h(px(size))
 }
 
-/// Tessellated icon geometry, keyed on (kind, origin, size): a paint
-/// during a hover spring rebuilds the identical vertex list every
-/// frame otherwise. Paths are cloned out of the cache; the color is
-/// supplied at paint time and is not part of the key.
+/// Tessellated icon triangles recorded at origin (0,0), keyed on
+/// (kind, size): geometry no longer depends on the paint origin, so a
+/// window drag reuses one entry per icon instead of minting one per
+/// pixel moved. Triangles are re-stamped at each paint's offset; the
+/// color is supplied at paint time and is not part of the key.
 /// The one icon-geometry map: two separate statics here meant stores
 /// went into a map reads never consulted, so every paint re-tessellated
-/// and the "cache" was a bounded leak.
+/// and the "cache" was a bounded leak. Eviction is FIFO, not flush-all.
 fn icon_cache() -> &'static parking_lot::Mutex<IconCache> {
     static CACHE: std::sync::LazyLock<parking_lot::Mutex<IconCache>> =
         std::sync::LazyLock::new(|| parking_lot::Mutex::new(IconCache::default()));
     &CACHE
 }
 
-/// The one icon-geometry map plus its eviction order: two separate
-/// statics here once meant stores went into a map reads never
-/// consulted, so every paint re-tessellated and the "cache" was a
-/// bounded leak. Eviction is FIFO, not flush-all: a window drag
-/// mints one entry per pixel moved, and clearing the whole map then
-/// re-tessellates every icon on screen the next frame.
 #[derive(Default)]
 struct IconCache {
-    map: std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>,
-    order: std::collections::VecDeque<(u8, u32, u32, u32)>,
+    map: std::collections::HashMap<(u8, u32), std::sync::Arc<Vec<[f32; 6]>>>,
+    order: std::collections::VecDeque<(u8, u32)>,
 }
 
-fn cached_path(
-    kind: Icon,
-    ox: f32,
-    oy: f32,
-    size: f32,
-) -> Option<Path<Pixels>> {
-    let key = (kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits());
-    icon_cache().lock().map.get(&key).cloned()
+fn cached_tris(kind: Icon, s: f32) -> Option<std::sync::Arc<Vec<[f32; 6]>>> {
+    icon_cache().lock().map.get(&(kind as u8, s.to_bits())).cloned()
 }
 
-fn store_path(kind: Icon, ox: f32, oy: f32, size: f32, path: &Path<Pixels>) {
+fn store_tris(kind: Icon, s: f32, tris: Vec<[f32; 6]>) -> std::sync::Arc<Vec<[f32; 6]>> {
     let mut cache = icon_cache().lock();
-    let key = (kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits());
+    let key = (kind as u8, s.to_bits());
+    let tris = std::sync::Arc::new(tris);
     if !cache.map.contains_key(&key) {
         cache.order.push_back(key);
     }
-    cache.map.insert(key, path.clone());
-    while cache.map.len() > 512 {
+    cache.map.insert(key, tris.clone());
+    while cache.map.len() > 256 {
         if let Some(old) = cache.order.pop_front() {
             cache.map.remove(&old);
         } else {
             break;
         }
     }
+    tris
+}
+
+/// Anything that accepts filled triangles: a `Path` being built for
+/// paint, or a recorder caching icon geometry for re-stamping.
+pub(crate) trait TriSink {
+    fn tri(&mut self, a: Point<Pixels>, b: Point<Pixels>, c: Point<Pixels>);
+}
+
+impl TriSink for Path<Pixels> {
+    fn tri(&mut self, a: Point<Pixels>, b: Point<Pixels>, c: Point<Pixels>) {
+        self.push_triangle((a, b, c), (point(0., 1.), point(0., 1.), point(0., 1.)));
+    }
+}
+
+impl<T: TriSink + ?Sized> TriSink for &mut T {
+    fn tri(&mut self, a: Point<Pixels>, b: Point<Pixels>, c: Point<Pixels>) {
+        (**self).tri(a, b, c);
+    }
+}
+
+/// Records triangles as flat xy pairs: icon geometry is tessellated
+/// once at origin (0,0), then re-stamped at each paint's offset.
+struct TriRecorder(Vec<[f32; 6]>);
+
+impl TriSink for TriRecorder {
+    fn tri(&mut self, a: Point<Pixels>, b: Point<Pixels>, c: Point<Pixels>) {
+        self.0.push([
+            a.x.into(), a.y.into(),
+            b.x.into(), b.y.into(),
+            c.x.into(), c.y.into(),
+        ]);
+    }
 }
 
 fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Window) {
     let (ox, oy): (f32, f32) = (bounds.origin.x.into(), bounds.origin.y.into());
     let s: f32 = f32::from(bounds.size.width) / 18.0;
-    if let Some(path) = cached_path(kind, ox, oy, s) {
-        window.paint_path(path, color);
-        return;
+    let tris = match cached_tris(kind, s) {
+        Some(tris) => tris,
+        None => {
+            let mut rec = TriRecorder(Vec::new());
+            icon_geometry(kind, &mut rec, s);
+            store_tris(kind, s, rec.0)
+        }
+    };
+    // Re-stamp the cached triangles at this paint's origin.
+    let mut path = Path::new(point(px(ox), px(oy)));
+    for t in tris.iter() {
+        path.push_triangle(
+            (
+                point(px(t[0] + ox), px(t[1] + oy)),
+                point(px(t[2] + ox), px(t[3] + oy)),
+                point(px(t[4] + ox), px(t[5] + oy)),
+            ),
+            (point(0., 1.), point(0., 1.), point(0., 1.)),
+        );
     }
-    let p = move |x: f32, y: f32| point(px(ox + x * s), px(oy + y * s));
-    let w = 1.6 * s;
+    window.paint_path(path, color);
+}
 
-    let mut path = Path::new(p(0.0, 0.0));
+/// Tessellate `kind` into `path` at origin (0,0), `s` px per unit.
+fn icon_geometry(kind: Icon, mut path: &mut impl TriSink, s: f32) {
+    let p = move |x: f32, y: f32| point(px(x * s), px(y * s));
+    let w = 1.6 * s;
     match kind {
         Icon::Pen => {
             // Barrel from upper right toward the nib, then the nib tip.
@@ -343,13 +385,11 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
             push_filled_triangle(&mut path, p(6.0, 4.0), p(6.0, 14.0), p(14.5, 9.0));
         }
     }
-    store_path(kind, ox, oy, s, &path);
-    window.paint_path(path, color);
 }
 
 /// Curved arrow arc with the head at its start; mirrored for redo.
 fn paint_undo(
-    path: &mut Path<Pixels>,
+    path: &mut impl TriSink,
     p: impl Fn(f32, f32) -> Point<Pixels>,
     s: f32,
     w: f32,
@@ -385,7 +425,7 @@ fn paint_undo(
 }
 
 /// A thick segment as a filled rectangle plus round caps.
-pub(crate) fn push_segment(path: &mut Path<Pixels>, a: Point<Pixels>, b: Point<Pixels>, w: f32) {
+pub(crate) fn push_segment(path: &mut impl TriSink, a: Point<Pixels>, b: Point<Pixels>, w: f32) {
     let (ax, ay): (f32, f32) = (a.x.into(), a.y.into());
     let (bx, by): (f32, f32) = (b.x.into(), b.y.into());
     let len = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
@@ -405,7 +445,7 @@ pub(crate) fn push_segment(path: &mut Path<Pixels>, a: Point<Pixels>, b: Point<P
     push_disc(path, b, w / 2.0);
 }
 
-pub(crate) fn push_disc(path: &mut Path<Pixels>, c: Point<Pixels>, r: f32) {
+pub(crate) fn push_disc(path: &mut impl TriSink, c: Point<Pixels>, r: f32) {
     let (cx, cy): (f32, f32) = (c.x.into(), c.y.into());
     let n = 20;
     for i in 0..n {
@@ -421,7 +461,7 @@ pub(crate) fn push_disc(path: &mut Path<Pixels>, c: Point<Pixels>, r: f32) {
 }
 
 /// An elliptical ring outline, `w` thick.
-pub(crate) fn push_ring(path: &mut Path<Pixels>, c: Point<Pixels>, rx: f32, ry: f32, w: f32) {
+pub(crate) fn push_ring(path: &mut impl TriSink, c: Point<Pixels>, rx: f32, ry: f32, w: f32) {
     let (cx, cy): (f32, f32) = (c.x.into(), c.y.into());
     let n = ((rx + ry) * 0.35).max(32.0) as usize;
     for i in 0..n {
@@ -438,7 +478,7 @@ pub(crate) fn push_ring(path: &mut Path<Pixels>, c: Point<Pixels>, rx: f32, ry: 
 }
 
 /// A filled ellipse (interior, no ring).
-pub(crate) fn push_ellipse_fill(path: &mut Path<Pixels>, c: Point<Pixels>, rx: f32, ry: f32) {
+pub(crate) fn push_ellipse_fill(path: &mut impl TriSink, c: Point<Pixels>, rx: f32, ry: f32) {
     let (cx, cy): (f32, f32) = (c.x.into(), c.y.into());
     let n = ((rx + ry) * 0.35).max(32.0) as usize;
     for i in 0..n {
@@ -454,12 +494,12 @@ pub(crate) fn push_ellipse_fill(path: &mut Path<Pixels>, c: Point<Pixels>, rx: f
 }
 
 /// A filled axis-aligned rectangle.
-pub(crate) fn push_rect_fill(path: &mut Path<Pixels>, a: Point<Pixels>, b: Point<Pixels>) {
+pub(crate) fn push_rect_fill(path: &mut impl TriSink, a: Point<Pixels>, b: Point<Pixels>) {
     push_quad(path, a, point(b.x, a.y), b, point(a.x, b.y));
 }
 
 pub(crate) fn push_quad(
-    path: &mut Path<Pixels>,
+    path: &mut impl TriSink,
     a: Point<Pixels>,
     b: Point<Pixels>,
     c: Point<Pixels>,
@@ -470,13 +510,10 @@ pub(crate) fn push_quad(
 }
 
 pub(crate) fn push_filled_triangle(
-    path: &mut Path<Pixels>,
+    path: &mut impl TriSink,
     a: Point<Pixels>,
     b: Point<Pixels>,
     c: Point<Pixels>,
 ) {
-    path.push_triangle(
-        (a, b, c),
-        (point(0., 1.), point(0., 1.), point(0., 1.)),
-    );
+    path.tri(a, b, c);
 }
