@@ -60,13 +60,22 @@ pub fn icon(kind: Icon, color: Rgba, size: f32) -> impl IntoElement {
 /// The one icon-geometry map: two separate statics here meant stores
 /// went into a map reads never consulted, so every paint re-tessellated
 /// and the "cache" was a bounded leak.
-fn icon_cache() -> &'static parking_lot::Mutex<
-    std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>,
-> {
-    static CACHE: std::sync::LazyLock<
-        parking_lot::Mutex<std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>>,
-    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+fn icon_cache() -> &'static parking_lot::Mutex<IconCache> {
+    static CACHE: std::sync::LazyLock<parking_lot::Mutex<IconCache>> =
+        std::sync::LazyLock::new(|| parking_lot::Mutex::new(IconCache::default()));
     &CACHE
+}
+
+/// The one icon-geometry map plus its eviction order: two separate
+/// statics here once meant stores went into a map reads never
+/// consulted, so every paint re-tessellated and the "cache" was a
+/// bounded leak. Eviction is FIFO, not flush-all: a window drag
+/// mints one entry per pixel moved, and clearing the whole map then
+/// re-tessellates every icon on screen the next frame.
+#[derive(Default)]
+struct IconCache {
+    map: std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>,
+    order: std::collections::VecDeque<(u8, u32, u32, u32)>,
 }
 
 fn cached_path(
@@ -76,17 +85,23 @@ fn cached_path(
     size: f32,
 ) -> Option<Path<Pixels>> {
     let key = (kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits());
-    icon_cache().lock().get(&key).cloned()
+    icon_cache().lock().map.get(&key).cloned()
 }
 
 fn store_path(kind: Icon, ox: f32, oy: f32, size: f32, path: &Path<Pixels>) {
     let mut cache = icon_cache().lock();
-    // Bound the map: origins vary with window position, so an
-    // unbounded cache grows one entry per pixel moved.
-    if cache.len() > 512 {
-        cache.clear();
+    let key = (kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits());
+    if !cache.map.contains_key(&key) {
+        cache.order.push_back(key);
     }
-    cache.insert((kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits()), path.clone());
+    cache.map.insert(key, path.clone());
+    while cache.map.len() > 512 {
+        if let Some(old) = cache.order.pop_front() {
+            cache.map.remove(&old);
+        } else {
+            break;
+        }
+    }
 }
 
 fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Window) {
