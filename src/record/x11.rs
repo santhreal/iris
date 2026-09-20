@@ -309,8 +309,12 @@ impl Drop for RecordingMark {
 /// the strip windows; the caller destroys them.
 fn make_strips(conn: &RustConnection, root: Window) -> Option<[Window; 4]> {
     let mut strips = [0u32; 4];
+    let mut made = 0usize;
     for strip in &mut strips {
-        let win = conn.generate_id().ok()?;
+        let Some(win) = conn.generate_id().ok() else {
+            destroy_strips(conn, &strips[..made]);
+            return None;
+        };
         let aux = CreateWindowAux::new()
             .background_pixel(BORDER_COLOR)
             .override_redirect(1);
@@ -330,6 +334,9 @@ fn make_strips(conn: &RustConnection, root: Window) -> Option<[Window; 4]> {
             )
             .is_err()
         {
+            // A failed create leaves the earlier strips mapped:
+            // destroy them rather than leaking four border windows.
+            destroy_strips(conn, &strips[..made]);
             return None;
         }
         // Empty input region: clicks pass through to whatever is beneath.
@@ -339,6 +346,7 @@ fn make_strips(conn: &RustConnection, root: Window) -> Option<[Window; 4]> {
         let _ = conn.map_window(win);
         let _ = conn.configure_window(win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
         *strip = win;
+        made += 1;
     }
     let _ = conn.flush();
     Some(strips)
