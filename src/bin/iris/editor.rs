@@ -431,10 +431,25 @@ fn text_size(w: u32) -> f32 {
     (w as f32 * 0.026).round().max(20.0)
 }
 
+use image::ImageEncoder as _;
+
 fn png_bytes(img: &image::RgbaImage) -> Result<Vec<u8>, String> {
+    // Fast deflate, same as the capture path: Balanced is ~3x slower
+    // on a 4K frame and a screenshot's redundancy compresses well
+    // either way.
     let mut out = std::io::Cursor::new(Vec::new());
-    img.write_to(&mut out, image::ImageFormat::Png)
-        .map_err(|e| format!("encode png: {e}"))?;
+    image::codecs::png::PngEncoder::new_with_quality(
+        &mut out,
+        image::codecs::png::CompressionType::Fast,
+        image::codecs::png::FilterType::Adaptive,
+    )
+    .write_image(
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::Rgba8,
+    )
+    .map_err(|e| format!("encode png: {e}"))?;
     Ok(out.into_inner())
 }
 
