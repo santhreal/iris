@@ -22,7 +22,7 @@ pub fn par_bands_mut<T: Send>(
     f: impl Fn(&mut [T], usize) + Sync + Send,
 ) {
     let band_elems = band_elems.max(1);
-    let total_bytes = data.len() * std::mem::size_of::<T>();
+    let total_bytes = std::mem::size_of_val(data);
     const PARALLEL_MIN: usize = 1 << 20;
     if total_bytes < PARALLEL_MIN || data.len() <= band_elems {
         let start = 0;
@@ -59,7 +59,7 @@ pub fn par_bands<T: Sync>(
     f: impl Fn(&[T], usize) + Sync + Send,
 ) {
     let band_elems = band_elems.max(1);
-    let total_bytes = data.len() * std::mem::size_of::<T>();
+    let total_bytes = std::mem::size_of_val(data);
     const PARALLEL_MIN: usize = 1 << 20;
     if total_bytes < PARALLEL_MIN || data.len() <= band_elems {
         f(data, 0);
