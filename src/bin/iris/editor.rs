@@ -1406,39 +1406,33 @@ fn blend_row(dst: &mut image::RgbaImage, y: i64, x0: i64, x1: i64, src: image::R
 }
 
 
-fn stamp(img: &mut image::RgbaImage, cx: f32, cy: f32, r: f32, px: image::Rgba<u8>) {
-    let r = r.max(0.5);
+/// Per-row chord spans of a disc: each row's covered interval is one
+/// sqrt, instead of testing dx*dx+dy*dy per pixel. `f` receives
+/// (y, x_lo, x_hi) unclamped; the sink clamps to its target.
+fn disc_spans(cx: f32, cy: f32, r: f32, mut f: impl FnMut(i64, f32, f32)) {
     let (y0, y1) = ((cy - r).floor() as i64, (cy + r).ceil() as i64);
-    // Each row's disc chord is contiguous: solve the half-width once
-    // per row and fill the span, instead of testing dx*dx+dy*dy per
-    // pixel.
     for y in y0..=y1 {
         let dy = y as f32 - cy;
         let half = (r * r - dy * dy).max(0.0).sqrt();
-        let x0 = (cx - half).floor() as i64;
-        let x1 = (cx + half).ceil() as i64;
-        blend_row(img, y, x0, x1, px);
+        f(y, cx - half, cx + half);
     }
 }
 
-/// Fill the capsule (stadium) around segment a-b with radius w/2.
-/// The old per-point disc stamps covered the same region but blended
-/// each pixel ~3x along every straight run: opaque strokes were
-/// idempotent, but a semi-transparent highlight compounded to ~0.73
-/// alpha where the canvas shows a uniform 0.35. One blend per pixel
-/// is both faster and matches the GPU path.
-fn stamp_segment(
-    img: &mut image::RgbaImage,
-    a: (f32, f32),
-    b: (f32, f32),
-    w: f32,
-    px: image::Rgba<u8>,
-) {
-    let r = (w / 2.0).max(0.5);
+fn stamp(img: &mut image::RgbaImage, cx: f32, cy: f32, r: f32, px: image::Rgba<u8>) {
+    let r = r.max(0.5);
+    disc_spans(cx, cy, r, |y, x0, x1| {
+        blend_row(img, y, x0.floor() as i64, x1.ceil() as i64, px);
+    });
+}
+
+/// Per-row chord spans of the capsule (stadium) around segment a-b
+/// with radius r: the body's offset edges are a±r·n to b±r·n, plus a
+/// disc chord at each end cap. `f` receives (y, x_lo, x_hi) unclamped.
+fn segment_spans(a: (f32, f32), b: (f32, f32), r: f32, mut f: impl FnMut(i64, f32, f32)) {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let len = dx.hypot(dy);
     if len < f32::EPSILON {
-        stamp(img, a.0, a.1, r, px);
+        disc_spans(a.0, a.1, r, f);
         return;
     }
     // Unit normal: the body's offset edges are a±r·n to b±r·n.
@@ -1488,15 +1482,112 @@ fn stamp_segment(
             }
         }
         if lo <= hi {
-            blend_row(img, y, lo.floor() as i64, hi.ceil() as i64, px);
+            f(y, lo, hi);
         }
     }
 }
+
+/// Fill the capsule (stadium) around segment a-b with radius w/2.
+/// The old per-point disc stamps covered the same region but blended
+/// each pixel ~3x along every straight run: opaque strokes were
+/// idempotent, but a semi-transparent highlight compounded to ~0.73
+/// alpha where the canvas shows a uniform 0.35. One blend per pixel
+/// is both faster and matches the GPU path.
+fn stamp_segment(
+    img: &mut image::RgbaImage,
+    a: (f32, f32),
+    b: (f32, f32),
+    w: f32,
+    px: image::Rgba<u8>,
+) {
+    let r = (w / 2.0).max(0.5);
+    segment_spans(a, b, r, |y, lo, hi| {
+        blend_row(img, y, lo.floor() as i64, hi.ceil() as i64, px);
+    });
+}
+
+/// Mark the capsule's coverage into a byte mask (bw-wide, origin at
+/// (ox, oy)): translucent strokes stamp every segment's coverage
+/// first, then blend each covered pixel exactly once.
+fn cover_segment(
+    mask: &mut [u8],
+    bw: usize,
+    ox: i64,
+    oy: i64,
+    a: (f32, f32),
+    b: (f32, f32),
+    r: f32,
+) {
+    let bh = mask.len() / bw.max(1);
+    segment_spans(a, b, r, |y, lo, hi| {
+        let my = y - oy;
+        if my < 0 || my >= bh as i64 {
+            return;
+        }
+        let s = (lo.floor() as i64 - ox).clamp(0, bw as i64) as usize;
+        let e = (hi.ceil() as i64 - ox + 1).clamp(0, bw as i64) as usize;
+        mask[my as usize * bw + s..my as usize * bw + e].fill(1);
+    });
+}
+
 
 
 fn stroke_polyline(img: &mut image::RgbaImage, points: &[(f32, f32)], w: f32, px: image::Rgba<u8>) {
     if points.len() == 1 {
         stamp(img, points[0].0, points[0].1, w / 2.0, px);
+        return;
+    }
+    if px.0[3] < 255 {
+        // Translucent stroke (highlight): adjacent capsules overlap
+        // at every joint, and two blends compound both the alpha and
+        // the RGB toward the stroke color — a corner reads as a
+        // darker dot in the saved PNG while the canvas tessellates
+        // the polyline once and shows a uniform wash. Stamp each
+        // segment's coverage into a mask over the stroke's bbox,
+        // then blend every covered pixel exactly once.
+        let r = (w / 2.0).max(0.5);
+        let (mut x0, mut y0, mut x1, mut y1) =
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for &(x, y) in points {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        let ih = img.height() as i64;
+        let ox = (x0 - r).floor() as i64;
+        let oy = (y0 - r).floor() as i64;
+        let bx = (x1 + r).ceil() as i64;
+        let by = (y1 + r).ceil() as i64;
+        let (bw, bh) = ((bx - ox).max(0) as usize, (by - oy).max(0) as usize);
+        if bw == 0 || bh == 0 {
+            return;
+        }
+        let mut mask = vec![0u8; bw * bh];
+        for seg in points.windows(2) {
+            cover_segment(&mut mask, bw, ox, oy, seg[0], seg[1], r);
+        }
+        for my in 0..bh as i64 {
+            let y = oy + my;
+            if y < 0 || y >= ih {
+                continue;
+            }
+            let row = &mask[my as usize * bw..my as usize * bw + bw];
+            let mut run: Option<usize> = None;
+            for (i, &m) in row.iter().enumerate() {
+                match (m != 0, run) {
+                    (true, None) => run = Some(i),
+                    (false, Some(s)) => {
+                        blend_row(img, y, ox + s as i64, ox + i as i64 - 1, px);
+                        run = None;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(s) = run {
+                blend_row(img, y, ox + s as i64, ox + bw as i64 - 1, px);
+            }
+        }
         return;
     }
     for seg in points.windows(2) {
@@ -2732,6 +2823,35 @@ mod tests {
         rasterize(&mut img, &action(Tool::Ellipse, vec![(5.0, 5.0), (25.0, 25.0)], true), 1.0);
         assert!(painted(&img, 15, 15), "center must be painted");
         assert!(!painted(&img, 5, 5), "bounding corner must stay clear");
+    }
+
+    #[test]
+    fn highlight_joint_blends_once() {
+        // WHY: a translucent polyline must blend every covered pixel
+        // exactly once. Adjacent capsules overlap at joints; two
+        // blends compound alpha 0.35->~0.58 and the RGB toward the
+        // stroke color, so a corner read as a darker dot in the saved
+        // PNG while the canvas showed a uniform wash. The mask path
+        // stamps coverage first, then blends once.
+        let mut img = image::RgbaImage::new(40, 40);
+        // L-shaped highlight: the joint at (10,10) is covered by both
+        // segments, the arm at (5,10) by only the horizontal one.
+        rasterize(
+            &mut img,
+            &action(
+                Tool::Highlight,
+                vec![(2.0, 10.0), (10.0, 10.0), (10.0, 30.0)],
+                false,
+            ),
+            1.0,
+        );
+        let joint = img.get_pixel(10, 10).0;
+        let arm = img.get_pixel(5, 10).0;
+        // Single blend: rgb = 255*0.35 = 89, alpha = 89. A double
+        // blend compounds to rgb ~147, alpha ~147: the joint must
+        // match the arm, not exceed it.
+        assert_eq!(joint, arm, "joint must blend exactly once: {joint:?} vs {arm:?}");
+        assert!(joint[0] < 110, "joint rgb {} shows compounding", joint[0]);
     }
 }
 
