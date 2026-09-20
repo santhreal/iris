@@ -25,6 +25,10 @@ pub struct Library {
     /// instead of cloning the path strings per card per frame.
     entries: Vec<Rc<CaptureEntry>>,
     selected: Vec<PathBuf>,
+    /// Membership set for `selected`, rebuilt on the render after a
+    /// mutation instead of hashed fresh every frame.
+    sel_set: std::collections::HashSet<PathBuf>,
+    sel_dirty: bool,
     anchor: Option<usize>,
     hovered: Option<usize>,
     /// Pointer-coupled springs per card: hover lift and selection
@@ -103,6 +107,8 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         entry_names: Vec::new(),
                         entries: Vec::new(),
                         selected: Vec::new(),
+                        sel_set: std::collections::HashSet::new(),
+                        sel_dirty: false,
                         anchor: None,
                         hovered: None,
                         springs: std::collections::HashMap::new(),
@@ -270,6 +276,7 @@ impl Library {
         } else {
             self.selected.push(path);
         }
+        self.sel_dirty = true;
     }
 
     fn click_card(
@@ -299,6 +306,7 @@ impl Library {
                         self.selected.push(entry.path.clone());
                     }
                 }
+                self.sel_dirty = true;
                 cx.notify();
             }
         } else if let Err(e) = editor::open(cx, &entry.path, Some(Self::card_morph_rect(ev, window)), None) {
@@ -356,6 +364,7 @@ fn open_containing_folder(path: &std::path::Path) {
 
     fn delete_selection(&mut self, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = std::mem::take(&mut self.selected);
+        self.sel_dirty = true;
         // delete_many + the follow-up list() stat every file; keep the
         // disk work off the UI thread.
         let task = cx.background_executor().spawn(async move {
@@ -384,6 +393,7 @@ fn open_containing_folder(path: &std::path::Path) {
         if dx * dx + dy * dy < 16.0 {
             if !self.selected.is_empty() {
                 self.selected.clear();
+                self.sel_dirty = true;
                 cx.notify();
             }
             return;
@@ -397,6 +407,7 @@ fn open_containing_folder(path: &std::path::Path) {
         let cols = ((width - GAP) / (CARD_W + GAP)).floor().max(1.0) as usize;
         let card_h = THUMB_H + 8.0 + 18.0;
         self.selected.clear();
+        self.sel_dirty = true;
         for (i, e) in self.entries.iter().enumerate() {
             let (r, c) = (i / cols, i % cols);
             let cx0 = GAP + c as f32 * (CARD_W + GAP);
@@ -448,6 +459,7 @@ impl Render for Library {
                 crate::widgets::button("sel-clear", "Clear", false)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.selected.clear();
+                        this.sel_dirty = true;
                         cx.notify();
                     }))
                     .into_any_element(),
@@ -574,13 +586,16 @@ impl Render for Library {
                 live = true;
             }
         }
-        self.sel_springs.retain(|i, _| *i < n);
         // Membership is checked per entry below and per card; a Vec
-        // scan is O(n*m) PathBuf compares a frame. Build the set once.
-        let sel_set: std::collections::HashSet<&std::path::Path> =
-            self.selected.iter().map(PathBuf::as_path).collect();
+        // scan is O(n*m) PathBuf compares a frame. The set rebuilds
+        // only when a mutation flagged it dirty.
+        if self.sel_dirty {
+            self.sel_dirty = false;
+            self.sel_set = self.selected.iter().cloned().collect();
+        }
+        let sel_set = &self.sel_set;
         for i in 0..n {
-            let target = if sel_set.contains(self.entries[i].path.as_path()) { 1.0 } else { 0.0 };
+            let target = if sel_set.contains(&self.entries[i].path) { 1.0 } else { 0.0 };
             let s = self.sel_springs.entry(i).or_default();
             if target == 0.0 && s.settled(0.0) && s.value == 0.0 {
                 continue;
@@ -613,7 +628,7 @@ impl Render for Library {
             } else {
                 1.0
             };
-            grid = grid.child(self.card(index, entry, amt, et, &sel_set, cx));
+            grid = grid.child(self.card(index, entry, amt, et, sel_set, cx));
         }
 
         let mut root = div()
@@ -632,6 +647,7 @@ impl Render for Library {
                     }
                     "escape" if !this.selected.is_empty() => {
                         this.selected.clear();
+                        this.sel_dirty = true;
                     }
                     "escape" => {
                         window.remove_window();
@@ -642,6 +658,7 @@ impl Render for Library {
                     }
                     "a" if meta => {
                         this.selected = this.entries.iter().map(|e| e.path.clone()).collect();
+                        this.sel_dirty = true;
                     }
                     _ => return,
                 }
@@ -702,8 +719,8 @@ impl Render for Library {
 }
 
 impl Library {
-    fn card(&self, index: usize, entry: &Rc<CaptureEntry>, hover_amt: f32, enter: f32, sel_set: &std::collections::HashSet<&std::path::Path>, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = sel_set.contains(entry.path.as_path());
+    fn card(&self, index: usize, entry: &Rc<CaptureEntry>, hover_amt: f32, enter: f32, sel_set: &std::collections::HashSet<PathBuf>, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = sel_set.contains(&entry.path);
         let hovered = self.hovered == Some(index);
         let sel_amt = self.sel_springs.get(&index).map(|s| s.value).unwrap_or(0.0);
         let squish = if self.pressed == Some(index) {
