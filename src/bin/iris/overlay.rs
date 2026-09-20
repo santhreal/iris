@@ -337,7 +337,9 @@ fn loupe_image(
     let bgra = img.as_bytes(0).unwrap_or(&[]);
     scratch.clear();
     scratch.resize((LOUPE_PX * LOUPE_PX * 4) as usize, 0);
-    let rgba = scratch.as_mut_slice();
+    // The scratch holds BGRA, the RenderImage's own order: the frame
+    // bytes copy straight in with no swizzle pass either way.
+    let out = scratch.as_mut_slice();
     let half = LOUPE_SRC as i64 / 2;
     let mut center = [0u8, 0u8, 0u8];
     let row_px = LOUPE_PX as usize;
@@ -346,7 +348,7 @@ fn loupe_image(
         // horizontal copies), then memcpy it down LOUPE_ZOOM rows:
         // 19 row builds + 152 row copies instead of 23k pixel writes.
         let row_start = (sy as u32 * LOUPE_ZOOM) as usize * row_px * 4;
-        let row = &mut rgba[row_start..row_start + row_px * 4];
+        let row = &mut out[row_start..row_start + row_px * 4];
         for sx in 0..LOUPE_SRC as i64 {
             let px_x = fx + sx - half;
             let px_y = fy + sy - half;
@@ -354,12 +356,12 @@ fn loupe_image(
                 px_x >= 0 && px_y >= 0 && px_x < width as i64 && px_y < height as i64;
             let src = if inside {
                 let i = ((px_y as u32 * width + px_x as u32) * 4) as usize;
-                [bgra[i + 2], bgra[i + 1], bgra[i], 255]
+                [bgra[i], bgra[i + 1], bgra[i + 2], 255]
             } else {
                 [0x14, 0x14, 0x16, 255]
             };
             if sx == half && sy == half {
-                center = [src[0], src[1], src[2]];
+                center = [src[2], src[1], src[0]];
             }
             let dx = (sx as u32 * LOUPE_ZOOM) as usize * 4;
             for bx in 0..LOUPE_ZOOM as usize {
@@ -368,7 +370,7 @@ fn loupe_image(
         }
         for by in 1..LOUPE_ZOOM as usize {
             let dst = row_start + by * row_px * 4;
-            let (head, tail) = rgba.split_at_mut(dst);
+            let (head, tail) = out.split_at_mut(dst);
             tail[..row_px * 4].copy_from_slice(&head[row_start..row_start + row_px * 4]);
         }
     }
@@ -383,12 +385,15 @@ fn loupe_image(
             (mid + z / 2 - 1, mid - z / 2 + i),
         ] {
             let d = ((y * LOUPE_PX + x) * 4) as usize;
-            rgba[d..d + 4].copy_from_slice(&[255, 255, 255, 242]);
+            out[d..d + 4].copy_from_slice(&[255, 255, 255, 242]);
         }
     }
     // Straight into a RenderImage: this rebuilds on every drag
     // mousemove, so an encode/decode round trip is out of the question.
-    let img = crate::widgets::render_image_from_rgba(LOUPE_PX, LOUPE_PX, rgba);
+    // The scratch moves in wholesale; next rebuild allocates fresh.
+    let buf = image::RgbaImage::from_raw(LOUPE_PX, LOUPE_PX, std::mem::take(scratch))
+        .expect("loupe buffer size");
+    let img = Arc::new(RenderImage::new([image::Frame::new(buf)]));
     let info = format!(
         "{fx}, {fy}  #{:02x}{:02x}{:02x}",
         center[0], center[1], center[2]
