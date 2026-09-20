@@ -407,7 +407,9 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
             break;
         }
         let mut gone = false;
+        let mut woke = false;
         while let Ok(Some(event)) = conn.poll_for_event() {
+            woke = true;
             if let Event::DestroyNotify(ev) = event {
                 if ev.window == target {
                     gone = true;
@@ -417,23 +419,33 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: std::sync::mps
         if gone {
             break;
         }
-        match root_rect(&conn, root, target) {
-            Ok(rect) => {
-                let moved = last != Some(rect);
-                if moved {
-                    place_strips(&conn, &strips, rect);
-                    last = Some(rect);
+        // The rect query is two round trips. It is needed on the first
+        // pass (no rect yet), on every event wake (a ConfigureNotify
+        // means the window moved), and through the ~2s settle window
+        // (the WM's map-time re-framing lands without a notify we can
+        // trust). After that a timeout wake means nothing moved, so
+        // the query is pure waste for the recording's life.
+        let need_rect = last.is_none() || woke || settle < 10;
+        if need_rect {
+            match root_rect(&conn, root, target) {
+                Ok(rect) => {
+                    let moved = last != Some(rect);
+                    if moved {
+                        place_strips(&conn, &strips, rect);
+                        last = Some(rect);
+                    }
+                    // Re-assert the chip for the first ~2s: the WM can
+                    // re-place it on map-time re-framing after the
+                    // initial rect report. After that, only a real
+                    // move re-places.
+                    if moved || settle < 10 {
+                        chip.place(rect);
+                    }
                 }
-                // Re-assert the chip for the first ~2s: the WM can
-                // re-place it on map-time re-framing after the initial
-                // rect report. After that, only a real move re-places.
-                if moved || settle < 10 {
-                    chip.place(rect);
-                }
+                Err(_) => break, // target closed; recording ends on its own
             }
-            Err(_) => break, // target closed; recording ends on its own
+            settle += 1;
         }
-        settle += 1;
         // Sleep until the next X event or the 200ms re-check: a
         // ConfigureNotify wakes the poll instantly, so a moved window
         // re-borders in the same frame instead of up to 200ms late.
