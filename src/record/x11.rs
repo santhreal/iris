@@ -352,7 +352,7 @@ fn make_strips(conn: &RustConnection, root: Window) -> Option<[Window; 4]> {
     Some(strips)
 }
 
-fn destroy_strips(conn: &RustConnection, strips: &[Window; 4]) {
+fn destroy_strips(conn: &RustConnection, strips: &[Window]) {
     for strip in strips {
         let _ = conn.destroy_window(*strip);
     }
