@@ -356,8 +356,12 @@ fn loupe_image(
 ) -> (Arc<RenderImage>, SharedString) {
     let bgra = img.as_bytes(0).unwrap_or(&[]);
     // Uninit, not zeroed: the row fill writes every byte, so a 92KB
-    // memset before the fill is a wasted pass per mousemove.
+    // memset before the fill is a wasted pass per mousemove. The
+    // reserve is load-bearing: mem::take below hands the buffer to
+    // the RenderImage, so the next rebuild starts from capacity 0
+    // and set_len without it writes into a dangling allocation.
     scratch.clear();
+    scratch.reserve((LOUPE_PX * LOUPE_PX * 4) as usize);
     #[allow(clippy::uninit_vec)] // the row fill writes every byte
     unsafe { scratch.set_len((LOUPE_PX * LOUPE_PX * 4) as usize) };
     // The scratch holds BGRA, the RenderImage's own order: the frame
