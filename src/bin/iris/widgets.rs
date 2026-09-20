@@ -129,11 +129,13 @@ pub fn menu() -> Div {
 }
 
 pub fn menu_row(id: &'static str, label: &'static str) -> Stateful<Div> {
-    menu_row_owned(ElementId::Name(id.into()), label.to_string())
+    menu_row_owned(ElementId::Name(id.into()), label)
 }
 
 /// A menu row with a runtime label (dropdown options, file names).
-pub fn menu_row_owned(id: impl Into<ElementId>, label: String) -> Stateful<Div> {
+/// `&'static str` stores without an allocation; a `String` moves
+/// into the Arc.
+pub fn menu_row_owned(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(MENU_ROW_H))
@@ -148,13 +150,13 @@ pub fn menu_row_owned(id: impl Into<ElementId>, label: String) -> Stateful<Div> 
         // toast card's drag tracking, the editor's topbar buttons).
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .hover(|s| s.bg(theme::SURFACE_HOVER))
-        .child(label)
+        .child(label.into())
 }
 
 /// A dropdown field: a button showing the current value with a
 /// chevron. The parent owns the open state and renders
 /// `dropdown_menu` beneath it when open.
-pub fn dropdown(id: impl Into<ElementId>, current: String, open: bool) -> Stateful<Div> {
+pub fn dropdown(id: impl Into<ElementId>, current: impl Into<SharedString>, open: bool) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(28.))
@@ -170,7 +172,7 @@ pub fn dropdown(id: impl Into<ElementId>, current: String, open: bool) -> Statef
         .text_sm()
         .text_color(theme::FG)
         .cursor_pointer()
-        .child(current)
+        .child(current.into())
         .child(icons::icon(Icon::ChevronDown, theme::FG_DIM, 10.0))
 }
 

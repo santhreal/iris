@@ -16,7 +16,7 @@ pub struct PinStage {
     img: Arc<RenderImage>,
     /// Window-space point where the current move drag grabbed the image.
     drag: Option<(f32, f32)>,
-    class: String,
+    class: SharedString,
 }
 
 /// Open a pinned window showing `path`'s image at native scale. The
@@ -62,7 +62,7 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
     let (vw, vh) = (w * scale, h * scale);
 
     let win_id = crate::xwin::unique_id("dev.iris.pin");
-    let class = win_id.clone();
+    let class = SharedString::from(win_id.clone());
     let class2 = win_id.clone();
     cx.open_window(
         WindowOptions {
@@ -132,7 +132,7 @@ impl Render for PinStage {
                     let (mx, my): (f32, f32) =
                         (ev.position.x.into(), ev.position.y.into());
                     crate::xwin::begin_wm_move(
-                        class.clone(),
+                        class.to_string(),
                         (f32::from(origin.x) + mx) as i32,
                         (f32::from(origin.y) + my) as i32,
                     );

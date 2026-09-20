@@ -344,11 +344,13 @@ impl Render for Settings {
         // Toast section
         const TOAST_CLICK_OPTIONS: &[&str] = &["Markup", "Copy", "Open folder", "Nothing"];
         let toast_click_options = TOAST_CLICK_OPTIONS;
-        let toast_click_current = match self.cfg.toast_click_action {
-            ToastClickAction::Markup => "Markup".to_string(),
-            ToastClickAction::Copy => "Copy".to_string(),
-            ToastClickAction::OpenFolder => "Open folder".to_string(),
-            ToastClickAction::None => "Nothing".to_string(),
+        // &'static str: the dropdown stores the label without a
+        // per-render String allocation.
+        let toast_click_current: &'static str = match self.cfg.toast_click_action {
+            ToastClickAction::Markup => "Markup",
+            ToastClickAction::Copy => "Copy",
+            ToastClickAction::OpenFolder => "Open folder",
+            ToastClickAction::None => "Nothing",
         };
         let toast_click_selected = match self.cfg.toast_click_action {
             ToastClickAction::Markup => Some(0),
@@ -380,11 +382,11 @@ impl Render for Settings {
         const TOAST_POS_OPTIONS: &[&str] =
             &["Bottom right", "Bottom left", "Top right", "Top left"];
         let toast_pos_options = TOAST_POS_OPTIONS;
-        let toast_pos_current = match self.cfg.toast_position {
-            ToastPosition::BottomRight => "Bottom right".to_string(),
-            ToastPosition::BottomLeft => "Bottom left".to_string(),
-            ToastPosition::TopRight => "Top right".to_string(),
-            ToastPosition::TopLeft => "Top left".to_string(),
+        let toast_pos_current: &'static str = match self.cfg.toast_position {
+            ToastPosition::BottomRight => "Bottom right",
+            ToastPosition::BottomLeft => "Bottom left",
+            ToastPosition::TopRight => "Top right",
+            ToastPosition::TopLeft => "Top left",
         };
         let toast_pos_selected = match self.cfg.toast_position {
             ToastPosition::BottomRight => Some(0),
@@ -480,10 +482,10 @@ impl Render for Settings {
         // Recording section
         const REC_FMT_OPTIONS: &[&str] = &["MP4 (H.264)", "GIF", "WebM (VP9)"];
         let rec_fmt_options = REC_FMT_OPTIONS;
-        let rec_fmt_current = match self.cfg.recording_format {
-            iris_lib::config::RecordingFormat::Mp4 => "MP4 (H.264)".to_string(),
-            iris_lib::config::RecordingFormat::Gif => "GIF".to_string(),
-            iris_lib::config::RecordingFormat::Webm => "WebM (VP9)".to_string(),
+        let rec_fmt_current: &'static str = match self.cfg.recording_format {
+            iris_lib::config::RecordingFormat::Mp4 => "MP4 (H.264)",
+            iris_lib::config::RecordingFormat::Gif => "GIF",
+            iris_lib::config::RecordingFormat::Webm => "WebM (VP9)",
         };
         let rec_fmt_selected = match self.cfg.recording_format {
             iris_lib::config::RecordingFormat::Mp4 => Some(0),
@@ -492,10 +494,10 @@ impl Render for Settings {
         };
         const REC_ENC_OPTIONS: &[&str] = &["Auto", "Software (x264)", "NVIDIA (NVENC)"];
         let rec_enc_options = REC_ENC_OPTIONS;
-        let rec_enc_current = match self.cfg.recording_encoder {
-            iris_lib::config::RecordingEncoder::Auto => "Auto".to_string(),
-            iris_lib::config::RecordingEncoder::Libx264 => "Software (x264)".to_string(),
-            iris_lib::config::RecordingEncoder::Nvenc => "NVIDIA (NVENC)".to_string(),
+        let rec_enc_current: &'static str = match self.cfg.recording_encoder {
+            iris_lib::config::RecordingEncoder::Auto => "Auto",
+            iris_lib::config::RecordingEncoder::Libx264 => "Software (x264)",
+            iris_lib::config::RecordingEncoder::Nvenc => "NVIDIA (NVENC)",
         };
         let rec_enc_selected = match self.cfg.recording_encoder {
             iris_lib::config::RecordingEncoder::Auto => Some(0),
@@ -702,7 +704,7 @@ impl Settings {
         id: &'static str,
         label: &'static str,
         field: DropdownField,
-        current: String,
+        current: impl Into<SharedString>,
         options: &'static [&'static str],
         selected: Option<usize>,
         cx: &mut Context<Self>,
