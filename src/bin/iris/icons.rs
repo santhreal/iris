@@ -57,24 +57,30 @@ pub fn icon(kind: Icon, color: Rgba, size: f32) -> impl IntoElement {
 /// during a hover spring rebuilds the identical vertex list every
 /// frame otherwise. Paths are cloned out of the cache; the color is
 /// supplied at paint time and is not part of the key.
+/// The one icon-geometry map: two separate statics here meant stores
+/// went into a map reads never consulted, so every paint re-tessellated
+/// and the "cache" was a bounded leak.
+fn icon_cache() -> &'static parking_lot::Mutex<
+    std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>,
+> {
+    static CACHE: std::sync::LazyLock<
+        parking_lot::Mutex<std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>>,
+    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    &CACHE
+}
+
 fn cached_path(
     kind: Icon,
     ox: f32,
     oy: f32,
     size: f32,
 ) -> Option<Path<Pixels>> {
-    static CACHE: std::sync::LazyLock<
-        parking_lot::Mutex<std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>>,
-    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
     let key = (kind as u8, ox.to_bits(), oy.to_bits(), size.to_bits());
-    CACHE.lock().get(&key).cloned()
+    icon_cache().lock().get(&key).cloned()
 }
 
 fn store_path(kind: Icon, ox: f32, oy: f32, size: f32, path: &Path<Pixels>) {
-    static CACHE: std::sync::LazyLock<
-        parking_lot::Mutex<std::collections::HashMap<(u8, u32, u32, u32), Path<Pixels>>>,
-    > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
-    let mut cache = CACHE.lock();
+    let mut cache = icon_cache().lock();
     // Bound the map: origins vary with window position, so an
     // unbounded cache grows one entry per pixel moved.
     if cache.len() > 512 {
