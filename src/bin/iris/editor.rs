@@ -157,6 +157,10 @@ pub struct Editor {
     color: &'static str,
     text_entry: Option<TextEntry>,
     caret_started: Instant,
+    /// One-shot flag for the caret blink timer: the timer notifies at
+    /// 8Hz while an entry lives instead of request_animation_frame
+    /// repainting the whole window at vsync for a 1Hz blink.
+    caret_timer: bool,
     /// Select tool: the action under the cursor, and a live move drag
     /// as (action index, last pointer in image px, action as it was
     /// when the drag started, for the undo entry).
@@ -356,6 +360,7 @@ pub fn open(
                 color: COLORS[0],
                 text_entry: None,
                 caret_started: Instant::now(),
+                caret_timer: false,
                 selected: None,
                 move_drag: None,
                 crop_rect: None,
@@ -2007,9 +2012,33 @@ impl Render for Editor {
             }
         }
 
-        // Active text entry with a blinking caret.
+        // Active text entry with a blinking caret. The blink is a
+        // 1.06s cycle; an 8Hz timer repaints it instead of pinning the
+        // whole window to vsync for the entry's lifetime.
         if let Some(entry) = &self.text_entry {
-            window.request_animation_frame();
+            if !self.caret_timer {
+                self.caret_timer = true;
+                cx.spawn(async move |this, cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(125))
+                            .await;
+                        let alive = this.update(cx, |this, cx| {
+                            if this.text_entry.is_some() {
+                                cx.notify();
+                                true
+                            } else {
+                                this.caret_timer = false;
+                                false
+                            }
+                        });
+                        if matches!(alive, Ok(false) | Err(_)) {
+                            break;
+                        }
+                    }
+                })
+                .detach();
+            }
             let blink_on = (self.caret_started.elapsed().as_millis() % 1060) < 580;
             let p = entry.point;
             let size = text_size(base_w);
