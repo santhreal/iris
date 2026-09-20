@@ -285,9 +285,9 @@ fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
-/// Capture the focused window's rect out of a full-screen grab. X11
-/// only: the Wayland portal cannot name a window, so this reports an
-/// honest error there.
+/// Capture the focused window: its rect is read straight off the
+/// root, decorations included. X11 only: the Wayland portal cannot
+/// name a window, so this reports an honest error there.
 fn capture_active_window(cx: &mut App) -> Result<(), String> {
     fn grab_and_finish() -> Result<(PathBuf, iris_lib::library::CaptureEntry), String> {
         let rect = iris_lib::capture::x11::active_window_rect()?;
