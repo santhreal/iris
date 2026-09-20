@@ -412,33 +412,6 @@ fn png_bytes(img: &image::RgbaImage) -> Result<Vec<u8>, String> {
 }
 
 /// Pixelate a region of the composite (the blur tool's mark).
-fn pixelated_patch(
-    composite: &image::RgbaImage,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-) -> Result<Arc<RenderImage>, String> {
-    if w == 0 || h == 0 {
-        return Err("empty blur region".to_string());
-    }
-    let sub = image::imageops::crop_imm(composite, x, y, w, h).to_image();
-    let small_w = (w / BLUR_BLOCK).max(1);
-    let small_h = (h / BLUR_BLOCK).max(1);
-    let small = image::imageops::resize(
-        &sub,
-        small_w,
-        small_h,
-        image::imageops::FilterType::Triangle,
-    );
-    let patch = image::imageops::resize(
-        &small,
-        w,
-        h,
-        image::imageops::FilterType::Nearest,
-    );
-    Ok(crate::widgets::render_image_from_rgba(w, h, patch.as_raw()))
-}
 
 impl Editor {
     fn img_w(&self) -> u32 {
@@ -509,12 +482,15 @@ impl Editor {
             if w == 0 || h == 0 {
                 return;
             }
-            match pixelated_patch(&self.composite, x, y, w, h) {
+            match pixelated_patch_rgba(&self.composite, x, y, w, h) {
                 Ok(patch) => {
-                    // The composite itself is pixelated in place so later
-                    // blurs sample through earlier ones, matching canvas2d.
-                    let _ = pixelate_cpu(&mut self.composite, x, y, w, h);
-                    action.blur_patch = Some(patch);
+                    // One resample serves both consumers: the GPU tile
+                    // the canvas shows and the CPU pixelation later
+                    // blurs sample through. Computing it twice per
+                    // commit was two crop+resize+resize chains.
+                    let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
+                    image::imageops::overlay(&mut self.composite, &patch, x as i64, y as i64);
+                    action.blur_patch = Some(render);
                     action.blur_rect = (x as f32, y as f32, w as f32, h as f32);
                 }
                 Err(_) => return,
@@ -589,9 +565,13 @@ impl Editor {
                 if w >= 1 && h >= 1 && x < self.composite.width() && y < self.composite.height() {
                     let w = w.min(self.composite.width() - x);
                     let h = h.min(self.composite.height() - y);
-                    if let Ok(patch) = pixelated_patch(&self.composite, x, y, w, h) {
-                        action.blur_patch = Some(patch);
-                        let _ = pixelate_cpu(&mut self.composite, x, y, w, h);
+                    // One resample serves the GPU tile and the CPU
+                    // pixelation; computing it twice per replayed blur
+                    // was two crop+resize+resize chains.
+                    if let Ok(patch) = pixelated_patch_rgba(&self.composite, x, y, w, h) {
+                        let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
+                        image::imageops::overlay(&mut self.composite, &patch, x as i64, y as i64);
+                        action.blur_patch = Some(render);
                     }
                 }
             } else {
@@ -910,17 +890,6 @@ impl Editor {
 }
 
 /// Pixelate a region of a CPU image in place.
-fn pixelate_cpu(
-    img: &mut image::RgbaImage,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-) -> Result<(), String> {
-    let patch = pixelated_patch_rgba(img, x, y, w, h)?;
-    image::imageops::overlay(img, &patch, x as i64, y as i64);
-    Ok(())
-}
 
 fn pixelated_patch_rgba(
     img: &image::RgbaImage,
