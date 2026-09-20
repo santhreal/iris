@@ -916,25 +916,29 @@ mod hotkeys {
                         iris_lib::ilog!("iris: no keycode for hotkey keysym {keysym:#x}");
                         continue;
                     };
-                    let mut ok = true;
-                    for extra in locks {
-                        if conn
-                            .grab_key(
+                    // Issue all four lock-variant grabs before checking
+                    // any: a serial check() per grab is a round trip
+                    // each, four per hotkey per regrab.
+                    let cookies: Vec<_> = locks
+                        .iter()
+                        .map(|extra| {
+                            conn.grab_key(
                                 false,
                                 root,
-                                mods | extra,
+                                mods | *extra,
                                 keycode,
                                 GrabMode::ASYNC,
                                 GrabMode::ASYNC,
                             )
-                            .map_err(|e| e.to_string())
+                        })
+                        .collect();
+                    let ok = cookies.into_iter().all(|c| {
+                        c.map_err(|e| e.to_string())
                             .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
-                            .is_err()
-                        {
-                            iris_lib::ilog!("iris: cannot grab hotkey keysym {keysym:#x}");
-                            ok = false;
-                            break;
-                        }
+                            .is_ok()
+                    });
+                    if !ok {
+                        iris_lib::ilog!("iris: cannot grab hotkey keysym {keysym:#x}");
                     }
                     if ok {
                         grabbed.push((keycode, mods, cmd));
