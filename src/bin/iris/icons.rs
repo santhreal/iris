@@ -96,7 +96,7 @@ fn store_tris(kind: Icon, s: f32, tris: Vec<[f32; 6]>) -> std::sync::Arc<Vec<[f3
 }
 
 /// Anything that accepts filled triangles: a `Path` being built for
-/// paint, or a recorder caching icon geometry for re-stamping.
+/// paint, or a recorder caching geometry for re-stamping.
 pub(crate) trait TriSink {
     fn tri(&mut self, a: Point<Pixels>, b: Point<Pixels>, c: Point<Pixels>);
 }
@@ -113,9 +113,9 @@ impl<T: TriSink + ?Sized> TriSink for &mut T {
     }
 }
 
-/// Records triangles as flat xy pairs: icon geometry is tessellated
-/// once at origin (0,0), then re-stamped at each paint's offset.
-struct TriRecorder(Vec<[f32; 6]>);
+/// Records triangles as flat xy pairs: geometry is tessellated once
+/// at origin (0,0), then re-stamped at each paint's offset.
+pub(crate) struct TriRecorder(pub Vec<[f32; 6]>);
 
 impl TriSink for TriRecorder {
     fn tri(&mut self, a: Point<Pixels>, b: Point<Pixels>, c: Point<Pixels>) {

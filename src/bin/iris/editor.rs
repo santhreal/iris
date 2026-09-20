@@ -104,14 +104,17 @@ struct Action {
     /// the selected outline per frame would otherwise rescan every
     /// stroke's points each time.
     bbox: Option<(f32, f32, f32, f32)>,
-    /// The tessellated paint path, keyed on (origin, scale, points
-    /// fingerprint): building it per frame re-tessellates 20-vertex
-    /// discs for every segment of every stroke, while a clone is one
-    /// memcpy. Painted on the UI thread only, so a RefCell suffices.
-    /// The fingerprint (len, first, last) catches every mutation that
-    /// exists: strokes only grow, moves shift every point.
+    /// The tessellated paint triangles at stage origin (0,0), keyed on
+    /// (scale, points fingerprint): building them per frame
+    /// re-tessellates 20-vertex discs for every segment of every
+    /// stroke, while a re-stamp is one offset per vertex. Origin is
+    /// not part of the key, so a pan drag reuses the same geometry
+    /// instead of re-tessellating every action every frame. Painted
+    /// on the UI thread only, so a RefCell suffices. The fingerprint
+    /// (len, first, last) catches every mutation that exists: strokes
+    /// only grow, moves shift every point.
     cached_path: std::cell::RefCell<
-        Option<(f32, f32, f32, usize, (f32, f32), (f32, f32), Path<Pixels>)>,
+        Option<(f32, usize, (f32, f32), (f32, f32), Rc<Vec<[f32; 6]>>)>,
     >,
 }
 
@@ -2450,53 +2453,64 @@ fn paint_action(
     };
     let w = action.width * scale;
     let (ox, oy): (f32, f32) = (bounds.origin.x.into(), bounds.origin.y.into());
-    let s = move |p: (f32, f32)| point(px(ox) + px(p.0 * scale), px(oy) + px(p.1 * scale));
-    // Cache hit: the path for these exact points at this origin and
-    // scale is already tessellated; cloning it is one memcpy instead
-    // of re-tessellating every segment's quad and cap discs.
+    let s = move |p: (f32, f32)| point(px(p.0 * scale), px(p.1 * scale));
+    // Cache hit: the triangles for these exact points at this scale
+    // are already tessellated; re-stamping them at this paint's
+    // origin is one add per vertex instead of re-tessellating every
+    // segment's quad and cap discs. A pan drag changes only the
+    // origin, so it hits this path every frame.
     let fingerprint = (
-        ox,
-        oy,
         scale,
         action.points.len(),
         *action.points.first().unwrap(),
         *action.points.last().unwrap(),
     );
-    if let Some((kox, koy, kscale, klen, kfirst, klast, cached)) =
+    if let Some((kscale, klen, kfirst, klast, cached)) =
         action.cached_path.borrow().as_ref()
     {
-        if (*kox, *koy, *kscale, *klen, *kfirst, *klast) == fingerprint {
-            window.paint_path(cached.clone(), color);
+        if (*kscale, *klen, *kfirst, *klast) == fingerprint {
+            let mut path = Path::new(point(px(ox), px(oy)));
+            stamp_tris(&mut path, cached, ox, oy);
+            window.paint_path(path, color);
             return;
         }
-        // Incremental: a growing pen/highlight stroke keeps its origin,
-        // scale and first point, so the new segments append onto the
-        // cached path instead of re-tessellating the whole polyline on
+        // Incremental: a growing pen/highlight stroke keeps its scale
+        // and first point, so the new segments append onto the cached
+        // triangles instead of re-tessellating the whole polyline on
         // every mousemove (O(stroke) per move became O(new segments)).
         if matches!(action.tool, Tool::Pen | Tool::Highlight)
-            && (*kox, *koy, *kscale, *kfirst) == (ox, oy, scale, fingerprint.4)
+            && (*kscale, *kfirst) == (scale, fingerprint.2)
             && *klen >= 2
             && *klen < action.points.len()
         {
-            let mut path = cached.clone();
-            for seg in action.points[*klen - 1..].windows(2) {
-                push_segment(&mut path, s(seg[0]), s(seg[1]), w);
+            let mut tris = (**cached).clone();
+            {
+                let mut rec = icons::TriRecorder(tris);
+                for seg in action.points[*klen - 1..].windows(2) {
+                    push_segment(&mut rec, s(seg[0]), s(seg[1]), w);
+                }
+                tris = rec.0;
             }
+            let tris = Rc::new(tris);
+            let mut path = Path::new(point(px(ox), px(oy)));
+            stamp_tris(&mut path, &tris, ox, oy);
             *action.cached_path.borrow_mut() = Some((
-                ox,
-                oy,
                 scale,
                 action.points.len(),
-                fingerprint.4,
-                fingerprint.5,
-                path.clone(),
+                fingerprint.2,
+                fingerprint.3,
+                tris,
             ));
             window.paint_path(path, color);
             return;
         }
     }
 
-    let mut path = Path::new(s(action.points[0]));
+    // Cache miss: tessellate at origin (0,0) into the recorder, then
+    // stamp at this paint's origin.
+    let mut rec = icons::TriRecorder(Vec::new());
+    let mut path = &mut rec;
+
     match action.tool {
         Tool::Pen | Tool::Highlight => {
             if action.points.len() == 1 {
@@ -2566,16 +2580,32 @@ fn paint_action(
         }
         _ => {}
     }
+    let tris = Rc::new(rec.0);
+    let mut path = Path::new(point(px(ox), px(oy)));
+    stamp_tris(&mut path, &tris, ox, oy);
     *action.cached_path.borrow_mut() = Some((
         fingerprint.0,
         fingerprint.1,
         fingerprint.2,
         fingerprint.3,
-        fingerprint.4,
-        fingerprint.5,
-        path.clone(),
+        tris,
     ));
     window.paint_path(path, color);
+}
+
+/// Re-stamp recorded triangles at paint offset (ox, oy): the cached
+/// geometry is origin-relative, so a moved stage reuses it verbatim.
+fn stamp_tris(path: &mut Path<Pixels>, tris: &[[f32; 6]], ox: f32, oy: f32) {
+    for t in tris {
+        path.push_triangle(
+            (
+                point(px(t[0] + ox), px(t[1] + oy)),
+                point(px(t[2] + ox), px(t[3] + oy)),
+                point(px(t[4] + ox), px(t[5] + oy)),
+            ),
+            (point(0., 1.), point(0., 1.), point(0., 1.)),
+        );
+    }
 }
 
 // WHY: rasterize is the CPU mirror of the GPU paint path; a tool that
