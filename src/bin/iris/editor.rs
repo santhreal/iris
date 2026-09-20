@@ -96,6 +96,11 @@ struct Action {
     blur_rect: (f32, f32, f32, f32),
     /// Counter tool: the step number shown in the badge.
     step: u32,
+    /// Bounding box in image px, computed at commit and translated by
+    /// move drags: hit-testing every committed action per click and
+    /// the selected outline per frame would otherwise rescan every
+    /// stroke's points each time.
+    bbox: Option<(f32, f32, f32, f32)>,
     /// The tessellated paint path, keyed on (origin, scale, points
     /// fingerprint): building it per frame re-tessellates 20-vertex
     /// discs for every segment of every stroke, while a clone is one
@@ -443,6 +448,7 @@ impl Editor {
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
             step: self.next_step(),
+            bbox: None,
             cached_path: std::cell::RefCell::new(None),
         }
     }
@@ -508,6 +514,7 @@ impl Editor {
         } else {
             rasterize(&mut self.composite, &action, 1.0);
         }
+        action.bbox = Self::compute_bbox(&action);
         self.push_edit(Edit::Add(action.clone()));
         self.actions.borrow_mut().push(action);
         self.selected = None;
@@ -589,10 +596,10 @@ impl Editor {
             }
         }
     }
-
-    /// Bounding box of one action in image pixels, for hit testing
-    /// and the selection outline.
-    fn action_bbox(action: &Action) -> Option<(f32, f32, f32, f32)> {
+    /// Bounding box of one action in image pixels, computed at commit.
+    /// Stored on the action: hit-testing and the selection outline
+    /// read it instead of rescanning every point.
+    fn compute_bbox(action: &Action) -> Option<(f32, f32, f32, f32)> {
         match action.tool {
             Tool::Text => {
                 let p = action.points.first()?;
@@ -627,7 +634,7 @@ impl Editor {
     /// Topmost action whose bbox contains `p`, for the Select tool.
     fn hit_action(&self, p: (f32, f32)) -> Option<usize> {
         for (i, action) in self.actions.borrow().iter().enumerate().rev() {
-            let Some((x, y, w, h)) = Self::action_bbox(action) else {
+            let Some((x, y, w, h)) = action.bbox else {
                 continue;
             };
             if p.0 >= x && p.0 <= x + w && p.1 >= y && p.1 <= y + h {
@@ -657,6 +664,10 @@ impl Editor {
         if action.tool == Tool::Blur {
             action.blur_rect.0 += dx;
             action.blur_rect.1 += dy;
+        }
+        if let Some(bb) = &mut action.bbox {
+            bb.0 += dx;
+            bb.1 += dy;
         }
         (dx, dy)
     }
@@ -836,8 +847,7 @@ impl Editor {
                 });
                 cx.notify();
             });
-        })
-        .detach();
+        });
     }
 
     fn commit_text(&mut self, keep: bool) {
@@ -846,7 +856,7 @@ impl Editor {
         };
         let value = entry.buffer.trim().to_string();
         if keep && !value.is_empty() {
-            let action = Action {
+            let mut action = Action {
                 tool: Tool::Text,
                 color: self.color,
                 width: stroke_base(self.img_w()),
@@ -857,8 +867,10 @@ impl Editor {
                 blur_patch: None,
                 blur_rect: (0.0, 0.0, 0.0, 0.0),
                 step: 0,
+                bbox: None,
                 cached_path: std::cell::RefCell::new(None),
             };
+            action.bbox = Self::compute_bbox(&action);
             rasterize(&mut self.composite, &action, 1.0);
             self.push_edit(Edit::Add(action.clone()));
             self.actions.borrow_mut().push(action);
@@ -1681,7 +1693,7 @@ impl Render for Editor {
 
         // Selection outline around the active action.
         if let Some(i) = self.selected {
-            if let Some((x, y, w, h)) = self.actions.borrow().get(i).and_then(Editor::action_bbox) {
+            if let Some((x, y, w, h)) = self.actions.borrow().get(i).and_then(|a| a.bbox) {
                 stage = stage.child(
                     div()
                         .absolute()
@@ -1816,7 +1828,7 @@ impl Render for Editor {
                                 this.selected = Some(i);
                                 this.move_drag = {
                                     let old = this.actions.borrow()[i].clone();
-                                    Self::action_bbox(&old).map(|bb| (i, p, old, bb))
+                                    old.bbox.map(|bb| (i, p, old, bb))
                                 };
                             } else {
                                 this.selected = None;
@@ -2173,6 +2185,7 @@ mod tests {
             blur_patch: None,
             blur_rect: (0.0, 0.0, 0.0, 0.0),
             step: 0,
+            bbox: None,
             cached_path: std::cell::RefCell::new(None),
         }
     }
