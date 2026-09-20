@@ -114,6 +114,9 @@ struct TextEntry {
 
 pub struct Editor {
     path: PathBuf,
+    /// Display name for the topbar: the path's file name, computed
+    /// once at open instead of allocating per render.
+    filename: String,
     base: image::RgbaImage,
     base_img: Arc<RenderImage>,
     /// CPU composite: base plus every committed action, used to sample
@@ -303,6 +306,10 @@ pub fn open(
         },
         |_, cx| {
             cx.new(|_| Editor {
+                filename: path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "capture.png".to_string()),
                 path: path.to_path_buf(),
                 composite: base.clone(),
                 base,
@@ -1212,11 +1219,7 @@ impl Render for Editor {
                 window.request_animation_frame();
             }
         }
-        let filename = self
-            .path
-            .file_name()
-            .map(|f| f.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "capture.png".to_string());
+        let filename = &self.filename;
 
         let mut root = div()
             .id("editor")
