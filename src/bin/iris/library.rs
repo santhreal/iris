@@ -39,11 +39,11 @@ pub struct Library {
     /// live-path set and prunes `thumb_cache`, instead of rebuilding
     /// the set every frame.
     entries_dirty: bool,
-    /// Display names (truncated file names) parallel to `entries`:
-    /// rebuilding the string per card per frame is an allocation a
-    /// frame per card for a value that only changes with the entry.
+    /// Display strings (truncated file name, dimensions) parallel to
+    /// `entries`: rebuilding them per card per frame is an allocation
+    /// a frame per card for values that only change with the entry.
     /// SharedString so the per-frame clone is an Arc bump.
-    entry_names: Vec<SharedString>,
+    entry_names: Vec<(SharedString, SharedString)>,
     drag_fired: bool,
     help: bool,
     /// First-render clock for the open cascade.
@@ -139,21 +139,23 @@ pub fn open(cx: &mut App) -> Result<(), String> {
 }
 
 impl Library {
-    /// The card's display name: the file name truncated to ~19 chars.
-    /// GPUI's text_ellipsis only fires on wrapped text; nowrap clips,
-    /// so the truncation happens here, once per entry.
-    fn entry_name(e: &CaptureEntry) -> SharedString {
+    /// The card's display strings: the file name truncated to ~19
+    /// chars (GPUI's text_ellipsis only fires on wrapped text; nowrap
+    /// clips, so the truncation happens here) and the dimensions.
+    /// Computed once per entry, not per frame.
+    fn entry_name(e: &CaptureEntry) -> (SharedString, SharedString) {
         let name = e
             .path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if name.chars().count() > 19 {
+        let name = if name.chars().count() > 19 {
             let cut: String = name.chars().take(18).collect();
             SharedString::from(format!("{cut}\u{2026}"))
         } else {
             SharedString::from(name)
-        }
+        };
+        (name, SharedString::from(format!("{}×{}", e.width, e.height)))
     }
     /// Read thumbnails off the main thread and fill the cache in one
     /// delivery: a first paint that blocks on N disk reads stutters.
@@ -940,14 +942,14 @@ impl Library {
                             .whitespace_nowrap()
                             .text_xs()
                             .text_color(theme::FG)
-                            .child(self.entry_names.get(index).cloned().unwrap_or_default()),
+                            .child(self.entry_names.get(index).map(|n| n.0.clone()).unwrap_or_default()),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
                             .text_xs()
                             .text_color(theme::FG_FAINT)
-                            .child(format!("{}×{}", entry.width, entry.height)),
+                            .child(self.entry_names.get(index).map(|n| n.1.clone()).unwrap_or_default()),
                     ),
             )
     }
