@@ -291,21 +291,13 @@ fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
 fn capture_active_window(cx: &mut App) -> Result<(), String> {
     fn grab_and_finish() -> Result<(PathBuf, iris_lib::library::CaptureEntry), String> {
         let rect = iris_lib::capture::x11::active_window_rect()?;
-        let frame = pipeline::grab_frame()?;
-        // frame.rgba is RGBA; crop_bgra would swap R and B. The plain
-        // copy crop keeps the channels as captured and bands across
-        // threads on large windows.
-        let rect = pipeline::Region {
-            x: rect.x.max(0) as u32,
-            y: rect.y.max(0) as u32,
-            width: rect.width.min(frame.width.saturating_sub(rect.x.max(0) as u32)),
-            height: rect.height.min(frame.height.saturating_sub(rect.y.max(0) as u32)),
-        };
-        if rect.width == 0 || rect.height == 0 {
-            return Err("active window is outside the frame".to_string());
-        }
-        let crop = pipeline::crop_rgba(&frame.rgba, frame.width, frame.height, rect)?;
-        let done = pipeline::finalize(crop)?;
+        // Grab only the window's rect off the root: the whole-screen
+        // grab + crop this replaced moved up to 200MB for a window
+        // that may be a megabyte. Root pixels keep the decorations.
+        let frame = iris_lib::capture::x11::grab_root_rect(rect)?;
+        let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+            .ok_or("frame buffer size mismatch")?;
+        let done = pipeline::finalize(img)?;
         pipeline::play_shutter_sound();
         Ok(done)
     }

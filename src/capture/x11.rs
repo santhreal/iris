@@ -276,7 +276,7 @@ impl super::CaptureBackend for X11Backend {
         // The grab writes every byte before any read.
         #[allow(clippy::uninit_vec)]
         unsafe { rgba.set_len(pixels * 4) };
-        let depth = grab_pixels_into(&conn, root, geom.width, geom.height, &mut rgba)?;
+        let depth = grab_pixels_into(&conn, root, 0, 0, geom.width, geom.height, &mut rgba)?;
 
         if depth != 24 {
             return Err(format!(
@@ -287,6 +287,58 @@ impl super::CaptureBackend for X11Backend {
 
         Ok(Frame { width, height, rgba })
     }
+}
+
+/// Grab one rect of the root window into a fresh RGBA buffer: the
+/// window-capture path reads only the target's pixels (decorations
+/// included, since the rect comes off the root) instead of grabbing
+/// the whole screen and cropping. Returns None when the rect is
+/// empty or the grab fails at the protocol level.
+pub fn grab_root_rect(rect: WinRect) -> Result<Frame, String> {
+    let (conn, screen_num) = shared_conn()?;
+    let root = conn.setup().roots[screen_num].root;
+    // Intersect with the root: a window hanging off the screen edge
+    // must not ask GetImage for pixels outside the drawable, and the
+    // i16 protocol fields must not wrap on a wide virtual screen.
+    let geom = conn
+        .get_geometry(root)
+        .map_err(|e| format!("X11 get_geometry: {e}"))?
+        .reply()
+        .map_err(|e| format!("X11 get_geometry reply: {e}"))?;
+    let (rw, rh) = (i32::from(geom.width), i32::from(geom.height));
+    let x0 = rect.x.clamp(0, rw);
+    let y0 = rect.y.clamp(0, rh);
+    let x1 = (rect.x + rect.width as i32).clamp(0, rw);
+    let y1 = (rect.y + rect.height as i32).clamp(0, rh);
+    let (w, h) = (x1 - x0, y1 - y0);
+    if w <= 0 || h <= 0 {
+        return Err("capture rect is outside the screen".to_string());
+    }
+    let (w, h) = (w as u32, h as u32);
+    let pixels = w as usize * h as usize;
+    let mut rgba: Vec<u8> = Vec::with_capacity(pixels * 4);
+    #[allow(clippy::uninit_vec)] // the grab writes every byte
+    unsafe { rgba.set_len(pixels * 4) };
+    let depth = grab_pixels_into(
+        conn,
+        root,
+        x0 as i16,
+        y0 as i16,
+        w as u16,
+        h as u16,
+        &mut rgba,
+    )?;
+    if depth != 24 {
+        return Err(format!(
+            "unsupported root depth {}; only 24-bit TrueColor is implemented",
+            depth
+        ));
+    }
+    Ok(Frame {
+        width: w,
+        height: h,
+        rgba,
+    })
 }
 
 /// BGRX/BGR/raw-24 to opaque RGBA, banded across threads at 4K sizes.
@@ -348,10 +400,13 @@ fn convert_to_rgba(
 /// page-faulted read. The SHM path converts straight out of the mapped
 /// segment — no intermediate copy of the frame ever exists. Falls back
 /// to plain GetImage when the server lacks SHM or the segment cannot
-/// be set up. Returns the image depth.
+/// be set up. Returns the image depth. `x`/`y` offset the grab inside
+/// `root`: a window capture reads only its rect, not the whole screen.
 fn grab_pixels_into<C>(
     conn: &C,
     root: x11rb::protocol::xproto::Window,
+    x: i16,
+    y: i16,
     width: u16,
     height: u16,
     out: &mut [u8],
@@ -359,11 +414,11 @@ fn grab_pixels_into<C>(
 where
     C: Connection + x11rb::protocol::xproto::ConnectionExt,
 {
-    if let Some(depth) = try_shm_grab_into(conn, root, width, height, out) {
+    if let Some(depth) = try_shm_grab_into(conn, root, x, y, width, height, out) {
         return Ok(depth);
     }
     let reply = conn
-        .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, width, height, !0u32)
+        .get_image(ImageFormat::Z_PIXMAP, root, x, y, width, height, !0u32)
         .map_err(|e| format!("X11 get_image: {e}"))?
         .reply()
         .map_err(|e| format!("X11 get_image reply: {e}"))?;
@@ -417,6 +472,8 @@ pub(crate) fn shm_supported() -> bool {
 fn try_shm_grab_into<C>(
     conn: &C,
     root: x11rb::protocol::xproto::Window,
+    x: i16,
+    y: i16,
     width: u16,
     height: u16,
     out: &mut [u8],
@@ -465,7 +522,7 @@ where
     }
     let s = guard.as_ref()?;
     let reply = ShmExt::shm_get_image(
-        conn, root, 0, 0, width, height, !0u32, ImageFormat::Z_PIXMAP.into(), s.seg, 0,
+        conn, root, x, y, width, height, !0u32, ImageFormat::Z_PIXMAP.into(), s.seg, 0,
     )
     .ok()?
     .reply()
