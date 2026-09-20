@@ -84,7 +84,12 @@ struct Action {
     tool: Tool,
     color: &'static str,
     width: f32,
-    points: Vec<(f32, f32)>,
+    /// Stroke points behind Rc: every Action clone (commit's
+    /// Edit::Add, undo/redo apply, the move-drag snapshot) is a
+    /// refcount bump instead of a copy of every point. Mutations go
+    /// through Rc::make_mut, which copies only while a snapshot
+    /// still shares the buffer.
+    points: Rc<Vec<(f32, f32)>>,
     text: Option<SharedString>,
     font_size: f32,
     /// Rect/Ellipse fill: when set the shape paints its interior, not
@@ -520,7 +525,7 @@ impl Editor {
             } else {
                 stroke_base(self.img_w()) * STROKE_MULT[self.stroke as usize]
             },
-            points: vec![p],
+            points: Rc::new(vec![p]),
             text: None,
             font_size: text_size(self.img_w()),
             filled: self.fill,
@@ -910,7 +915,7 @@ fn clamp_region(
                 }
                 let (mut x0, mut y0, mut x1, mut y1) =
                     (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                for &(x, y) in &action.points {
+                for &(x, y) in action.points.iter() {
                     x0 = x0.min(x);
                     y0 = y0.min(y);
                     x1 = x1.max(x);
@@ -948,7 +953,7 @@ fn clamp_region(
         let Some(action) = actions.get_mut(i) else {
             return (0.0, 0.0);
         };
-        for p in &mut action.points {
+        for p in Rc::make_mut(&mut action.points).iter_mut() {
             p.0 += dx;
             p.1 += dy;
         }
@@ -1202,7 +1207,7 @@ fn clamp_region(
                 tool: Tool::Text,
                 color: self.color,
                 width: stroke_base(self.img_w()),
-                points: vec![entry.point],
+                points: Rc::new(vec![entry.point]),
                 text: Some(SharedString::from(value)),
                 font_size: text_size(self.img_w()),
                 filled: false,
@@ -2487,11 +2492,11 @@ impl Render for Editor {
                 };
                 let mut action = rc.borrow_mut();
                 if action.tool == Tool::Pen || action.tool == Tool::Highlight {
-                    action.points.push(p);
+                    Rc::make_mut(&mut action.points).push(p);
                 } else if action.tool == Tool::Counter {
-                    action.points = vec![p];
+                    action.points = Rc::new(vec![p]);
                 } else {
-                    action.points = vec![action.points[0], p];
+                    action.points = Rc::new(vec![action.points[0], p]);
                 }
                 cx.notify();
             }))
@@ -2766,13 +2771,14 @@ fn stamp_tris(path: &mut Path<Pixels>, tris: &[[f32; 6]], ox: f32, oy: f32) {
 #[cfg(test)]
 mod tests {
     use super::{rasterize, Action, Tool};
+    use std::rc::Rc;
 
     fn action(tool: Tool, points: Vec<(f32, f32)>, filled: bool) -> Action {
         Action {
             tool,
             color: "#ff0000",
             width: 2.0,
-            points,
+            points: Rc::new(points),
             text: None,
             font_size: 16.0,
             filled,
@@ -2874,13 +2880,14 @@ mod tests {
 #[cfg(test)]
 mod dirty_tests {
     use super::{Action, Editor, Tool};
+    use std::rc::Rc;
 
     fn base_action(tool: Tool) -> Action {
         Action {
             tool,
             color: "#ff0000",
             width: 2.0,
-            points: Vec::new(),
+            points: Rc::new(Vec::new()),
             text: None,
             font_size: 16.0,
             filled: false,
@@ -2895,14 +2902,14 @@ mod dirty_tests {
 
     fn stroke(points: Vec<(f32, f32)>, bbox: (f32, f32, f32, f32)) -> Action {
         let mut a = base_action(Tool::Pen);
-        a.points = points;
+        a.points = Rc::new(points);
         a.bbox = Some(bbox);
         a
     }
 
     fn highlight(points: Vec<(f32, f32)>, bbox: (f32, f32, f32, f32)) -> Action {
         let mut a = base_action(Tool::Highlight);
-        a.points = points;
+        a.points = Rc::new(points);
         a.bbox = Some(bbox);
         a
     }
@@ -2916,7 +2923,7 @@ mod dirty_tests {
 
     fn counter(at: (f32, f32), step: u32) -> Action {
         let mut a = base_action(Tool::Counter);
-        a.points = vec![at];
+        a.points = Rc::new(vec![at]);
         a.step = step;
         a.step_label = step.to_string().into();
         let r = a.font_size * 0.9;
