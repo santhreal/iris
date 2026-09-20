@@ -587,18 +587,18 @@ impl Editor {
     fn undo(&mut self) {
         if let Some(edit) = self.undos.pop() {
             self.apply_inverse(&edit);
-            self.redos.push(edit);
             self.selected = None;
-            self.rebuild_all();
+            self.rebuild_for_edit(&edit);
+            self.redos.push(edit);
         }
     }
 
     fn redo(&mut self) {
         if let Some(edit) = self.redos.pop() {
             self.apply_forward(&edit);
-            self.undos.push(edit);
             self.selected = None;
-            self.rebuild_all();
+            self.rebuild_for_edit(&edit);
+            self.undos.push(edit);
         }
     }
 
@@ -610,6 +610,83 @@ impl Editor {
         self.rebuild_all();
     }
 
+/// Replay actions `skip..` onto `composite` in commit order: blur
+/// pixelates whatever is beneath it at that point, so later blurs
+/// sample through earlier ones, matching the canvas2d implementation.
+/// Patches are recomputed here so moved or cropped blurs sample their
+/// new location. Associated function so the partial-replay path is
+/// testable without a Window.
+fn replay_actions(
+    composite: &mut image::RgbaImage,
+    actions: &mut [Action],
+    skip: usize,
+) {
+    for action in actions.iter_mut().skip(skip) {
+        if action.tool == Tool::Blur {
+            let (x, y) = (
+                action.blur_rect.0.max(0.0) as u32,
+                action.blur_rect.1.max(0.0) as u32,
+            );
+            let (w, h) = (action.blur_rect.2 as u32, action.blur_rect.3 as u32);
+            if w >= 1 && h >= 1 && x < composite.width() && y < composite.height() {
+                let w = w.min(composite.width() - x);
+                let h = h.min(composite.height() - y);
+                // One resample serves the GPU tile and the CPU
+                // pixelation; computing it twice per replayed blur
+                // was two crop+resize+resize chains.
+                if let Ok(patch) = pixelated_patch_rgba(composite, x, y, w, h) {
+                    let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
+                    image::imageops::overlay(composite, &patch, x as i64, y as i64);
+                    action.blur_patch = Some(render);
+                }
+            }
+        } else {
+            rasterize(composite, action, 1.0);
+        }
+    }
+}
+
+/// Copy the (x, y, w, h) rect of `base` over `composite`, row by row:
+/// the dirty rebuild restores only the region an edit touched instead
+/// of the whole frame.
+fn restore_region(
+    base: &image::RgbaImage,
+    composite: &mut image::RgbaImage,
+    (x, y, w, h): (u32, u32, u32, u32),
+) {
+    let stride = base.width() as usize * 4;
+    let src = base.as_raw();
+    let dst: &mut [u8] = composite.as_mut();
+    for row in 0..h as usize {
+        let off = (y as usize + row) * stride + x as usize * 4;
+        dst[off..off + w as usize * 4].copy_from_slice(&src[off..off + w as usize * 4]);
+    }
+}
+
+/// Index of the first action that could have painted inside `rect`:
+/// its padded bbox intersects. Text and counter ink can overflow the
+/// estimated bbox, so the test pads by the font size; a skipped action
+/// can then never have painted inside the dirty rect.
+fn first_intersecting(actions: &[Action], rect: (f32, f32, f32, f32)) -> Option<usize> {
+    let (dx, dy, dw, dh) = rect;
+    actions.iter().position(|a| {
+        let pad = if matches!(a.tool, Tool::Text | Tool::Counter) {
+            a.font_size
+        } else {
+            0.0
+        };
+        match a.bbox {
+            Some((bx, by, bw, bh)) => {
+                bx - pad < dx + dw
+                    && bx + bw + pad > dx
+                    && by - pad < dy + dh
+                    && by + bh + pad > dy
+            }
+            None => true,
+        }
+    })
+}
+
     fn rebuild_all(&mut self) {
         // Replay in commit order: blur pixelates whatever is beneath it
         // at that point, so later blurs sample through earlier ones,
@@ -618,6 +695,35 @@ impl Editor {
         // Reuse the composite buffer: it is always the same size as base,
         // so replay writes into it instead of cloning a fresh image.
         self.composite.copy_from_slice(&self.base);
+        Self::replay_actions(&mut self.composite, &mut self.actions.borrow_mut(), 0);
+    }
+    /// The union of two (x, y, w, h) rects.
+    fn union_rect(
+        a: (f32, f32, f32, f32),
+        b: (f32, f32, f32, f32),
+    ) -> (f32, f32, f32, f32) {
+        let (x, y) = (a.0.min(b.0), a.1.min(b.1));
+        (x, y, (a.0 + a.2).max(b.0 + b.2) - x, (a.1 + a.3).max(b.1 + b.3) - y)
+    }
+
+    /// Rebuild only the pixels an edit touched: restore the dirty rect
+    /// from base, then replay from the first action whose padded bbox
+    /// intersects it. Actions before that index never wrote inside the
+    /// rect, and replaying the tail in commit order reproduces the full
+    /// rebuild's result while skipping the 33MB base copy and every
+    /// earlier action's rasterize.
+    fn rebuild_dirty(&mut self, region: (f32, f32, f32, f32)) {
+        let (iw, ih) = (self.composite.width(), self.composite.height());
+        let x = (region.0.max(0.0) as u32).min(iw);
+        let y = (region.1.max(0.0) as u32).min(ih);
+        let w = (region.2.ceil() as u32).min(iw - x);
+        let h = (region.3.ceil() as u32).min(ih - y);
+        if w == 0 || h == 0 {
+            return;
+        }
+        Self::restore_region(&self.base, &mut self.composite, (x, y, w, h));
+        // Steps are commit-order across every counter, so renumbering
+        // runs over all actions even when the replay is partial.
         let mut step = 0u32;
         for action in self.actions.borrow_mut().iter_mut() {
             if action.tool == Tool::Counter {
@@ -625,27 +731,29 @@ impl Editor {
                 action.step = step;
                 action.step_label = SharedString::from(step.to_string());
             }
-            if action.tool == Tool::Blur {
-                let (x, y) = (
-                    action.blur_rect.0.max(0.0) as u32,
-                    action.blur_rect.1.max(0.0) as u32,
-                );
-                let (w, h) = (action.blur_rect.2 as u32, action.blur_rect.3 as u32);
-                if w >= 1 && h >= 1 && x < self.composite.width() && y < self.composite.height() {
-                    let w = w.min(self.composite.width() - x);
-                    let h = h.min(self.composite.height() - y);
-                    // One resample serves the GPU tile and the CPU
-                    // pixelation; computing it twice per replayed blur
-                    // was two crop+resize+resize chains.
-                    if let Ok(patch) = pixelated_patch_rgba(&self.composite, x, y, w, h) {
-                        let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
-                        image::imageops::overlay(&mut self.composite, &patch, x as i64, y as i64);
-                        action.blur_patch = Some(render);
-                    }
-                }
-            } else {
-                rasterize(&mut self.composite, action, 1.0);
-            }
+        }
+        let Some(first) =
+            Self::first_intersecting(&self.actions.borrow(), (x as f32, y as f32, w as f32, h as f32))
+        else {
+            return;
+        };
+        Self::replay_actions(&mut self.composite, &mut self.actions.borrow_mut(), first);
+    }
+
+    /// Rebuild after an undo/redo/delete: the dirty rect is the union
+    /// of the bboxes the edit carries. A stored action without a bbox
+    /// falls back to the full rebuild.
+    fn rebuild_for_edit(&mut self, edit: &Edit<Action>) {
+        let region = match edit {
+            Edit::Add(a) | Edit::Remove(_, a) => a.bbox,
+            Edit::Move(_, old, new) => match (old.bbox, new.bbox) {
+                (Some(a), Some(b)) => Some(Self::union_rect(a, b)),
+                _ => None,
+            },
+        };
+        match region {
+            Some(r) => self.rebuild_dirty(r),
+            None => self.rebuild_all(),
         }
     }
     /// Bounding box of one action in image pixels, computed at commit.
@@ -1428,8 +1536,8 @@ impl Render for Editor {
                         if let Some(i) = this.selected.take() {
                             if i < this.actions.borrow().len() {
                                 let removed = this.actions.borrow_mut().remove(i);
+                                this.rebuild_for_edit(&Edit::Remove(i, removed.clone()));
                                 this.push_edit(Edit::Remove(i, removed));
-                                this.rebuild_all();
                             }
                         }
                     }
@@ -2064,9 +2172,11 @@ impl Render for Editor {
                         // A drag that changed nothing is not an edit.
                         if i < this.actions.borrow().len() && this.actions.borrow()[i].points != old.points {
                             let new = this.actions.borrow()[i].clone();
+                            this.rebuild_for_edit(&Edit::Move(i, old.clone(), new.clone()));
                             this.push_edit(Edit::Move(i, old, new));
                         }
-                        this.rebuild_all();
+                        // Points back at the drag's start means the
+                        // composite still shows the action correctly.
                     }
                     this.crop_anchor = None;
                     this.crop_move = None;
@@ -2353,5 +2463,76 @@ mod tests {
         rasterize(&mut img, &action(Tool::Ellipse, vec![(5.0, 5.0), (25.0, 25.0)], true), 1.0);
         assert!(painted(&img, 15, 15), "center must be painted");
         assert!(!painted(&img, 5, 5), "bounding corner must stay clear");
+    }
+}
+
+// WHY: rebuild_dirty must produce byte-identical composites to
+// rebuild_all while touching only the edited region; a wrong "first
+// intersecting" index or a missed restore leaves stale ink or erases
+// live ink. Not covered: blur patches (they replay identically).
+#[cfg(test)]
+mod dirty_tests {
+    use super::{Action, Editor, Tool};
+
+    fn stroke(points: Vec<(f32, f32)>, bbox: (f32, f32, f32, f32)) -> Action {
+        Action {
+            tool: Tool::Pen,
+            color: "#ff0000",
+            width: 2.0,
+            points,
+            text: None,
+            font_size: 16.0,
+            filled: false,
+            blur_patch: None,
+            blur_rect: (0.0, 0.0, 0.0, 0.0),
+            step: 0,
+            step_label: "0".into(),
+            bbox: Some(bbox),
+            cached_path: std::cell::RefCell::new(None),
+        }
+    }
+
+    #[test]
+    fn dirty_rebuild_matches_full_rebuild() {
+        // Two disjoint strokes: one top-left, one bottom-right.
+        let a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
+        let b = stroke(vec![(30.0, 30.0), (38.0, 38.0)], (26.0, 26.0, 16.0, 16.0));
+        let base = image::RgbaImage::from_pixel(40, 40, image::Rgba([10, 20, 30, 255]));
+
+        // Full rebuild reference.
+        let mut full = base.clone();
+        Editor::replay_actions(&mut full, &mut [a.clone(), b.clone()], 0);
+
+        // Dirty rebuild for an edit inside b's bbox only.
+        let mut dirty = full.clone();
+        Editor::restore_region(&base, &mut dirty, (26, 26, 14, 14));
+        let first = Editor::first_intersecting(&[a.clone(), b.clone()], (26.0, 26.0, 14.0, 14.0));
+        assert_eq!(first, Some(1), "only the second stroke intersects");
+        Editor::replay_actions(&mut dirty, &mut [a.clone(), b.clone()], 1);
+
+        assert_eq!(dirty.as_raw(), full.as_raw(), "dirty rebuild must equal full rebuild");
+        // The skipped stroke's pixels survived: they were never restored.
+        assert_eq!(dirty.get_pixel(5, 2), full.get_pixel(5, 2));
+    }
+
+    #[test]
+    fn no_intersecting_action_leaves_composite_alone() {
+        let a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
+        assert_eq!(
+            Editor::first_intersecting(&[a], (30.0, 30.0, 8.0, 8.0)),
+            None,
+            "a far-away region intersects nothing"
+        );
+    }
+
+    #[test]
+    fn missing_bbox_replays_everything() {
+        let mut a = stroke(vec![(2.0, 2.0), (10.0, 2.0)], (0.0, 0.0, 14.0, 6.0));
+        a.bbox = None;
+        assert_eq!(
+            Editor::first_intersecting(&[a], (30.0, 30.0, 8.0, 8.0)),
+            Some(0),
+            "a bbox-less action conservatively intersects"
+        );
     }
 }
