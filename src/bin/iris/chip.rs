@@ -93,9 +93,9 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
         .map_err(|e| format!("open chip window: {e}"))?;
 
     let xid = find_chip_xid().unwrap_or(0);
-    if let Ok((conn, _)) = x11rb::connect(None) {
+    if let Ok((conn, _)) = iris_lib::capture::x11::shared_conn() {
         if xid != 0 {
-            crate::xwin::suppress_decorations_on(&conn, xid);
+            crate::xwin::suppress_decorations_on(conn, xid);
         }
     }
     // The XID lookup above can beat the map; strip decorations with
@@ -122,8 +122,8 @@ pub fn close(cx: &mut App) {
 /// The chip window's X11 id: the one top-level window whose WM_CLASS
 /// is dev.iris.chip.
 pub fn find_chip_xid() -> Option<u32> {
-    let (conn, _) = x11rb::connect(None).ok()?;
-    find_chip_xid_on(&conn)
+    let (conn, _) = iris_lib::capture::x11::shared_conn().ok()?;
+    find_chip_xid_on(conn)
 }
 
 /// Same lookup on a caller-owned connection. Uses _NET_CLIENT_LIST:
