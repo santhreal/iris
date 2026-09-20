@@ -68,6 +68,10 @@ pub struct Encoder {
     tx: Option<SyncSender<FrameMsg>>,
     /// Emptied buffers back from the writer thread.
     recycle: Receiver<Vec<u8>>,
+    /// Buffers freed by dropped frames, kept for the next take_buf.
+    /// Without this a backpressured drop frees an 8MB frame and the
+    /// next take_buf re-allocates it.
+    spares: Vec<Vec<u8>>,
     writer: Option<JoinHandle<Result<(), String>>>,
     /// Frames dropped because the queue was full; logged at finish.
     dropped: u64,
@@ -290,6 +294,7 @@ impl Encoder {
             frame_bytes: cfg.width as usize * cfg.height as usize * cfg.pix_fmt.bytes_per_pixel(),
             tx: Some(tx),
             recycle,
+            spares: Vec::new(),
             writer: Some(writer),
             dropped: 0,
         })
@@ -298,6 +303,9 @@ impl Encoder {
     /// An emptied frame buffer for the caller to fill and hand back
     /// through write_frame. Capacity is exactly one frame.
     pub fn take_buf(&mut self) -> Vec<u8> {
+        if let Some(buf) = self.spares.pop() {
+            return buf;
+        }
         self.recycle
             .try_recv()
             .unwrap_or_else(|_| Vec::with_capacity(self.frame_bytes))
@@ -347,7 +355,15 @@ impl Encoder {
             .ok_or_else(|| "encoder already finished".to_string())?;
         match tx.try_send(msg) {
             Ok(()) => Ok(()),
-            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+            Err(std::sync::mpsc::TrySendError::Full(msg)) => {
+                // The frame is dropped; keep its buffer for the next
+                // take_buf rather than freeing a frame-sized alloc.
+                if let FrameMsg::Buf(mut buf) = msg {
+                    if self.spares.len() < 2 {
+                        buf.clear();
+                        self.spares.push(buf);
+                    }
+                }
                 self.dropped += 1;
                 if self.dropped == 1 || self.dropped % 120 == 0 {
                     crate::ilog!(
