@@ -35,6 +35,10 @@ pub struct Library {
     /// Decoded thumbnails, keyed by capture path. Reading and
     /// decoding every PNG on every animation frame was the judder.
     thumb_cache: std::collections::HashMap<PathBuf, std::sync::Arc<RenderImage>>,
+    /// Set when `entries` is reassigned: the next render rebuilds the
+    /// live-path set and prunes `thumb_cache`, instead of rebuilding
+    /// the set every frame.
+    entries_dirty: bool,
     drag_fired: bool,
     help: bool,
     /// First-render clock for the open cascade.
@@ -95,6 +99,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         last_frame: None,
                         drag_start: None,
                         thumb_cache: std::collections::HashMap::new(),
+                        entries_dirty: false,
                         drag_fired: false,
                         help: false,
                         opened: Instant::now(),
@@ -195,6 +200,7 @@ impl Library {
                             .collect();
                         this.thumb_cache.retain(|p, _| !stale.contains(p.as_path()));
                         this.entries = fresh;
+                        this.entries_dirty = true;
                         this.selected
                             .retain(|p| this.entries.iter().any(|e| &e.path == p));
                         this.prefetch_thumbs(cx);
@@ -311,6 +317,7 @@ fn open_containing_folder(path: &std::path::Path) {
             let (errors, entries) = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.entries = entries;
+                this.entries_dirty = true;
                 this.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
                 cx.notify();
             });
@@ -487,10 +494,15 @@ impl Render for Library {
         // thumb has not landed draws without its image until then.
         // A set, not a nested scan: retain() over the cache against a
         // per-entry linear probe is O(cache * entries) PathBuf
-        // compares every frame.
-        let live_paths: std::collections::HashSet<&std::path::Path> =
-            self.entries.iter().map(|e| e.path.as_path()).collect();
-        self.thumb_cache.retain(|p, _| live_paths.contains(p.as_path()));
+        // compares. Rebuilt only when entries changed: a per-frame
+        // rebuild is O(entries) PathBuf hashing for a cache that
+        // almost never has stale keys.
+        if self.entries_dirty {
+            self.entries_dirty = false;
+            let live_paths: std::collections::HashSet<&std::path::Path> =
+                self.entries.iter().map(|e| e.path.as_path()).collect();
+            self.thumb_cache.retain(|p, _| live_paths.contains(p.as_path()));
+        }
         // Advance pointer-coupled springs by the real frame delta;
         // keep rendering until everything settles.
         let now = Instant::now();
@@ -788,6 +800,7 @@ impl Library {
                                     this.status = Some(e);
                                 }
                                 this.entries = entries;
+                                this.entries_dirty = true;
                                 cx.notify();
                             });
                         })
