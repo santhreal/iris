@@ -847,7 +847,8 @@ impl Editor {
                 });
                 cx.notify();
             });
-        });
+        })
+        .detach();
     }
 
     fn commit_text(&mut self, keep: bool) {
@@ -1072,37 +1073,19 @@ fn blend_row(dst: &mut image::RgbaImage, y: i64, x0: i64, x1: i64, src: image::R
     }
 }
 
-fn blend(dst: &mut image::RgbaImage, x: i64, y: i64, src: image::Rgba<u8>) {
-    if x < 0 || y < 0 || x >= dst.width() as i64 || y >= dst.height() as i64 {
-        return;
-    }
-    // Write through the raw buffer: get_pixel+put_pixel bounds-check
-    // twice per pixel and a filled shape calls this per pixel.
-    let i = ((y as u32 * dst.width() + x as u32) * 4) as usize;
-    let buf: &mut [u8] = dst.as_mut();
-    let a = src.0[3] as f32 / 255.0;
-    if a >= 1.0 {
-        buf[i..i + 4].copy_from_slice(&src.0);
-        return;
-    }
-    let inv = 1.0 - a;
-    buf[i] = (src.0[0] as f32 * a + buf[i] as f32 * inv) as u8;
-    buf[i + 1] = (src.0[1] as f32 * a + buf[i + 1] as f32 * inv) as u8;
-    buf[i + 2] = (src.0[2] as f32 * a + buf[i + 2] as f32 * inv) as u8;
-    buf[i + 3] = buf[i + 3].max(src.0[3]);
-}
+
 fn stamp(img: &mut image::RgbaImage, cx: f32, cy: f32, r: f32, px: image::Rgba<u8>) {
     let r = r.max(0.5);
-    let (x0, y0) = ((cx - r).floor() as i64, (cy - r).floor() as i64);
-    let (x1, y1) = ((cx + r).ceil() as i64, (cy + r).ceil() as i64);
+    let (y0, y1) = ((cy - r).floor() as i64, (cy + r).ceil() as i64);
+    // Each row's disc chord is contiguous: solve the half-width once
+    // per row and fill the span, instead of testing dx*dx+dy*dy per
+    // pixel.
     for y in y0..=y1 {
-        for x in x0..=x1 {
-            let dx = x as f32 - cx;
-            let dy = y as f32 - cy;
-            if dx * dx + dy * dy <= r * r {
-                blend(img, x, y, px);
-            }
-        }
+        let dy = y as f32 - cy;
+        let half = (r * r - dy * dy).max(0.0).sqrt();
+        let x0 = (cx - half).floor() as i64;
+        let x1 = (cx + half).ceil() as i64;
+        blend_row(img, y, x0, x1, px);
     }
 }
 

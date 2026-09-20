@@ -152,15 +152,16 @@ impl IconWindow {
         use x11rb::protocol::xproto::{Gcontext, ImageFormat, Pixmap};
         const MAX_W: u32 = 96;
         let (mut w, mut h) = (icon.width, icon.height);
-        let mut data: &[u8] = &icon.rgba;
         // The resize output owns its buffer; the unresized path keeps
-        // borrowing the Arc.
-        let mut resized_buf: Option<Vec<u8>> = None;
-        if w > MAX_W {
+        // borrowing the Arc. Cow so the borrow and the owned resize
+        // share one binding.
+        let data: std::borrow::Cow<[u8]> = if w > MAX_W {
             let nh = (h as u64 * MAX_W as u64 / w as u64).max(1) as u32;
             let img: image::ImageBuffer<image::Rgba<u8>, _> =
-                image::ImageBuffer::from_raw(w, h, data)?;
-            resized_buf = Some(
+                image::ImageBuffer::from_raw(w, h, &icon.rgba[..])?;
+            w = MAX_W;
+            h = nh;
+            std::borrow::Cow::Owned(
                 image::imageops::resize(
                     &img,
                     MAX_W,
@@ -168,11 +169,11 @@ impl IconWindow {
                     image::imageops::FilterType::Triangle,
                 )
                 .into_raw(),
-            );
-            data = resized_buf.as_deref().unwrap();
-            w = MAX_W;
-            h = nh;
-        }
+            )
+        } else {
+            std::borrow::Cow::Borrowed(&icon.rgba[..])
+        };
+        let data: &[u8] = &data;
         let depth = conn.setup().roots[0].root_depth;
         let lsb = conn.setup().image_byte_order
             == x11rb::protocol::xproto::ImageOrder::LSB_FIRST;
