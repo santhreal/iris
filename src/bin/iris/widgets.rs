@@ -299,7 +299,12 @@ pub fn render_image_from_png(bytes: &[u8]) -> Option<std::sync::Arc<gpui::Render
     let mut data = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
         .ok()?
         .into_rgba8();
-    swizzle_rgba_bgra(data.as_mut());
+    // Same banding as the rgba path: a 4K editor base is a 33MB
+    // swizzle, too big for one thread.
+    let row = data.width() as usize * 4;
+    iris_lib::par::par_bands_mut(data.as_mut(), row, |band, _| {
+        swizzle_rgba_bgra(band);
+    });
     Some(std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(data)])))
 }
 
