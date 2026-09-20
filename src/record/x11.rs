@@ -86,19 +86,23 @@ fn root_rect(conn: &RustConnection, root: Window, win: Window) -> Result<Rect, S
 
 fn make_crosshair(conn: &RustConnection) -> Result<Cursor, String> {
     let font: Font = conn.generate_id().map_err(|e| e.to_string())?;
-    conn.open_font(font, b"cursor")
-        .map_err(|e| e.to_string())?
-        .check()
-        .map_err(|e| format!("open cursor font: {e}"))?;
     let cursor = conn.generate_id().map_err(|e| e.to_string())?;
-    conn.create_glyph_cursor(
-        cursor, font, font, XC_CROSSHAIR, XC_CROSSHAIR + 1,
-        0, 0, 0, u16::MAX, u16::MAX, u16::MAX,
-    )
-    .map_err(|e| e.to_string())?
-    .check()
-    .map_err(|e| format!("create crosshair cursor: {e}"))?;
-    conn.close_font(font).map_err(|e| e.to_string())?;
+    // X11 requests run in order, so the font open, cursor create and
+    // font close can all be in flight together; checking each reply
+    // serially was three round trips for one cursor.
+    let open = conn.open_font(font, b"cursor").map_err(|e| e.to_string())?;
+    let create = conn
+        .create_glyph_cursor(
+            cursor, font, font, XC_CROSSHAIR, XC_CROSSHAIR + 1,
+            0, 0, 0, u16::MAX, u16::MAX, u16::MAX,
+        )
+        .map_err(|e| e.to_string())?;
+    let close = conn.close_font(font).map_err(|e| e.to_string())?;
+    open.check().map_err(|e| format!("open cursor font: {e}"))?;
+    create
+        .check()
+        .map_err(|e| format!("create crosshair cursor: {e}"))?;
+    close.check().map_err(|e| format!("close cursor font: {e}"))?;
     Ok(cursor)
 }
 
