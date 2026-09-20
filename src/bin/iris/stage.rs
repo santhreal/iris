@@ -128,7 +128,9 @@ fn prepare_thumb(
         img
     };
     // RenderImage directly from the resized pixels: no PNG
-    // re-encode, and the atlas tile stays freeable on dismiss.
+    // re-encode, and the atlas tile stays freeable on dismiss. The
+    // copy is inherent: the RenderImage wants BGRA while thumb_rgba
+    // keeps RGBA for the drag icon's own swizzle.
     let render = crate::widgets::render_image_from_rgba(rgba.width(), rgba.height(), rgba.as_raw());
     Ok((render, Arc::new(rgba.into_raw()), (w, h)))
 }
