@@ -839,13 +839,18 @@ mod hotkeys {
     }
 
     /// Signalled by settings save: ungrab everything, reload config,
-    /// re-grab. The grab thread owns the connection.
-    static REGRAB: std::sync::OnceLock<std::sync::mpsc::Sender<()>> =
-        std::sync::OnceLock::new();
+    /// re-grab. The grab thread owns the connection. The signal is a
+    /// byte on a self-pipe so the grab thread's poll() wakes on it
+    /// instead of timing out every 50ms to check a channel.
+    static REGRAB_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
     pub fn request_regrab() {
-        if let Some(tx) = REGRAB.get() {
-            let _ = tx.send(());
+        let fd = REGRAB_FD.load(std::sync::atomic::Ordering::Acquire);
+        if fd >= 0 {
+            let byte = [1u8];
+            unsafe {
+                libc::write(fd, byte.as_ptr() as *const libc::c_void, 1);
+            }
         }
     }
 
@@ -854,8 +859,13 @@ mod hotkeys {
     /// (Wayland, no DISPLAY).
     pub fn spawn(tx: UnboundedSender<Command>) {
         std::thread::spawn(move || {
-            let (regrab_tx, regrab_rx) = std::sync::mpsc::channel::<()>();
-            let _ = REGRAB.set(regrab_tx);
+            // Self-pipe: the read end joins the X fd in poll(), the
+            // write end is published for request_regrab.
+            let mut pipe_fds = [-1i32; 2];
+            if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+                return;
+            }
+            REGRAB_FD.store(pipe_fds[1], std::sync::atomic::Ordering::Release);
             let Ok((conn, screen_num)) = x11rb::connect(None) else {
                 return;
             };
@@ -920,17 +930,17 @@ mod hotkeys {
             };
             grab_all(&conn, &mut grabbed);
 
-            // Event-driven, not polled: poll() the connection's fd so a
-            // grabbed keypress wakes the thread the instant the X server
-            // delivers it, instead of up to a sleep interval late. The
-            // timeout still lets a regrab request land when no events
-            // arrive.
+            // Event-driven, not polled: poll() the connection's fd and
+            // the regrab pipe, so a grabbed keypress or a settings save
+            // wakes the thread the instant it lands. No timeout: the
+            // thread sleeps until one of the two fds is readable.
             use std::os::unix::io::AsRawFd;
             let x_fd = conn.stream().as_raw_fd();
+            let mut pfds = [
+                libc::pollfd { fd: x_fd, events: libc::POLLIN, revents: 0 },
+                libc::pollfd { fd: pipe_fds[0], events: libc::POLLIN, revents: 0 },
+            ];
             loop {
-                if regrab_rx.try_recv().is_ok() {
-                    grab_all(&conn, &mut grabbed);
-                }
                 // Drain every queued event before sleeping again.
                 loop {
                     match conn.poll_for_event() {
@@ -959,16 +969,19 @@ mod hotkeys {
                         Err(_) => return,
                     }
                 }
-                // Sleep until the next X event or the regrab deadline.
-                // 50ms is the regrab latency bound, not the hotkey one:
-                // a keypress wakes poll() immediately.
-                let mut pfd = libc::pollfd {
-                    fd: x_fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                unsafe {
-                    libc::poll(&mut pfd, 1, 50);
+                for p in &mut pfds {
+                    p.revents = 0;
+                }
+                if unsafe { libc::poll(pfds.as_mut_ptr(), 2, -1) } <= 0 {
+                    continue;
+                }
+                if pfds[1].revents & libc::POLLIN != 0 {
+                    // Drain the pipe, then regrab once per wake.
+                    let mut buf = [0u8; 64];
+                    unsafe {
+                        libc::read(pipe_fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len());
+                    }
+                    grab_all(&conn, &mut grabbed);
                 }
             }
         });
