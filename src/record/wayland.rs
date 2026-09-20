@@ -557,11 +557,14 @@ impl GlContext {
                         (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
                         return Err("glMapBufferRange failed".to_string());
                     }
-                    // Pure memcpy: ffmpeg is fed rgba and drops alpha
-                    // in its own conversion, so no stamping pass.
+                    // Banded memcpy: ffmpeg is fed rgba and drops
+                    // alpha in its own conversion, so no stamping
+                    // pass; a serial copy of a 33MB frame is a
+                    // visible slice of the frame budget.
                     let src = std::slice::from_raw_parts(ptr as *const u8, total_bytes);
-                    scratch.copy_from_slice(src);
-                    (unmap_buffer)(GL_PIXEL_PACK_BUFFER);
+                    crate::par::par_bands_mut(scratch.as_mut_slice(), 4096, |dst, start| {
+                        dst.copy_from_slice(&src[start..start + dst.len()]);
+                    });
                 }
                 (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
                 self.pbo_pending = Some(cur);
@@ -941,9 +944,13 @@ fn copy_frame(
     };
     out.clear();
     out.reserve(w * h * 4);
+    // Uninit capacity, not a zeroed vec: the banded row copy writes
+    // every byte, and a resize's memset before the copy is a wasted
+    // pass per frame.
+    #[allow(clippy::uninit_vec)]
+    unsafe { out.set_len(w * h * 4) };
     // Strided rows into a packed buffer, banded across threads once
     // the frame is large enough to pay for the spawn.
-    out.resize(w * h * 4, 0);
     crate::par::par_bands_mut(out, w * 4, |o_chunk, start| {
         let row0 = start / (w * 4);
         for (r, row_out) in o_chunk.chunks_exact_mut(w * 4).enumerate() {

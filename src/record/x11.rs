@@ -306,7 +306,15 @@ fn copy_frame_bytes(src: &[u8], need: usize, out: &mut Vec<u8>) -> Result<(), St
         ));
     }
     out.clear();
-    out.extend_from_slice(&src[..need]);
+    out.reserve(need);
+    // Uninit capacity, not a zeroed vec: the banded copy writes every
+    // byte, and a resize's memset before the copy is a wasted pass
+    // per frame.
+    #[allow(clippy::uninit_vec)]
+    unsafe { out.set_len(need) };
+    crate::par::par_bands_mut(out, 4096, |dst, start| {
+        dst.copy_from_slice(&src[start..start + dst.len()]);
+    });
     Ok(())
 }
 
