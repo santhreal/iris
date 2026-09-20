@@ -124,8 +124,12 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
             region.width, region.height, region.x, region.y, width, height
         ));
     }
-    let mut out = image::RgbaImage::new(region.width, region.height);
-    let raw: &mut [u8] = &mut *out.as_mut();
+    // Uninit capacity, not a zeroed image: the banded fill writes
+    // every byte, and a 33MB memset before a 33MB fill is a wasted
+    // pass. from_raw validates the size after the fill.
+    let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
+    unsafe { buf.set_len(buf.capacity()) };
+    let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;
     // Fused copy+swizzle per row, banded across threads once the crop
     // is big enough to matter (a 4K crop is 33MB).
@@ -143,7 +147,8 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
             }
         }
     });
-    Ok(out)
+    image::RgbaImage::from_raw(region.width, region.height, buf)
+        .ok_or_else(|| "crop buffer size mismatch".to_string())
 }
 
 /// Crop an already-RGBA frame: same banded parallel copy as
@@ -159,8 +164,9 @@ pub fn crop_rgba(rgba: &[u8], width: u32, height: u32, region: Region) -> Result
             region.width, region.height, region.x, region.y, width, height
         ));
     }
-    let mut out = image::RgbaImage::new(region.width, region.height);
-    let raw: &mut [u8] = &mut *out.as_mut();
+    let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
+    unsafe { buf.set_len(buf.capacity()) };
+    let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;
     iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
         let row0 = (start / row_len) as u32;
@@ -169,7 +175,8 @@ pub fn crop_rgba(rgba: &[u8], width: u32, height: u32, region: Region) -> Result
             dst_row.copy_from_slice(&rgba[src..src + row_len]);
         }
     });
-    Ok(out)
+    image::RgbaImage::from_raw(region.width, region.height, buf)
+        .ok_or_else(|| "crop buffer size mismatch".to_string())
 }
 
 /// Save an RGBA image to the screenshots dir, put it on the clipboard and
