@@ -152,34 +152,6 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
         .ok_or_else(|| "crop buffer size mismatch".to_string())
 }
 
-/// Crop an already-RGBA frame: same banded parallel copy as
-/// `crop_bgra` without the channel swizzle. The active-window path
-/// captures RGBA directly, so a swizzling crop would swap R and B.
-pub fn crop_rgba(rgba: &[u8], width: u32, height: u32, region: Region) -> Result<image::RgbaImage, String> {
-    if region.width == 0 || region.height == 0 {
-        return Err("empty capture region".to_string());
-    }
-    if region.x + region.width > width || region.y + region.height > height {
-        return Err(format!(
-            "region {}x{}+{}+{} outside frame {}x{}",
-            region.width, region.height, region.x, region.y, width, height
-        ));
-    }
-    let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
-    #[allow(clippy::uninit_vec)] // the banded fill writes every byte
-    unsafe { buf.set_len(buf.capacity()) };
-    let raw: &mut [u8] = &mut buf;
-    let row_len = region.width as usize * 4;
-    iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
-        let row0 = (start / row_len) as u32;
-        for (r, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
-            let src = ((region.y + row0 + r as u32) * width + region.x) as usize * 4;
-            dst_row.copy_from_slice(&rgba[src..src + row_len]);
-        }
-    });
-    image::RgbaImage::from_raw(region.width, region.height, buf)
-        .ok_or_else(|| "crop buffer size mismatch".to_string())
-}
 
 /// Save an RGBA image to the screenshots dir, put it on the clipboard and
 /// register it in the library. The capture is durable and paste-able
