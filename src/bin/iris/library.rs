@@ -54,7 +54,7 @@ pub struct Library {
     status: Option<String>,
     focus: FocusHandle,
     /// This window's unique WM_CLASS, for the title-bar drag.
-    class: String,
+    class: SharedString,
     /// The config snapshot: render reads the hotkey every frame, and
     /// Config::load() hits the disk each call.
     cfg: iris_lib::config::Config,
@@ -118,7 +118,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         opened: Instant::now(),
                         status: None,
                         focus,
-                        class: win_id.clone(),
+                        class: SharedString::from(win_id.clone()),
                         cfg: iris_lib::config::Config::load(),
                         band: None,
                         scroll: gpui::ScrollHandle::new(),

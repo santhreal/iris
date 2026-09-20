@@ -57,6 +57,8 @@ pub fn set_mic(v: bool) {
 
 pub struct Chip {
     started: Instant,
+    /// The 30Hz repaint timer is armed on first render.
+    timer_started: bool,
 }
 
 /// Open the chip. Returns the X11 window id on X11, 0 elsewhere.
@@ -87,6 +89,7 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
             |_, cx| {
                 cx.new(|_| Chip {
                     started: Instant::now(),
+                    timer_started: false,
                 })
             },
         )
@@ -134,13 +137,30 @@ pub fn find_chip_xid_on(conn: &impl x11rb::connection::Connection) -> Option<u32
 }
 
 impl Render for Chip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let paused = paused();
-        // Paused: the dot is static and the timer frozen, so no rAF —
-        // a GPU wake per frame for a still pill is wasted. The next
-        // dispatch (resume/stop) re-renders through notify.
-        if !paused {
-            window.request_animation_frame();
+        // Repaint on a 30Hz timer, not vsync: the pulse is a 1.6s
+        // sine, so 30fps reads as smoothly as 60 while halving the
+        // compositor wakes a recording pays for the whole session.
+        // Paused skips the notify, so a still pill costs no wakes.
+        if !self.timer_started {
+            self.timer_started = true;
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(33))
+                        .await;
+                    let alive = this.update(cx, |_, cx| {
+                        if !crate::chip::paused() {
+                            cx.notify();
+                        }
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
         }
         let mic_on = MIC_ON.load(Ordering::Relaxed);
         // Subtract wall time spent paused: the file has no frames for

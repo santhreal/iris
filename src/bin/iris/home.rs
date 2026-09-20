@@ -21,7 +21,7 @@ pub struct Home {
     hovered: Option<usize>,
     pressed: Option<usize>,
     /// This window's unique WM_CLASS, for the title-bar drag.
-    class: String,
+    class: SharedString,
     /// Pointer-coupled springs per tile. They reverse mid-flight
     /// when the pointer leaves or the button releases early.
     hover: [motion::Spring; 3],
@@ -63,7 +63,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 hover: [motion::Spring::default(); 3],
                 press: [motion::Spring::default(); 3],
                 last_frame: None,
-                class: win_id.clone(),
+                class: SharedString::from(win_id.clone()),
             })
         },
     )

@@ -66,7 +66,7 @@ pub struct Overlay {
     current: Option<(f32, f32, f32, f32)>,
     hovered: Option<WinRect>,
     cursor: (f32, f32),
-    loupe: Option<(Arc<RenderImage>, String)>,
+    loupe: Option<(Arc<RenderImage>, SharedString)>,
     /// Frame pixel the loupe was last built for; a mousemove inside
     /// the same pixel skips the rebuild.
     loupe_at: Option<(i64, i64)>,
@@ -98,6 +98,9 @@ pub struct Overlay {
     /// The config snapshot for this session: render and the key handler
     /// read it every frame, and Config::load() hits the disk each call.
     cfg: iris_lib::config::Config,
+    /// The committed-selection hint line, built once per session from
+    /// cfg: formatting it per frame allocates a String a frame.
+    hint: SharedString,
 }
 
 /// The pooled overlay window: created on the first capture, parked
@@ -235,6 +238,11 @@ fn open_shell_opts(
                 tabbing_identifier: None,
             },
             move |_, cx| {
+                let cfg = iris_lib::config::Config::load();
+                let hint = SharedString::from(format!(
+                    "{} capture   {} cancel",
+                    cfg.confirm_keybind, cfg.cancel_keybind
+                ));
                 cx.new(|_| Overlay {
                     hidden: false,
                     mode: OverlayMode::Capture,
@@ -263,7 +271,8 @@ fn open_shell_opts(
                     flight: None,
                     landed: None,
                     finalize_failed: false,
-                    cfg: iris_lib::config::Config::load(),
+                    hint,
+                    cfg,
                 })
             },
         )
@@ -333,7 +342,7 @@ fn loupe_image(
     fx: i64,
     fy: i64,
     scratch: &mut Vec<u8>,
-) -> (Arc<RenderImage>, String) {
+) -> (Arc<RenderImage>, SharedString) {
     let bgra = img.as_bytes(0).unwrap_or(&[]);
     // Uninit, not zeroed: the row fill writes every byte, so a 92KB
     // memset before the fill is a wasted pass per mousemove.
@@ -397,10 +406,10 @@ fn loupe_image(
     let buf = image::RgbaImage::from_raw(LOUPE_PX, LOUPE_PX, std::mem::take(scratch))
         .expect("loupe buffer size");
     let img = Arc::new(RenderImage::new([image::Frame::new(buf)]));
-    let info = format!(
+    let info = SharedString::from(format!(
         "{fx}, {fy}  #{:02x}{:02x}{:02x}",
         center[0], center[1], center[2]
-    );
+    ));
     (img, info)
 }
 
@@ -463,6 +472,10 @@ impl Overlay {
         self.finalize_failed = false;
         self.mode = OverlayMode::Capture;
         self.cfg = iris_lib::config::Config::load();
+        self.hint = SharedString::from(format!(
+            "{} capture   {} cancel",
+            self.cfg.confirm_keybind, self.cfg.cancel_keybind
+        ));
         self.loupe = None;
         self.loupe_at = None;
         self.finishing = false;
@@ -1199,7 +1212,7 @@ impl Render for Overlay {
             // dragging the loupe is the feedback; the hint would
             // flicker under it.
             if !self.dragging {
-                let cfg = &self.cfg;
+                let hint = self.hint.clone();
                 root = root.child(
                     div()
                         .absolute()
@@ -1211,10 +1224,7 @@ impl Render for Overlay {
                         .bg(theme::alpha(theme::BG_ELEV, 0.9))
                         .text_xs()
                         .text_color(theme::FG_DIM)
-                        .child(format!(
-                            "{} capture   {} cancel",
-                            cfg.confirm_keybind, cfg.cancel_keybind
-                        )),
+                        .child(hint),
                 );
             }
             // Resize handles on a committed selection: 8 grab points

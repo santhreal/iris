@@ -45,7 +45,7 @@ pub struct Settings {
     status: Option<String>,
     focus: Option<FocusHandle>,
     /// This window's unique WM_CLASS, for the title-bar drag.
-    class: String,
+    class: SharedString,
 }
 
 /// Open the settings window. A second call focuses a new window; the
@@ -83,7 +83,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 open_dropdown: None,
                 status: None,
                 focus,
-                class: win_id.clone(),
+                class: SharedString::from(win_id.clone()),
             })
         },
     )

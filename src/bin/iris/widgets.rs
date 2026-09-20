@@ -370,7 +370,7 @@ pub fn traffic_lights(
 /// the move request finds its XID.
 pub fn window_frame(
     title: &'static str,
-    class: String,
+    class: SharedString,
     right: Vec<AnyElement>,
     content: impl IntoElement,
 ) -> Div {
@@ -406,7 +406,7 @@ pub fn window_frame(
                     // coordinates are window origin + local position.
                     let origin = window.bounds().origin;
                     crate::xwin::begin_wm_move(
-                        class.clone(),
+                        class.to_string(),
                         (f32::from(origin.x) + f32::from(ev.position.x)) as i32,
                         (f32::from(origin.y) + f32::from(ev.position.y)) as i32,
                     );

@@ -491,11 +491,27 @@ fn send_client<C: Connection>(
     );
 }
 
+/// Sleep until the connection has an event or `ms` elapse: the drag
+/// loop's pointer cadence stays 16ms, but XdndFinished and
+/// SelectionRequest wake it the instant they land.
+#[cfg(target_os = "linux")]
+fn wait_event_or(conn: &x11rb::rust_connection::RustConnection, ms: i32) {
+    use std::os::unix::io::AsRawFd;
+    let mut pfd = libc::pollfd {
+        fd: conn.stream().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    unsafe {
+        libc::poll(&mut pfd, 1, ms);
+    }
+}
+
 /// XDnD source state machine. Runs until the drop completes, the drag is
 /// cancelled, or the safety deadline passes.
 #[cfg(target_os = "linux")]
-fn run_xdnd_drag<C: Connection>(
-    conn: C,
+fn run_xdnd_drag(
+    conn: x11rb::rust_connection::RustConnection,
     win: x11rb::protocol::xproto::Window,
     root: x11rb::protocol::xproto::Window,
     atoms: XdndAtoms,
@@ -561,7 +577,9 @@ fn run_xdnd_drag<C: Connection>(
             if dropped {
                 // Drop sent: stay alive until XdndFinished (or the
                 // deadline) so the target can convert the selection.
-                std::thread::sleep(Duration::from_millis(16));
+                // poll() wakes the instant the reply lands instead of
+                // up to 16ms late.
+                wait_event_or(&conn, 16);
                 continue;
             }
             if let Some(icon) = &icon {
@@ -624,7 +642,9 @@ fn run_xdnd_drag<C: Connection>(
             icon.follow(&conn, px, py);
         }
         let _ = conn.flush();
-        std::thread::sleep(Duration::from_millis(16));
+        // Events (XdndFinished, SelectionRequest) wake the loop early;
+        // the timeout keeps the 16ms pointer cadence.
+        wait_event_or(&conn, 16);
     }
 
     if let Some(icon) = &icon {
