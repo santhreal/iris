@@ -467,7 +467,6 @@ impl GlContext {
             return Err(format!("eglCreateImageKHR failed: error {err:?}"));
         }
 
-        let mut need_stamp = false;
         let result = (|| unsafe {
             if self.texture == 0 || self.fbo == 0 {
                 return Err("GL texture/FBO were not allocated at setup".to_string());
@@ -558,24 +557,18 @@ impl GlContext {
                         (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
                         return Err("glMapBufferRange failed".to_string());
                     }
-                    // Fused copy + alpha-stamp: one pass over the frame
-                    // instead of a memcpy followed by a per-pixel OR.
+                    // Pure memcpy: ffmpeg is fed rgba and drops alpha
+                    // in its own conversion, so no stamping pass.
                     let src = std::slice::from_raw_parts(ptr as *const u8, total_bytes);
-                    for (d, s) in scratch.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-                        d.copy_from_slice(s);
-                        d[3] = 0xFF;
-                    }
+                    scratch.copy_from_slice(src);
                     (unmap_buffer)(GL_PIXEL_PACK_BUFFER);
                 }
                 (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
                 self.pbo_pending = Some(cur);
                 (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
-                // produced frames are already alpha-stamped by the
-                // fused copy above.
                 return Ok(produced);
             }
-            // Sync readPixels path: stamp alpha after the read below.
-            need_stamp = true;
+            // Sync readPixels path.
             (self.read_pixels)(
                 0,
                 0,
@@ -595,21 +588,7 @@ impl GlContext {
         }
 
         let produced = result?;
-        if !produced {
-            return Ok(false);
-        }
-        // Alpha-stamp in parallel bands (sync readPixels path only;
-        // the PBO copy stamps inline). A serial per-pixel pass over a
-        // 4K frame is a visible slice of the frame budget.
-        if need_stamp {
-            crate::par::par_bands_mut(scratch, 4096, |band, _| {
-                for px in band.chunks_exact_mut(4) {
-                    px[3] = 0xFF;
-                }
-            });
-        }
-
-        Ok(true)
+        Ok(produced)
     }
 }
 
@@ -690,10 +669,10 @@ async fn portal_negotiate() -> Result<(OwnedFd, u32), String> {
 
 struct Shared {
     encoder: Option<Encoder>,
-    /// The dimensions the live encoder was opened with; a renegotiated
-    /// stream size splits the file rather than dying on a frame-size
-    /// mismatch.
-    enc_size: (u32, u32),
+    /// The (size, pixel format) the live encoder was opened with; a
+    /// renegotiated stream splits the file rather than dying on a
+    /// frame-size mismatch or swapping channels mid-stream.
+    enc_fmt: (u32, u32, super::encoder::PixFmt),
     /// The path of the segment currently being written: splits rename
     /// the output, and the caller reports the last one.
     output: PathBuf,
@@ -744,6 +723,10 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
         return;
     };
 
+    // The frame's pixel format, decided by which path produced it:
+    // GL readPixels is always rgba; a CPU-mappable buffer keeps the
+    // negotiated format.
+    let mut pix_fmt = super::encoder::PixFmt::Rgba;
     match first.type_() {
         DataType::MemPtr | DataType::MemFd => {
             let Some((width, height, format, _modifier)) = data.format else {
@@ -759,9 +742,12 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
             let end = offset.saturating_add(size).min(buf.len());
             let src = &buf[offset.min(end)..end];
 
-            if let Err(e) = convert_frame(src, stride, width, height, format, &mut data.scratch) {
-                data.fail(e);
-                return;
+            match copy_frame(src, stride, width, height, format, &mut data.scratch) {
+                Ok(f) => pix_fmt = f,
+                Err(e) => {
+                    data.fail(e);
+                    return;
+                }
             }
         }
         DataType::DmaBuf => {
@@ -805,9 +791,12 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
                     let end = offset.saturating_add(size).min(buf.len());
                     let src = &buf[offset.min(end)..end];
 
-                    if let Err(e) = convert_frame(src, stride, width, height, format, &mut data.scratch) {
-                        data.fail(e);
-                        return;
+                    match copy_frame(src, stride, width, height, format, &mut data.scratch) {
+                        Ok(f) => pix_fmt = f,
+                        Err(e) => {
+                            data.fail(e);
+                            return;
+                        }
                     }
                 } else {
                     if !data.unsupported_reported {
@@ -854,9 +843,10 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
             mic: data.mic,
             format: data.rec_format,
             encoder: data.rec_encoder,
+            pix_fmt,
         }) {
             Ok(encoder) => {
-                shared.enc_size = (width, height);
+                shared.enc_fmt = (width, height, pix_fmt);
                 shared.encoder = Some(encoder);
             }
             Err(e) => {
@@ -865,7 +855,7 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
                 return;
             }
         }
-    } else if shared.enc_size != (width, height) {
+    } else if shared.enc_fmt != (width, height, pix_fmt) {
         // The compositor renegotiated (window resized): finish this
         // segment and open the next at the new size, the same split
         // the X11 loop performs on a resize.
@@ -893,10 +883,11 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
             mic: data.mic,
             format: data.rec_format,
             encoder: data.rec_encoder,
+            pix_fmt,
         }) {
             Ok(encoder) => {
                 let mut shared = data.shared.borrow_mut();
-                shared.enc_size = (width, height);
+                shared.enc_fmt = (width, height, pix_fmt);
                 shared.encoder = Some(encoder);
             }
             Err(e) => {
@@ -918,17 +909,19 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
     }
 }
 
-/// Swizzle one PipeWire frame into `out` (resized to w*h*4), forcing
-/// alpha to opaque. `out` is reused across frames so recording does not
-/// allocate a multi-MB buffer per frame.
-fn convert_frame(
+/// Copy one PipeWire frame into `out` (resized to w*h*4), returning
+/// the pixel format the encoder must declare. `out` is reused across
+/// frames so recording does not allocate a multi-MB buffer per frame.
+/// No swizzle: ffmpeg accepts the native layout through -pix_fmt.
+fn copy_frame(
     src: &[u8],
     stride: usize,
     width: u32,
     height: u32,
     format: VideoFormat,
     out: &mut Vec<u8>,
-) -> Result<(), String> {
+) -> Result<super::encoder::PixFmt, String> {
+    use super::encoder::PixFmt;
     let (w, h) = (width as usize, height as usize);
     let stride = if stride == 0 { w * 4 } else { stride };
     if src.len() < stride * h {
@@ -937,35 +930,28 @@ fn convert_frame(
             src.len()
         ));
     }
-    out.resize(w * h * 4, 0);
-    let bgrx = matches!(format, VideoFormat::BGRx | VideoFormat::BGRA);
-    let rgbx = matches!(format, VideoFormat::RGBx | VideoFormat::RGBA);
-    if !bgrx && !rgbx {
-        return Err(format!(
-            "unsupported negotiated pixel format {format:?}; expected BGRx/BGRA/RGBx/RGBA"
-        ));
-    }
-    let swizzle_row = |row_out: &mut [u8], row_in: &[u8]| {
-        for (o, px) in row_out.chunks_exact_mut(4).zip(row_in[..w * 4].chunks_exact(4)) {
-            let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
-            let rgb = if bgrx {
-                (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF)
-            } else {
-                v & 0xFF_FFFF
-            };
-            o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
+    let pix_fmt = match format {
+        VideoFormat::BGRx | VideoFormat::BGRA => PixFmt::Bgra,
+        VideoFormat::RGBx | VideoFormat::RGBA => PixFmt::Rgba,
+        other => {
+            return Err(format!(
+                "unsupported negotiated pixel format {other:?}; expected BGRx/BGRA/RGBx/RGBA"
+            ))
         }
     };
-    // Parallel row-band swizzle: a single-threaded per-pixel loop at
-    // 1080p+ is a visible slice of the frame budget and drops frames.
+    out.clear();
+    out.reserve(w * h * 4);
+    // Strided rows into a packed buffer, banded across threads once
+    // the frame is large enough to pay for the spawn.
+    out.resize(w * h * 4, 0);
     crate::par::par_bands_mut(out, w * 4, |o_chunk, start| {
         let row0 = start / (w * 4);
         for (r, row_out) in o_chunk.chunks_exact_mut(w * 4).enumerate() {
             let row_in = &src[(row0 + r) * stride..(row0 + r) * stride + w * 4];
-            swizzle_row(row_out, row_in);
+            row_out.copy_from_slice(row_in);
         }
     });
-    Ok(())
+    Ok(pix_fmt)
 }
 
 fn on_param_changed(
@@ -1118,7 +1104,7 @@ pub fn record_window(spec: RecordingSpec) -> Result<PathBuf, String> {
 
     let shared = Rc::new(RefCell::new(Shared {
         encoder: None,
-        enc_size: (0, 0),
+        enc_fmt: (0, 0, super::encoder::PixFmt::Rgba),
         output: spec.output.clone(),
         error: None,
         quit: Some(mainloop.downgrade()),
@@ -1255,25 +1241,29 @@ mod tests {
     }
 
     #[test]
-    fn convert_frame_bgrx_swizzle() {
+    fn copy_frame_bgrx_passthrough() {
+        // No swizzle: the bytes move verbatim and the format is
+        // reported for ffmpeg's -pix_fmt.
         let src = [
             0x10, 0x20, 0x30, 0x00,
             0x40, 0x50, 0x60, 0x00,
         ];
         let mut out = Vec::new();
-        convert_frame(&src, 8, 2, 1, VideoFormat::BGRx, &mut out).unwrap();
-        assert_eq!(out, vec![0x30, 0x20, 0x10, 0xFF, 0x60, 0x50, 0x40, 0xFF]);
+        let fmt = copy_frame(&src, 8, 2, 1, VideoFormat::BGRx, &mut out).unwrap();
+        assert_eq!(fmt, crate::record::encoder::PixFmt::Bgra);
+        assert_eq!(out, src);
     }
 
     #[test]
-    fn convert_frame_rgbx_swizzle() {
+    fn copy_frame_rgbx_passthrough() {
         let src = [
             0x30, 0x20, 0x10, 0x00,
             0x60, 0x50, 0x40, 0x00,
         ];
         let mut out = Vec::new();
-        convert_frame(&src, 8, 2, 1, VideoFormat::RGBx, &mut out).unwrap();
-        assert_eq!(out, vec![0x30, 0x20, 0x10, 0xFF, 0x60, 0x50, 0x40, 0xFF]);
+        let fmt = copy_frame(&src, 8, 2, 1, VideoFormat::RGBx, &mut out).unwrap();
+        assert_eq!(fmt, crate::record::encoder::PixFmt::Rgba);
+        assert_eq!(out, src);
     }
 
     #[test]

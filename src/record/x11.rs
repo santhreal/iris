@@ -237,32 +237,76 @@ pub fn pick_window(stop: &std::sync::mpsc::Receiver<()>) -> Result<PickedWindow,
 /// Swizzle a BGRX/XRGB grab into `out` (resized to pixels*4), forcing
 /// alpha to opaque. `out` is reused across frames so recording does not
 /// allocate a fresh buffer per frame.
-fn bgrx_to_rgba(data: &[u8], pixels: usize, out: &mut Vec<u8>) -> Result<(), String> {
-    let bpp = data.len() / pixels.max(1);
-    // resize without clear(): once sized, this is a no-op and does not
-    // re-zero a buffer every byte of which the swizzle overwrites.
-    out.resize(pixels * 4, 0);
-    match bpp {
-        4 => {
-            // Banded word-level swizzle: at 4K a single-threaded
-            // per-pixel loop is a visible slice of the frame budget
-            // and drops frames. B,G,R,_ -> R,G,B,255 swaps bytes 0<->2.
-            crate::par::par_bands_mut(out, 4096, |o_chunk, start| {
-                let i_chunk = &data[start..start + o_chunk.len()];
-                for (o, px) in o_chunk.chunks_exact_mut(4).zip(i_chunk.chunks_exact(4)) {
-                    let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
-                    let rgb = (v & 0xFF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-                    o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
-                }
-            });
-        }
-        3 => {
-            for (o, px) in out.chunks_exact_mut(4).zip(data.chunks_exact(3)) {
-                o.copy_from_slice(&[px[2], px[1], px[0], 255]);
-            }
-        }
-        other => return Err(format!("unsupported bytes-per-pixel {other}")),
+/// The window's native pixel format as ffmpeg's -pix_fmt, resolved
+/// once at record start: the grab then memcpy's server pixels into
+/// the frame buffer instead of swizzling per pixel. Returns the
+/// format and the drawable depth the grabs must see.
+fn resolve_pix_fmt(
+    conn: &RustConnection,
+    screen_num: usize,
+    win: Window,
+) -> Result<(super::encoder::PixFmt, u8), String> {
+    use super::encoder::PixFmt;
+    let screen = &conn.setup().roots[screen_num];
+    if conn.setup().image_byte_order != x11rb::protocol::xproto::ImageOrder::LSB_FIRST {
+        return Err("MSB-first X11 image byte order is unsupported".to_string());
     }
+    let attrs = conn
+        .get_window_attributes(win)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| format!("get_window_attributes: {e}"))?;
+    let geom = conn
+        .get_geometry(win)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| format!("get_geometry: {e}"))?;
+    let depth = geom.depth;
+    // The window's visual decides channel order: red in the low byte
+    // is BGRX/BGR in memory, red in the high byte is XRGB/RGB.
+    let visual = screen
+        .allowed_depths
+        .iter()
+        .flat_map(|d| d.visuals.iter())
+        .find(|v| v.visual_id == attrs.visual)
+        .ok_or_else(|| format!("visual {:#x} not in screen list", attrs.visual))?;
+    let bpp = conn
+        .setup()
+        .pixmap_formats
+        .iter()
+        .find(|f| f.depth == depth)
+        .map(|f| f.bits_per_pixel)
+        .unwrap_or(32);
+    // The window's visual decides channel order: red in the high
+    // bits of the pixel value lands in byte 2 of the little-endian
+    // word, so memory is B,G,R,X (the common TrueColor case); red in
+    // the low byte is R,G,B,X.
+    let fmt = match (bpp, visual.red_mask) {
+        (32, 0x00FF_0000) => PixFmt::Bgra,
+        (32, 0x0000_00FF) => PixFmt::Rgba,
+        (24, 0x00FF_0000) => PixFmt::Bgr24,
+        (24, 0x0000_00FF) => PixFmt::Rgb24,
+        (b, m) => {
+            return Err(format!(
+                "unsupported pixel layout: {b}bpp red_mask {m:#x} at depth {depth}"
+            ))
+        }
+    };
+    Ok((fmt, depth))
+}
+
+/// Copy `need` native-format bytes out of `src` into `out` (resized).
+/// `out` is reused across frames so recording does not allocate a
+/// fresh buffer per frame.
+fn copy_frame_bytes(src: &[u8], need: usize, out: &mut Vec<u8>) -> Result<(), String> {
+    if src.len() < need {
+        return Err(format!(
+            "short frame buffer: {} bytes for {need}",
+            src.len()
+        ));
+    }
+    out.clear();
+    out.extend_from_slice(&src[..need]);
     Ok(())
 }
 
@@ -515,7 +559,7 @@ pub fn record_window_follow(spec: RecordingSpec, chip: Arc<dyn ChipFollow>) -> R
 }
 
 fn record_target(picked: &PickedWindow, spec: &RecordingSpec) -> Result<PathBuf, String> {
-    let (conn, _) = connect()?;
+    let (conn, screen_num) = connect()?;
 
     // Composite 0.2+ for window redirection + named pixmaps.
     let version = conn
@@ -535,7 +579,7 @@ fn record_target(picked: &PickedWindow, spec: &RecordingSpec) -> Result<PathBuf,
         .check()
         .map_err(|e| format!("redirect window: {e}"))?;
 
-    let result = record_loop(&conn, picked, spec);
+    let result = record_loop(&conn, screen_num, picked, spec);
 
     let _ = conn.composite_unredirect_window(picked.id, Redirect::AUTOMATIC);
     result
@@ -551,13 +595,13 @@ struct ShmGrab {
 }
 
 impl ShmGrab {
-    fn new(conn: &RustConnection, width: u32, height: u32) -> Option<Self> {
+    fn new(conn: &RustConnection, width: u32, height: u32, bpp: usize) -> Option<Self> {
         use x11rb::protocol::shm::ConnectionExt as ShmExt;
         let version = ShmExt::shm_query_version(conn).ok()?.reply().ok()?;
         if version.major_version < 1 {
             return None;
         }
-        let size = width as usize * height as usize * 4;
+        let size = width as usize * height as usize * bpp;
         unsafe {
             let shmid = libc::shmget(libc::IPC_PRIVATE, size, libc::IPC_CREAT | 0o600);
             if shmid < 0 {
@@ -635,17 +679,6 @@ impl NamedPixmap {
     }
 }
 
-/// Whether the server stores `depth` pixmaps at 32 bits per pixel: the
-/// SHM swizzle reads 4 bytes per pixel, so a depth-24 pixmap packed at
-/// 24bpp would decode as garbage. When the format list says otherwise,
-/// the socket path (which reports its own bpp) must be used instead.
-fn shm_is_32bpp(conn: &RustConnection, depth: u8) -> bool {
-    conn.setup()
-        .pixmap_formats
-        .iter()
-        .any(|f| f.depth == depth && f.bits_per_pixel == 32)
-}
-
 fn grab_pixmap(
     conn: &RustConnection,
     shm: &mut Option<ShmGrab>,
@@ -653,6 +686,8 @@ fn grab_pixmap(
     win: Window,
     width: u32,
     height: u32,
+    depth: u8,
+    bpp: usize,
     out: &mut Vec<u8>,
 ) -> Result<(), String> {
     // The named pixmap is cached per (window, size): naming and freeing
@@ -667,26 +702,24 @@ fn grab_pixmap(
         }
         *named = Some(NamedPixmap::for_window(conn, win, width, height)?);
     }
-    let np = named.as_ref().unwrap();
-    // The swizzle reads 4 bytes per pixel; anything but a 24/32bpp
-    // pixmap would swizzle garbage. Fail loudly instead of recording it.
-    if np.depth != 24 && np.depth != 32 {
+    let named = named.as_mut().unwrap();
+    if named.depth != depth {
         return Err(format!(
-            "window pixmap depth {} unsupported (need 24 or 32)",
-            np.depth
+            "window pixmap depth {} differs from window depth {depth}",
+            named.depth
         ));
     }
-    let pixmap = np.pixmap;
+    let pixmap = named.pixmap;
 
     // SHM path: the server writes the frame into the mapped segment and
-    // the swizzle reads it in place. A 1080p frame over the socket is
+    // the copy reads it in place. A 1080p frame over the socket is
     // ~8MB of protocol traffic per frame; this is none.
-    let need = width as usize * height as usize * 4;
+    let need = width as usize * height as usize * bpp;
     if shm.as_ref().map(|s| s.size) != Some(need) {
         if let Some(old) = shm.take() {
             old.detach(conn);
         }
-        *shm = ShmGrab::new(conn, width, height);
+        *shm = ShmGrab::new(conn, width, height, bpp);
     }
     if let Some(s) = shm.as_ref() {
         use x11rb::protocol::shm::ConnectionExt as ShmExt;
@@ -697,23 +730,18 @@ fn grab_pixmap(
         .ok()
         .and_then(|c| c.reply().ok());
         if let Some(reply) = grabbed {
-            if reply.depth != 24 && reply.depth != 32 {
+            if reply.depth != depth {
                 return Err(format!(
-                    "shm grab returned depth {} (need 24 or 32)",
+                    "shm grab returned depth {} (expected {depth})",
                     reply.depth
                 ));
             }
-            if shm_is_32bpp(conn, reply.depth) {
-                let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
-                return bgrx_to_rgba(src, width as usize * height as usize, out);
-            }
-            // Depth is fine but the server packs it at non-32bpp: fall
-            // through to the socket path, which reports its own bpp.
-        } else {
-            // SHM failed mid-session: drop it and fall through to the socket.
-            if let Some(old) = shm.take() {
-                old.detach(conn);
-            }
+            let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
+            return copy_frame_bytes(src, need, out);
+        }
+        // SHM failed mid-session: drop it and fall through to the socket.
+        if let Some(old) = shm.take() {
+            old.detach(conn);
         }
     }
 
@@ -730,13 +758,23 @@ fn grab_pixmap(
         .map_err(|e| e.to_string())?
         .reply()
         .map_err(|e| format!("get_image on window pixmap: {e}"))?;
-    bgrx_to_rgba(&image.data, width as usize * height as usize, out)
+    if image.depth != depth {
+        return Err(format!(
+            "get_image returned depth {} (expected {depth})",
+            image.depth
+        ));
+    }
+    copy_frame_bytes(&image.data, need, out)
 }
+
 fn record_loop(
     conn: &RustConnection,
+    screen_num: usize,
     picked: &PickedWindow,
     spec: &RecordingSpec,
 ) -> Result<PathBuf, String> {
+    let (pix_fmt, depth) = resolve_pix_fmt(conn, screen_num, picked.id)?;
+    let bpp = pix_fmt.bytes_per_pixel();
     // Persistent SHM segment + named pixmap for per-frame grabs; the
     // guard frees both on every exit path, including early returns.
     struct GrabGuard<'a> {
@@ -788,9 +826,9 @@ fn record_loop(
         dims
     };
     let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
-        grab_pixmap(conn, &mut guard.shm, &mut guard.named, picked.id, w, h, rgba)
+        grab_pixmap(conn, &mut guard.shm, &mut guard.named, picked.id, w, h, depth, bpp, rgba)
     };
-    record_loop_inner(spec, probe, grab)
+    record_loop_inner(spec, pix_fmt, probe, grab)
 }
 
 /// Record a fixed screen region until `spec.stop` fires. The overlay
@@ -805,6 +843,8 @@ pub fn record_region(
     let result = (move || {
         let (conn, screen_num) = connect()?;
         let root = conn.setup().roots[screen_num].root;
+        let (pix_fmt, depth) = resolve_pix_fmt(&conn, screen_num, root)?;
+        let bpp = pix_fmt.bytes_per_pixel();
         let _mark = RecordingMark::show_static(chip_inner, root, rect);
         struct ShmGuard<'a> {
             conn: &'a RustConnection,
@@ -820,9 +860,9 @@ pub fn record_region(
         let mut guard = ShmGuard { conn: &conn, shm: None };
         let probe = || Some((rect.w as u32, rect.h as u32));
         let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
-            grab_root_rect(&conn, &mut guard.shm, root, rect, w, h, rgba)
+            grab_root_rect(&conn, &mut guard.shm, root, rect, w, h, depth, bpp, rgba)
         };
-        record_loop_inner(&spec, probe, grab)
+        record_loop_inner(&spec, pix_fmt, probe, grab)
     })();
     chip.hide();
     result
@@ -838,14 +878,16 @@ fn grab_root_rect(
     rect: Rect,
     width: u32,
     height: u32,
+    depth: u8,
+    bpp: usize,
     out: &mut Vec<u8>,
 ) -> Result<(), String> {
-    let need = width as usize * height as usize * 4;
+    let need = width as usize * height as usize * bpp;
     if shm.as_ref().map(|s| s.size) != Some(need) {
         if let Some(old) = shm.take() {
             old.detach(conn);
         }
-        *shm = ShmGrab::new(conn, width, height);
+        *shm = ShmGrab::new(conn, width, height, bpp);
     }
     if let Some(s) = shm.as_ref() {
         use x11rb::protocol::shm::ConnectionExt as ShmExt;
@@ -856,23 +898,17 @@ fn grab_root_rect(
         .ok()
         .and_then(|c| c.reply().ok());
         if let Some(reply) = grabbed {
-            // The swizzle reads 4 bytes per pixel; a non-24/32bpp root
-            // would swizzle garbage out of the segment.
-            if reply.depth != 24 && reply.depth != 32 {
+            if reply.depth != depth {
                 return Err(format!(
-                    "root depth {} unsupported (need 24 or 32)",
+                    "shm grab returned depth {} (expected {depth})",
                     reply.depth
                 ));
             }
-            if shm_is_32bpp(conn, reply.depth) {
-                let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
-                return bgrx_to_rgba(src, width as usize * height as usize, out);
-            }
-            // Non-32bpp packing: the socket path reports its own bpp.
-        } else {
-            if let Some(old) = shm.take() {
-                old.detach(conn);
-            }
+            let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
+            return copy_frame_bytes(src, need, out);
+        }
+        if let Some(old) = shm.take() {
+            old.detach(conn);
         }
     }
     let image = conn
@@ -888,7 +924,13 @@ fn grab_root_rect(
         .map_err(|e| e.to_string())?
         .reply()
         .map_err(|e| format!("get_image on root region: {e}"))?;
-    bgrx_to_rgba(&image.data, width as usize * height as usize, out)
+    if image.depth != depth {
+        return Err(format!(
+            "get_image returned depth {} (expected {depth})",
+            image.depth
+        ));
+    }
+    copy_frame_bytes(&image.data, need, out)
 }
 
 /// The shared recording loop: chip controls, the absolute frame
@@ -899,6 +941,7 @@ fn grab_root_rect(
 /// caller must report the file that actually holds the tail.
 fn record_loop_inner(
     spec: &RecordingSpec,
+    pix_fmt: super::encoder::PixFmt,
     mut probe: impl FnMut() -> Option<(u32, u32)>,
     mut grab: impl FnMut(u32, u32, &mut Vec<u8>) -> Result<(), String>,
 ) -> Result<PathBuf, String> {
@@ -917,8 +960,8 @@ fn record_loop_inner(
         mic: spec.mic,
         format: spec.format,
         encoder: spec.encoder,
+        pix_fmt,
     })?;
-
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(spec.fps));
     let mut start = Instant::now();
     let mut mic = spec.mic;
@@ -950,6 +993,7 @@ fn record_loop_inner(
                 mic,
                 format: spec.format,
                 encoder: spec.encoder,
+                pix_fmt,
             })?;
         }};
     }

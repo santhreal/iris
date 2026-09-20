@@ -4,6 +4,39 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread::JoinHandle;
 
+/// The raw pixel format frames arrive in, declared to ffmpeg through
+/// -pix_fmt so the capture path never swizzles: a BGRX grab is fed as
+/// `bgra` and memcpy'd, not converted per pixel. Alpha is dropped by
+/// the yuv420p/rgb24 conversion downstream, so no stamping either.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PixFmt {
+    /// 4 bytes/pixel, B,G,R,X in memory (X11 BGRX, PipeWire BGRx).
+    Bgra,
+    /// 4 bytes/pixel, R,G,B,A in memory (GL readPixels, PipeWire RGBx).
+    Rgba,
+    /// 3 bytes/pixel, B,G,R in memory (packed 24bpp X11 ZPixmap).
+    Bgr24,
+    /// 3 bytes/pixel, R,G,B in memory.
+    Rgb24,
+}
+
+impl PixFmt {
+    pub fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Bgra | Self::Rgba => 4,
+            Self::Bgr24 | Self::Rgb24 => 3,
+        }
+    }
+    fn ffmpeg_name(self) -> &'static str {
+        match self {
+            Self::Bgra => "bgra",
+            Self::Rgba => "rgba",
+            Self::Bgr24 => "bgr24",
+            Self::Rgb24 => "rgb24",
+        }
+    }
+}
+
 /// Runtime parameters for one encode.
 pub struct EncoderConfig {
     pub output: PathBuf,
@@ -13,6 +46,8 @@ pub struct EncoderConfig {
     pub mic: bool,
     pub format: crate::config::RecordingFormat,
     pub encoder: crate::config::RecordingEncoder,
+    /// Native format of the frames passed to write_frame.
+    pub pix_fmt: PixFmt,
 }
 
 /// Raw RGBA frames in, H.264/AAC mp4 out, via a piped ffmpeg child.
@@ -69,7 +104,7 @@ impl Encoder {
             "-f".into(),
             "rawvideo".into(),
             "-pix_fmt".into(),
-            "rgba".into(),
+            cfg.pix_fmt.ffmpeg_name().into(),
             "-s".into(),
             size,
             "-r".into(),
@@ -125,8 +160,11 @@ impl Encoder {
                 let gif_fps = cfg.fps.min(20).to_string();
                 args.extend([
                     "-vf".into(),
+                    // format=rgb24 first: BGRX sources carry a garbage
+                    // alpha byte that palettegen would read as
+                    // transparency.
                     format!(
-                        "fps={gif_fps},scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=single[p];[s1][p]paletteuse=new=1"
+                        "format=rgb24,fps={gif_fps},scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=single[p];[s1][p]paletteuse=new=1"
                     ),
                     "-f".into(),
                     "gif".into(),
@@ -192,7 +230,8 @@ impl Encoder {
         // used: an 8KB BufWriter still emits ~1000 writes per 8MB
         // frame. Cap at the pipe size so a huge frame degrades to a
         // few writes, not thousands.
-        let buf_cap = (cfg.width as usize * cfg.height as usize * 4).min(4 * 1024 * 1024);
+        let buf_cap = (cfg.width as usize * cfg.height as usize * cfg.pix_fmt.bytes_per_pixel())
+            .min(4 * 1024 * 1024);
         let writer = match std::thread::Builder::new()
             .name("iris-enc-writer".into())
             .spawn(move || {
@@ -222,7 +261,7 @@ impl Encoder {
         Ok(Self {
             child: Some(child),
             output: cfg.output.clone(),
-            frame_bytes: cfg.width as usize * cfg.height as usize * 4,
+            frame_bytes: cfg.width as usize * cfg.height as usize * cfg.pix_fmt.bytes_per_pixel(),
             tx: Some(tx),
             recycle,
             writer: Some(writer),
