@@ -823,7 +823,7 @@ impl Render for Overlay {
                     return;
                 }
                 // Number keys snap the selection to that monitor.
-                if let Some(d) = key.strip_prefix("").and_then(|k| k.parse::<usize>().ok()) {
+                if let Ok(d) = key.parse::<usize>() {
                     if d >= 1 && d <= this.monitors.len() {
                         let m = this.monitors[d - 1];
                         let sf = window.scale_factor();
