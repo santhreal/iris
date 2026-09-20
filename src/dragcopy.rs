@@ -46,7 +46,9 @@ fn validate_drag_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
 /// rate by the drag thread. Plain data; defined on every platform so
 /// the non-Linux drag stub keeps the same signature.
 pub struct DragIcon {
-    pub rgba: Vec<u8>,
+    /// Shared so a surface that already holds the pixels (the toast's
+    /// thumb_rgba) hands over a refcount, not a multi-MB clone.
+    pub rgba: std::sync::Arc<Vec<u8>>,
     pub width: u32,
     pub height: u32,
 }
@@ -150,17 +152,24 @@ impl IconWindow {
         use x11rb::protocol::xproto::{Gcontext, ImageFormat, Pixmap};
         const MAX_W: u32 = 96;
         let (mut w, mut h) = (icon.width, icon.height);
-        let mut data = icon.rgba;
+        let mut data: &[u8] = &icon.rgba;
+        // The resize output owns its buffer; the unresized path keeps
+        // borrowing the Arc.
+        let mut resized_buf: Option<Vec<u8>> = None;
         if w > MAX_W {
             let nh = (h as u64 * MAX_W as u64 / w as u64).max(1) as u32;
-            let img = image::RgbaImage::from_raw(w, h, data)?;
-            let resized = image::imageops::resize(
-                &img,
-                MAX_W,
-                nh,
-                image::imageops::FilterType::Triangle,
+            let img: image::ImageBuffer<image::Rgba<u8>, _> =
+                image::ImageBuffer::from_raw(w, h, data)?;
+            resized_buf = Some(
+                image::imageops::resize(
+                    &img,
+                    MAX_W,
+                    nh,
+                    image::imageops::FilterType::Triangle,
+                )
+                .into_raw(),
             );
-            data = resized.into_raw();
+            data = resized_buf.as_deref().unwrap();
             w = MAX_W;
             h = nh;
         }

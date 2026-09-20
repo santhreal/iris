@@ -921,12 +921,18 @@ impl Library {
                 // PNG decode on the drag-start path.
                 let icon = this.thumb_cache.get(&entry.path).and_then(|img| {
                     let size = img.size(0);
-                    let mut rgba = img.as_bytes(0)?.to_vec();
+                    // Fused copy+swizzle into the Arc the drag owns:
+                    // the cache's BGRA bytes become the icon's RGBA in
+                    // one pass.
+                    let src = img.as_bytes(0)?;
+                    let mut rgba = Vec::with_capacity(src.len());
+                    unsafe { rgba.set_len(src.len()) };
+                    rgba.copy_from_slice(src);
                     crate::widgets::swizzle_rgba_bgra(&mut rgba);
                     Some(iris_lib::dragcopy::DragIcon {
                         width: size.width.0 as u32,
                         height: size.height.0 as u32,
-                        rgba,
+                        rgba: std::sync::Arc::new(rgba),
                     })
                 });
                 if let Err(e) = iris_lib::dragcopy::start_file_drag_at_cursor(paths, icon) {

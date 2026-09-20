@@ -614,7 +614,9 @@ impl Render for ToastStage {
                         let icon = iris_lib::dragcopy::DragIcon {
                             width: stage.dims.0 as u32,
                             height: stage.dims.1 as u32,
-                            rgba: (*stage.thumb_rgba).clone(),
+                            // The stage already holds the pixels behind
+                            // an Arc: a refcount, not a multi-MB clone.
+                            rgba: stage.thumb_rgba.clone(),
                         };
                         if let Err(e) = iris_lib::dragcopy::start_file_drag_at_cursor(
                             vec![stage.path.clone()],
