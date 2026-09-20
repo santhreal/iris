@@ -671,7 +671,7 @@ impl Render for ToastStage {
                     if cfg.toast_pin_enabled {
                         actions = actions.child(
                             crate::widgets::overlay_icon_button_active(
-                                "toast-action-pin".into(),
+                                ElementId::Name("toast-action-pin".into()),
                                  crate::icons::Icon::Pin,
                                 self.pinned,
                             )
@@ -685,7 +685,7 @@ impl Render for ToastStage {
                     actions = actions
                         .child(
                             crate::widgets::overlay_icon_button(
-                                "toast-action-copy-img".into(),
+                                ElementId::Name("toast-action-copy-img".into()),
                                 crate::icons::Icon::Copy,
                             )
                             .on_click(cx.listener(|stage, _, _, cx| {
@@ -695,7 +695,7 @@ impl Render for ToastStage {
                         )
                         .child(
                             crate::widgets::overlay_icon_button(
-                                "toast-action-copy-file".into(),
+                                ElementId::Name("toast-action-copy-file".into()),
                                 crate::icons::Icon::Grid,
                             )
                             .on_click(cx.listener(|stage, _, _, cx| {
@@ -705,7 +705,7 @@ impl Render for ToastStage {
                         )
                         .child(
                             crate::widgets::overlay_icon_button(
-                                "toast-action-open-folder".into(),
+                                ElementId::Name("toast-action-open-folder".into()),
                                 crate::icons::Icon::Viewfinder,
                             )
                             .on_click(cx.listener(|stage, _, _, cx| {
@@ -715,7 +715,7 @@ impl Render for ToastStage {
                         )
                         .child(
                             crate::widgets::overlay_icon_button(
-                                "toast-action-markup".into(),
+                                ElementId::Name("toast-action-markup".into()),
                                 crate::icons::Icon::Pen,
                             )
                             .on_click(cx.listener(|stage, _, window, cx| {
@@ -725,7 +725,7 @@ impl Render for ToastStage {
                         )
                         .child(
                             crate::widgets::overlay_icon_button(
-                                "toast-action-delete".into(),
+                                ElementId::Name("toast-action-delete".into()),
                                 crate::icons::Icon::Trash,
                             )
                             .on_click(cx.listener(|stage, _, _, cx| {

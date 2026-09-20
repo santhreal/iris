@@ -70,14 +70,14 @@ pub fn icon_button(id: String, glyph: Icon, active: bool, size: f32) -> Stateful
 }
 
 /// Small icon button for card overlays: 26px on a frosted chip.
-pub fn overlay_icon_button(id: String, glyph: Icon) -> Stateful<Div> {
+pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Div> {
     overlay_icon_button_active(id, glyph, false)
 }
 
 /// Small icon button for card overlays, with optional active/highlight state.
-pub fn overlay_icon_button_active(id: String, glyph: Icon, active: bool) -> Stateful<Div> {
+pub fn overlay_icon_button_active(id: impl Into<ElementId>, glyph: Icon, active: bool) -> Stateful<Div> {
     div()
-        .id(ElementId::Name(id.into()))
+        .id(id)
         .w(px(26.))
         .h(px(26.))
         .rounded(px(theme::RADIUS_SM))

@@ -766,7 +766,7 @@ impl Library {
                     .flex()
                     .gap(px(4.))
                     .opacity(hover_amt)
-                    .child(crate::widgets::overlay_icon_button(format!("cpy-{index}"), crate::icons::Icon::Copy).on_click(cx.listener(move |_this, _, _, cx| {
+                    .child(crate::widgets::overlay_icon_button(ElementId::NamedInteger("cpy".into(), index as u64), crate::icons::Icon::Copy).on_click(cx.listener(move |_this, _, _, cx| {
                         cx.stop_propagation();
                         let path = copy_path.clone();
                         let task = cx.background_executor()
@@ -782,11 +782,11 @@ impl Library {
                         })
                         .detach();
                     })))
-                    .child(crate::widgets::overlay_icon_button(format!("fld-{index}"), crate::icons::Icon::Folder).on_click(cx.listener(move |_, _, _, cx| {
+                    .child(crate::widgets::overlay_icon_button(ElementId::NamedInteger("fld".into(), index as u64), crate::icons::Icon::Folder).on_click(cx.listener(move |_, _, _, cx| {
                         cx.stop_propagation();
                         Self::open_containing_folder(&folder_path);
                     })))
-                    .child(crate::widgets::overlay_icon_button(format!("del-{index}"), crate::icons::Icon::Close).on_click(cx.listener(move |_this, _, _, cx| {
+                    .child(crate::widgets::overlay_icon_button(ElementId::NamedInteger("del".into(), index as u64), crate::icons::Icon::Close).on_click(cx.listener(move |_this, _, _, cx| {
                         cx.stop_propagation();
                         let path = delete_path.clone();
                         let task = cx.background_executor().spawn(async move {
