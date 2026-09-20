@@ -523,6 +523,7 @@ fn run_xdnd_drag(
     let mut accepted = false;
     let mut dropped = false;
     let mut last_pos = (i32::MIN, i32::MIN);
+    let mut last_icon_pos = (i32::MIN, i32::MIN);
     let mut aware_cache = std::collections::HashMap::new();
     let icon = icon.and_then(|icon| IconWindow::show(&conn, root, icon));
 
@@ -596,34 +597,36 @@ fn run_xdnd_drag(
             }
             break;
         }
-        let under = xdnd_target_at(
-            &conn,
-            root,
-            atoms.aware,
-            atoms.proxy,
-            icon.as_ref().map(|i| i.win),
-            &mut aware_cache,
-        );
-        let under_win = under.map(|(w, _)| w);
-        if under_win != target {
-            if let Some(old) = target.take() {
-                send_client(&conn, old, atoms.leave, [win, 0, 0, 0, 0]);
+        // A stationary pointer cannot change the target chain: skip
+        // the per-level query_pointer walk (a round trip each) and
+        // the position resend. The 16ms cadence still polls for the
+        // button release.
+        if (px, py) != last_pos {
+            let under = xdnd_target_at(
+                &conn,
+                root,
+                atoms.aware,
+                atoms.proxy,
+                icon.as_ref().map(|i| i.win),
+                &mut aware_cache,
+            );
+            let under_win = under.map(|(w, _)| w);
+            if under_win != target {
+                if let Some(old) = target.take() {
+                    send_client(&conn, old, atoms.leave, [win, 0, 0, 0, 0]);
+                }
+                accepted = false;
+                if let Some((w, version)) = under {
+                    send_client(
+                        &conn,
+                        w,
+                        atoms.enter,
+                        [win, version << 24, atoms.uri_list, x11rb::NONE, x11rb::NONE],
+                    );
+                    target = Some(w);
+                }
             }
-            accepted = false;
-            if let Some((w, version)) = under {
-                send_client(
-                    &conn,
-                    w,
-                    atoms.enter,
-                    [win, version << 24, atoms.uri_list, x11rb::NONE, x11rb::NONE],
-                );
-                target = Some(w);
-            }
-            last_pos = (i32::MIN, i32::MIN);
-        }
-        if let Some(t) = target {
-            if (px, py) != last_pos {
-                last_pos = (px, py);
+            if let Some(t) = target {
                 send_client(
                     &conn,
                     t,
@@ -637,9 +640,13 @@ fn run_xdnd_drag(
                     ],
                 );
             }
+            last_pos = (px, py);
         }
         if let Some(icon) = &icon {
-            icon.follow(&conn, px, py);
+            if (px, py) != last_icon_pos {
+                last_icon_pos = (px, py);
+                icon.follow(&conn, px, py);
+            }
         }
         let _ = conn.flush();
         // Events (XdndFinished, SelectionRequest) wake the loop early;
