@@ -987,9 +987,7 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
                             let half = rx * (1.0 - t * t).max(0.0).sqrt();
                             let x0 = (cx - half).max(0.0) as i64;
                             let x1 = (cx + half).min(img.width() as f32 - 1.0) as i64;
-                            for x in x0..=x1 {
-                                blend(img, x, y, px);
-                            }
+                            blend_row(img, y, x0, x1, px);
                         }
                     } else {
                         let n = ((rx + ry) * 0.35).max(24.0) as usize;
@@ -1014,9 +1012,7 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
                     let x0 = x0.max(0.0) as i64;
                     let x1 = x1.min(img.width() as f32 - 1.0) as i64;
                     for y in y0..=y1 {
-                        for x in x0..=x1 {
-                            blend(img, x, y, px);
-                        }
+                        blend_row(img, y, x0, x1, px);
                     }
                 } else {
                     stamp_segment(img, (tl.0, tl.1), (br.0, tl.1), w, px);
@@ -1044,6 +1040,35 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
             }
         }
         Tool::Select | Tool::Crop => {}
+    }
+}
+
+/// Fill the inclusive span [x0, x1] of row `y` with `src`, bounds
+/// already clamped by the caller. One slice borrow per row instead of
+/// `blend`'s per-pixel as_mut + bounds check.
+fn blend_row(dst: &mut image::RgbaImage, y: i64, x0: i64, x1: i64, src: image::Rgba<u8>) {
+    if x0 > x1 || y < 0 || y >= dst.height() as i64 {
+        return;
+    }
+    let w = dst.width() as i64;
+    let (x0, x1) = (x0.max(0), x1.min(w - 1));
+    let row_start = (y as u32 * dst.width() * 4) as usize;
+    let buf: &mut [u8] = dst.as_mut();
+    let row = &mut buf[row_start..];
+    let row = &mut row[(x0 as usize * 4)..=(x1 as usize * 4) + 3];
+    let a = src.0[3] as f32 / 255.0;
+    if a >= 1.0 {
+        for px in row.chunks_exact_mut(4) {
+            px.copy_from_slice(&src.0);
+        }
+        return;
+    }
+    let inv = 1.0 - a;
+    for px in row.chunks_exact_mut(4) {
+        px[0] = (src.0[0] as f32 * a + px[0] as f32 * inv) as u8;
+        px[1] = (src.0[1] as f32 * a + px[1] as f32 * inv) as u8;
+        px[2] = (src.0[2] as f32 * a + px[2] as f32 * inv) as u8;
+        px[3] = px[3].max(src.0[3]);
     }
 }
 
