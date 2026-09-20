@@ -673,7 +673,7 @@ impl Settings {
             Some((f, buffer)) if *f == field => (format!("{buffer}▏"), true),
             _ => (self.field_text(field), false),
         };
-        let box_el = crate::widgets::text_field(format!("field-{label}"), text, active)
+        let box_el = crate::widgets::text_field(ElementId::Name(label.into()), text, active)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.editing = Some((field, this.field_text(field)));
                 this.recording = None;
@@ -695,7 +695,7 @@ impl Settings {
         } else {
             self.field_text(field)
         };
-        let box_el = crate::widgets::text_field(format!("hotkey-{label}"), text, recording)
+        let box_el = crate::widgets::text_field(ElementId::Name(label.into()), text, recording)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.recording = Some(field);
                 this.editing = None;
@@ -730,7 +730,7 @@ impl Settings {
         F: Fn(&mut Self, usize, &mut Window, &mut Context<Self>) + 'static + Clone,
     {
         let is_open = self.open_dropdown == Some(field);
-        let btn = crate::widgets::dropdown(id.to_string(), current, is_open)
+        let btn = crate::widgets::dropdown(ElementId::Name(id.into()), current, is_open)
             .w_full()
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_dropdown = if this.open_dropdown == Some(field) {
@@ -755,7 +755,7 @@ impl Settings {
                 let mark = if selected == Some(i) { "✓ " } else { "   " };
                 let on_select = on_select.clone();
                 let row = crate::widgets::menu_row_owned(
-                    format!("{id}-opt-{i}"),
+                    ElementId::NamedInteger(id.into(), i as u64),
                     format!("{mark}{opt}"),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {

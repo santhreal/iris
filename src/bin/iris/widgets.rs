@@ -129,13 +129,13 @@ pub fn menu() -> Div {
 }
 
 pub fn menu_row(id: &'static str, label: &'static str) -> Stateful<Div> {
-    menu_row_owned(id.to_string(), label.to_string())
+    menu_row_owned(ElementId::Name(id.into()), label.to_string())
 }
 
 /// A menu row with a runtime label (dropdown options, file names).
-pub fn menu_row_owned(id: String, label: String) -> Stateful<Div> {
+pub fn menu_row_owned(id: impl Into<ElementId>, label: String) -> Stateful<Div> {
     div()
-        .id(ElementId::Name(id.into()))
+        .id(id)
         .h(px(MENU_ROW_H))
         .px(px(12.))
         .flex()
@@ -154,9 +154,9 @@ pub fn menu_row_owned(id: String, label: String) -> Stateful<Div> {
 /// A dropdown field: a button showing the current value with a
 /// chevron. The parent owns the open state and renders
 /// `dropdown_menu` beneath it when open.
-pub fn dropdown(id: String, current: String, open: bool) -> Stateful<Div> {
+pub fn dropdown(id: impl Into<ElementId>, current: String, open: bool) -> Stateful<Div> {
     div()
-        .id(ElementId::Name(id.into()))
+        .id(id)
         .h(px(28.))
         .px(px(10.))
         .flex()
@@ -182,7 +182,7 @@ pub fn dropdown_menu(options: &[String], selected: usize) -> Div {
     let mut m = menu();
     for (i, opt) in options.iter().enumerate() {
         let mark = if i == selected { "✓ " } else { "   " };
-        m = m.child(menu_row_owned(format!("opt-{i}"), format!("{mark}{opt}")));
+        m = m.child(menu_row_owned(ElementId::NamedInteger("opt".into(), i as u64), format!("{mark}{opt}")));
     }
     m
 }
@@ -218,9 +218,9 @@ pub fn toggle(id: &'static str, on: bool) -> Stateful<Div> {
 
 /// Single-line text field box. Resting state has no border, like a
 /// macOS form field; editing draws a soft ring.
-pub fn text_field(id: String, text: String, active: bool) -> Stateful<Div> {
+pub fn text_field(id: impl Into<ElementId>, text: String, active: bool) -> Stateful<Div> {
     div()
-        .id(ElementId::Name(id.into()))
+        .id(id)
         .flex_1()
         .h(px(28.))
         .px(px(10.))
