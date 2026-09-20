@@ -265,31 +265,13 @@ pub(crate) fn swizzle_rgba_bgra(chunk: &mut [u8]) {
 
 pub fn render_image_from_rgba(width: u32, height: u32, rgba: &[u8]) -> std::sync::Arc<gpui::RenderImage> {
     let mut data = vec![0u8; rgba.len()];
-    // Small images (the 152px loupe, rebuilt every mousemove) lose more
-    // to thread-spawn latency than they gain from parallelism. Only
-    // band across threads once the buffer is large enough to matter.
-    const PARALLEL_MIN: usize = 1 << 20; // ~1 MP of RGBA
-    if rgba.len() < PARALLEL_MIN {
-        data.copy_from_slice(rgba);
-        swizzle_rgba_bgra(&mut data);
-        let buf = image::RgbaImage::from_raw(width, height, data).expect("rgba buffer size");
-        return std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]));
-    }
+    // Fused copy+swizzle, banded across threads once the buffer is
+    // large enough to pay for the spawn (the 152px loupe, rebuilt
+    // every mousemove, stays inline).
     let row = width as usize * 4;
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
-        .unwrap_or(4)
-        .min(height as usize)
-        .max(1);
-    // Fused copy+swizzle, one memory pass per band.
-    let band = (height as usize).div_ceil(threads) * row;
-    std::thread::scope(|scope| {
-        for (dst, src) in data.chunks_mut(band).zip(rgba.chunks(band)) {
-            scope.spawn(move || {
-                dst.copy_from_slice(src);
-                swizzle_rgba_bgra(dst);
-            });
-        }
+    iris_lib::par::par_bands_mut(&mut data, row, |dst, start| {
+        dst.copy_from_slice(&rgba[start..start + dst.len()]);
+        swizzle_rgba_bgra(dst);
     });
     let buf = image::RgbaImage::from_raw(width, height, data).expect("rgba buffer size");
     std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]))
@@ -300,27 +282,13 @@ pub fn render_image_from_rgba(width: u32, height: u32, rgba: &[u8]) -> std::sync
 /// overlay uses this so the frozen frame's only CPU copy IS the
 /// RenderImage's buffer.
 pub fn render_image_from_rgba_owned(width: u32, height: u32, mut rgba: Vec<u8>) -> std::sync::Arc<gpui::RenderImage> {
-    const PARALLEL_MIN: usize = 1 << 20;
-    if rgba.len() < PARALLEL_MIN {
-        swizzle_rgba_bgra(&mut rgba);
-    } else {
-        let row = width as usize * 4;
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(8))
-            .unwrap_or(4)
-            .min(height as usize)
-            .max(1);
-        let band = (height as usize).div_ceil(threads) * row;
-        std::thread::scope(|scope| {
-            for chunk in rgba.chunks_mut(band) {
-                scope.spawn(move || swizzle_rgba_bgra(chunk));
-            }
-        });
-    }
+    let row = width as usize * 4;
+    iris_lib::par::par_bands_mut(&mut rgba, row, |band, _| {
+        swizzle_rgba_bgra(band);
+    });
     let buf = image::RgbaImage::from_raw(width, height, rgba).expect("rgba buffer size");
     std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]))
 }
-
 /// Same construction from encoded PNG bytes (thumbs, editor base).
 pub fn render_image_from_png(bytes: &[u8]) -> Option<std::sync::Arc<gpui::RenderImage>> {
     let mut data = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)

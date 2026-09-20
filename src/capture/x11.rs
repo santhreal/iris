@@ -322,7 +322,7 @@ impl super::CaptureBackend for X11Backend {
 /// conversion writes `out` exactly once.
 fn convert_to_rgba(
     src: &[u8],
-    pixels: usize,
+    _pixels: usize,
     bpp: usize,
     out: &mut [u8],
     width: u32,
@@ -331,36 +331,19 @@ fn convert_to_rgba(
     match bpp {
         // XRGB/BGRX little-endian: B, G, R, _ per pixel.
         4 => {
-            // Parallel u32 swizzle: at 12M pixels a scalar
-            // per-byte loop is a visible slice of the latency.
-            let threads = std::thread::available_parallelism()
-                .map(|n| n.get().min(8))
-                .unwrap_or(4);
-            let chunk_px = pixels.div_ceil(threads);
-            std::thread::scope(|scope| {
-                let mut out_rest = out;
-                let mut in_rest = src;
-                for _ in 0..threads {
-                    let take_px = chunk_px.min(in_rest.len() / 4);
-                    if take_px == 0 {
-                        break;
-                    }
-                    let (out_chunk, o_rest) = out_rest.split_at_mut(take_px * 4);
-                    let (in_chunk, i_rest) = in_rest.split_at(take_px * 4);
-                    out_rest = o_rest;
-                    in_rest = i_rest;
-                    scope.spawn(move || {
-                        for (o, i) in out_chunk
-                            .chunks_exact_mut(4)
-                            .zip(in_chunk.chunks_exact(4))
-                        {
-                            let v = u32::from_le_bytes([i[0], i[1], i[2], i[3]]);
-                            let rgb = (v & 0xFF00_FF00)
-                                | ((v & 0xFF) << 16)
-                                | ((v >> 16) & 0xFF);
-                            o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
-                        }
-                    });
+            // Banded across threads: at 12M pixels a scalar per-byte
+            // loop is a visible slice of the latency.
+            crate::par::par_bands_mut(out, 4096, |out_chunk, start| {
+                let in_chunk = &src[start..start + out_chunk.len()];
+                for (o, i) in out_chunk
+                    .chunks_exact_mut(4)
+                    .zip(in_chunk.chunks_exact(4))
+                {
+                    let v = u32::from_le_bytes([i[0], i[1], i[2], i[3]]);
+                    let rgb = (v & 0xFF00_FF00)
+                        | ((v & 0xFF) << 16)
+                        | ((v >> 16) & 0xFF);
+                    o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
                 }
             });
         }

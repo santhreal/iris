@@ -127,12 +127,12 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
     let mut out = image::RgbaImage::new(region.width, region.height);
     let raw: &mut [u8] = &mut *out.as_mut();
     let row_len = region.width as usize * 4;
-    // Fused copy+swizzle per row: one pass, and banded across threads
-    // once the crop is big enough to matter (a 4K crop is 33MB).
-    let crop_rows = |dst: &mut [u8], row0: u32, rows: u32| {
-        for r in 0..rows {
-            let src = ((region.y + row0 + r) * width + region.x) as usize * 4;
-            let dst_row = &mut dst[r as usize * row_len..(r as usize + 1) * row_len];
+    // Fused copy+swizzle per row, banded across threads once the crop
+    // is big enough to matter (a 4K crop is 33MB).
+    iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
+        let row0 = (start / row_len) as u32;
+        for (r, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
+            let src = ((region.y + row0 + r as u32) * width + region.x) as usize * 4;
             for (d, s) in dst_row
                 .chunks_exact_mut(4)
                 .zip(bgra[src..src + row_len].chunks_exact(4))
@@ -142,30 +142,7 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
                 d.copy_from_slice(&rgb.to_le_bytes());
             }
         }
-    };
-    const PARALLEL_MIN: usize = 1 << 20;
-    if region.width as usize * region.height as usize * 4 < PARALLEL_MIN {
-        crop_rows(raw, 0, region.height);
-    } else {
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(8))
-            .unwrap_or(4)
-            .min(region.height as usize)
-            .max(1);
-        let band = (region.height as usize).div_ceil(threads);
-        std::thread::scope(|scope| {
-            let mut rest: &mut [u8] = raw;
-            let mut row0 = 0u32;
-            while !rest.is_empty() {
-                let rows = (band as u32).min(region.height - row0);
-                let (head, tail) = rest.split_at_mut(rows as usize * row_len);
-                rest = tail;
-                let r0 = row0;
-                row0 += rows;
-                scope.spawn(move || crop_rows(head, r0, rows));
-            }
-        });
-    }
+    });
     Ok(out)
 }
 
@@ -185,36 +162,13 @@ pub fn crop_rgba(rgba: &[u8], width: u32, height: u32, region: Region) -> Result
     let mut out = image::RgbaImage::new(region.width, region.height);
     let raw: &mut [u8] = &mut *out.as_mut();
     let row_len = region.width as usize * 4;
-    let crop_rows = |dst: &mut [u8], row0: u32, rows: u32| {
-        for r in 0..rows {
-            let src = ((region.y + row0 + r) * width + region.x) as usize * 4;
-            dst[r as usize * row_len..(r as usize + 1) * row_len]
-                .copy_from_slice(&rgba[src..src + row_len]);
+    iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
+        let row0 = (start / row_len) as u32;
+        for (r, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
+            let src = ((region.y + row0 + r as u32) * width + region.x) as usize * 4;
+            dst_row.copy_from_slice(&rgba[src..src + row_len]);
         }
-    };
-    const PARALLEL_MIN: usize = 1 << 20;
-    if region.width as usize * region.height as usize * 4 < PARALLEL_MIN {
-        crop_rows(raw, 0, region.height);
-    } else {
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(8))
-            .unwrap_or(4)
-            .min(region.height as usize)
-            .max(1);
-        let band = (region.height as usize).div_ceil(threads);
-        std::thread::scope(|scope| {
-            let mut rest: &mut [u8] = raw;
-            let mut row0 = 0u32;
-            while !rest.is_empty() {
-                let rows = (band as u32).min(region.height - row0);
-                let (head, tail) = rest.split_at_mut(rows as usize * row_len);
-                rest = tail;
-                let r0 = row0;
-                row0 += rows;
-                scope.spawn(move || crop_rows(head, r0, rows));
-            }
-        });
-    }
+    });
     Ok(out)
 }
 

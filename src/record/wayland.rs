@@ -602,29 +602,11 @@ impl GlContext {
         // the PBO copy stamps inline). A serial per-pixel pass over a
         // 4K frame is a visible slice of the frame budget.
         if need_stamp {
-            let pixels = width as usize * height as usize;
-            const PARALLEL_MIN: usize = 1 << 20;
-            if pixels < PARALLEL_MIN {
-                for px in scratch.chunks_exact_mut(4) {
+            crate::par::par_bands_mut(scratch, 4096, |band, _| {
+                for px in band.chunks_exact_mut(4) {
                     px[3] = 0xFF;
                 }
-            } else {
-                let threads = std::thread::available_parallelism()
-                    .map(|n| n.get().min(8))
-                    .unwrap_or(4)
-                    .min(pixels)
-                    .max(1);
-                let chunk = pixels.div_ceil(threads) * 4;
-                std::thread::scope(|scope| {
-                    for band in scratch.chunks_mut(chunk) {
-                        scope.spawn(move || {
-                            for px in band.chunks_exact_mut(4) {
-                                px[3] = 0xFF;
-                            }
-                        });
-                    }
-                });
-            }
+            });
         }
 
         Ok(true)
@@ -956,10 +938,6 @@ fn convert_frame(
         ));
     }
     out.resize(w * h * 4, 0);
-    let pixels = w * h;
-    // Parallel row-band swizzle: a single-threaded per-pixel loop at
-    // 1080p+ is a visible slice of the frame budget and drops frames.
-    const PARALLEL_MIN: usize = 1 << 20; // ~1 MP
     let bgrx = matches!(format, VideoFormat::BGRx | VideoFormat::BGRA);
     let rgbx = matches!(format, VideoFormat::RGBx | VideoFormat::RGBA);
     if !bgrx && !rgbx {
@@ -978,39 +956,15 @@ fn convert_frame(
             o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
         }
     };
-    if pixels < PARALLEL_MIN {
-        for (row_out, row_in) in out.chunks_exact_mut(w * 4).zip(src.chunks(stride).take(h)) {
+    // Parallel row-band swizzle: a single-threaded per-pixel loop at
+    // 1080p+ is a visible slice of the frame budget and drops frames.
+    crate::par::par_bands_mut(out, w * 4, |o_chunk, start| {
+        let row0 = start / (w * 4);
+        for (r, row_out) in o_chunk.chunks_exact_mut(w * 4).enumerate() {
+            let row_in = &src[(row0 + r) * stride..(row0 + r) * stride + w * 4];
             swizzle_row(row_out, row_in);
         }
-    } else {
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(8))
-            .unwrap_or(4)
-            .min(h)
-            .max(1);
-        let band = h.div_ceil(threads);
-        std::thread::scope(|scope| {
-            let mut out_rest = out.as_mut_slice();
-            let mut in_rest = src;
-            for _ in 0..threads {
-                let rows = band.min(in_rest.len() / stride);
-                if rows == 0 {
-                    break;
-                }
-                let (o_chunk, o_rest) = out_rest.split_at_mut(rows * w * 4);
-                let (i_chunk, i_rest) = in_rest.split_at(rows * stride);
-                out_rest = o_rest;
-                in_rest = i_rest;
-                scope.spawn(move || {
-                    for (row_out, row_in) in
-                        o_chunk.chunks_exact_mut(w * 4).zip(i_chunk.chunks(stride).take(rows))
-                    {
-                        swizzle_row(row_out, row_in);
-                    }
-                });
-            }
-        });
-    }
+    });
     Ok(())
 }
 
