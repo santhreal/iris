@@ -92,10 +92,13 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             },
             |_, cx| {
                 cx.new(|cx| {
-                    let entries = library::list();
+                    // The store list stats every capture file; on a
+                    // slow or network shots dir that stalls the open.
+                    // Open empty and populate from the background, the
+                    // same path the refresh poll takes.
                     let mut this = Library {
-                        entry_names: entries.iter().map(Library::entry_name).collect(),
-                        entries,
+                        entry_names: Vec::new(),
+                        entries: Vec::new(),
                         selected: Vec::new(),
                         anchor: None,
                         hovered: None,
@@ -118,7 +121,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         scroll: gpui::ScrollHandle::new(),
                     };
                     this.arm_refresh(cx);
-                    this.prefetch_thumbs(cx);
+                    this.refresh_now(cx);
                     this
                 })
             },
@@ -198,46 +201,57 @@ impl Library {
         .detach();
     }
 
+    /// One background list + apply: the open path and the refresh
+    /// poll share it so neither stats the store on the UI thread.
+    fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let fresh = cx
+                .background_executor()
+                .spawn(async move { library::list() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                // Path AND timestamp: an editor re-save keeps the
+                // path but bumps created_ms, and a path-only diff
+                // would keep showing the stale thumbnail.
+                let changed = fresh.len() != this.entries.len()
+                    || !fresh
+                        .iter()
+                        .map(|e| (&e.path, e.created_ms))
+                        .eq(this.entries.iter().map(|e| (&e.path, e.created_ms)));
+                if changed {
+                    // Drop cached thumbs whose entry changed under
+                    // the same path so prefetch re-decodes them.
+                    let stale: std::collections::HashSet<&std::path::Path> = fresh
+                        .iter()
+                        .filter(|e| {
+                            this.entries
+                                .iter()
+                                .any(|o| o.path == e.path && o.created_ms != e.created_ms)
+                        })
+                        .map(|e| e.path.as_path())
+                        .collect();
+                    this.thumb_cache.retain(|p, _| !stale.contains(p.as_path()));
+                    this.entries = fresh;
+                    this.entries_dirty = true;
+                    this.entry_names = this.entries.iter().map(Self::entry_name).collect();
+                    this.selected
+                        .retain(|p| this.entries.iter().any(|e| &e.path == p));
+                    this.prefetch_thumbs(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Poll the store so captures from any process surface here. The
     /// directory scan runs off the main thread.
     fn arm_refresh(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(REFRESH).await;
-                let fresh = cx
-                    .background_executor()
-                    .spawn(async move { library::list() })
-                    .await;
                 let alive = this.update(cx, |this, cx| {
-                    // Path AND timestamp: an editor re-save keeps the
-                    // path but bumps created_ms, and a path-only diff
-                    // would keep showing the stale thumbnail.
-                    let changed = fresh.len() != this.entries.len()
-                        || !fresh
-                            .iter()
-                            .map(|e| (&e.path, e.created_ms))
-                            .eq(this.entries.iter().map(|e| (&e.path, e.created_ms)));
-                    if changed {
-                        // Drop cached thumbs whose entry changed under
-                        // the same path so prefetch re-decodes them.
-                        let stale: std::collections::HashSet<&std::path::Path> = fresh
-                            .iter()
-                            .filter(|e| {
-                                this.entries
-                                    .iter()
-                                    .any(|o| o.path == e.path && o.created_ms != e.created_ms)
-                            })
-                            .map(|e| e.path.as_path())
-                            .collect();
-                        this.thumb_cache.retain(|p, _| !stale.contains(p.as_path()));
-                        this.entries = fresh;
-                        this.entries_dirty = true;
-                        this.entry_names = this.entries.iter().map(Self::entry_name).collect();
-                        this.selected
-                            .retain(|p| this.entries.iter().any(|e| &e.path == p));
-                        this.prefetch_thumbs(cx);
-                        cx.notify();
-                    }
+                    this.refresh_now(cx);
                 });
                 if alive.is_err() {
                     break;
