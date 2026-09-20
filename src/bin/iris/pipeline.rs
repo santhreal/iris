@@ -184,7 +184,7 @@ pub fn crop_rgba(rgba: &[u8], width: u32, height: u32, region: Region) -> Result
 /// Save an RGBA image to the screenshots dir, put it on the clipboard and
 /// register it in the library. The capture is durable and paste-able
 /// before any surface shows it.
-pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry), String> {
+pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry), String> {
     let t_png = std::time::Instant::now();
     let cfg = Config::load();
     std::fs::create_dir_all(&cfg.screenshots_dir)
@@ -212,13 +212,23 @@ pub fn finalize(img: &image::RgbaImage) -> Result<(PathBuf, library::CaptureEntr
     iris_lib::ilog!("iris: capture: png written in {:?}", t_png.elapsed());
     // The file is the product; a clipboard failure degrades to a
     // log line, never a lost capture. copy_to_clipboard gates whether
-    // the capture lands on the clipboard at all.
+    // the capture lands on the clipboard at all. The clipboard set
+    // re-encodes the pixels to PNG at arboard's default compression,
+    // which is slower than the file encode above: it runs on its own
+    // thread so the toast does not wait on a second encode.
+    let img = std::sync::Arc::new(img);
     if cfg.copy_to_clipboard {
-        if let Err(e) = copy_image(img) {
-            iris_lib::ilog!("iris: clipboard: {e}");
-        }
+        let img = img.clone();
+        std::thread::Builder::new()
+            .name("iris-clipboard".into())
+            .spawn(move || {
+                if let Err(e) = copy_image(&img) {
+                    iris_lib::ilog!("iris: clipboard: {e}");
+                }
+            })
+            .map_err(|e| format!("spawn clipboard thread: {e}"))?;
     }
-    let entry = library::add(&path, img)?;
+    let entry = library::add(&path, &img)?;
     Ok((path, entry))
 }
 

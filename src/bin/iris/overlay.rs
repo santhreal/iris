@@ -699,7 +699,7 @@ impl Overlay {
         let flight_img = crate::widgets::render_image_from_rgba(cw, ch, crop.as_raw());
         let finalize = cx
             .background_executor()
-            .spawn(async move { pipeline::finalize(&crop) });
+            .spawn(async move { pipeline::finalize(crop) });
         cx.spawn(async move |this, cx| {
             let result = finalize.await;
             let _ = this.update(cx, |this, cx| match result {

@@ -594,9 +594,16 @@ impl Render for Library {
             self.sel_set = self.selected.iter().cloned().collect();
         }
         let sel_set = &self.sel_set;
+        self.sel_springs.retain(|i, _| *i < n);
         for i in 0..n {
             let target = if sel_set.contains(&self.entries[i].path) { 1.0 } else { 0.0 };
-            let s = self.sel_springs.entry(i).or_default();
+            // get_mut, not entry(): an unselected card with no live
+            // spring must not insert a permanent map entry per frame.
+            let s = match self.sel_springs.get_mut(&i) {
+                Some(s) => s,
+                None if target == 0.0 => continue,
+                None => self.sel_springs.entry(i).or_default(),
+            };
             if target == 0.0 && s.settled(0.0) && s.value == 0.0 {
                 continue;
             }

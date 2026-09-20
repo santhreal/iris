@@ -252,7 +252,7 @@ fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
         // copy up to 200MB for nothing.
         let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
             .ok_or("frame buffer size mismatch")?;
-        let done = pipeline::finalize(&img)?;
+        let done = pipeline::finalize(img)?;
         pipeline::play_shutter_sound();
         Ok(done)
     }
@@ -305,7 +305,7 @@ fn capture_active_window(cx: &mut App) -> Result<(), String> {
             return Err("active window is outside the frame".to_string());
         }
         let crop = pipeline::crop_rgba(&frame.rgba, frame.width, frame.height, rect)?;
-        let done = pipeline::finalize(&crop)?;
+        let done = pipeline::finalize(crop)?;
         pipeline::play_shutter_sound();
         Ok(done)
     }

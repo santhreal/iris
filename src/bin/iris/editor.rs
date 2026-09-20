@@ -2491,44 +2491,40 @@ fn paint_action(
         *action.points.first().unwrap(),
         *action.points.last().unwrap(),
     );
-    if let Some((kscale, klen, kfirst, klast, cached)) =
-        action.cached_path.borrow().as_ref()
     {
-        if (*kscale, *klen, *kfirst, *klast) == fingerprint {
-            let mut path = Path::new(point(px(ox), px(oy)));
-            stamp_tris(&mut path, cached, ox, oy);
-            window.paint_path(path, color);
-            return;
-        }
-        // Incremental: a growing pen/highlight stroke keeps its scale
-        // and first point, so the new segments append onto the cached
-        // triangles instead of re-tessellating the whole polyline on
-        // every mousemove (O(stroke) per move became O(new segments)).
-        if matches!(action.tool, Tool::Pen | Tool::Highlight)
-            && (*kscale, *kfirst) == (scale, fingerprint.2)
-            && *klen >= 2
-            && *klen < action.points.len()
+        let mut cache = action.cached_path.borrow_mut();
+        if let Some((kscale, klen, kfirst, klast, cached)) = cache.as_mut()
         {
-            let mut tris = (**cached).clone();
+            if (*kscale, *klen, *kfirst, *klast) == fingerprint {
+                let mut path = Path::new(point(px(ox), px(oy)));
+                stamp_tris(&mut path, cached, ox, oy);
+                window.paint_path(path, color);
+                return;
+            }
+            // Incremental: a growing pen/highlight stroke keeps its scale
+            // and first point, so the new segments append onto the cached
+            // triangles instead of re-tessellating the whole polyline on
+            // every mousemove (O(stroke) per move became O(new segments)).
+            // The cache holds the only Rc, so make_mut appends in place:
+            // cloning the Vec per move was still an O(stroke) copy.
+            if matches!(action.tool, Tool::Pen | Tool::Highlight)
+                && (*kscale, *kfirst) == (scale, fingerprint.2)
+                && *klen >= 2
+                && *klen < action.points.len()
             {
-                let mut rec = icons::TriRecorder(tris);
+                let tris = Rc::make_mut(cached);
+                let mut rec = icons::TriRecorder(std::mem::take(tris));
                 for seg in action.points[*klen - 1..].windows(2) {
                     push_segment(&mut rec, s(seg[0]), s(seg[1]), w);
                 }
-                tris = rec.0;
+                *tris = rec.0;
+                *klen = action.points.len();
+                *klast = fingerprint.3;
+                let mut path = Path::new(point(px(ox), px(oy)));
+                stamp_tris(&mut path, tris, ox, oy);
+                window.paint_path(path, color);
+                return;
             }
-            let tris = Rc::new(tris);
-            let mut path = Path::new(point(px(ox), px(oy)));
-            stamp_tris(&mut path, &tris, ox, oy);
-            *action.cached_path.borrow_mut() = Some((
-                scale,
-                action.points.len(),
-                fingerprint.2,
-                fingerprint.3,
-                tris,
-            ));
-            window.paint_path(path, color);
-            return;
         }
     }
 
