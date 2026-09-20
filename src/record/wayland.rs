@@ -1126,19 +1126,27 @@ pub fn record_window(spec: RecordingSpec) -> Result<PathBuf, String> {
     }
     // The portal dialog can sit unanswered for minutes; poll the stop
     // channel while negotiating so a stop during the pick still joins.
-    let negotiate = std::thread::spawn(portal_negotiate_blocking);
+    // The negotiate result arrives on its own channel: recv_timeout
+    // wakes the instant the portal answers, instead of a 50ms poll.
+    let (neg_tx, neg_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = neg_tx.send(portal_negotiate_blocking());
+    });
     let (fd, node_id) = loop {
-        if negotiate.is_finished() {
-            break negotiate
-                .join()
-                .map_err(|_| "portal negotiate panicked".to_string())??;
+        match neg_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(r) => break r?,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if !matches!(spec.stop.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)) {
+                    // The negotiate thread finishes on its own once
+                    // the user answers; the recording ends as a
+                    // cancel either way.
+                    return Err(format!("{CANCELLED_PREFIX} stopped during source pick"));
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("portal negotiate thread died".to_string());
+            }
         }
-        if !matches!(spec.stop.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)) {
-            // The negotiate thread finishes on its own once the user
-            // answers; the recording ends as a cancel either way.
-            return Err(format!("{CANCELLED_PREFIX} stopped during source pick"));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
     };
 
     pipewire::init();
