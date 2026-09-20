@@ -398,13 +398,21 @@ impl GlContext {
             .make_current(self.display, self.surface, self.surface, Some(self.context))
             .map_err(|e| format!("eglMakeCurrent on stream thread: {e}"))?;
         let fourcc = drm_fourcc_for_format(format)?;
-        let mut attribs: Vec<egl::Int> = Vec::with_capacity(32);
-        attribs.push(egl::WIDTH);
-        attribs.push(width as egl::Int);
-        attribs.push(egl::HEIGHT);
-        attribs.push(height as egl::Int);
-        attribs.push(EGL_LINUX_DRM_FOURCC_EXT);
-        attribs.push(fourcc as egl::Int);
+        // Stack array, not a Vec: this runs per frame on PipeWire's
+        // RT thread, and a heap alloc per frame is a needless syscall
+        // in the capture path. Max: 6 header + 4 planes * 8 + NONE.
+        let mut attribs = [0 as egl::Int; 40];
+        let mut n = 0usize;
+        let mut push = |v: egl::Int| {
+            attribs[n] = v;
+            n += 1;
+        };
+        push(egl::WIDTH);
+        push(width as egl::Int);
+        push(egl::HEIGHT);
+        push(height as egl::Int);
+        push(EGL_LINUX_DRM_FOURCC_EXT);
+        push(fourcc as egl::Int);
 
         const PLANE_FD_ATTRS: [egl::Int; 4] = [
             EGL_DMA_BUF_PLANE0_FD_EXT,
@@ -438,20 +446,20 @@ impl GlContext {
         ];
 
         for (i, plane) in planes.iter().enumerate().take(4) {
-            attribs.push(PLANE_FD_ATTRS[i]);
-            attribs.push(plane.fd as egl::Int);
-            attribs.push(PLANE_OFFSET_ATTRS[i]);
-            attribs.push(plane.offset as egl::Int);
-            attribs.push(PLANE_PITCH_ATTRS[i]);
-            attribs.push(plane.stride as egl::Int);
+            push(PLANE_FD_ATTRS[i]);
+            push(plane.fd as egl::Int);
+            push(PLANE_OFFSET_ATTRS[i]);
+            push(plane.offset as egl::Int);
+            push(PLANE_PITCH_ATTRS[i]);
+            push(plane.stride as egl::Int);
             if modifier != DRM_FORMAT_MOD_INVALID {
-                attribs.push(PLANE_MOD_LO_ATTRS[i]);
-                attribs.push((modifier & 0xFFFFFFFF) as egl::Int);
-                attribs.push(PLANE_MOD_HI_ATTRS[i]);
-                attribs.push(((modifier >> 32) & 0xFFFFFFFF) as egl::Int);
+                push(PLANE_MOD_LO_ATTRS[i]);
+                push((modifier & 0xFFFFFFFF) as egl::Int);
+                push(PLANE_MOD_HI_ATTRS[i]);
+                push(((modifier >> 32) & 0xFFFFFFFF) as egl::Int);
             }
         }
-        attribs.push(egl::NONE);
+        push(egl::NONE);
 
         let image = unsafe {
             (self.create_image)(
