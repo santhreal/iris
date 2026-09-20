@@ -187,16 +187,23 @@ impl IconWindow {
             }
         }
         let pixmap: Pixmap = conn.generate_id().ok()?;
-        conn.create_pixmap(depth, pixmap, root, w as u16, h as u16)
-            .ok()?
-            .check()
-            .ok()?;
         let gc: Gcontext = conn.generate_id().ok()?;
-        conn.create_gc(gc, root, &x11rb::protocol::xproto::CreateGCAux::new())
-            .ok()?
-            .check()
+        let mask: Pixmap = conn.generate_id().ok()?;
+        let mgc: Gcontext = conn.generate_id().ok()?;
+        let win = conn.generate_id().ok()?;
+        // Every request issues before the first check: the server
+        // runs them in order on one connection, so a serial check()
+        // per request was a round trip each (~15 per drag start).
+        // The cookies are checked in issue order after one flush; a
+        // failure still reports against the request that caused it,
+        // and dependent requests failing behind it change nothing.
+        let c_pixmap = conn
+            .create_pixmap(depth, pixmap, root, w as u16, h as u16)
             .ok()?;
-        conn.put_image(
+        let c_gc = conn
+            .create_gc(gc, root, &x11rb::protocol::xproto::CreateGCAux::new())
+            .ok()?;
+        let c_put = conn.put_image(
             ImageFormat::Z_PIXMAP,
             pixmap,
             gc,
@@ -208,27 +215,21 @@ impl IconWindow {
             depth,
             &pixels,
         )
-        .ok()?
-        .check()
         .ok()?;
         // 1-bit mask: two rectangles plus four corner arcs = rounded rect.
         let r: i16 = 10;
         let (w16, h16) = (w as i16, h as i16);
-        let mask: Pixmap = conn.generate_id().ok()?;
-        conn.create_pixmap(1, mask, root, w as u16, h as u16)
-            .ok()?
-            .check()
+        let c_mask = conn
+            .create_pixmap(1, mask, root, w as u16, h as u16)
             .ok()?;
-        let mgc: Gcontext = conn.generate_id().ok()?;
-        conn.create_gc(
-            mgc,
-            mask,
-            &x11rb::protocol::xproto::CreateGCAux::new().foreground(0),
-        )
-        .ok()?
-        .check()
-        .ok()?;
-        conn.poly_fill_rectangle(
+        let c_mgc = conn
+            .create_gc(
+                mgc,
+                mask,
+                &x11rb::protocol::xproto::CreateGCAux::new().foreground(0),
+            )
+            .ok()?;
+        let c_clear = conn.poly_fill_rectangle(
             mask,
             mgc,
             &[x11rb::protocol::xproto::Rectangle {
@@ -238,16 +239,13 @@ impl IconWindow {
                 height: h as u16,
             }],
         )
-        .ok()?
-        .check()
         .ok()?;
-        conn.change_gc(
-            mgc,
-            &x11rb::protocol::xproto::ChangeGCAux::new().foreground(1),
-        )
-        .ok()?
-        .check()
-        .ok()?;
+        let c_fg = conn
+            .change_gc(
+                mgc,
+                &x11rb::protocol::xproto::ChangeGCAux::new().foreground(1),
+            )
+            .ok()?;
         use x11rb::protocol::xproto::{Arc, Rectangle};
         let rects = [
             Rectangle {
@@ -263,7 +261,7 @@ impl IconWindow {
                 height: (h16 - 2 * r) as u16,
             },
         ];
-        conn.poly_fill_rectangle(mask, mgc, &rects).ok()?.check().ok()?;
+        let c_rects = conn.poly_fill_rectangle(mask, mgc, &rects).ok()?;
         let arc = |x: i16, y: i16, start: i16| Arc {
             x,
             y,
@@ -278,14 +276,13 @@ impl IconWindow {
             arc(0, h16 - 2 * r, 180 * 64),
             arc(w16 - 2 * r, h16 - 2 * r, 270 * 64),
         ];
-        conn.poly_fill_arc(mask, mgc, &arcs).ok()?.check().ok()?;
+        let c_arcs = conn.poly_fill_arc(mask, mgc, &arcs).ok()?;
 
-        let win = conn.generate_id().ok()?;
         let aux = CreateWindowAux::new()
             .override_redirect(1)
             .background_pixmap(pixmap)
             .border_pixel(0);
-        conn.create_window(
+        let c_win = conn.create_window(
             x11rb::COPY_FROM_PARENT as u8,
             win,
             root,
@@ -298,21 +295,35 @@ impl IconWindow {
             x11rb::COPY_FROM_PARENT,
             &aux,
         )
-        .ok()?
-        .check()
         .ok()?;
         use x11rb::protocol::shape::{ConnectionExt as ShapeExt, SK, SO};
-        conn.shape_mask(SO::SET, SK::BOUNDING, win, 0, 0, mask)
-            .ok()?
-            .check()
+        let c_shape = conn
+            .shape_mask(SO::SET, SK::BOUNDING, win, 0, 0, mask)
             .ok()?;
-        conn.map_window(win).ok()?.check().ok()?;
-        conn.free_gc(gc).ok()?;
-        conn.free_gc(mgc).ok()?;
-        conn.free_pixmap(mask).ok()?;
+        let c_map = conn.map_window(win).ok()?;
+        let c_fgc = conn.free_gc(gc).ok()?;
+        let c_fmgc = conn.free_gc(mgc).ok()?;
+        let c_fmask = conn.free_pixmap(mask).ok()?;
         // The window's background_pixmap attribute holds its own
         // server-side reference; ours is freed or it leaks per drag.
-        conn.free_pixmap(pixmap).ok()?;
+        let c_fpix = conn.free_pixmap(pixmap).ok()?;
+        let _ = conn.flush();
+        for c in [
+            c_pixmap, c_gc, c_put, c_mask, c_mgc, c_clear, c_fg, c_rects, c_arcs, c_win,
+            c_shape, c_map, c_fgc, c_fmgc, c_fmask, c_fpix,
+        ] {
+            if c.check().is_err() {
+                // Free whatever the prefix created; freeing a resource
+                // that never existed is an ignored error.
+                let _ = conn.destroy_window(win);
+                let _ = conn.free_gc(gc);
+                let _ = conn.free_gc(mgc);
+                let _ = conn.free_pixmap(mask);
+                let _ = conn.free_pixmap(pixmap);
+                let _ = conn.flush();
+                return None;
+            }
+        }
         Some(Self {
             win,
             width: w16,
@@ -403,6 +414,7 @@ impl XdndAtoms {
 fn xdnd_target_at<C: Connection>(
     conn: &C,
     win: x11rb::protocol::xproto::Window,
+    first_child: x11rb::protocol::xproto::Window,
     aware: x11rb::protocol::xproto::Atom,
     proxy: x11rb::protocol::xproto::Atom,
     skip: Option<x11rb::protocol::xproto::Window>,
@@ -415,10 +427,18 @@ fn xdnd_target_at<C: Connection>(
     // query_pointer reports the immediate child containing the pointer,
     // so one round trip per level replaces a query_tree plus a
     // geometry+attributes pair per sibling. Unmapped windows cannot
-    // contain the pointer, so no map-state check is needed.
+    // contain the pointer, so no map-state check is needed. The
+    // caller's own query_pointer on `win` supplies the first link:
+    // re-asking it here was a duplicate round trip per pointer move.
     let mut chain = vec![win];
-    let mut cur = win;
+    let mut cur = first_child;
+    if cur != x11rb::NONE && Some(cur) != skip {
+        chain.push(cur);
+    }
     for _ in 0..32 {
+        if cur == x11rb::NONE || Some(cur) == skip {
+            break;
+        }
         let Some(ptr) = conn.query_pointer(cur).ok().and_then(|c| c.reply().ok()) else {
             break;
         };
@@ -605,6 +625,7 @@ fn run_xdnd_drag(
             let under = xdnd_target_at(
                 &conn,
                 root,
+                pointer.child,
                 atoms.aware,
                 atoms.proxy,
                 icon.as_ref().map(|i| i.win),
