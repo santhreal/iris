@@ -708,7 +708,7 @@ impl Library {
         let selecting = !self.selected.is_empty();
         let circle_vis = sel_amt.max(hover_amt).max(if selecting && !selected { 0.85 } else { 0.0 });
         let circle = div()
-            .id(ElementId::Name(format!("sel-{index}").into()))
+            .id(ElementId::NamedInteger("sel".into(), index as u64))
             .absolute()
             .top(px(6.))
             .left(px(6.))
@@ -812,7 +812,7 @@ impl Library {
         let card_path = entry.path.clone();
 
         div()
-            .id(ElementId::Name(format!("card-{index}").into()))
+            .id(ElementId::NamedInteger("card".into(), index as u64))
             .w(px(CARD_W))
             .flex()
             .flex_col()
