@@ -437,7 +437,13 @@ pub fn open(
                             ));
                             this.composite = img;
                             this.base_ready = true;
-                            this.rebuild_all();
+                            // composite already holds base's pixels;
+                            // the 33MB restore+replay only matters
+                            // when strokes drawn before the decode
+                            // landed need baking in.
+                            if !this.actions.borrow().is_empty() {
+                                this.rebuild_all();
+                            }
                         }
                         Err(e) => {
                             this.status = Some(format!("decode: {e}"));
