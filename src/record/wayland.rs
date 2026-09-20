@@ -733,6 +733,10 @@ struct StreamData {
     frames: u64,
     gl_context: Option<GlContext>,
     scratch: Vec<u8>,
+    /// Plane descriptors for the DMA-buf import, rebuilt per frame
+    /// into a reused Vec: an allocation per frame on the RT thread
+    /// is a needless syscall in the capture path.
+    planes: Vec<PlaneInfo>,
 }
 
 impl StreamData {
@@ -783,11 +787,11 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
                 return;
             };
             if let Some(gl) = &mut data.gl_context {
-                let mut planes = Vec::with_capacity(datas.len());
+                data.planes.clear();
                 for d in datas.iter() {
                     let raw = d.as_raw();
                     let chunk = d.chunk();
-                    planes.push(PlaneInfo {
+                    data.planes.push(PlaneInfo {
                         fd: raw.fd as i32,
                         offset: chunk.offset() + raw.mapoffset,
                         stride: chunk.stride() as u32,
@@ -798,7 +802,7 @@ fn on_process(stream: &StreamRef, data: &mut StreamData) {
                     height,
                     format,
                     modifier,
-                    &planes,
+                    &data.planes,
                     &mut data.scratch,
                 ) {
                     Ok(true) => {}
@@ -1200,6 +1204,7 @@ pub fn record_window(spec: RecordingSpec) -> Result<PathBuf, String> {
         frames: 0,
         gl_context,
         scratch: Vec::new(),
+        planes: Vec::new(),
     };
 
     let stop = spec.stop;
