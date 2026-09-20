@@ -340,7 +340,11 @@ pub fn open(
                 )),
                 filename,
                 path: path.to_path_buf(),
-                composite: base.clone(),
+                // 1x1 until the decode lands: cloning the zeroed base
+                // here allocated a full-size buffer the decode task
+                // replaces unread. Every composite read is gated on
+                // base_ready or follows the assignment in the task.
+                composite: image::RgbaImage::new(1, 1),
                 base,
                 base_img,
                 actions: Rc::new(std::cell::RefCell::new(Vec::new())),
