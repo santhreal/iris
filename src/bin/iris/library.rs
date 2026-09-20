@@ -170,20 +170,26 @@ impl Library {
             return;
         }
         cx.spawn(async move |this, cx| {
-            let loaded = cx
-                .background_executor()
-                .spawn(async move {
-                    missing
-                        .into_iter()
-                        .filter_map(|(p, t)| {
-                            std::fs::read(&t)
-                                .ok()
-                                .and_then(|b| crate::widgets::render_image_from_png(&b))
-                                .map(|img| (p, img))
-                        })
-                        .collect::<Vec<_>>()
+            // One background task per thumb: the executor is a pool,
+            // so N PNG decodes run across cores instead of serially
+            // on one task.
+            let tasks: Vec<_> = missing
+                .into_iter()
+                .map(|(p, t)| {
+                    cx.background_executor().spawn(async move {
+                        std::fs::read(&t)
+                            .ok()
+                            .and_then(|b| crate::widgets::render_image_from_png(&b))
+                            .map(|img| (p, img))
+                    })
                 })
-                .await;
+                .collect();
+            let mut loaded = Vec::with_capacity(tasks.len());
+            for task in tasks {
+                if let Some(pair) = task.await {
+                    loaded.push(pair);
+                }
+            }
             let _ = this.update(cx, |this, cx| {
                 this.thumb_cache.extend(loaded);
                 cx.notify();
