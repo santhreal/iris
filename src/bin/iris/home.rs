@@ -346,7 +346,7 @@ impl Render for Home {
                     .right(px(14.))
                     .opacity(motion::ease_out_cubic(gear_enter.clamp(0.0, 1.0)))
                     .child(
-                        widgets::icon_button("home-settings".into(), Icon::Gear, false, 30.0).on_click(
+                        widgets::icon_button(ElementId::Name("home-settings".into()), Icon::Gear, false, 30.0).on_click(
                             cx.listener(|_, _, _, cx| {
                                 if let Err(e) = crate::settings::open(cx) {
                                     iris_lib::ilog!("iris: {e}");

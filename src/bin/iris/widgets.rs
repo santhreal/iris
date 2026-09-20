@@ -48,9 +48,9 @@ pub fn button_with_icon(
 
 /// Icon-only button, `size`px square. `active` fills the chip and
 /// inverts the glyph; otherwise ghost with a hover wash.
-pub fn icon_button(id: String, glyph: Icon, active: bool, size: f32) -> Stateful<Div> {
+pub fn icon_button(id: impl Into<ElementId>, glyph: Icon, active: bool, size: f32) -> Stateful<Div> {
     div()
-        .id(ElementId::Name(id.into()))
+        .id(id)
         .w(px(size))
         .h(px(size))
         .flex()

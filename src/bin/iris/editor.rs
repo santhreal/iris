@@ -1458,7 +1458,7 @@ impl Render for Editor {
                 for (tool, glyph, label) in TOOLS {
                     let active = self.tool == tool;
                     bar = bar.child(
-                        crate::widgets::icon_button(format!("tool-{label}"), glyph, active, 32.0)
+                        crate::widgets::icon_button(ElementId::Name(label.into()), glyph, active, 32.0)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.commit_text(true);
                                 this.tool = tool;
@@ -1475,7 +1475,7 @@ impl Render for Editor {
                 {
                     let active = self.stroke == i as u8;
                     bar = bar.child(
-                        crate::widgets::icon_button(format!("stroke-{i}"), glyph, active, 32.0)
+                        crate::widgets::icon_button(ElementId::NamedInteger("stroke".into(), i as u64), glyph, active, 32.0)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.stroke = i as u8;
                                 cx.notify();
@@ -1485,7 +1485,7 @@ impl Render for Editor {
                 // Fill toggle for Rect/Ellipse: paints the interior
                 // instead of just the outline.
                 bar = bar.child(
-                    crate::widgets::icon_button("fill-toggle".into(), Icon::Rect, self.fill, 32.0)
+                    crate::widgets::icon_button(ElementId::Name("fill-toggle".into()), Icon::Rect, self.fill, 32.0)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.fill = !this.fill;
                             cx.notify();
@@ -1494,21 +1494,21 @@ impl Render for Editor {
                 bar = bar
                     .child(div().h(px(1.)).w(px(28.)).my(px(4.)).flex_shrink_0().bg(theme::HAIRLINE))
                     .child(
-                        crate::widgets::icon_button("action-undo".into(), Icon::Undo, false, 32.0)
+                        crate::widgets::icon_button(ElementId::Name("action-undo".into()), Icon::Undo, false, 32.0)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.undo();
                                 cx.notify();
                             })),
                     )
                     .child(
-                        crate::widgets::icon_button("action-redo".into(), Icon::Redo, false, 32.0)
+                        crate::widgets::icon_button(ElementId::Name("action-redo".into()), Icon::Redo, false, 32.0)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.redo();
                                 cx.notify();
                             })),
                     )
                     .child(
-                        crate::widgets::icon_button("action-clear".into(), Icon::Trash, false, 32.0)
+                        crate::widgets::icon_button(ElementId::Name("action-clear".into()), Icon::Trash, false, 32.0)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.clear();
                                 cx.notify();
@@ -1527,7 +1527,7 @@ impl Render for Editor {
                     let active = c == self.color;
                     swatches = swatches.child(
                         div()
-                            .id(ElementId::Name(format!("swatch-{c}").into()))
+                            .id(ElementId::Name(c.into()))
                             .w(px(18.))
                             .h(px(18.))
                             .flex_shrink_0()
