@@ -1466,13 +1466,56 @@ fn stamp_arrow_head(
         b.0 - head * (angle + 0.45).cos(),
         b.1 - head * (angle + 0.45).sin(),
     );
-    // Fill the head triangle by stamping across its span.
-    let steps = (head / 1.5).max(4.0) as usize;
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        let q1 = (b.0 + (p1.0 - b.0) * t, b.1 + (p1.1 - b.1) * t);
-        let q2 = (b.0 + (p2.0 - b.0) * t, b.1 + (p2.1 - b.1) * t);
-        stamp_segment(img, q1, q2, 2.0, px);
+    fill_triangle(img, b, p1, p2, px);
+}
+
+/// Scanline fill of triangle (v0, v1, v2): each row's chord is the
+/// intersection of the two edges the row crosses. The old head fill
+/// stamped ~10 overlapping 2px capsules across the span, blending
+/// every pixel several times; one blend per pixel is faster and
+/// matches the GPU path's single coverage.
+fn fill_triangle(
+    img: &mut image::RgbaImage,
+    v0: (f32, f32),
+    v1: (f32, f32),
+    v2: (f32, f32),
+    px: image::Rgba<u8>,
+) {
+    // Sort vertices by y: top, middle, bottom.
+    let mut vs = [v0, v1, v2];
+    vs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let (t, m, b) = (vs[0], vs[1], vs[2]);
+    if (b.1 - t.1).abs() < f32::EPSILON {
+        // Degenerate: a flat line. Stamp it as a thin segment.
+        stamp_segment(img, t, b, 1.0, px);
+        return;
+    }
+    let y0 = t.1.floor().max(0.0) as i64;
+    let y1 = b.1.ceil().min(img.height() as f32 - 1.0) as i64;
+    for y in y0..=y1 {
+        let yf = y as f32;
+        // Long edge t->b is always crossed; the short edge switches
+        // from t->m to m->b at m's row.
+        let u_long = (yf - t.1) / (b.1 - t.1);
+        let xl = t.0 + (b.0 - t.0) * u_long;
+        let xs = if yf <= m.1 {
+            if (m.1 - t.1).abs() < f32::EPSILON {
+                m.0
+            } else {
+                t.0 + (m.0 - t.0) * ((yf - t.1) / (m.1 - t.1))
+            }
+        } else if (b.1 - m.1).abs() < f32::EPSILON {
+            m.0
+        } else {
+            m.0 + (b.0 - m.0) * ((yf - m.1) / (b.1 - m.1))
+        };
+        blend_row(
+            img,
+            y,
+            xl.min(xs).floor() as i64,
+            xl.max(xs).ceil() as i64,
+            px,
+        );
     }
 }
 
@@ -2587,6 +2630,18 @@ mod tests {
         assert!(painted(&img, 2, 5));
         assert!(painted(&img, 28, 5));
         assert!(painted(&img, 15, 5));
+    }
+    #[test]
+    fn arrow_paints_head_at_tip_not_tail() {
+        let mut img = image::RgbaImage::new(60, 30);
+        rasterize(&mut img, &action(Tool::Arrow, vec![(5.0, 15.0), (50.0, 15.0)], false), 1.0);
+        // The head fans out behind the tip: its base sits ~14px back
+        // from (50,15) and spans y 8..22 there, narrowing to the tip.
+        assert!(painted(&img, 36, 8), "upper fan base must be painted");
+        assert!(painted(&img, 36, 22), "lower fan base must be painted");
+        assert!(painted(&img, 44, 15), "fan interior must be painted");
+        assert!(painted(&img, 50, 15), "tip must be painted");
+        assert!(!painted(&img, 10, 8), "tail must not fan out");
     }
 
     #[test]
