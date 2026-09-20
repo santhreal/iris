@@ -467,6 +467,7 @@ impl GlContext {
             return Err(format!("eglCreateImageKHR failed: error {err:?}"));
         }
 
+        let mut need_stamp = false;
         let result = (|| unsafe {
             if self.texture == 0 || self.fbo == 0 {
                 return Err("GL texture/FBO were not allocated at setup".to_string());
@@ -557,18 +558,24 @@ impl GlContext {
                         (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
                         return Err("glMapBufferRange failed".to_string());
                     }
-                    std::ptr::copy_nonoverlapping(
-                        ptr as *const u8,
-                        scratch.as_mut_ptr(),
-                        total_bytes,
-                    );
+                    // Fused copy + alpha-stamp: one pass over the frame
+                    // instead of a memcpy followed by a per-pixel OR.
+                    let src = std::slice::from_raw_parts(ptr as *const u8, total_bytes);
+                    for (d, s) in scratch.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+                        d.copy_from_slice(s);
+                        d[3] = 0xFF;
+                    }
                     (unmap_buffer)(GL_PIXEL_PACK_BUFFER);
                 }
                 (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
                 self.pbo_pending = Some(cur);
                 (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
+                // produced frames are already alpha-stamped by the
+                // fused copy above.
                 return Ok(produced);
             }
+            // Sync readPixels path: stamp alpha after the read below.
+            need_stamp = true;
             (self.read_pixels)(
                 0,
                 0,
@@ -591,31 +598,33 @@ impl GlContext {
         if !produced {
             return Ok(false);
         }
-
-        // Alpha-stamp in parallel bands: a serial per-pixel pass over a
+        // Alpha-stamp in parallel bands (sync readPixels path only;
+        // the PBO copy stamps inline). A serial per-pixel pass over a
         // 4K frame is a visible slice of the frame budget.
-        let pixels = width as usize * height as usize;
-        const PARALLEL_MIN: usize = 1 << 20;
-        if pixels < PARALLEL_MIN {
-            for px in scratch.chunks_exact_mut(4) {
-                px[3] = 0xFF;
-            }
-        } else {
-            let threads = std::thread::available_parallelism()
-                .map(|n| n.get().min(8))
-                .unwrap_or(4)
-                .min(pixels)
-                .max(1);
-            let chunk = pixels.div_ceil(threads) * 4;
-            std::thread::scope(|scope| {
-                for band in scratch.chunks_mut(chunk) {
-                    scope.spawn(move || {
-                        for px in band.chunks_exact_mut(4) {
-                            px[3] = 0xFF;
-                        }
-                    });
+        if need_stamp {
+            let pixels = width as usize * height as usize;
+            const PARALLEL_MIN: usize = 1 << 20;
+            if pixels < PARALLEL_MIN {
+                for px in scratch.chunks_exact_mut(4) {
+                    px[3] = 0xFF;
                 }
-            });
+            } else {
+                let threads = std::thread::available_parallelism()
+                    .map(|n| n.get().min(8))
+                    .unwrap_or(4)
+                    .min(pixels)
+                    .max(1);
+                let chunk = pixels.div_ceil(threads) * 4;
+                std::thread::scope(|scope| {
+                    for band in scratch.chunks_mut(chunk) {
+                        scope.spawn(move || {
+                            for px in band.chunks_exact_mut(4) {
+                                px[3] = 0xFF;
+                            }
+                        });
+                    }
+                });
+            }
         }
 
         Ok(true)
