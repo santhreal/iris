@@ -22,17 +22,43 @@ impl WaylandBackend {
 }
 
 async fn portal_screenshot() -> Result<Frame, String> {
-    let request = ashpd::desktop::screenshot::Screenshot::request()
-        .interactive(false)
-        .send()
-        .await
-        .map_err(|e| {
-            format!("portal Screenshot request failed (is xdg-desktop-portal running?): {e}")
-        })?;
-    let shot = request
-        .response()
-        .map_err(|e| format!("portal Screenshot denied or failed: {e}"))?;
-    let uri = shot.uri().as_str();
+    // A cold portal backend can lose the first request: dbus activation
+    // starts xdpw on demand and the frontend's dispatch can land before
+    // the backend registers its objects, or a screencopy frame can
+    // outlive the request on an idle output. One retry covers the cold
+    // start; a user cancel is never retried.
+    let mut last_err = String::new();
+    for attempt in 0..2 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+        let request = match ashpd::desktop::screenshot::Screenshot::request()
+            .interactive(false)
+            .send()
+            .await
+        {
+            Ok(request) => request,
+            Err(e) => {
+                last_err = format!(
+                    "portal Screenshot request failed (is xdg-desktop-portal running?): {e}"
+                );
+                continue;
+            }
+        };
+        match request.response() {
+            Ok(shot) => return frame_from_uri(shot.uri().as_str()),
+            Err(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)) => {
+                return Err("portal Screenshot cancelled".to_string());
+            }
+            Err(e) => {
+                last_err = format!("portal Screenshot denied or failed: {e}");
+            }
+        }
+    }
+    Err(last_err)
+}
+
+fn frame_from_uri(uri: &str) -> Result<Frame, String> {
     let encoded = uri
         .strip_prefix("file://")
         .ok_or_else(|| format!("portal returned a non-file uri: {uri}"))?;
