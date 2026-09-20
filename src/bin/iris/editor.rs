@@ -138,11 +138,15 @@ pub struct Editor {
     /// image changes: formatting it per frame allocates a String a
     /// frame.
     title: SharedString,
-    base: image::RgbaImage,
+    /// The unedited pixels. Arc so crop/transform can share one buffer
+    /// with composite instead of cloning a full-size image per op.
+    base: Arc<image::RgbaImage>,
     base_img: Arc<RenderImage>,
     /// CPU composite: base plus every committed action, used to sample
-    /// blur patches and to rasterize the final PNG.
-    composite: image::RgbaImage,
+    /// blur patches and to rasterize the final PNG. After a crop or
+    /// transform it shares base's buffer; the first mutation through
+    /// Arc::make_mut splits it then (or never, on crop-then-save).
+    composite: Arc<image::RgbaImage>,
     /// Committed actions behind Rc<RefCell>: the canvas prep closure
     /// clones a refcount per render, and edits borrow mutably in place.
     /// A plain Rc forced Rc::make_mut to deep-copy every stroke's points
@@ -354,8 +358,8 @@ pub fn open(
                 // here allocated a full-size buffer the decode task
                 // replaces unread. Every composite read is gated on
                 // base_ready or follows the assignment in the task.
-                composite: image::RgbaImage::new(1, 1),
-                base,
+                composite: Arc::new(image::RgbaImage::new(1, 1)),
+                base: Arc::new(base),
                 base_img,
                 actions: Rc::new(std::cell::RefCell::new(Vec::new())),
                 undos: Vec::new(),
@@ -412,23 +416,24 @@ pub fn open(
                         let i = image::load_from_memory(&png)
                             .map_err(|e| format!("decode {}: {e}", decode_path.display()))?;
                         let img = i.to_rgba8();
-                        // Clone for `base` here, off the UI thread:
-                        // a 4K memcpy on the main thread stalls the
-                        // morph that is mid-flight when this lands.
-                        let base = img.clone();
+                        // base and composite each get their own Arc:
+                        // sharing one buffer would make the first
+                        // stroke commit clone 33MB through make_mut.
+                        let base = Arc::new(img.clone());
+                        let composite = Arc::new(img);
                         let render = crate::widgets::render_image_from_rgba(
-                            img.width(),
-                            img.height(),
-                            img.as_raw(),
+                            composite.width(),
+                            composite.height(),
+                            composite.as_raw(),
                         );
-                        Ok::<(image::RgbaImage, image::RgbaImage, Arc<gpui::RenderImage>), String>(
-                            (img, base, render),
+                        Ok::<(Arc<image::RgbaImage>, Arc<image::RgbaImage>, Arc<gpui::RenderImage>), String>(
+                            (base, composite, render),
                         )
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     match decoded {
-                        Ok((img, base, render)) => {
+                        Ok((base, composite, render)) => {
                             let old = std::mem::replace(&mut this.base_img, render);
                             crate::widgets::release_render(&old, cx);
                             this.base = base;
@@ -438,7 +443,7 @@ pub fn open(
                                 this.base.width(),
                                 this.base.height()
                             ));
-                            this.composite = img;
+                            this.composite = composite;
                             this.base_ready = true;
                             // composite already holds base's pixels;
                             // the 33MB restore+replay only matters
@@ -578,14 +583,14 @@ impl Editor {
                     // blurs sample through. Computing it twice per
                     // commit was two crop+resize+resize chains.
                     let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
-                    image::imageops::overlay(&mut self.composite, &patch, x as i64, y as i64);
+                    image::imageops::overlay(Arc::make_mut(&mut self.composite), &patch, x as i64, y as i64);
                     action.blur_patch = Some(render);
                     action.blur_rect = (x as f32, y as f32, w as f32, h as f32);
                 }
                 Err(_) => return,
             }
         } else {
-            rasterize(&mut self.composite, &action, 1.0);
+            rasterize(Arc::make_mut(&mut self.composite), &action, 1.0);
         }
         action.bbox = Self::compute_bbox(&action);
         self.push_edit(Edit::Add(action.clone()));
@@ -781,8 +786,8 @@ fn clamp_region(
         // here so moved or cropped blurs sample their new location.
         // Reuse the composite buffer: it is always the same size as base,
         // so replay writes into it instead of cloning a fresh image.
-        self.composite.copy_from_slice(&self.base);
-        Self::replay_actions(&mut self.composite, &mut self.actions.borrow_mut(), 0);
+        Arc::make_mut(&mut self.composite).copy_from_slice(&self.base);
+        Self::replay_actions(Arc::make_mut(&mut self.composite), &mut self.actions.borrow_mut(), 0);
     }
     /// The union of two (x, y, w, h) rects.
     fn union_rect(
@@ -854,7 +859,7 @@ fn clamp_region(
         );
         Self::apply_plan(
             &self.base,
-            &mut self.composite,
+            Arc::make_mut(&mut self.composite),
             &mut self.actions.borrow_mut(),
             closed,
             &mark,
@@ -996,20 +1001,23 @@ fn clamp_region(
         if w < 8 || h < 8 {
             return;
         }
-        let cropped = image::imageops::crop_imm(&self.composite, x, y, w, h).to_image();
+        let cropped = image::imageops::crop_imm(&*self.composite, x, y, w, h).to_image();
         let old = std::mem::replace(
             &mut self.base_img,
             crate::widgets::render_image_from_rgba(w, h, cropped.as_raw()),
         );
         crate::widgets::release_render(&old, cx);
-        self.base = cropped.clone();
+        // base and composite share the cropped buffer: the clone this
+        // replaces was a full-size copy on the UI thread, and the
+        // first post-crop edit pays it through make_mut instead.
+        self.composite = Arc::new(cropped);
+        self.base = Arc::clone(&self.composite);
         self.title = SharedString::from(format!(
             "{} · {}×{}",
             self.filename,
             self.base.width(),
             self.base.height()
         ));
-        self.composite = cropped;
         self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
@@ -1026,13 +1034,10 @@ fn clamp_region(
         }
         self.commit_text(true);
         self.commit_current();
-        // composite is already current: every commit rasterizes into
-        // it, so rebuild_all's 33MB restore+replay would produce the
-        // same pixels it is about to rotate.
         let out = match op {
-            Transform::Rot90 => image::imageops::rotate90(&self.composite),
-            Transform::FlipH => image::imageops::flip_horizontal(&self.composite),
-            Transform::FlipV => image::imageops::flip_vertical(&self.composite),
+            Transform::Rot90 => image::imageops::rotate90(&*self.composite),
+            Transform::FlipH => image::imageops::flip_horizontal(&*self.composite),
+            Transform::FlipV => image::imageops::flip_vertical(&*self.composite),
         };
         let (w, h) = (out.width(), out.height());
         let old = std::mem::replace(
@@ -1040,14 +1045,16 @@ fn clamp_region(
             crate::widgets::render_image_from_rgba(w, h, out.as_raw()),
         );
         crate::widgets::release_render(&old, cx);
-        self.base = out.clone();
+        // Same sharing as apply_crop: the clone this replaces was a
+        // full-size copy on the UI thread per transform.
+        self.composite = Arc::new(out);
+        self.base = Arc::clone(&self.composite);
         self.title = SharedString::from(format!(
             "{} · {}×{}",
             self.filename,
             self.base.width(),
             self.base.height()
         ));
-        self.composite = out;
         self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
@@ -1079,7 +1086,19 @@ fn clamp_region(
         // the UI thread would freeze the outro for hundreds of ms.
         self.commit_text(true);
         self.commit_current();
-        let img = std::mem::take(&mut self.composite);
+        // Move the pixels out rather than cloning: after a crop or
+        // transform, base shares composite's buffer, so resetting base
+        // first leaves composite unique and try_unwrap hands the image
+        // over whole. A still-shared composite (no crop) is unique
+        // already; the Err arm is the pre-decode placeholder.
+        self.base = Arc::new(image::RgbaImage::new(1, 1));
+        let img = match Arc::try_unwrap(std::mem::replace(
+            &mut self.composite,
+            Arc::new(image::RgbaImage::new(1, 1)),
+        )) {
+            Ok(img) => img,
+            Err(rc) => (*rc).clone(),
+        };
         let path = self.path.clone();
         cx.spawn(async move |_, cx| {
             let result = cx
@@ -1186,7 +1205,7 @@ fn clamp_region(
                 cached_path: std::cell::RefCell::new(None),
             };
             action.bbox = Self::compute_bbox(&action);
-            rasterize(&mut self.composite, &action, 1.0);
+            rasterize(Arc::make_mut(&mut self.composite), &action, 1.0);
             self.push_edit(Edit::Add(action.clone()));
             self.actions.borrow_mut().push(action);
         }
