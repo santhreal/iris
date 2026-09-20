@@ -78,40 +78,10 @@ pub fn monitors() -> Result<Vec<WinRect>, String> {
 /// path queries both back to back, and a connection handshake is
 /// tens of ms of dead latency before the overlay can open.
 pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
+    let monitors = monitors()?;
     let (conn, screen_num) = shared_conn()?;
-    let screen = &conn.setup().roots[screen_num];
-    let root = screen.root;
-    let reply = conn
-        .randr_get_monitors(root, true)
-        .map_err(|e| format!("randr get_monitors: {e}"))?
-        .reply()
-        .map_err(|e| format!("randr get_monitors reply: {e}"))?;
-    let mut primary = Vec::new();
-    let mut rest = Vec::new();
-    for m in &reply.monitors {
-        let rect = WinRect {
-            x: m.x as i32,
-            y: m.y as i32,
-            width: m.width as u32,
-            height: m.height as u32,
-        };
-        if m.primary {
-            primary.push(rect);
-        } else {
-            rest.push(rect);
-        }
-    }
-    primary.extend(rest);
-    if primary.is_empty() {
-        primary.push(WinRect {
-            x: 0,
-            y: 0,
-            width: screen.width_in_pixels as u32,
-            height: screen.height_in_pixels as u32,
-        });
-    }
     let windows = list_top_level_windows_on(conn, screen_num)?;
-    Ok((primary, windows))
+    Ok((monitors, windows))
 }
 
 /// Top-level windows in bottom-to-top stacking order (EWMH
