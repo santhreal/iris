@@ -49,8 +49,13 @@ pub struct Library {
     /// Display strings (truncated file name, dimensions) parallel to
     /// `entries`: rebuilding them per card per frame is an allocation
     /// a frame per card for values that only change with the entry.
-    /// SharedString so the per-frame clone is an Arc bump.
     entry_names: Vec<(SharedString, SharedString)>,
+    /// Toolbar labels rebuilt only when their value changes: the
+    /// counts format a String per frame otherwise.
+    count_label: SharedString,
+    sel_label: SharedString,
+    /// Empty-state line: the hotkey is fixed for the session.
+    empty_label: SharedString,
     drag_fired: bool,
     help: bool,
     /// First-render clock for the open cascade.
@@ -99,12 +104,17 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             },
             |_, cx| {
                 cx.new(|cx| {
-                    // The store list stats every capture file; on a
                     // slow or network shots dir that stalls the open.
                     // Open empty and populate from the background, the
                     // same path the refresh poll takes.
                     let mut this = Library {
                         entry_names: Vec::new(),
+                        count_label: SharedString::from("0 captures"),
+                        sel_label: SharedString::from(""),
+                        empty_label: SharedString::from(format!(
+                            "No captures yet — press {}",
+                            iris_lib::config::Config::load().capture_hotkey
+                        )),
                         entries: Vec::new(),
                         selected: Vec::new(),
                         sel_set: std::collections::HashSet::new(),
@@ -243,6 +253,8 @@ impl Library {
                     this.entries = fresh.into_iter().map(Rc::new).collect();
                     this.entries_dirty = true;
                     this.entry_names = this.entries.iter().map(|e| Self::entry_name(e)).collect();
+                    this.count_label =
+                        SharedString::from(format!("{} captures", this.entries.len()));
                     this.selected
                         .retain(|p| this.entries.iter().any(|e| &e.path == p));
                     this.prefetch_thumbs(cx);
@@ -437,12 +449,11 @@ impl Render for Library {
         // Right-side toolbar cluster, handed to the shared frame.
         let mut cluster: Vec<AnyElement> = Vec::new();
         if selecting {
-            let n = self.selected.len();
             cluster.push(
                 div()
                     .text_xs()
                     .text_color(theme::FG_DIM)
-                    .child(format!("{n} selected"))
+                    .child(self.sel_label.clone())
                     .into_any_element(),
             );
             cluster.push(
@@ -469,7 +480,7 @@ impl Render for Library {
                 div()
                     .text_xs()
                     .text_color(theme::FG_FAINT)
-                    .child(format!("{} captures", self.entries.len()))
+                    .child(self.count_label.clone())
                     .into_any_element(),
             );
             cluster.push(
@@ -547,7 +558,7 @@ impl Render for Library {
                     .justify_center()
                     .text_sm()
                     .text_color(theme::FG_FAINT)
-                    .child(format!("No captures yet — press {hotkey}")),
+                    .child(self.empty_label.clone())
             );
         }
 
@@ -592,6 +603,8 @@ impl Render for Library {
         if self.sel_dirty {
             self.sel_dirty = false;
             self.sel_set = self.selected.iter().cloned().collect();
+            self.sel_label =
+                SharedString::from(format!("{} selected", self.selected.len()));
         }
         let sel_set = &self.sel_set;
         self.sel_springs.retain(|i, _| *i < n);
