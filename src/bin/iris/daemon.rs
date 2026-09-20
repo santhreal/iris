@@ -624,13 +624,14 @@ fn accept_args(listener: &UnixListener) -> Vec<String> {
                 // client that connects but never writes or closes would
                 // stall every later command on a blocking read. Bound
                 // the read: 2s of poll, then give up on the peer.
-                let mut buf = String::new();
+                let mut buf: Vec<u8> = Vec::new();
                 {
                     use std::io::Read;
                     use std::os::unix::io::AsRawFd;
                     let fd = stream.as_raw_fd();
                     let mut chunk = [0u8; 4096];
                     let started = std::time::Instant::now();
+                    // Read until the peer closes (forward_if_running
                     // drops its stream after the write) or 2s passes
                     // with no data. Payloads are argv lines; 1MiB caps
                     // a hostile flood.
@@ -646,7 +647,7 @@ fn accept_args(listener: &UnixListener) -> Vec<String> {
                         match stream.read(&mut chunk) {
                             Ok(0) | Err(_) => break,
                             Ok(n) => {
-                                buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                                buf.extend_from_slice(&chunk[..n]);
                                 // 1MiB caps a hostile flood; the 5s
                                 // total deadline caps a slow drip that
                                 // keeps poll() fed forever.
@@ -659,7 +660,11 @@ fn accept_args(listener: &UnixListener) -> Vec<String> {
                         }
                     }
                 }
-                args.extend(buf.lines().map(|l| l.to_string()).filter(|l| !l.is_empty()));
+                // Decode once: a multi-byte char split across the 4KiB
+                // read boundary would corrupt into U+FFFD under
+                // per-chunk from_utf8_lossy.
+                let text = String::from_utf8_lossy(&buf);
+                args.extend(text.lines().map(|l| l.to_string()).filter(|l| !l.is_empty()));
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(_) => break,
