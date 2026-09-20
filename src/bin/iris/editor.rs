@@ -929,6 +929,26 @@ fn clamp_region(
             p.0 += dx;
             p.1 += dy;
         }
+        // Keep the tessellation cache valid through the drag: the
+        // cached triangles are stage-space (image * scale), so the
+        // same delta scaled applies, and first/last shift with the
+        // points. Without this every mousemove re-tessellated the
+        // action being dragged.
+        if let Some((kscale, _, kfirst, klast, tris)) =
+            action.cached_path.borrow_mut().as_mut()
+        {
+            let (sx, sy) = (dx * *kscale, dy * *kscale);
+            for t in Rc::make_mut(tris).iter_mut() {
+                t[0] += sx;
+                t[1] += sy;
+                t[2] += sx;
+                t[3] += sy;
+                t[4] += sx;
+                t[5] += sy;
+            }
+            *kfirst = (kfirst.0 + dx, kfirst.1 + dy);
+            *klast = (klast.0 + dx, klast.1 + dy);
+        }
         if action.tool == Tool::Blur {
             action.blur_rect.0 += dx;
             action.blur_rect.1 += dy;
