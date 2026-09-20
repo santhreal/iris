@@ -348,9 +348,18 @@ fn convert_to_rgba(
             });
         }
         3 => {
-            for (o, px) in out.chunks_exact_mut(4).zip(src.chunks_exact(3)) {
-                o.copy_from_slice(&[px[2], px[1], px[0], 255]);
-            }
+            // Same banding as 4bpp: a 24bpp root at 12M pixels is the
+            // same per-byte loop cost.
+            crate::par::par_bands_mut(out, 4096, |out_chunk, start| {
+                let in_start = start / 4 * 3;
+                let in_chunk = &src[in_start..in_start + out_chunk.len() / 4 * 3];
+                for (o, px) in out_chunk
+                    .chunks_exact_mut(4)
+                    .zip(in_chunk.chunks_exact(3))
+                {
+                    o.copy_from_slice(&[px[2], px[1], px[0], 255]);
+                }
+            });
         }
         other => {
             return Err(format!(
