@@ -981,7 +981,9 @@ fn clamp_region(
         };
         self.commit_text(true);
         self.commit_current();
-        self.rebuild_all();
+        // composite is already current: every commit rasterizes into
+        // it, so rebuild_all's restore+replay would produce the same
+        // pixels the crop is about to cut.
         let (x, y) = (x.max(0.0) as u32, y.max(0.0) as u32);
         if x >= self.composite.width() || y >= self.composite.height() {
             return;
@@ -1021,7 +1023,9 @@ fn clamp_region(
         }
         self.commit_text(true);
         self.commit_current();
-        self.rebuild_all();
+        // composite is already current: every commit rasterizes into
+        // it, so rebuild_all's 33MB restore+replay would produce the
+        // same pixels it is about to rotate.
         let out = match op {
             Transform::Rot90 => image::imageops::rotate90(&self.composite),
             Transform::FlipH => image::imageops::flip_horizontal(&self.composite),
