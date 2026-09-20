@@ -1089,6 +1089,12 @@ fn stamp(img: &mut image::RgbaImage, cx: f32, cy: f32, r: f32, px: image::Rgba<u
     }
 }
 
+/// Fill the capsule (stadium) around segment a-b with radius w/2.
+/// The old per-point disc stamps covered the same region but blended
+/// each pixel ~3x along every straight run: opaque strokes were
+/// idempotent, but a semi-transparent highlight compounded to ~0.73
+/// alpha where the canvas shows a uniform 0.35. One blend per pixel
+/// is both faster and matches the GPU path.
 fn stamp_segment(
     img: &mut image::RgbaImage,
     a: (f32, f32),
@@ -1096,13 +1102,65 @@ fn stamp_segment(
     w: f32,
     px: image::Rgba<u8>,
 ) {
-    let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
-    let steps = (len / (w / 3.0).max(1.0)).ceil().max(1.0) as usize;
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        stamp(img, a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, w / 2.0, px);
+    let r = (w / 2.0).max(0.5);
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = dx.hypot(dy);
+    if len < f32::EPSILON {
+        stamp(img, a.0, a.1, r, px);
+        return;
+    }
+    // Unit normal: the body's offset edges are a±r·n to b±r·n.
+    let (nx, ny) = (-dy / len, dx / len);
+    let y0 = (a.1.min(b.1) - r).floor() as i64;
+    let y1 = (a.1.max(b.1) + r).ceil() as i64;
+    for y in y0..=y1 {
+        let yf = y as f32;
+        // Body interval: |signed distance to the line| <= r AND the
+        // projection parameter t in [0,1]. Both are linear in x, so
+        // each is one interval; the body is their intersection.
+        let body = (|| {
+            let (mut lo, mut hi) = (f32::NEG_INFINITY, f32::INFINITY);
+            if nx.abs() > f32::EPSILON {
+                let base = a.0 - (yf - a.1) * ny / nx;
+                let half = (r / nx).abs();
+                lo = lo.max(base - half);
+                hi = hi.min(base + half);
+            } else if ((yf - a.1) * ny).abs() > r {
+                return None;
+            }
+            if dx.abs() > f32::EPSILON {
+                let x_t0 = a.0 - (yf - a.1) * dy / dx;
+                let x_t1 = x_t0 + len * len / dx;
+                lo = lo.max(x_t0.min(x_t1));
+                hi = hi.min(x_t0.max(x_t1));
+            } else {
+                let t = (yf - a.1) * dy / (len * len);
+                if !(0.0..=1.0).contains(&t) {
+                    return None;
+                }
+            }
+            (lo <= hi).then_some((lo, hi))
+        })();
+        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        if let Some((bl, bh)) = body {
+            lo = lo.min(bl);
+            hi = hi.max(bh);
+        }
+        // End-cap chords.
+        for &(cx, cy) in &[a, b] {
+            let dyc = yf - cy;
+            if dyc.abs() <= r {
+                let half = (r * r - dyc * dyc).max(0.0).sqrt();
+                lo = lo.min(cx - half);
+                hi = hi.max(cx + half);
+            }
+        }
+        if lo <= hi {
+            blend_row(img, y, lo.floor() as i64, hi.ceil() as i64, px);
+        }
     }
 }
+
 
 fn stroke_polyline(img: &mut image::RgbaImage, points: &[(f32, f32)], w: f32, px: image::Rgba<u8>) {
     if points.len() == 1 {
