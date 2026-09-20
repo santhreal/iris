@@ -221,12 +221,19 @@ pub fn open(
     from: Option<(f32, f32, f32, f32)>,
     morph_sync: Option<Arc<AtomicBool>>,
 ) -> Result<(), String> {
-    // One read, no decode: a noisy 4K PNG takes most of a second to
-    // inflate, which would stall the click that opened us. The window
-    // opens on a placeholder of the right size and the decode lands
-    // behind it; GPUI renders the shared PNG bytes directly.
-    let png = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let (bw, bh) = png_dimensions(&png)
+    // Only the IHDR is needed for the window's size: a noisy 4K PNG
+    // is tens of MB, and reading it whole on the UI thread stalls the
+    // click that opened us. The full read + decode runs behind the
+    // open window; GPUI renders the shared PNG bytes directly.
+    let mut header = [0u8; 24];
+    {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path)
+            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        f.read_exact(&mut header)
+            .map_err(|e| format!("read {} header: {e}", path.display()))?;
+    }
+    let (bw, bh) = png_dimensions(&header)
         .ok_or_else(|| format!("not a PNG: {}", path.display()))?;
     let base = image::RgbaImage::new(bw, bh);
     // Blank until the background decode lands; previously GPUI's own
@@ -359,25 +366,31 @@ pub fn open(
     // The RenderImage is built in the same task: its copy+swizzle of
     // the decoded frame is a 33MB memcpy at 4K, too big for the UI
     // thread while the morph is mid-flight.
+    let decode_path = path.to_path_buf();
     handle
         .update(cx, |_, _, cx| {
             cx.spawn(async move |this, cx| {
                 let decoded = cx
                     .background_executor()
                     .spawn(async move {
-                        image::load_from_memory(&png).map(|i| {
-                            let img = i.to_rgba8();
-                            // Clone for `base` here, off the UI thread:
-                            // a 4K memcpy on the main thread stalls the
-                            // morph that is mid-flight when this lands.
-                            let base = img.clone();
-                            let render = crate::widgets::render_image_from_rgba(
-                                img.width(),
-                                img.height(),
-                                img.as_raw(),
-                            );
-                            (img, base, render)
-                        })
+                        let png = std::fs::read(&decode_path).map_err(|e| {
+                            format!("read {}: {e}", decode_path.display())
+                        })?;
+                        let i = image::load_from_memory(&png)
+                            .map_err(|e| format!("decode {}: {e}", decode_path.display()))?;
+                        let img = i.to_rgba8();
+                        // Clone for `base` here, off the UI thread:
+                        // a 4K memcpy on the main thread stalls the
+                        // morph that is mid-flight when this lands.
+                        let base = img.clone();
+                        let render = crate::widgets::render_image_from_rgba(
+                            img.width(),
+                            img.height(),
+                            img.as_raw(),
+                        );
+                        Ok::<(image::RgbaImage, image::RgbaImage, Arc<gpui::RenderImage>), String>(
+                            (img, base, render),
+                        )
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
