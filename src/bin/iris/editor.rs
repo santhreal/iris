@@ -119,9 +119,11 @@ pub struct Editor {
     /// CPU composite: base plus every committed action, used to sample
     /// blur patches and to rasterize the final PNG.
     composite: image::RgbaImage,
-    /// Committed actions. Rc so the canvas prep closure clones a
-    /// refcount, not the whole vec of strokes, every render.
-    actions: Rc<Vec<Action>>,
+    /// Committed actions behind Rc<RefCell>: the canvas prep closure
+    /// clones a refcount per render, and edits borrow mutably in place.
+    /// A plain Rc forced Rc::make_mut to deep-copy every stroke's points
+    /// on each edit while the canvas held a ref.
+    actions: Rc<std::cell::RefCell<Vec<Action>>>,
     /// Operation-level history: commits, deletes and moves are all
     /// undoable, like Markup. Two stacks; a fresh edit clears redo.
     undos: Vec<Edit<Action>>,
@@ -305,7 +307,7 @@ pub fn open(
                 composite: base.clone(),
                 base,
                 base_img,
-                actions: Rc::new(Vec::new()),
+                actions: Rc::new(std::cell::RefCell::new(Vec::new())),
                 undos: Vec::new(),
                 redos: Vec::new(),
                 current: None,
@@ -441,6 +443,7 @@ impl Editor {
     /// The next counter number: one past the highest committed step.
     fn next_step(&self) -> u32 {
         self.actions
+            .borrow()
             .iter()
             .filter(|a| a.tool == Tool::Counter)
             .map(|a| a.step)
@@ -499,7 +502,7 @@ impl Editor {
             rasterize(&mut self.composite, &action, 1.0);
         }
         self.push_edit(Edit::Add(action.clone()));
-        Rc::make_mut(&mut self.actions).push(action);
+        self.actions.borrow_mut().push(action);
         self.selected = None;
     }
 
@@ -509,11 +512,11 @@ impl Editor {
     }
 
     fn apply_forward(&mut self, edit: &Edit<Action>) {
-        history::apply_forward(Rc::make_mut(&mut self.actions), edit);
+        history::apply_forward(&mut self.actions.borrow_mut(), edit);
     }
 
     fn apply_inverse(&mut self, edit: &Edit<Action>) {
-        history::apply_inverse(Rc::make_mut(&mut self.actions), edit);
+        history::apply_inverse(&mut self.actions.borrow_mut(), edit);
     }
 
     fn undo(&mut self) {
@@ -535,7 +538,7 @@ impl Editor {
     }
 
     fn clear(&mut self) {
-        Rc::make_mut(&mut self.actions).clear();
+        self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
         self.selected = None;
@@ -551,7 +554,7 @@ impl Editor {
         // so replay writes into it instead of cloning a fresh image.
         self.composite.copy_from_slice(&self.base);
         let mut step = 0u32;
-        for action in Rc::make_mut(&mut self.actions) {
+        for action in self.actions.borrow_mut().iter_mut() {
             if action.tool == Tool::Counter {
                 step += 1;
                 action.step = step;
@@ -616,7 +619,7 @@ impl Editor {
 
     /// Topmost action whose bbox contains `p`, for the Select tool.
     fn hit_action(&self, p: (f32, f32)) -> Option<usize> {
-        for (i, action) in self.actions.iter().enumerate().rev() {
+        for (i, action) in self.actions.borrow().iter().enumerate().rev() {
             let Some((x, y, w, h)) = Self::action_bbox(action) else {
                 continue;
             };
@@ -629,14 +632,15 @@ impl Editor {
 
     /// Translate one action, clamped so its bbox stays on the image.
     fn move_action(&mut self, i: usize, d: (f32, f32)) {
-        let Some(&(x, y, w, h)) = self.actions.get(i).and_then(Self::action_bbox).as_ref()
+        let Some(&(x, y, w, h)) = self.actions.borrow().get(i).and_then(Self::action_bbox).as_ref()
         else {
             return;
         };
         let (iw, ih) = (self.base.width() as f32, self.base.height() as f32);
         let dx = d.0.clamp(-x, iw - (x + w));
         let dy = d.1.clamp(-y, ih - (y + h));
-        let Some(action) = Rc::make_mut(&mut self.actions).get_mut(i) else {
+        let mut actions = self.actions.borrow_mut();
+        let Some(action) = actions.get_mut(i) else {
             return;
         };
         for p in &mut action.points {
@@ -682,7 +686,7 @@ impl Editor {
         crate::widgets::release_render(&old, cx);
         self.base = cropped.clone();
         self.composite = cropped;
-        Rc::make_mut(&mut self.actions).clear();
+        self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
         self.selected = None;
@@ -712,7 +716,7 @@ impl Editor {
         crate::widgets::release_render(&old, cx);
         self.base = out.clone();
         self.composite = out;
-        Rc::make_mut(&mut self.actions).clear();
+        self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
         self.selected = None;
@@ -849,7 +853,7 @@ impl Editor {
             };
             rasterize(&mut self.composite, &action, 1.0);
             self.push_edit(Edit::Add(action.clone()));
-            Rc::make_mut(&mut self.actions).push(action);
+            self.actions.borrow_mut().push(action);
         }
     }
 
@@ -1275,8 +1279,8 @@ impl Render for Editor {
                     }
                     "delete" | "backspace" => {
                         if let Some(i) = this.selected.take() {
-                            if i < this.actions.len() {
-                                let removed = Rc::make_mut(&mut this.actions).remove(i);
+                            if i < this.actions.borrow().len() {
+                                let removed = this.actions.borrow_mut().remove(i);
                                 this.push_edit(Edit::Remove(i, removed));
                                 this.rebuild_all();
                             }
@@ -1594,7 +1598,7 @@ impl Render for Editor {
                 move |_, _, _| (actions.clone(), current.clone()),
                 move |bounds, (actions, current), window, _cx| {
                     let cur = current.as_ref().map(|rc| rc.borrow());
-                    for action in actions.iter().chain(cur.as_deref()) {
+                    for action in actions.borrow().iter().chain(cur.as_deref()) {
                         paint_action(action, bounds, scale, base_w, base_h, window);
                     }
                 },
@@ -1605,7 +1609,7 @@ impl Render for Editor {
             .size_full(),
         );
         let cur = self.current.as_ref().map(|rc| rc.borrow());
-        for action in self.actions.iter().chain(cur.as_deref()) {
+        for action in self.actions.borrow().iter().chain(cur.as_deref()) {
             if action.tool == Tool::Blur {
                 if let Some(patch) = &action.blur_patch {
                     let (x, y, w, h) = action.blur_rect;
@@ -1673,7 +1677,7 @@ impl Render for Editor {
 
         // Selection outline around the active action.
         if let Some(i) = self.selected {
-            if let Some((x, y, w, h)) = self.actions.get(i).and_then(Editor::action_bbox) {
+            if let Some((x, y, w, h)) = self.actions.borrow().get(i).and_then(Editor::action_bbox) {
                 stage = stage.child(
                     div()
                         .absolute()
@@ -1806,7 +1810,7 @@ impl Render for Editor {
                             this.commit_text(true);
                             if let Some(i) = this.hit_action(p) {
                                 this.selected = Some(i);
-                                this.move_drag = Some((i, p, this.actions[i].clone()));
+                                this.move_drag = Some((i, p, this.actions.borrow()[i].clone()));
                             } else {
                                 this.selected = None;
                             }
@@ -1912,8 +1916,8 @@ impl Render for Editor {
                     }
                     if let Some((i, _, old)) = this.move_drag.take() {
                         // A drag that changed nothing is not an edit.
-                        if i < this.actions.len() && this.actions[i].points != old.points {
-                            let new = this.actions[i].clone();
+                        if i < this.actions.borrow().len() && this.actions.borrow()[i].points != old.points {
+                            let new = this.actions.borrow()[i].clone();
                             this.push_edit(Edit::Move(i, old, new));
                         }
                         this.rebuild_all();
