@@ -940,6 +940,7 @@ impl Library {
                     // one pass.
                     let src = img.as_bytes(0)?;
                     let mut rgba = Vec::with_capacity(src.len());
+                    #[allow(clippy::uninit_vec)] // copy_from_slice fills it next
                     unsafe { rgba.set_len(src.len()) };
                     rgba.copy_from_slice(src);
                     crate::widgets::swizzle_rgba_bgra(&mut rgba);

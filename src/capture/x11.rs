@@ -273,6 +273,8 @@ impl super::CaptureBackend for X11Backend {
         // and a 33MB memset before a 33MB fill is a wasted pass. On
         // failure the buffer drops without ever being read.
         let mut rgba: Vec<u8> = Vec::with_capacity(pixels * 4);
+        // The grab writes every byte before any read.
+        #[allow(clippy::uninit_vec)]
         unsafe { rgba.set_len(pixels * 4) };
         let depth = grab_pixels_into(&conn, root, geom.width, geom.height, &mut rgba)?;
 

@@ -128,6 +128,7 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
     // every byte, and a 33MB memset before a 33MB fill is a wasted
     // pass. from_raw validates the size after the fill.
     let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
+    #[allow(clippy::uninit_vec)] // the banded fill writes every byte
     unsafe { buf.set_len(buf.capacity()) };
     let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;
@@ -165,6 +166,7 @@ pub fn crop_rgba(rgba: &[u8], width: u32, height: u32, region: Region) -> Result
         ));
     }
     let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
+    #[allow(clippy::uninit_vec)] // the banded fill writes every byte
     unsafe { buf.set_len(buf.capacity()) };
     let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;

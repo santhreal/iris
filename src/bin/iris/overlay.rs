@@ -338,7 +338,7 @@ fn loupe_image(
     // Uninit, not zeroed: the row fill writes every byte, so a 92KB
     // memset before the fill is a wasted pass per mousemove.
     scratch.clear();
-    scratch.reserve((LOUPE_PX * LOUPE_PX * 4) as usize);
+    #[allow(clippy::uninit_vec)] // the row fill writes every byte
     unsafe { scratch.set_len((LOUPE_PX * LOUPE_PX * 4) as usize) };
     // The scratch holds BGRA, the RenderImage's own order: the frame
     // bytes copy straight in with no swizzle pass either way.
