@@ -146,7 +146,7 @@ pub struct Editor {
     /// as (action index, last pointer in image px, action as it was
     /// when the drag started, for the undo entry).
     selected: Option<usize>,
-    move_drag: Option<(usize, (f32, f32), Action)>,
+    move_drag: Option<(usize, (f32, f32), Action, (f32, f32, f32, f32))>,
     /// Crop tool: the pending rect in image px, plus its drag states.
     crop_rect: Option<(f32, f32, f32, f32)>,
     crop_anchor: Option<(f32, f32)>,
@@ -638,17 +638,17 @@ impl Editor {
     }
 
     /// Translate one action, clamped so its bbox stays on the image.
-    fn move_action(&mut self, i: usize, d: (f32, f32)) {
-        let Some(&(x, y, w, h)) = self.actions.borrow().get(i).and_then(Self::action_bbox).as_ref()
-        else {
-            return;
-        };
+    /// `bbox` is the action's current bounds, tracked by the caller:
+    /// recomputing it from the points every mousemove is O(stroke)
+    /// per move for a value the drag already knows.
+    fn move_action(&mut self, i: usize, d: (f32, f32), bbox: (f32, f32, f32, f32)) -> (f32, f32) {
+        let (x, y, w, h) = bbox;
         let (iw, ih) = (self.base.width() as f32, self.base.height() as f32);
         let dx = d.0.clamp(-x, iw - (x + w));
         let dy = d.1.clamp(-y, ih - (y + h));
         let mut actions = self.actions.borrow_mut();
         let Some(action) = actions.get_mut(i) else {
-            return;
+            return (0.0, 0.0);
         };
         for p in &mut action.points {
             p.0 += dx;
@@ -658,6 +658,7 @@ impl Editor {
             action.blur_rect.0 += dx;
             action.blur_rect.1 += dy;
         }
+        (dx, dy)
     }
 
     /// Apply the pending crop: everything committed flattens into the
@@ -1813,7 +1814,10 @@ impl Render for Editor {
                             this.commit_text(true);
                             if let Some(i) = this.hit_action(p) {
                                 this.selected = Some(i);
-                                this.move_drag = Some((i, p, this.actions.borrow()[i].clone()));
+                                this.move_drag = {
+                                    let old = this.actions.borrow()[i].clone();
+                                    Self::action_bbox(&old).map(|bb| (i, p, old, bb))
+                                };
                             } else {
                                 this.selected = None;
                             }
@@ -1870,10 +1874,10 @@ impl Render for Editor {
                 let p = this.to_image(ev.position, window);
                 // Select: move the dragged action live; the composite
                 // rebuilds once at release.
-                if let Some((i, last, old)) = this.move_drag.take() {
+                if let Some((i, last, old, bbox)) = this.move_drag.take() {
                     let d = (p.0 - last.0, p.1 - last.1);
-                    this.move_action(i, d);
-                    this.move_drag = Some((i, p, old));
+                    let (dx, dy) = this.move_action(i, d, bbox);
+                    this.move_drag = Some((i, p, old, (bbox.0 + dx, bbox.1 + dy, bbox.2, bbox.3)));
                     cx.notify();
                     return;
                 }
@@ -1917,7 +1921,7 @@ impl Render for Editor {
                         cx.notify();
                         return;
                     }
-                    if let Some((i, _, old)) = this.move_drag.take() {
+                    if let Some((i, _, old, _)) = this.move_drag.take() {
                         // A drag that changed nothing is not an edit.
                         if i < this.actions.borrow().len() && this.actions.borrow()[i].points != old.points {
                             let new = this.actions.borrow()[i].clone();
