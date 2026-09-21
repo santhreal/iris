@@ -24,7 +24,7 @@ use interprocess::local_socket::{
 fn socket_name() -> Name<'static> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir());
+        .unwrap_or_else(std::env::temp_dir);
     dir.join("iris.sock")
         .into_os_string()
         .to_fs_name::<GenericFilePath>()

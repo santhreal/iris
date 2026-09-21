@@ -59,13 +59,15 @@ fn asset_selector() -> &'static str {
     }
 }
 
-/// GET `url`, returning the raw `ureq::Error` so callers can match on
-/// the HTTP status (a 404 on /latest means "no releases yet").
-fn http_get(url: &str) -> Result<ureq::Response, ureq::Error> {
+/// GET `url`, returning the `ureq::Error` boxed so the `Err` variant
+/// stays small. Callers match the status to tell "no releases" (404)
+/// from a real failure.
+fn http_get(url: &str) -> Result<ureq::Response, Box<ureq::Error>> {
     ureq::get(url)
         .set("User-Agent", concat!("iris/", env!("CARGO_PKG_VERSION")))
         .set("Accept", "application/vnd.github+json")
         .call()
+        .map_err(Box::new)
 }
 
 /// Query the latest release. Returns `Ok(None)` when already current,
@@ -76,7 +78,7 @@ pub fn check() -> Result<Option<UpdateInfo>, String> {
         Ok(r) => r,
         // A repo with no releases answers 404 on /latest: that is "up
         // to date", not a failure. Any other error propagates.
-        Err(ureq::Error::Status(404, _)) => return Ok(None),
+        Err(e) if matches!(*e, ureq::Error::Status(404, _)) => return Ok(None),
         Err(e) => return Err(format!("update: GET {url}: {e}")),
     };
     let body = resp

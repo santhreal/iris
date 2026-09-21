@@ -72,12 +72,6 @@ pub enum Command {
     /// The X11 chip window asked to close; only Linux has a chip.
     #[cfg(target_os = "linux")]
     ChipHide,
-    /// Print the running version and exit (handled before dispatch).
-    Version,
-    /// Report whether a newer release exists.
-    CheckUpdate,
-    /// Download and apply the latest release, then restart.
-    Update,
     Quit,
 }
 
@@ -100,9 +94,6 @@ pub fn parse_args(args: &[String]) -> Vec<Command> {
             "--settings" => cmds.push(Command::Settings),
             "--library" => cmds.push(Command::Library),
             "--quit" => cmds.push(Command::Quit),
-            "--version" => cmds.push(Command::Version),
-            "--check-update" => cmds.push(Command::CheckUpdate),
-            "--update" => cmds.push(Command::Update),
             "--home" => cmds.push(Command::Home),
             "--record-window" => cmds.push(Command::RecordToggle),
             "--record-region" => cmds.push(Command::RecordRegionPick),
@@ -186,49 +177,6 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         Command::ChipHide => {
             chip::close(cx);
-            Ok(())
-        }
-        Command::Version => {
-            println!("iris {}", env!("CARGO_PKG_VERSION"));
-            cx.quit();
-            Ok(())
-        }
-        Command::CheckUpdate => {
-            cx.spawn(async move |cx| {
-                let result = cx
-                    .background_executor()
-                    .spawn(async move { crate::update::check() })
-                    .await;
-                match result {
-                    Ok(Some(info)) => {
-                        iris_lib::ilog!("iris: update available: {}", info.version)
-                    }
-                    Ok(None) => iris_lib::ilog!("iris: up to date"),
-                    Err(e) => iris_lib::ilog!("iris: {e}"),
-                }
-            })
-            .detach();
-            Ok(())
-        }
-        Command::Update => {
-            cx.spawn(async move |cx| {
-                let result = cx
-                    .background_executor()
-                    .spawn(async move {
-                        match crate::update::check()? {
-                            Some(info) => crate::update::apply(&info),
-                            None => {
-                                iris_lib::ilog!("iris: up to date");
-                                Ok(())
-                            }
-                        }
-                    })
-                    .await;
-                if let Err(e) = result {
-                    iris_lib::ilog!("iris: {e}");
-                }
-            })
-            .detach();
             Ok(())
         }
         Command::Quit => {
