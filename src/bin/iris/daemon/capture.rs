@@ -20,7 +20,7 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
     // map, so our own windows can never enter the frozen frame.
     let grab = cx
         .background_executor()
-        .spawn(async move { pipeline::grab_frame() });
+        .spawn(async move { pipeline::grab_frame_bgra() });
     // The layout query is cheap (xrandr + window list, single-digit
     // ms); the shell opens on it immediately.
     let layout = overlay::layout();
@@ -69,11 +69,10 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
             .background_executor()
             .spawn(async move {
                 let t_grab = Instant::now();
-                let frame = grab.await?;
-                let (width, height) = (frame.width, frame.height);
+                let (width, height, bgra) = grab.await?;
                 let grab_ms = t_grab.elapsed();
                 let t_slice = Instant::now();
-                let img = overlay::slice_frame(frame);
+                let img = overlay::slice_frame_bgra(width, height, bgra);
                 iris_lib::ilog!(
                     "iris: capture: grab {:?}, slice {:?}",
                     grab_ms,

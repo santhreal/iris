@@ -24,7 +24,7 @@ mod shell;
 mod tests;
 mod view;
 
-pub use shell::{layout, open_shell, slice_frame, warmup};
+pub use shell::{layout, open_shell, slice_frame_bgra, warmup};
 
 pub(super) const MIN_SIZE: f32 = 3.0;
 /// The dim layer fades in when the overlay appears.

@@ -121,6 +121,25 @@ pub fn grab_frame() -> Result<Frame, String> {
     capture::backend()?.grab_screen()
 }
 
+/// Grab the whole virtual screen as BGRA for the overlay's GPU-bound
+/// frame. On X11 the capture produces BGRA directly (BGRX source is a
+/// plain alpha stamp, no R/B swap), skipping the RGBA intermediate and
+/// the second swizzle `slice_frame` would run. On Wayland the portal
+/// still delivers RGBA, so swizzle once here.
+pub fn grab_frame_bgra() -> Result<(u32, u32, Vec<u8>), String> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_none() {
+        let frame = capture::backend()?.grab_screen()?;
+        let mut bgra = frame.rgba;
+        let row = frame.width as usize * 4;
+        iris_lib::par::par_bands_mut(&mut bgra, row, |band, _| {
+            crate::widgets::swizzle_rgba_bgra(band);
+        });
+        Ok((frame.width, frame.height, bgra))
+    } else {
+        capture::x11::grab_screen_bgra()
+    }
+}
+
 /// A region in frame pixels, clamped to the frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Region {

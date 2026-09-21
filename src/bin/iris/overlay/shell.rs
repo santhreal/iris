@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use gpui::*;
-use iris_lib::capture::{Frame, WinRect};
+use iris_lib::capture::WinRect;
 
 use super::{Overlay, POOL};
 use crate::theme;
@@ -55,13 +55,13 @@ pub fn layout() -> ShellLayout {
     }
 }
 
-/// The frozen frame as one display image: the frame's RGBA buffer is
-/// moved into the RenderImage and swizzled to BGRA in place, so the
-/// frame's only CPU copy IS the GPU-bound buffer. Crop and loupe read
-/// pixels back out of it (the swizzle is symmetric). Callers run this
-/// off the main thread.
-pub fn slice_frame(frame: Frame) -> Arc<RenderImage> {
-    crate::widgets::render_image_from_rgba_owned(frame.width, frame.height, frame.rgba)
+/// The frozen frame as one display image: the frame's BGRA buffer is
+/// moved into the RenderImage with no swizzle (the X11 capture path
+/// already produced BGRA), so the frame's only CPU copy IS the
+/// GPU-bound buffer. Crop and loupe read pixels back out of it (the
+/// swizzle is symmetric). Callers run this off the main thread.
+pub fn slice_frame_bgra(width: u32, height: u32, bgra: Vec<u8>) -> Arc<RenderImage> {
+    crate::widgets::render_image_from_bgra_owned(width, height, bgra)
 }
 
 /// Open the fullscreen overlay shell over the whole virtual screen,

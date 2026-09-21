@@ -124,7 +124,7 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
     }
     let grab = cx
         .background_executor()
-        .spawn(async move { pipeline::grab_frame() });
+        .spawn(async move { pipeline::grab_frame_bgra() });
     let layout = overlay::layout();
     // Same pool path as capture_region: a parked window skips GPUI's
     // init, and reset() re-arms it before the mode flips to pick.
@@ -176,9 +176,8 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
         let grabbed = cx
             .background_executor()
             .spawn(async move {
-                let frame = grab.await?;
-                let (width, height) = (frame.width, frame.height);
-                let img = overlay::slice_frame(frame);
+                let (width, height, bgra) = grab.await?;
+                let img = overlay::slice_frame_bgra(width, height, bgra);
                 Ok::<(Arc<gpui::RenderImage>, u32, u32), String>((img, width, height))
             })
             .await;

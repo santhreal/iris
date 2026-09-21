@@ -48,20 +48,16 @@ pub fn render_image_from_rgba(
     std::sync::Arc::new(gpui::RenderImage::new([::image::Frame::new(buf)]))
 }
 
-/// Same as `render_image_from_rgba` but takes ownership of the buffer
-/// and swizzles in place: no second copy of a multi-MB frame. The
-/// overlay uses this so the frozen frame's only CPU copy IS the
-/// RenderImage's buffer.
-pub fn render_image_from_rgba_owned(
+
+/// Wrap an already-BGRA buffer into a `RenderImage` with no swizzle:
+/// the X11 capture path can produce BGRA directly, so the frame's
+/// only CPU copy moves straight into the GPU-bound image.
+pub fn render_image_from_bgra_owned(
     width: u32,
     height: u32,
-    mut rgba: Vec<u8>,
+    bgra: Vec<u8>,
 ) -> std::sync::Arc<gpui::RenderImage> {
-    let row = width as usize * 4;
-    iris_lib::par::par_bands_mut(&mut rgba, row, |band, _| {
-        swizzle_rgba_bgra(band);
-    });
-    let buf = ::image::RgbaImage::from_raw(width, height, rgba).expect("rgba buffer size");
+    let buf = ::image::RgbaImage::from_raw(width, height, bgra).expect("bgra buffer size");
     std::sync::Arc::new(gpui::RenderImage::new([::image::Frame::new(buf)]))
 }
 
