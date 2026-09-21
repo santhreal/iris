@@ -45,13 +45,10 @@ impl Library {
         self.prefetch_in_flight = true;
         self.prefetch_want = Some(range);
         cx.spawn(async move |this, cx| {
-            loop {
-                let Some(range) = this
-                    .update(cx, |this, _| this.prefetch_want.take())
-                    .unwrap_or(None)
-                else {
-                    break;
-                };
+            while let Some(range) = this
+                .update(cx, |this, _| this.prefetch_want.take())
+                .unwrap_or(None)
+            {
                 let missing: Vec<(std::path::PathBuf, std::path::PathBuf)> = match this
                     .update(cx, |this, _| {
                         let (lo, hi) = (range.0.min(this.entries.len()), range.1.min(this.entries.len()));

@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn local_now_fields_in_range() {
         let (y, mo, d, h, mi, s) = local_now();
-        assert!(y >= 2020 && y < 2200, "year {y}");
+        assert!((2020..2200).contains(&y), "year {y}");
         assert!((1..=12).contains(&mo));
         assert!((1..=31).contains(&d));
         assert!(h < 24 && mi < 60 && s < 61);

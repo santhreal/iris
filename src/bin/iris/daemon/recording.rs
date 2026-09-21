@@ -86,7 +86,7 @@ pub(super) fn toggle_recording(cx: &mut App) -> Result<(), String> {
             mic,
             format,
             encoder,
-            move |spec| record::wayland::record_window(spec),
+            record::wayland::record_window,
         )
     } else {
         let xid = chip::open(cx, mic)?;
