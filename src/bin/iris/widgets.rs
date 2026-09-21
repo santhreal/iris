@@ -154,8 +154,8 @@ pub fn menu_row_owned(id: impl Into<ElementId>, label: impl Into<SharedString>) 
 }
 
 /// A dropdown field: a button showing the current value with a
-/// chevron. The parent owns the open state and renders
-/// `dropdown_menu` beneath it when open.
+/// chevron. The parent owns the open state and builds the option
+/// menu beneath it when open (see `dropdown_row` in settings).
 pub fn dropdown(id: impl Into<ElementId>, current: impl Into<SharedString>, open: bool) -> Stateful<Div> {
     div()
         .id(id)
@@ -174,19 +174,6 @@ pub fn dropdown(id: impl Into<ElementId>, current: impl Into<SharedString>, open
         .cursor_pointer()
         .child(current.into())
         .child(icons::icon(Icon::ChevronDown, theme::FG_DIM, 10.0))
-}
-
-/// The floating option list a `dropdown` opens. `selected` is drawn
-/// with a check; the parent wires each row's on_click and positions
-/// the menu absolutely under the field.
-#[allow(dead_code)]
-pub fn dropdown_menu(options: &[String], selected: usize) -> Div {
-    let mut m = menu();
-    for (i, opt) in options.iter().enumerate() {
-        let mark = if i == selected { "✓ " } else { "   " };
-        m = m.child(menu_row_owned(ElementId::NamedInteger("opt".into(), i as u64), format!("{mark}{opt}")));
-    }
-    m
 }
 
 /// macOS-style toggle: 40x22 pill, 16px knob. The knob is white in
