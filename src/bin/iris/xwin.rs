@@ -258,7 +258,7 @@ fn scan_and_resolve(
             .iter()
             .filter(|(_, c)| c.windows(class.len()).any(|w| w == class))
             .map(|(w, _)| *w)
-            .last();
+            .next_back();
         if let Some(xid) = newest {
             let p = pend.remove(i);
             apply_fixup(conn, xid, &p.fixup, true);
