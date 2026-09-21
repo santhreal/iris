@@ -57,4 +57,4 @@ serial_test = "3"
 # when sway delivers early modifier state. Pinned to a rev so a later
 # fork push cannot move the dependency under the build.
 [patch.crates-io]
-gpui = { git = "https://github.com/santhreal/gpui.git", rev = "ab1b054f1d", version = "=0.2.2" }
+gpui = { git = "https://github.com/santhreal/gpui.git", rev = "3ef89c4ddb", version = "=0.2.2" }
