@@ -15,8 +15,9 @@
 //!             manager, so `--update` reports that path instead of
 //!             fighting it.
 //!
-//! Everything here runs on a background thread; the UI only ever calls
-//! `check`/`apply` through `dispatch`, never blocks on it.
+//! `main` handles `--check-update`/`--update` client-side before the
+//! forward probe; the Settings window calls `check` on a background
+//! thread. Neither path blocks the UI loop.
 
 use std::path::{Path, PathBuf};
 
