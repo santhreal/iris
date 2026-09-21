@@ -17,6 +17,15 @@ you look away.
   click-through red border wraps the target window and a floating chip
   shows the elapsed time and mic state. Stop with the same hotkey, the
   tray, or `iris --stop-recording`. Output is H.264/AAC mp4 via ffmpeg.
+- **Record region** (`iris --record-region`): drag a screen region and
+  record just that area.
+- **Pin to screen**: pin a capture as an always-on-top reference image;
+  drag to move, double-click or Esc to close.
+- **Annotate**: the editor has pen, line, arrow, rect, ellipse, text,
+  highlight, blur, crop, and a numbered-counter tool; undo/redo, fill
+  toggle, zoom and pan. Press `?` in the editor for the shortcut sheet.
+- **OCR**: the toast's context menu can copy recognized text from a
+  capture.
 - **Library**: the main window lists captures with thumbnails; copy,
   annotate, reveal, or delete from there.
 - **CLI flags forward to the running instance**, so compositor keybinds
@@ -46,10 +55,33 @@ recordings_dir = "~/Videos/iris"
 screenshot_template = "{date}_{time}"
 record_mic_default = false
 recording_fps = 30
+recording_format = "mp4"        # mp4 | gif | webm
+recording_encoder = "auto"      # auto | libx264 | nvenc
 show_toast_after_capture = true
 ```
 
-A leading `~` expands to your home directory.
+A leading `~` expands to your home directory. The Settings window
+(`iris --settings`) edits every field.
+
+## CLI
+
+Every flag forwards to the running daemon, so compositor keybinds drive
+one process.
+
+| Flag | Action |
+| --- | --- |
+| `iris --capture` | region capture overlay, then toast |
+| `iris --capture-fullscreen` | full-screen grab, no overlay |
+| `iris --capture-window` | capture the focused window |
+| `iris --delay <secs>` | full-screen capture after a countdown |
+| `iris --record-window` | toggle a window-picked recording |
+| `iris --record-region` | pick a screen region and record it |
+| `iris --record-pause` | pause/resume the active recording |
+| `iris --record-mic` | toggle the mic on the active recording |
+| `iris --library` | open the library |
+| `iris --settings` | open the settings window |
+| `iris --annotate <file>` | edit an existing capture |
+| `iris --quit` | stop the daemon |
 
 ## Keys
 

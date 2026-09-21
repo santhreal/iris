@@ -450,8 +450,11 @@ impl Editor {
         if self.help {
             root = root.child(
                 crate::widgets::shortcuts_sheet(vec![
-                    ("Tools", "V P L A E R T H B C".into()),
+                    ("Tools", "V P L A E R T H B C N".into()),
+                    ("Fill shapes", "F".into()),
                     ("Stroke width", "1 / 2 / 3".into()),
+                    ("Zoom fit / in / out", "0 / + / -".into()),
+                    ("Pan", "Space + drag".into()),
                     ("Save and close", "Ctrl+S / Enter".into()),
                     ("Discard", "Esc".into()),
                     ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z".into()),
