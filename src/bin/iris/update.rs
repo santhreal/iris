@@ -171,24 +171,34 @@ fn stop_daemon() {
     crate::sys::ipc::send_to_daemon(&["--quit".to_string()]);
     crate::sys::ipc::wait_for_daemon_exit(5000);
 }
-
 #[cfg(target_os = "windows")]
 fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
-    // NSIS silent install over the running exe, then relaunch. The
-    // installer re-registers autostart and the Start Menu shortcut.
-    let status = std::process::Command::new(file)
-        .arg("/S")
-        .status()
-        .map_err(|e| format!("update: run installer: {e}"))?;
-    if !status.success() {
-        return Err(format!("update: installer exited {status}"));
-    }
-    relaunch()
+    // The updater IS the installed iris.exe, and Windows locks a running
+    // executable against overwrite. Hand off to a detached cmd helper
+    // that waits for this process to exit, runs the NSIS installer
+    // silent, then relaunches iris. Exit immediately so the exe is free
+    // when the installer writes.
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("iris.exe"));
+    let helper = format!(
+        "timeout /t 2 /nobreak >nul & \"\"{}\" /S & start \"\" \"{}\"\"",
+        file.display(),
+        exe.display()
+    );
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("cmd")
+        .args(["/C", &helper])
+        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("update: spawn installer helper: {e}"))?;
+    std::process::exit(0);
 }
-
 #[cfg(target_os = "macos")]
 fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
-    // Mount the DMG, copy iris.app over /Applications, unmount, relaunch.
+    // Mount the DMG, replace /Applications/iris.app, unmount, relaunch.
+    // macOS lets a running .app be unlinked, so rm the old bundle before
+    // copying: a bare `cp -R` would merge and leave stale files behind.
     let out = std::process::Command::new("hdiutil")
         .args(["attach", "-nobrowse", "-readonly"])
         .arg(file)
@@ -208,6 +218,7 @@ fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
         .ok_or_else(|| "update: no mount point in hdiutil output".to_string())?;
     let src = Path::new(mount).join("iris.app");
     let dst = Path::new("/Applications/iris.app");
+    let _ = std::fs::remove_dir_all(dst);
     let copy = std::process::Command::new("cp")
         .args(["-R"])
         .arg(&src)
@@ -222,35 +233,34 @@ fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
         Err(e) => Err(format!("update: copy app: {e}")),
     }
 }
-
 #[cfg(target_os = "linux")]
 fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
-    // Only an AppImage install can self-update: replace the file the
-    // APPIMAGE env var points at. A deb/rpm install is owned by the
-    // package manager — report that instead of overwriting /usr/bin.
+    // Only an AppImage install can self-update. A running binary cannot
+    // be overwritten in place (ETXTBSY), but a rename() over it is
+    // atomic and allowed: copy the download to a sibling of $APPIMAGE,
+    // then rename it onto the target.
     let appimage = std::env::var("APPIMAGE").map_err(|_| {
         "update: not an AppImage install; update via apt/dnf".to_string()
     })?;
     let target = PathBuf::from(appimage);
-    std::fs::copy(file, &target)
-        .map_err(|e| format!("update: replace {}: {e}", target.display()))?;
-    // Preserve the executable bit on the new image.
-    #[cfg(unix)]
+    let tmp = target.with_extension("new");
+    std::fs::copy(file, &tmp)
+        .map_err(|e| format!("update: stage {}: {e}", tmp.display()))?;
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&target)
-            .map_err(|e| format!("update: stat {}: {e}", target.display()))?
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&target, perms)
-            .map_err(|e| format!("update: chmod {}: {e}", target.display()))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("update: chmod {}: {e}", tmp.display()))?;
     }
+    std::fs::rename(&tmp, &target)
+        .map_err(|e| format!("update: replace {}: {e}", target.display()))?;
     relaunch()
 }
-
 /// Spawn the new binary and exit this process. The daemon is already
 /// stopped (see `apply`), so the fresh `iris` binds the socket and
 /// becomes the daemon rather than forwarding to a stale instance.
+/// Windows does not use this: its `apply_file` hands off to a detached
+/// installer helper and exits.
+#[cfg(not(target_os = "windows"))]
 fn relaunch() -> ! {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("iris"));
     let _ = std::process::Command::new(exe).spawn();
