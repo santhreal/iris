@@ -127,11 +127,18 @@ fn prepare_thumb(
     let (iw, ih) = (img.width() as f32, img.height() as f32);
     let scale = (MAX_W / iw).min(MAX_H / ih).min(1.0);
     let (w, h) = ((iw * scale).round().max(1.0), (ih * scale).round().max(1.0));
+    // thumbnail() pre-shrinks with a cheap nearest pass before the
+    // convolution resize: on a 4K capture a straight Lanczos3 resize
+    // convolves 33MB to produce a ~216px card.
     let rgba = if scale < 1.0 {
-        image::imageops::resize(&img, w as u32, h as u32, image::imageops::FilterType::Lanczos3)
+        image::imageops::thumbnail(&img, w as u32, h as u32)
     } else {
         img
     };
+    // thumbnail() can land a pixel off the computed (w, h) on a
+    // rounding boundary; report the real dims so the card layout
+    // matches the pixels.
+    let (w, h) = (rgba.width() as f32, rgba.height() as f32);
     // RenderImage directly from the resized pixels: no PNG
     // re-encode, and the atlas tile stays freeable on dismiss. The
     // copy is inherent: the RenderImage wants BGRA while thumb_rgba
