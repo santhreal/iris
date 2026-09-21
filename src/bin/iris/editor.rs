@@ -1297,9 +1297,12 @@ fn pixelated_patch_rgba(
     if w == 0 || h == 0 {
         return Err("empty blur region".to_string());
     }
-    let sub = image::imageops::crop_imm(img, x, y, w, h).to_image();
+    // crop_imm returns a SubImage view; resize accepts any
+    // GenericImageView, so materializing it with to_image() was an
+    // O(region) copy the resample never needed.
+    let sub = image::imageops::crop_imm(img, x, y, w, h);
     let small = image::imageops::resize(
-        &sub,
+        &*sub,
         (w / BLUR_BLOCK).max(1),
         (h / BLUR_BLOCK).max(1),
         image::imageops::FilterType::Triangle,
