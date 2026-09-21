@@ -22,6 +22,7 @@ crate-type = ["rlib"]
 [profile.release]
 lto = "thin"
 codegen-units = 1
+strip = "symbols"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
