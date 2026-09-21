@@ -1334,17 +1334,9 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
                 let ry = (b.1 - a.1).abs() / 2.0;
                 if rx > 0.0 && ry > 0.0 {
                     if action.filled {
-                        // Scanline fill: write each row's chord directly.
-                        // Stamping a disc per pixel was O(w*h*w) blends.
-                        let y0 = (cy - ry).max(0.0) as i64;
-                        let y1 = (cy + ry).min(img.height() as f32 - 1.0) as i64;
-                        for y in y0..=y1 {
-                            let t = (y as f32 - cy) / ry;
-                            let half = rx * (1.0 - t * t).max(0.0).sqrt();
-                            let x0 = (cx - half).max(0.0) as i64;
-                            let x1 = (cx + half).min(img.width() as f32 - 1.0) as i64;
-                            blend_row(img, y, x0, x1, px);
-                        }
+                        // Banded scanline fill: each row's chord is one
+                        // sqrt, and the rows split across cores.
+                        fill_ellipse(img, cx, cy, rx, ry, px);
                     } else {
                         let n = ((rx + ry) * 0.35).max(24.0) as usize;
                         for i in 0..n {
@@ -1359,17 +1351,11 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
             if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
                 let (tl, br) = (*a, *b);
                 if action.filled {
-                    // Direct scanline fill: stamping a disc per pixel
-                    // was O(w*h*w) blends for a solid rect.
+                    // Banded scanline fill: the rows split across cores
+                    // for a large solid rect.
                     let (x0, x1) = (tl.0.min(br.0), tl.0.max(br.0));
                     let (y0, y1) = (tl.1.min(br.1), tl.1.max(br.1));
-                    let y0 = y0.max(0.0) as i64;
-                    let y1 = y1.min(img.height() as f32 - 1.0) as i64;
-                    let x0 = x0.max(0.0) as i64;
-                    let x1 = x1.min(img.width() as f32 - 1.0) as i64;
-                    for y in y0..=y1 {
-                        blend_row(img, y, x0, x1, px);
-                    }
+                    fill_rect(img, x0 as i64, x1 as i64, y0 as i64, y1 as i64, px);
                 } else {
                     stamp_segment(img, (tl.0, tl.1), (br.0, tl.1), w, px);
                     stamp_segment(img, (br.0, tl.1), (br.0, br.1), w, px);
@@ -1399,6 +1385,36 @@ fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: f32) {
     }
 }
 
+/// Fill the inclusive span [x0, x1] of one row's byte slice with
+/// `src`. `blend_row` borrows the row out of the image; the banded
+/// fills borrow it out of a par_bands_mut chunk, so the blend itself
+/// works on a bare slice either way.
+fn blend_span(row: &mut [u8], x0: i64, x1: i64, src: image::Rgba<u8>) {
+    if x0 > x1 {
+        return;
+    }
+    let w = (row.len() / 4) as i64;
+    let (x0, x1) = (x0.max(0), x1.min(w - 1));
+    if x0 > x1 {
+        return;
+    }
+    let span = &mut row[(x0 as usize * 4)..=(x1 as usize * 4) + 3];
+    let a = src.0[3] as f32 / 255.0;
+    if a >= 1.0 {
+        for px in span.chunks_exact_mut(4) {
+            px.copy_from_slice(&src.0);
+        }
+        return;
+    }
+    let inv = 1.0 - a;
+    for px in span.chunks_exact_mut(4) {
+        px[0] = (src.0[0] as f32 * a + px[0] as f32 * inv) as u8;
+        px[1] = (src.0[1] as f32 * a + px[1] as f32 * inv) as u8;
+        px[2] = (src.0[2] as f32 * a + px[2] as f32 * inv) as u8;
+        px[3] = px[3].max(src.0[3]);
+    }
+}
+
 /// Fill the inclusive span [x0, x1] of row `y` with `src`, bounds
 /// already clamped by the caller. One slice borrow per row instead of
 /// `blend`'s per-pixel as_mut + bounds check.
@@ -1406,26 +1422,55 @@ fn blend_row(dst: &mut image::RgbaImage, y: i64, x0: i64, x1: i64, src: image::R
     if x0 > x1 || y < 0 || y >= dst.height() as i64 {
         return;
     }
-    let w = dst.width() as i64;
-    let (x0, x1) = (x0.max(0), x1.min(w - 1));
-    let row_start = (y as u32 * dst.width() * 4) as usize;
+    let stride = dst.width() as usize * 4;
+    let row_start = y as u32 as usize * stride;
     let buf: &mut [u8] = dst.as_mut();
-    let row = &mut buf[row_start..];
-    let row = &mut row[(x0 as usize * 4)..=(x1 as usize * 4) + 3];
-    let a = src.0[3] as f32 / 255.0;
-    if a >= 1.0 {
-        for px in row.chunks_exact_mut(4) {
-            px.copy_from_slice(&src.0);
-        }
+    blend_span(&mut buf[row_start..row_start + stride], x0, x1, src);
+}
+
+/// Fill the rect [x0,x1]x[y0,y1] banded across rows. A large solid
+/// fill is O(area) blends; below par_bands_mut's 1MB gate it runs
+/// inline, above it the rows split across cores.
+fn fill_rect(img: &mut image::RgbaImage, x0: i64, x1: i64, y0: i64, y1: i64, src: image::Rgba<u8>) {
+    let stride = img.width() as usize * 4;
+    let (x0, x1) = (x0.max(0), x1.min(img.width() as i64 - 1));
+    let (y0, y1) = (y0.max(0), y1.min(img.height() as i64 - 1));
+    if x0 > x1 || y0 > y1 {
         return;
     }
-    let inv = 1.0 - a;
-    for px in row.chunks_exact_mut(4) {
-        px[0] = (src.0[0] as f32 * a + px[0] as f32 * inv) as u8;
-        px[1] = (src.0[1] as f32 * a + px[1] as f32 * inv) as u8;
-        px[2] = (src.0[2] as f32 * a + px[2] as f32 * inv) as u8;
-        px[3] = px[3].max(src.0[3]);
-    }
+    iris_lib::par::par_bands_mut(img.as_mut(), stride, |band, start| {
+        let first_row = (start / stride) as i64;
+        let band_rows = (band.len() / stride) as i64;
+        for y in first_row.max(y0)..=(first_row + band_rows - 1).min(y1) {
+            let row = &mut band
+                [(y - first_row) as usize * stride..(y - first_row + 1) as usize * stride];
+            blend_span(row, x0, x1, src);
+        }
+    });
+}
+
+/// Fill an ellipse banded across rows: each row's chord is one sqrt,
+/// and the rows split across cores for a large fill.
+fn fill_ellipse(img: &mut image::RgbaImage, cx: f32, cy: f32, rx: f32, ry: f32, src: image::Rgba<u8>) {
+    let stride = img.width() as usize * 4;
+    let w = img.width() as i64;
+    let (y0, y1) = (
+        (cy - ry).max(0.0) as i64,
+        (cy + ry).min(img.height() as f32 - 1.0) as i64,
+    );
+    iris_lib::par::par_bands_mut(img.as_mut(), stride, |band, start| {
+        let first_row = (start / stride) as i64;
+        let band_rows = (band.len() / stride) as i64;
+        for y in first_row.max(y0)..=(first_row + band_rows - 1).min(y1) {
+            let t = (y as f32 - cy) / ry;
+            let half = rx * (1.0 - t * t).max(0.0).sqrt();
+            let x0 = (cx - half).max(0.0) as i64;
+            let x1 = (cx + half).min(w as f32 - 1.0) as i64;
+            let row = &mut band
+                [(y - first_row) as usize * stride..(y - first_row + 1) as usize * stride];
+            blend_span(row, x0, x1, src);
+        }
+    });
 }
 
 
@@ -2847,6 +2892,62 @@ mod tests {
         rasterize(&mut img, &action(Tool::Ellipse, vec![(5.0, 5.0), (25.0, 25.0)], true), 1.0);
         assert!(painted(&img, 15, 15), "center must be painted");
         assert!(!painted(&img, 5, 5), "bounding corner must stay clear");
+    }
+
+    // WHY: the banded fill must not drop or shift a row at a band
+    // boundary. Below par_bands_mut's 1MB gate the fill runs inline;
+    // a 1024x512 image (2MB) splits into ~64-row bands, so a fill
+    // spanning several bands must paint every covered row including
+    // the boundary rows and leave the rest clear.
+    #[test]
+    fn banded_fill_covers_band_boundaries() {
+        // A rect covering rows 100..=400 crosses band boundaries at
+        // 128, 192, 256, 320, 384. Every interior pixel must be
+        // painted and the 1px border around it clear: a band that
+        // drops, shifts, or over-fills a row fails one of these.
+        let mut img = image::RgbaImage::new(1024, 512);
+        rasterize(
+            &mut img,
+            &action(Tool::Rect, vec![(100.0, 100.0), (900.0, 400.0)], true),
+            1.0,
+        );
+        for y in 100..=400 {
+            for x in 100..=900 {
+                assert!(painted(&img, x, y), "interior pixel ({x},{y}) dropped");
+            }
+        }
+        for x in 99..=901 {
+            assert!(!painted(&img, x, 99), "top border ({x},99) painted");
+            assert!(!painted(&img, x, 401), "bottom border ({x},401) painted");
+        }
+        for y in 99..=401 {
+            assert!(!painted(&img, 99, y), "left border (99,{y}) painted");
+            assert!(!painted(&img, 901, y), "right border (901,{y}) painted");
+        }
+
+        // A full-image fill must paint every pixel: any dropped band
+        // shows as a clear row.
+        let mut img = image::RgbaImage::new(1024, 512);
+        rasterize(
+            &mut img,
+            &action(Tool::Rect, vec![(0.0, 0.0), (1023.0, 511.0)], true),
+            1.0,
+        );
+        assert!(
+            img.pixels().all(|p| p.0[3] > 0),
+            "banded full fill dropped a row"
+        );
+
+        // A large filled ellipse: center painted, bounding corner clear.
+        let mut img = image::RgbaImage::new(1024, 512);
+        rasterize(
+            &mut img,
+            &action(Tool::Ellipse, vec![(200.0, 100.0), (800.0, 400.0)], true),
+            1.0,
+        );
+        assert!(painted(&img, 500, 250), "ellipse center must be painted");
+        assert!(painted(&img, 500, 128), "ellipse band-boundary row must be painted");
+        assert!(!painted(&img, 210, 110), "ellipse bounding corner must stay clear");
     }
 
     #[test]
