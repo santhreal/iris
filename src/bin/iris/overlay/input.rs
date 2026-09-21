@@ -224,15 +224,18 @@ impl Overlay {
         // Every other monitor's overlay leaves with the commit; only
         // this window stays for the flight.
         close_other_overlays(cx, Some(window.window_handle()));
-        let (cw, ch) = (crop.width(), crop.height());
+        let (cw, ch) = (region.width, region.height);
         // The flight needs pixels now, not after an encode/decode
-        // round trip: a straight swizzle of the crop into a
-        // RenderImage. The PNG encode, thumbnail and disk write run
-        // behind the flight and land mid-animation.
-        let flight_img = crate::widgets::render_image_from_rgba(cw, ch, crop.as_raw());
-        let finalize = cx
-            .background_executor()
-            .spawn(async move { pipeline::finalize(crop) });
+        // round trip: the crop is already BGRA, so it wraps straight
+        // into a RenderImage with no swizzle. The background finalize
+        // re-crops from the shared frame and swizzles there, so the
+        // UI thread never pays the RGBA pass.
+        let flight_img = crate::widgets::render_image_from_bgra_owned(cw, ch, crop);
+        let frame_for_finalize = frame_img.clone();
+        let finalize = cx.background_executor().spawn(async move {
+            let bgra = frame_for_finalize.as_bytes(0).unwrap_or(&[]);
+            pipeline::finalize_bgra(bgra, fw, fh, region)
+        });
         cx.spawn(async move |this, cx| {
             let result = finalize.await;
             let _ = this.update(cx, |this, cx| match result {

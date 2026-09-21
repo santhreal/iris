@@ -167,8 +167,31 @@ impl Region {
 
 /// Crop a region out of a BGRA buffer (the overlay's RenderImage
 /// holds the frame's only CPU copy, already swizzled for the GPU).
-/// The swizzle is symmetric: BGRA in, RGBA out.
-pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result<image::RgbaImage, String> {
+/// Pure banded copy: the flight tile wraps the result as BGRA
+/// directly, and the background finalize re-crops with the swizzle,
+/// so the UI thread pays one memcpy-class pass instead of two
+/// swizzles whose net was identity.
+pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result<Vec<u8>, String> {
+    check_region(width, height, region)?;
+    // Uninit capacity, not a zeroed image: the banded fill writes
+    // every byte, and a 33MB memset before a 33MB fill is a wasted
+    // pass.
+    let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
+    #[allow(clippy::uninit_vec)] // the banded fill writes every byte
+    unsafe { buf.set_len(buf.capacity()) };
+    let raw: &mut [u8] = &mut buf;
+    let row_len = region.width as usize * 4;
+    iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
+        let row0 = (start / row_len) as u32;
+        for (r, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
+            let src = ((region.y + row0 + r as u32) * width + region.x) as usize * 4;
+            dst_row.copy_from_slice(&bgra[src..src + row_len]);
+        }
+    });
+    Ok(buf)
+}
+
+fn check_region(width: u32, height: u32, region: Region) -> Result<(), String> {
     if region.width == 0 || region.height == 0 {
         return Err("empty capture region".to_string());
     }
@@ -178,16 +201,24 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
             region.width, region.height, region.x, region.y, width, height
         ));
     }
-    // Uninit capacity, not a zeroed image: the banded fill writes
-    // every byte, and a 33MB memset before a 33MB fill is a wasted
-    // pass. from_raw validates the size after the fill.
+    Ok(())
+}
+
+/// Crop + swizzle to RGBA in one banded pass, then finalize. Runs on
+/// the background executor: the overlay's finish path hands it the
+/// shared frame bytes instead of a second copy of the crop.
+pub fn finalize_bgra(
+    bgra: &[u8],
+    width: u32,
+    height: u32,
+    region: Region,
+) -> Result<(PathBuf, library::CaptureEntry), String> {
+    check_region(width, height, region)?;
     let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
     #[allow(clippy::uninit_vec)] // the banded fill writes every byte
     unsafe { buf.set_len(buf.capacity()) };
     let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;
-    // Fused copy+swizzle per row, banded across threads once the crop
-    // is big enough to matter (a 4K crop is 33MB).
     iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
         let row0 = (start / row_len) as u32;
         for (r, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
@@ -202,8 +233,9 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
             }
         }
     });
-    image::RgbaImage::from_raw(region.width, region.height, buf)
-        .ok_or_else(|| "crop buffer size mismatch".to_string())
+    let img = image::RgbaImage::from_raw(region.width, region.height, buf)
+        .ok_or_else(|| "crop buffer size mismatch".to_string())?;
+    finalize(img)
 }
 
 
@@ -360,24 +392,37 @@ mod tests {
 
     #[test]
     fn crop_copies_exact_pixels() {
-        // BGRA source: build it by swizzling an RGBA ramp so the
-        // expected output is the ramp itself.
-        let mut rgba = vec![0u8; 4 * 4 * 4];
-        for i in 0..rgba.len() {
-            rgba[i] = i as u8;
+        // BGRA source: the crop is a verbatim copy, no swizzle.
+        let mut bgra = vec![0u8; 4 * 4 * 4];
+        for (i, b) in bgra.iter_mut().enumerate() {
+            *b = i as u8;
         }
-        let mut bgra = rgba.clone();
-        crate::widgets::swizzle_rgba_bgra(&mut bgra);
         let out = crop_bgra(&bgra, 4, 4, Region { x: 1, y: 1, width: 2, height: 2 }).unwrap();
-        assert_eq!(out.width(), 2);
+        assert_eq!(out.len(), 2 * 2 * 4);
         // Top-left of the crop is frame pixel (1,1) = byte offset 20.
-        assert_eq!(&out.as_raw()[..4], &[20, 21, 22, 23]);
+        assert_eq!(&out[..4], &[20, 21, 22, 23]);
+    }
+
+    #[test]
+    fn finalize_bgra_swizzles_to_rgba() {
+        // The background path crops AND swizzles: BGRA in, RGBA into
+        // the saved image. Exercise the crop+swizzle half directly.
+        let mut bgra = vec![0u8; 4 * 4 * 4];
+        for (i, b) in bgra.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let region = Region { x: 1, y: 1, width: 2, height: 2 };
+        // Reproduce finalize_bgra's inner pass on the same input.
+        let mut buf = crop_bgra(&bgra, 4, 4, region).unwrap();
+        crate::widgets::swizzle_rgba_bgra(&mut buf);
+        // Frame pixel (1,1) BGRA = [20,21,22,23] -> RGBA [22,21,20,23].
+        assert_eq!(&buf[..4], &[22, 21, 20, 23]);
     }
 
     #[test]
     fn parallel_crop_matches_serial() {
         // Over the 1MP parallel threshold: every band must land its
-        // rows at the right offset with the same BGRA->RGBA swap.
+        // rows at the right offset as a verbatim BGRA copy.
         let (w, h) = (1600u32, 1000u32);
         let mut bgra = vec![0u8; (w * h * 4) as usize];
         for i in 0..(w * h) as usize {
@@ -388,15 +433,12 @@ mod tests {
         }
         let region = Region { x: 300, y: 200, width: 600, height: 450 };
         let out = crop_bgra(&bgra, w, h, region).unwrap();
-        assert_eq!(out.dimensions(), (600, 450));
+        assert_eq!(out.len(), 600 * 450 * 4);
         // Spot-check first, middle and last pixels of the crop.
-        for (dx, dy) in [(0u32, 0u32), (300, 225), (599, 449)] {
-            let src = (((200 + dy) * w + 300 + dx) * 4) as usize;
-            let dst = ((dy * 600 + dx) * 4) as usize;
-            assert_eq!(out.as_raw()[dst], bgra[src + 2], "R at {dx},{dy}");
-            assert_eq!(out.as_raw()[dst + 1], bgra[src + 1], "G at {dx},{dy}");
-            assert_eq!(out.as_raw()[dst + 2], bgra[src], "B at {dx},{dy}");
-            assert_eq!(out.as_raw()[dst + 3], 255, "A at {dx},{dy}");
+        for (dx, dy) in [(0usize, 0usize), (300, 225), (599, 449)] {
+            let src = ((200 + dy) * w as usize + 300 + dx) * 4;
+            let dst = (dy * 600 + dx) * 4;
+            assert_eq!(out[dst..dst + 4], bgra[src..src + 4], "pixel at {dx},{dy}");
         }
     }
 }
