@@ -59,6 +59,9 @@ pub(crate) struct StreamData {
     pub(crate) format: Option<(u32, u32, VideoFormat, u64)>,
     pub(crate) shared: Rc<RefCell<Shared>>,
     pub(crate) unsupported_reported: bool,
+    /// First-buffer type logged once so a run records which capture
+    /// path it exercised (MemFd copy vs DMA-buf EGL import).
+    pub(crate) buffer_logged: bool,
     pub(crate) frames: u64,
     pub(crate) gl_context: Option<GlContext>,
     pub(crate) scratch: Vec<u8>,
@@ -94,6 +97,10 @@ pub(crate) fn on_process(stream: &StreamRef, data: &mut StreamData) {
     // The frame's pixel format, decided by which path produced it:
     // GL readPixels is always rgba; a CPU-mappable buffer keeps the
     // negotiated format.
+    if !data.buffer_logged {
+        data.buffer_logged = true;
+        crate::ilog!("iris: record: first buffer type {:?}", first.type_());
+    }
     let mut pix_fmt = PixFmt::Rgba;
     match first.type_() {
         DataType::MemPtr | DataType::MemFd => {

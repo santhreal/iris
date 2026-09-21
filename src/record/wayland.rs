@@ -172,6 +172,7 @@ pub fn record_window(spec: RecordingSpec) -> Result<PathBuf, String> {
         format: None,
         shared: shared.clone(),
         unsupported_reported: false,
+        buffer_logged: false,
         frames: 0,
         gl_context,
         scratch: Vec::new(),
