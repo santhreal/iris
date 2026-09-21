@@ -32,8 +32,8 @@ pub struct Home {
 /// Open the home window.
 pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = cx.focus_handle();
-    let origin = crate::xwin::centered_origin(cx, WIN.0, WIN.1, (200.0, 120.0));
-    let win_id = crate::xwin::unique_id("dev.iris.home");
+    let origin = crate::sys::window::centered_origin(cx, WIN.0, WIN.1, (200.0, 120.0));
+    let win_id = crate::sys::window::unique_id("dev.iris.home");
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -70,7 +70,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     .map_err(|e| format!("open home window: {e}"))?;
     // openbox-class WMs cascade Normal windows off-center and may
     // decorate them; re-place and strip.
-    crate::xwin::place_after_map(win_id, origin.0, origin.1);
+    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
     Ok(())
 }
 

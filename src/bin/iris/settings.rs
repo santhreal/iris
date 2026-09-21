@@ -52,8 +52,8 @@ pub struct Settings {
 pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = Some(cx.focus_handle());
     let win = (680.0f32, 650.0f32);
-    let origin = crate::xwin::centered_origin(cx, win.0, win.1, (220.0, 140.0));
-    let win_id = crate::xwin::unique_id("dev.iris.settings");
+    let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (220.0, 140.0));
+    let win_id = crate::sys::window::unique_id("dev.iris.settings");
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -87,7 +87,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
         },
     )
     .map_err(|e| format!("open settings window: {e}"))?;
-    crate::xwin::place_after_map(win_id, origin.0, origin.1);
+    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
     Ok(())
 }
 

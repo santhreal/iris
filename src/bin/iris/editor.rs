@@ -150,13 +150,13 @@ fn resolve_window_placement(
 ) -> ((f32, f32), (f32, f32)) {
     let mut win = (1100.0f32, 720.0f32);
     let mut origin = if from.is_none() {
-        crate::xwin::centered_origin(cx, win.0, win.1, (120.0, 80.0))
+        crate::sys::window::centered_origin(cx, win.0, win.1, (120.0, 80.0))
     } else {
         (120.0, 80.0)
     };
     if let Some((fx, fy, fw, fh)) = from {
         #[cfg(target_os = "linux")]
-        let mons = iris_lib::capture::x11::monitors().unwrap_or_default();
+        let mons = iris_lib::capture::monitors().unwrap_or_default();
         #[cfg(not(target_os = "linux"))]
         let mons: Vec<iris_lib::capture::WinRect> = Vec::new();
         let host = mons.iter().copied().find(|m| {
@@ -227,7 +227,7 @@ pub fn open(
     let focus = cx.focus_handle();
     let (origin, win) = resolve_window_placement(cx, from);
 
-    let win_id = crate::xwin::unique_id("dev.iris.editor");
+    let win_id = crate::sys::window::unique_id("dev.iris.editor");
     let morph = from.map(|(x, y, w, h)| (x - origin.0, y - origin.1, w, h));
     let handle = cx
         .open_window(

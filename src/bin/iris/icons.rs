@@ -15,6 +15,9 @@ pub(crate) use tessellate::{
     push_ring, push_segment, TriRecorder,
 };
 
+// Some variants are only drawn by the Linux recording chip; the enum is
+// a shared vocabulary, so the unused-on-Windows variants stay.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
     Pen,

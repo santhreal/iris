@@ -12,7 +12,6 @@
 //! repositioned by XID through `XcbChip`.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -20,17 +19,12 @@ use futures::StreamExt;
 use gpui::*;
 use iris_lib::record;
 
-use crate::{chip, library, overlay, settings, stage};
+#[cfg(target_os = "linux")]
+use crate::chip;
+use crate::{library, overlay, settings, stage};
 
 mod capture;
-#[cfg(target_os = "linux")]
-mod hotkeys;
 mod recording;
-mod socket;
-#[cfg(target_os = "linux")]
-mod tray;
-
-pub use socket::forward_if_running;
 
 /// The daemon-owned recording session. The record thread owns the
 /// border strips; the chip window is a GPUI surface repositioned by
@@ -42,6 +36,9 @@ pub(crate) static RECORDING: std::sync::LazyLock<parking_lot::Mutex<record::Reco
 pub(crate) static COMMAND_TX: std::sync::OnceLock<UnboundedSender<Command>> =
     std::sync::OnceLock::new();
 
+/// The command channel sender for the X11 chip's hide callback; only
+/// Linux drives a chip that needs it.
+#[cfg(target_os = "linux")]
 pub(crate) fn command_tx() -> Option<UnboundedSender<Command>> {
     COMMAND_TX.get().cloned()
 }
@@ -72,6 +69,8 @@ pub enum Command {
     },
     RecordPause,
     RecordMic,
+    /// The X11 chip window asked to close; only Linux has a chip.
+    #[cfg(target_os = "linux")]
     ChipHide,
     Quit,
 }
@@ -151,8 +150,13 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::RecordPause => {
             let mgr = RECORDING.lock();
             if let Some(rec) = &mgr.active {
+                #[cfg(target_os = "linux")]
                 chip::set_paused(!chip::paused());
-                rec.send_control(if chip::paused() {
+                #[cfg(target_os = "linux")]
+                let paused = chip::paused();
+                #[cfg(not(target_os = "linux"))]
+                let paused = false;
+                rec.send_control(if paused {
                     record::RecControl::Pause
                 } else {
                     record::RecControl::Resume
@@ -164,11 +168,13 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             let mut mgr = RECORDING.lock();
             if let Some(rec) = &mut mgr.active {
                 rec.mic = !rec.mic;
+                #[cfg(target_os = "linux")]
                 chip::set_mic(rec.mic);
                 rec.send_control(record::RecControl::ToggleMic);
             }
             Ok(())
         }
+        #[cfg(target_os = "linux")]
         Command::ChipHide => {
             chip::close(cx);
             Ok(())
@@ -225,58 +231,36 @@ fn open_anchor(cx: &mut App) {
 
 /// Settings saved: reload the hotkey grabs.
 pub fn notify_hotkeys_changed() {
-    #[cfg(target_os = "linux")]
-    hotkeys::request_regrab();
+    crate::sys::hotkeys::request_regrab();
 }
 
 /// Start daemon services inside the GPUI app: the single-instance
 /// socket, the tray icon, and the global hotkey grabs. The socket and
-/// command pump are event-driven (poll on the listener fd, an
-/// unbounded channel stream); failures degrade to log lines.
+/// command pump are channel-driven; failures degrade to log lines.
 pub fn start(cx: &mut App) {
     open_anchor(cx);
+    iris_lib::ilog!("iris: daemon start");
     // Warm the overlay pool: the first capture reuses a live window
     // instead of paying GPUI's ~130ms renderer init on the hotkey.
     overlay::warmup(cx);
     let (tx, rx) = unbounded::<Command>();
     let _ = COMMAND_TX.set(tx.clone());
 
-    match socket::bind_socket() {
-        Ok(listener) => {
-            let listener = Arc::new(listener);
+    match crate::sys::ipc::spawn_listener() {
+        // The accept thread pushes each connection's argv here; the
+        // pump parses and dispatches it. Channel-driven, so a forwarded
+        // command lands the instant it connects on every platform.
+        Ok(mut ipc_rx) => {
             cx.spawn(async move |cx| {
-                // Event-driven: poll() the listener fd so a forwarded
-                // CLI command dispatches the instant it connects, not
-                // up to a timer interval late. accept_args drains every
-                // pending connection before the next sleep.
-                use std::os::unix::io::AsRawFd;
-                let fd = listener.as_raw_fd();
-                loop {
-                    let listener = Arc::clone(&listener);
-                    let args = cx
-                        .background_executor()
-                        .spawn(async move {
-                            let mut pfd = libc::pollfd {
-                                fd,
-                                events: libc::POLLIN,
-                                revents: 0,
-                            };
-                            unsafe {
-                                libc::poll(&mut pfd, 1, -1);
+                while let Some(args) = ipc_rx.next().await {
+                    let cmds = parse_args(&args);
+                    let _ = cx.update(|cx| {
+                        for cmd in cmds {
+                            if let Err(e) = dispatch(cx, &cmd) {
+                                iris_lib::ilog!("iris: dispatch: {e}");
                             }
-                            socket::accept_args(&listener)
-                        })
-                        .await;
-                    if !args.is_empty() {
-                        let cmds = parse_args(&args);
-                        let _ = cx.update(|cx| {
-                            for cmd in cmds {
-                                if let Err(e) = dispatch(cx, &cmd) {
-                                    iris_lib::ilog!("iris: dispatch: {e}");
-                                }
-                            }
-                        });
-                    }
+                        }
+                    });
                 }
             })
             .detach();
@@ -284,24 +268,8 @@ pub fn start(cx: &mut App) {
         Err(e) => iris_lib::ilog!("iris: single-instance socket unavailable: {e}"),
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        hotkeys::spawn(tx.clone());
-        let tray = tray::IrisTray { tx: tx.clone() };
-        std::thread::spawn(move || {
-            use ksni::blocking::TrayMethods;
-            match tray.spawn() {
-                Err(e) => iris_lib::ilog!("iris: tray unavailable: {e}"),
-                Ok(handle) => {
-                    // Keep the tray registered for the process lifetime.
-                    let _keep = handle;
-                    loop {
-                        std::thread::park();
-                    }
-                }
-            }
-        });
-    }
+    crate::sys::hotkeys::spawn(tx.clone());
+    crate::sys::tray::spawn(tx.clone());
     // Command pump: tray + hotkey threads -> app dispatch. The
     // receiver is a stream, so a press dispatches the instant it
     // arrives instead of up to a poll interval late.

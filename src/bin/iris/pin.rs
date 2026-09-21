@@ -72,7 +72,7 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
     let scale = (max_w / w).min(max_h / h).min(1.0);
     let (vw, vh) = (w * scale, h * scale);
 
-    let win_id = crate::xwin::unique_id("dev.iris.pin");
+    let win_id = crate::sys::window::unique_id("dev.iris.pin");
     let class = SharedString::from(win_id.clone());
     let class2 = win_id.clone();
     cx.open_window(
@@ -104,7 +104,7 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
         },
     )
     .map_err(|e| format!("open pin window: {e}"))?;
-    crate::xwin::always_on_top_after_map(class2);
+    crate::sys::window::always_on_top_after_map(class2);
     Ok(())
 }
 
@@ -142,7 +142,7 @@ impl Render for PinStage {
                     let origin = window.bounds().origin;
                     let (mx, my): (f32, f32) =
                         (ev.position.x.into(), ev.position.y.into());
-                    crate::xwin::begin_wm_move(
+                    crate::sys::window::begin_wm_move(
                         class.to_string(),
                         (f32::from(origin.x) + mx) as i32,
                         (f32::from(origin.y) + my) as i32,

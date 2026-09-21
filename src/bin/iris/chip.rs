@@ -102,16 +102,24 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
         )
         .map_err(|e| format!("open chip window: {e}"))?;
 
-    let xid = find_chip_xid().unwrap_or(0);
-    if let Ok((conn, _)) = iris_lib::capture::x11::shared_conn() {
-        if xid != 0 {
-            crate::xwin::suppress_decorations_on(conn, xid);
+    // X11: the chip is positioned by XID and undecorated via a motif
+    // hint; other platforms honor the bounds GPUI requests at creation.
+    #[cfg(target_os = "linux")]
+    let xid = {
+        let xid = find_chip_xid().unwrap_or(0);
+        if let Ok((conn, _)) = iris_lib::capture::x11::shared_conn() {
+            if xid != 0 {
+                crate::xwin::suppress_decorations_on(conn, xid);
+            }
         }
-    }
-    // The XID lookup above can beat the map; strip decorations with
-    // the persistent fixup: openbox decorates at map time and only
-    // re-reads the hint when forced to re-frame the window.
-    crate::xwin::place_after_map("dev.iris.chip".to_string(), 0.0, 0.0);
+        // The XID lookup above can beat the map; strip decorations with
+        // the persistent fixup: openbox decorates at map time and only
+        // re-reads the hint when forced to re-frame the window.
+        crate::sys::window::place_after_map("dev.iris.chip".to_string(), 0.0, 0.0);
+        xid
+    };
+    #[cfg(not(target_os = "linux"))]
+    let xid = 0u32;
     CHIP_XID.store(xid, Ordering::SeqCst);
     MIC_ON.store(mic, Ordering::Relaxed);
     PAUSED.store(false, Ordering::Relaxed);
@@ -128,9 +136,10 @@ pub fn close(cx: &mut App) {
         let _ = handle.update(cx, |_, window, _| window.remove_window());
     }
 }
-
 /// The chip window's X11 id: the one top-level window whose WM_CLASS
-/// is dev.iris.chip.
+/// is dev.iris.chip. X11-only: other platforms position the chip by
+/// the bounds GPUI requests, not by a server window id.
+#[cfg(target_os = "linux")]
 pub fn find_chip_xid() -> Option<u32> {
     let (conn, _) = iris_lib::capture::x11::shared_conn().ok()?;
     find_chip_xid_on(conn)
@@ -139,6 +148,7 @@ pub fn find_chip_xid() -> Option<u32> {
 /// Same lookup on a caller-owned connection. Uses _NET_CLIENT_LIST:
 /// WMs reparent client windows into frames, so the chip is not a
 /// direct child of the root.
+#[cfg(target_os = "linux")]
 pub fn find_chip_xid_on(conn: &impl x11rb::connection::Connection) -> Option<u32> {
     crate::xwin::find_xid_by_class_on(conn, "iris.chip")
 }

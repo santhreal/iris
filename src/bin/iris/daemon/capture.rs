@@ -41,7 +41,7 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
         match session {
             Ok(true) => {
                 let u = &layout.union;
-                crate::xwin::unpark_span(class, u.x, u.y, u.width, u.height);
+                crate::sys::window::unpark_span(class, u.x, u.y, u.width, u.height);
                 // Re-assert activation on GPUI's own connection: the
                 // WM's map-time focus handling can land after the
                 // helper thread's request.
@@ -151,11 +151,11 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
 /// name a window, so this reports an honest error there.
 pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
     fn grab_and_finish() -> Result<(PathBuf, iris_lib::library::CaptureEntry), String> {
-        let rect = iris_lib::capture::x11::active_window_rect()?;
+        let rect = iris_lib::capture::active_window_rect()?;
         // Grab only the window's rect off the root: the whole-screen
         // grab + crop this replaced moved up to 200MB for a window
         // that may be a megabyte. Root pixels keep the decorations.
-        let frame = iris_lib::capture::x11::grab_root_rect(rect)?;
+        let frame = iris_lib::capture::grab_rect(rect)?;
         let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
             .ok_or("frame buffer size mismatch")?;
         let done = pipeline::finalize(img)?;

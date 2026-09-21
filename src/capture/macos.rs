@@ -57,3 +57,31 @@ impl crate::capture::CaptureBackend for MacosBackend {
         capture_full_frame()
     }
 }
+
+// ---- geometry and region grabs --------------------------------------
+// avfoundation captures the whole screen; monitor enumeration and a
+// focused-window rect need CoreGraphics, which is not yet wired. These
+// return honest errors so the overlay and window capture degrade
+// cleanly instead of pretending a rect exists.
+
+use crate::capture::WinRect;
+
+/// Monitor enumeration needs CoreGraphics; not yet implemented.
+pub fn monitors() -> Result<Vec<WinRect>, String> {
+    Err("monitor enumeration is not implemented on macOS yet".to_string())
+}
+
+/// The overlay's monitor+window layout; empty until CoreGraphics lands.
+pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
+    Err("layout is not implemented on macOS yet".to_string())
+}
+
+/// A focused-window rect needs the Accessibility API; not implemented.
+pub fn active_window_rect() -> Result<WinRect, String> {
+    Err("focused-window capture is not implemented on macOS yet".to_string())
+}
+
+/// A region grab needs CoreGraphics; not yet implemented.
+pub fn grab_rect(_rect: WinRect) -> Result<Frame, String> {
+    Err("region grab is not implemented on macOS yet".to_string())
+}

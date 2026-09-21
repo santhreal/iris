@@ -6,8 +6,8 @@
 //! for that; libc's localtime_r and SystemTime cover both.
 
 /// Local time as (year, month, day, hour, minute, second), via the
-/// C library's timezone database. Falls back to UTC fields when
-/// localtime_r fails (no /etc/localtime, embedded target).
+/// C library's timezone database. Falls back to UTC fields when the
+/// platform localtime call fails (no zone database, embedded target).
 pub fn local_now() -> (i32, u32, u32, u32, u32, u32) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -15,7 +15,7 @@ pub fn local_now() -> (i32, u32, u32, u32, u32, u32) {
         .unwrap_or(0);
     unsafe {
         let mut tm: libc::tm = std::mem::zeroed();
-        if libc::localtime_r(&secs, &mut tm).is_null() {
+        if !localtime(secs, &mut tm) {
             // UTC fallback: civil-from-days over the raw epoch.
             return utc_fields(secs);
         }
@@ -28,6 +28,21 @@ pub fn local_now() -> (i32, u32, u32, u32, u32, u32) {
             tm.tm_sec as u32,
         )
     }
+}
+
+/// Fill `tm` from epoch `secs` in local time; false on failure. POSIX
+/// `localtime_r` and Windows `localtime_s` differ in argument order and
+/// return convention; this wrapper hides both behind one call.
+#[cfg(unix)]
+unsafe fn localtime(secs: i64, tm: &mut libc::tm) -> bool {
+    !libc::localtime_r(&secs, tm).is_null()
+}
+
+/// Windows `localtime_s` takes the destination first and returns an
+/// errno (0 = success) rather than a pointer.
+#[cfg(windows)]
+unsafe fn localtime(secs: i64, tm: &mut libc::tm) -> bool {
+    libc::localtime_s(tm, &secs) == 0
 }
 
 /// Milliseconds since the Unix epoch, for ordering and dedup.

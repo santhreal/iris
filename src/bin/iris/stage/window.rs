@@ -109,7 +109,7 @@ fn open_toast_window(
 
     let cfg = iris_lib::config::Config::load();
     let win_size = size(px(w + BLEED + MARGIN), px(h + BLEED + MARGIN));
-    let screen = anchor.or_else(|| crate::xwin::primary_monitor_rect(cx));
+    let screen = anchor.or_else(|| crate::sys::window::primary_monitor_rect(cx));
     let origin = match screen {
         Some((sx, sy, sw, sh)) => match cfg.toast_position {
             iris_lib::config::ToastPosition::BottomRight => point(
@@ -148,7 +148,7 @@ fn open_toast_window(
         ),
         iris_lib::config::ToastPosition::TopLeft => (ox + MARGIN, oy + MARGIN, w, h),
     };
-    let win_id = crate::xwin::unique_id("dev.iris.toast");
+    let win_id = crate::sys::window::unique_id("dev.iris.toast");
     let handle = cx
         .open_window(
             WindowOptions {
@@ -190,6 +190,6 @@ fn open_toast_window(
     // window back where the corner is. No-op once the WM honors the
     // requested origin (mutter, KWin).
     let (ox, oy): (f32, f32) = (origin.x.into(), origin.y.into());
-    crate::xwin::place_after_map_kind(win_id, ox, oy, true);
+    crate::sys::window::place_after_map_kind(win_id, ox, oy, true);
     Ok(())
 }

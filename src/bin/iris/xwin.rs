@@ -19,68 +19,10 @@ use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
 /// The post-map fixups run on the dispatcher's own connection; this
 /// one stays separate so a drag's event reads never race the
 /// dispatcher's. x11rb serializes requests internally.
-#[cfg(target_os = "linux")]
 pub(super) fn shared_conn() -> Option<(&'static x11rb::rust_connection::RustConnection, usize)> {
     static CONN: std::sync::LazyLock<Option<(x11rb::rust_connection::RustConnection, usize)>> =
         std::sync::LazyLock::new(|| x11rb::connect(None).ok());
     CONN.as_ref().map(|(c, s)| (c, *s))
-}
-
-#[cfg(not(target_os = "linux"))]
-#[allow(dead_code)]
-pub(super) fn shared_conn() -> Option<(&'static x11rb::rust_connection::RustConnection, usize)> {
-    None
-}
-
-/// The primary monitor's rect in root pixels from randr (primary
-/// first in `monitors()`), falling back to GPUI's primary display.
-/// GPUI's X11 primary_display() can span the whole virtual screen
-/// on multi-monitor setups, which centers windows on no monitor at
-/// all; randr reports the real per-monitor geometry.
-pub fn primary_monitor_rect(cx: &gpui::App) -> Option<(f32, f32, f32, f32)> {
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        if let Ok(monitors) = iris_lib::capture::x11::monitors() {
-            if let Some(m) = monitors.first() {
-                return Some((m.x as f32, m.y as f32, m.width as f32, m.height as f32));
-            }
-        }
-    }
-    cx.primary_display().map(|d| {
-        let b = d.bounds();
-        (
-            b.origin.x.into(),
-            b.origin.y.into(),
-            b.size.width.into(),
-            b.size.height.into(),
-        )
-    })
-}
-
-/// Window origin that centers a `w`x`h` window on the primary display,
-/// or `fallback` when no display information is available.
-pub fn centered_origin(cx: &gpui::App, w: f32, h: f32, fallback: (f32, f32)) -> (f32, f32) {
-    let Some((bx, by, sw, sh)) = primary_monitor_rect(cx) else {
-        return fallback;
-    };
-    (bx + (sw - w) / 2.0, by + (sh - h) / 2.0)
-}
-
-/// A process-unique window class: surfaces that can have several
-/// live instances (toasts replacing each other, editors) must be
-/// distinguishable for the post-map fixup to find THE window it
-/// belongs to, not whichever sibling happens to be newest.
-pub fn unique_id(base: &str) -> String {
-    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!(
-        "{base}.{:x}.{}",
-        nanos,
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    )
 }
 
 /// Find a mapped client's XID by a WM_CLASS substring. Uses

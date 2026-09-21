@@ -104,3 +104,8 @@ one process.
 Wayland recording asks the portal for a window source; the compositor's
 own picker appears. Windows and macOS record the primary desktop and
 stop via hotkey, tray, or `--stop-recording`.
+
+Single-instance IPC, global hotkeys, and the tray run on all three
+platforms: a local socket on Linux, a named pipe on Windows, and a
+local socket on macOS; X11 key grabs, `RegisterHotKey`, and Carbon
+hotkeys; StatusNotifierItem, `Shell_NotifyIcon`, and `NSStatusItem`.

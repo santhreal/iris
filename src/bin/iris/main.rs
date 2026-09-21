@@ -22,6 +22,7 @@
 //!   --toast <file.png>   debug: show the toast stage for an existing file
 //!   --quit               ask the daemon to exit
 
+#[cfg(target_os = "linux")]
 mod chip;
 mod daemon;
 mod home;
@@ -35,8 +36,10 @@ mod pin;
 mod pipeline;
 mod settings;
 mod stage;
+mod sys;
 mod theme;
 mod widgets;
+#[cfg(target_os = "linux")]
 mod xwin;
 
 use gpui::*;
@@ -45,8 +48,7 @@ fn main() {
     iris_lib::log::init();
     // Skip argv[0]; daemon::parse_args handles the flags.
     let args: Vec<String> = std::env::args().skip(1).collect();
-
-    if daemon::forward_if_running(&args) {
+    if sys::ipc::forward_if_running(&args) {
         return;
     }
 

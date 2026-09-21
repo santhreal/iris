@@ -25,7 +25,7 @@ pub(super) fn wayland() -> bool {
 
 pub fn layout() -> ShellLayout {
     #[cfg(target_os = "linux")]
-    let (monitors, windows) = iris_lib::capture::x11::layout().unwrap_or((Vec::new(), Vec::new()));
+    let (monitors, windows) = iris_lib::capture::layout().unwrap_or((Vec::new(), Vec::new()));
     #[cfg(not(target_os = "linux"))]
     let (monitors, windows): (Vec<WinRect>, Vec<WinRect>) = (Vec::new(), Vec::new());
     let union = monitors.iter().skip(1).fold(
@@ -86,7 +86,7 @@ fn open_shell_opts(
         return Err("no monitor layout".into());
     }
     let focus = cx.focus_handle();
-    let win_id = crate::xwin::unique_id("dev.iris.overlay");
+    let win_id = crate::sys::window::unique_id("dev.iris.overlay");
     let windows = layout.windows.clone();
     let monitors = layout.monitors.clone();
     let (ux, uy, uw, uh) = (
@@ -181,7 +181,7 @@ fn open_shell_opts(
             },
         )
         .map_err(|e| format!("open overlay window: {e}"))?;
-    crate::xwin::span_after_map(win_id.clone(), ux, uy, uw, uh);
+    crate::sys::window::span_after_map(win_id.clone(), ux, uy, uw, uh);
     // Pooling needs minimize+restore, which Wayland cannot do; the
     // window is destroyed on park there instead.
     if !wayland() {

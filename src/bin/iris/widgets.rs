@@ -367,7 +367,7 @@ pub fn window_frame(
                     // Single press: hand the drag to the WM. Root
                     // coordinates are window origin + local position.
                     let origin = window.bounds().origin;
-                    crate::xwin::begin_wm_move(
+                    crate::sys::window::begin_wm_move(
                         class.to_string(),
                         (f32::from(origin.x) + f32::from(ev.position.x)) as i32,
                         (f32::from(origin.y) + f32::from(ev.position.y)) as i32,

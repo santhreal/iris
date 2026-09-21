@@ -148,8 +148,8 @@ pub struct Library {
 pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = cx.focus_handle();
     let win = (960.0f32, 640.0f32);
-    let origin = crate::xwin::centered_origin(cx, win.0, win.1, (140.0, 90.0));
-    let win_id = crate::xwin::unique_id("dev.iris.library");
+    let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (140.0, 90.0));
+    let win_id = crate::sys::window::unique_id("dev.iris.library");
     let handle = cx
         .open_window(
             WindowOptions {
@@ -229,6 +229,6 @@ pub fn open(cx: &mut App) -> Result<(), String> {
         })
         .detach();
     }
-    crate::xwin::place_after_map(win_id, origin.0, origin.1);
+    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
     Ok(())
 }

@@ -23,7 +23,7 @@ struct Flash {
 /// out. Returns after the windows open; they dismiss themselves.
 pub fn show(cx: &mut App) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    let monitors = iris_lib::capture::x11::monitors().unwrap_or_default();
+    let monitors = iris_lib::capture::monitors().unwrap_or_default();
     #[cfg(not(target_os = "linux"))]
     let monitors: Vec<iris_lib::capture::WinRect> = Vec::new();
     let mut monitors = monitors;
@@ -47,7 +47,7 @@ pub fn show(cx: &mut App) -> Result<(), String> {
         uy2 = uy2.max(m.y + m.height as i32);
     }
     let (uw, uh) = ((ux2 - ux).max(1) as u32, (uy2 - uy).max(1) as u32);
-    let win_id = crate::xwin::unique_id("dev.iris.flash");
+    let win_id = crate::sys::window::unique_id("dev.iris.flash");
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -75,7 +75,7 @@ pub fn show(cx: &mut App) -> Result<(), String> {
         },
     )
     .map_err(|e| format!("open flash window: {e}"))?;
-    crate::xwin::span_after_map(win_id, ux, uy, uw, uh);
+    crate::sys::window::span_after_map(win_id, ux, uy, uw, uh);
     Ok(())
 }
 

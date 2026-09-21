@@ -30,6 +30,9 @@ pub const FG_DIM: Rgba = rgb(0.635, 0.635, 0.659);
 pub const FG_FAINT: Rgba = rgb(0.443, 0.443, 0.478);
 pub const ACCENT: Rgba = rgb(0.961, 0.961, 0.969);
 pub const ACCENT_INK: Rgba = rgb(0.106, 0.106, 0.118);
+// Only the Linux recording chip's pause state uses DANGER today; the
+// palette is a shared vocabulary, so it stays defined everywhere.
+#[allow(dead_code)]
 pub const DANGER: Rgba = rgb(1.0, 0.271, 0.227);
 
 /// Pressed-state wash: instant feedback that a control took the
