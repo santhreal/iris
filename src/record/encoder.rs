@@ -343,10 +343,14 @@ impl Encoder {
         if let Some(w) = &self.writer {
             if w.is_finished() {
                 let w = self.writer.take().unwrap();
-                return Err(w
-                    .join()
-                    .unwrap_or_else(|_| Err("encoder writer panicked".into()))
-                    .unwrap_err());
+                return Err(match w.join() {
+                    Ok(Err(e)) => e,
+                    // The writer only returns Ok after the sender
+                    // drops, which cannot happen while self.tx lives;
+                    // report it anyway rather than panic on unwrap_err.
+                    Ok(Ok(())) => "encoder writer exited early".to_string(),
+                    Err(_) => "encoder writer panicked".to_string(),
+                });
             }
         }
         let tx = self

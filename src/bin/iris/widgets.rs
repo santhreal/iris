@@ -399,7 +399,7 @@ pub fn window_frame(
 /// A keyboard-shortcuts sheet: centered card over a dim layer, rows
 /// of action / key combination. The surface owns the open state and
 /// closes on Esc or a press on the dim layer.
-pub fn shortcuts_sheet(rows: Vec<(&'static str, String)>) -> Stateful<Div> {
+pub fn shortcuts_sheet(rows: Vec<(&'static str, SharedString)>) -> Stateful<Div> {
     let mut list = div().flex().flex_col().gap(px(2.)).mt(px(10.));
     for (action, keys) in rows {
         list = list.child(

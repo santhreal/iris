@@ -8,7 +8,6 @@ use super::{visible_rows, Library, CARD_W, GAP};
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let hotkey = self.cfg.capture_hotkey.clone();
         let selecting = !self.selected.is_empty();
         let this_help = self.help;
 
@@ -311,17 +310,16 @@ impl Render for Library {
         }
 
         if this_help {
-            let hotkey = hotkey.clone();
             root = root.child(
                 crate::widgets::shortcuts_sheet(vec![
-                    ("Capture region", hotkey),
-                    ("Record window", "Ctrl+Shift+R".to_string()),
-                    ("Open in editor", "Click".to_string()),
-                    ("Select all", "Ctrl+A".to_string()),
-                    ("Delete selection", "Delete".to_string()),
-                    ("Clear selection", "Esc".to_string()),
-                    ("Fullscreen", "Double-click title bar".to_string()),
-                    ("This sheet", "?".to_string()),
+                    ("Capture region", self.cfg.capture_hotkey.clone().into()),
+                    ("Record window", "Ctrl+Shift+R".into()),
+                    ("Open in editor", "Click".into()),
+                    ("Select all", "Ctrl+A".into()),
+                    ("Delete selection", "Delete".into()),
+                    ("Clear selection", "Esc".into()),
+                    ("Fullscreen", "Double-click title bar".into()),
+                    ("This sheet", "?".into()),
                 ])
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.help = false;

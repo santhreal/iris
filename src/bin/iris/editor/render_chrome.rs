@@ -450,15 +450,15 @@ impl Editor {
         if self.help {
             root = root.child(
                 crate::widgets::shortcuts_sheet(vec![
-                    ("Tools", "V P L A E R T H B C".to_string()),
-                    ("Stroke width", "1 / 2 / 3".to_string()),
-                    ("Save and close", "Ctrl+S / Enter".to_string()),
-                    ("Discard", "Esc".to_string()),
-                    ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z".to_string()),
-                    ("Delete selected action", "Delete".to_string()),
-                    ("Apply crop", "Enter".to_string()),
-                    ("Copy image / file / path", "Copy menu".to_string()),
-                    ("This sheet", "?".to_string()),
+                    ("Tools", "V P L A E R T H B C".into()),
+                    ("Stroke width", "1 / 2 / 3".into()),
+                    ("Save and close", "Ctrl+S / Enter".into()),
+                    ("Discard", "Esc".into()),
+                    ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z".into()),
+                    ("Delete selected action", "Delete".into()),
+                    ("Apply crop", "Enter".into()),
+                    ("Copy image / file / path", "Copy menu".into()),
+                    ("This sheet", "?".into()),
                 ])
                 .opacity(topbar)
                 .on_click(cx.listener(|this, _, _, cx| {
