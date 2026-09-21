@@ -20,6 +20,46 @@ const THUMB_H: f32 = 132.0;
 const GAP: f32 = 16.0;
 const REFRESH: Duration = Duration::from_millis(1500);
 
+/// The card rows that intersect the scroll viewport, plus the heights
+/// of the full-width spacer rows that stand in for the rows above and
+/// below. A spacer occupies a whole wrap line, so its height is the
+/// covered rows' pitch minus the inter-row GAP the line break adds.
+/// Returns `(first_row, last_row, top_spacer_h, bottom_spacer_h)`;
+/// `top_spacer_h`/`bottom_spacer_h` are 0 when no spacer is needed.
+/// `viewport_h <= 0` means the scroll bounds are not laid out yet, so
+/// every row renders that frame rather than flash an empty grid.
+fn visible_rows(n: usize, cols: usize, scroll_y: f32, viewport_h: f32) -> (usize, usize, f32, f32) {
+    let card_h = THUMB_H + 8.0 + 18.0;
+    let row_pitch = card_h + GAP;
+    let rows = n.div_ceil(cols.max(1));
+    if rows == 0 {
+        return (0, 0, 0.0, 0.0);
+    }
+    if viewport_h <= 0.0 {
+        return (0, rows - 1, 0.0, 0.0);
+    }
+    let first = (((scroll_y - GAP) / row_pitch).floor().max(0.0) as usize).min(rows - 1);
+    // The last row whose top is above the viewport bottom. A row top
+    // exactly at the bottom edge is not visible, so ceil(x) - 1, not
+    // ceil(x): x = 4.0 means row 4 starts at the edge and is excluded.
+    let last = (((scroll_y + viewport_h - GAP) / row_pitch).ceil() as usize)
+        .saturating_sub(1)
+        .min(rows - 1);
+    let first_row = first.saturating_sub(1);
+    let last_row = (last + 1).min(rows - 1);
+    let top_h = if first_row > 0 {
+        first_row as f32 * row_pitch - GAP
+    } else {
+        0.0
+    };
+    let bottom_h = if last_row + 1 < rows {
+        (rows - last_row - 1) as f32 * row_pitch - GAP
+    } else {
+        0.0
+    };
+    (first_row, last_row, top_h, bottom_h)
+}
+
 pub struct Library {
     /// Cards share their entry: render closures capture an Rc bump
     /// instead of cloning the path strings per card per frame.
@@ -424,9 +464,12 @@ fn open_containing_folder(path: &std::path::Path) {
         let (bx0, bx1) = (x0.min(x1), x0.max(x1));
         let (by0, by1) = (y0.min(y1), y0.max(y1));
         // Card rects live in document space: grid top is the 56px
-        // frame toolbar, scroll shifts rows up.
+        // frame toolbar, scroll shifts rows up. ScrollHandle::offset
+        // is <= 0 (negative when scrolled down), so the positive
+        // scroll amount is -offset.y and a card's window-space top is
+        // its document top minus that amount.
         let width: f32 = window.bounds().size.width.into();
-        let scroll_y: f32 = self.scroll.offset().y.into();
+        let scroll_top: f32 = -f32::from(self.scroll.offset().y);
         let cols = ((width - GAP) / (CARD_W + GAP)).floor().max(1.0) as usize;
         let card_h = THUMB_H + 8.0 + 18.0;
         self.selected.clear();
@@ -434,7 +477,7 @@ fn open_containing_folder(path: &std::path::Path) {
         for (i, e) in self.entries.iter().enumerate() {
             let (r, c) = (i / cols, i % cols);
             let cx0 = GAP + c as f32 * (CARD_W + GAP);
-            let cy0 = 56.0 + GAP + r as f32 * (card_h + GAP) - scroll_y;
+            let cy0 = 56.0 + GAP + r as f32 * (card_h + GAP) - scroll_top;
             if cx0 < bx1 && cx0 + CARD_W > bx0 && cy0 < by1 && cy0 + card_h > by0 {
                 self.selected.push(e.path.clone());
             }
@@ -646,7 +689,28 @@ impl Render for Library {
         if live {
             window.request_animation_frame();
         }
-        for (index, entry) in self.entries.iter().enumerate() {
+        // Virtualize the grid: build a card subtree only for the rows
+        // that intersect the scroll viewport. A full render is
+        // O(entries) DOM construction a frame, paid on every scroll
+        // and animation frame; a large library turns that into the
+        // judder the thumb cache was added to fix.
+        let width: f32 = window.bounds().size.width.into();
+        let cols = ((width - GAP) / (CARD_W + GAP)).floor().max(1.0) as usize;
+        // ScrollHandle::offset is <= 0 (negative when scrolled down);
+        // the positive scroll amount is -offset.y.
+        let scroll_top: f32 = -f32::from(self.scroll.offset().y);
+        let viewport_h: f32 = self.scroll.bounds().size.height.into();
+        let (first_row, last_row, top_h, bottom_h) =
+            visible_rows(n, cols, scroll_top, viewport_h);
+        // A full-width spacer occupies a whole wrap line, standing in
+        // for the rows above and below so the rendered cards land at
+        // their un-virtualized offsets and the scroll range is kept.
+        if top_h > 0.0 {
+            grid = grid.child(div().w_full().h(px(top_h)));
+        }
+        let last_i = ((last_row + 1) * cols).min(n);
+        for index in first_row * cols..last_i {
+            let entry = &self.entries[index];
             let amt = self.springs.get(&index).map(|s| s.value).unwrap_or(0.0);
             // Open cascade: cards rise and fade in with a 25ms stagger.
             let et = if cascade {
@@ -660,6 +724,9 @@ impl Render for Library {
                 1.0
             };
             grid = grid.child(self.card(index, entry, amt, et, sel_set, cx));
+        }
+        if bottom_h > 0.0 {
+            grid = grid.child(div().w_full().h(px(bottom_h)));
         }
 
         let mut root = div()
@@ -1037,6 +1104,7 @@ impl Library {
 
 #[cfg(test)]
 mod tests {
+    use super::{visible_rows, GAP, THUMB_H};
     use std::prelude::v1::test;
 
     #[test]
@@ -1048,5 +1116,54 @@ mod tests {
         let root_file = std::path::Path::new("/file.png");
         let parent = root_file.parent().unwrap_or(root_file);
         assert_eq!(parent, std::path::Path::new("/"));
+    }
+
+    // The virtualized grid must place every rendered card at the same
+    // document offset an un-virtualized wrap would, and preserve the
+    // total content height so the scroll range is unchanged. The
+    // spacer heights are the load-bearing part: a wrong one shifts
+    // every card below it and inflates or shrinks the scrollable area.
+    #[test]
+    fn visible_rows_preserves_card_offsets_and_scroll_height() {
+        let card_h = THUMB_H + 8.0 + 18.0;
+        let row_pitch = card_h + GAP;
+        // 80 entries, 4 columns -> 20 rows. Row r's un-virtualized top
+        // is GAP + r*row_pitch; content bottom is rows*row_pitch.
+        let (n, cols, rows) = (80usize, 4usize, 20usize);
+
+        // No viewport yet (first frame): every row renders, no spacers.
+        assert_eq!(visible_rows(n, cols, 0.0, 0.0), (0, 19, 0.0, 0.0));
+
+        // Scrolled to the top, two rows tall: rows 0..=1 visible plus
+        // one buffer row -> 0..=2, no top spacer.
+        let (first, last, top, bottom) = visible_rows(n, cols, 0.0, 2.0 * row_pitch);
+        assert_eq!((first, last), (0, 2));
+        assert_eq!(top, 0.0);
+        // Content bottom = spacer_top + bottom_h + GAP(bottom pad).
+        let spacer_top = GAP + (last + 1) as f32 * row_pitch;
+        assert_eq!(spacer_top + bottom + GAP, rows as f32 * row_pitch + GAP);
+
+        // Scrolled to the middle: a strict subset renders with both
+        // spacers, and every rendered row lands at its un-virtualized
+        // offset.
+        let (first, last, top, bottom) =
+            visible_rows(n, cols, 8.0 * row_pitch, 3.0 * row_pitch);
+        assert!(first > 0 && last < rows - 1 && first <= last);
+        // The first rendered card row lands at GAP + first*row_pitch:
+        // top spacer occupies [GAP, GAP+top_h], then a GAP line break.
+        assert_eq!(GAP + top + GAP, GAP + first as f32 * row_pitch);
+        // Total content height is preserved end to end. The rendered
+        // rows occupy count*row_pitch - GAP (internal gaps, no
+        // trailing), so the sum is top + rendered + bottom + 4*GAP.
+        let rendered = (last - first + 1) as f32 * row_pitch - GAP;
+        let total = GAP + top + GAP + rendered + GAP + bottom + GAP;
+        assert_eq!(total, rows as f32 * row_pitch + GAP);
+
+        // Scrolled past the end: clamps to the last row, never inverts.
+        let (first, last, _, _) = visible_rows(n, cols, 100000.0, 500.0);
+        assert!(first <= last && last == rows - 1);
+
+        // Empty library: no rows, no spacers.
+        assert_eq!(visible_rows(0, cols, 0.0, 500.0), (0, 0, 0.0, 0.0));
     }
 }
