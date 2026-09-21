@@ -1082,8 +1082,9 @@ pub fn notify_hotkeys_changed() {
 }
 
 /// Start daemon services inside the GPUI app: the single-instance
-/// socket, the tray icon, and the global hotkey grabs. Everything is
-/// polled on one 100ms app timer; failures degrade to log lines.
+/// socket, the tray icon, and the global hotkey grabs. The socket and
+/// command pump are event-driven (poll on the listener fd, an
+/// unbounded channel stream); failures degrade to log lines.
 pub fn start(cx: &mut App) {
     open_anchor(cx);
     // Warm the overlay pool: the first capture reuses a live window
