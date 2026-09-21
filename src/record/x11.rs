@@ -51,6 +51,24 @@ pub struct Rect {
     pub h: u16,
 }
 
+/// Frame geometry for one grab: pixel dimensions plus the negotiated
+/// depth and bytes-per-pixel. Grouping them stops a width/height or
+/// depth/bpp transposition at a call site from compiling silently.
+#[derive(Clone, Copy)]
+struct FrameGeom {
+    width: u32,
+    height: u32,
+    depth: u8,
+    bpp: usize,
+}
+
+impl FrameGeom {
+    /// Bytes in one packed frame at this geometry.
+    fn bytes(&self) -> usize {
+        self.width as usize * self.height as usize * self.bpp
+    }
+}
+
 /// Follow target for the recording chip: the border thread reports the
 /// target window's rect, and the chip's owner repositions (and at the
 /// end removes) the chip window. The GPUI daemon implements this over
@@ -690,12 +708,10 @@ fn grab_pixmap(
     shm: &mut Option<ShmGrab>,
     named: &mut Option<NamedPixmap>,
     win: Window,
-    width: u32,
-    height: u32,
-    depth: u8,
-    bpp: usize,
+    geom: FrameGeom,
     out: &mut Vec<u8>,
 ) -> Result<(), String> {
+    let (width, height, depth, bpp) = (geom.width, geom.height, geom.depth, geom.bpp);
     // The named pixmap is cached per (window, size): naming and freeing
     // per frame is two round trips the schedule cannot spare.
     let stale = named
@@ -720,7 +736,7 @@ fn grab_pixmap(
     // SHM path: the server writes the frame into the mapped segment and
     // the copy reads it in place. A 1080p frame over the socket is
     // ~8MB of protocol traffic per frame; this is none.
-    let need = width as usize * height as usize * bpp;
+    let need = geom.bytes();
     if shm.as_ref().map(|s| s.size) != Some(need) {
         if let Some(old) = shm.take() {
             old.detach(conn);
@@ -927,7 +943,8 @@ fn record_loop(
         dims.map(|d| (d, dirty))
     };
     let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
-        grab_pixmap(conn, &mut guard.shm, &mut guard.named, picked.id, w, h, depth, bpp, rgba)
+        let geom = FrameGeom { width: w, height: h, depth, bpp };
+        grab_pixmap(conn, &mut guard.shm, &mut guard.named, picked.id, geom, rgba)
     };
     record_loop_inner(spec, pix_fmt, probe_events, grab)
 }
@@ -995,7 +1012,8 @@ pub fn record_region(
             Some(((rect.w as u32, rect.h as u32), dirty))
         };
         let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
-            grab_root_rect(&conn, &mut guard.shm, root, rect, w, h, depth, bpp, rgba)
+            let geom = FrameGeom { width: w, height: h, depth, bpp };
+            grab_root_rect(&conn, &mut guard.shm, root, rect, geom, rgba)
         };
         record_loop_inner(&spec, pix_fmt, probe, grab)
     })();
@@ -1011,13 +1029,11 @@ fn grab_root_rect(
     shm: &mut Option<ShmGrab>,
     root: Window,
     rect: Rect,
-    width: u32,
-    height: u32,
-    depth: u8,
-    bpp: usize,
+    geom: FrameGeom,
     out: &mut Vec<u8>,
 ) -> Result<(), String> {
-    let need = width as usize * height as usize * bpp;
+    let (width, height, depth, bpp) = (geom.width, geom.height, geom.depth, geom.bpp);
+    let need = geom.bytes();
     if shm.as_ref().map(|s| s.size) != Some(need) {
         if let Some(old) = shm.take() {
             old.detach(conn);

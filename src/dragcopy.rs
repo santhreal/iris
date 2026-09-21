@@ -366,6 +366,17 @@ struct XdndAtoms {
     utf8: x11rb::protocol::xproto::Atom,
 }
 
+/// The four atoms a clipboard serve answers on. Grouping them stops a
+/// TARGETS/uri-list/UTF8 transposition at the call site from compiling
+/// silently.
+#[cfg(target_os = "linux")]
+struct CbAtoms {
+    clipboard: x11rb::protocol::xproto::Atom,
+    targets: x11rb::protocol::xproto::Atom,
+    uri_list: x11rb::protocol::xproto::Atom,
+    utf8: x11rb::protocol::xproto::Atom,
+}
+
 /// Interned atoms shared across drags and clipboard serves: atoms are
 /// server-global constants, so the 13-name XDnD set and the 4-name
 /// clipboard set resolve once per process instead of once per call.
@@ -880,10 +891,12 @@ pub fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), Str
             serve_x11_clipboard(
                 conn,
                 win,
-                clipboard_atom,
-                targets_atom,
-                uri_list_atom,
-                utf8_atom,
+                CbAtoms {
+                    clipboard: clipboard_atom,
+                    targets: targets_atom,
+                    uri_list: uri_list_atom,
+                    utf8: utf8_atom,
+                },
                 uri_list,
                 fallback_text,
             );
@@ -897,13 +910,12 @@ pub fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), Str
 fn serve_x11_clipboard(
     conn: x11rb::rust_connection::RustConnection,
     win: x11rb::protocol::xproto::Window,
-    clipboard_atom: x11rb::protocol::xproto::Atom,
-    targets_atom: x11rb::protocol::xproto::Atom,
-    uri_list_atom: x11rb::protocol::xproto::Atom,
-    utf8_atom: x11rb::protocol::xproto::Atom,
+    atoms: CbAtoms,
     uri_list: String,
     abs_str: String,
 ) {
+    let (clipboard_atom, targets_atom, uri_list_atom, utf8_atom) =
+        (atoms.clipboard, atoms.targets, atoms.uri_list, atoms.utf8);
     let deadline = Instant::now() + Duration::from_secs(300);
     // Event-driven: poll() the connection fd so a paste request is
     // answered the instant it arrives instead of up to a sleep
