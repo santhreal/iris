@@ -28,6 +28,17 @@ pub fn open(cx: &mut App, path: &std::path::Path) -> Result<(), String> {
         let decoded = cx
             .background_executor()
             .spawn(async move {
+                // A just-captured image is already decoded in the
+                // pipeline stash: swizzle it to BGRA (~10ms) instead of
+                // re-decoding the PNG (~100ms). peek leaves the slot for
+                // the editor's annotate path.
+                if let Some(img) = crate::pipeline::peek_decoded(&path) {
+                    return Ok(crate::widgets::render_image_from_rgba(
+                        img.width(),
+                        img.height(),
+                        img.as_raw(),
+                    ));
+                }
                 let bytes = std::fs::read(&path)
                     .map_err(|e| format!("read {}: {e}", path.display()))?;
                 crate::widgets::render_image_from_png(&bytes)
