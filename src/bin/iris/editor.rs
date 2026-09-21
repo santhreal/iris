@@ -1772,15 +1772,44 @@ fn draw_text(
     let Some(font) = FONT.as_ref() else {
         return;
     };
-    imageproc::drawing::draw_text_mut(
-        img,
-        px,
-        p.0 as i32,
-        (p.1 - size) as i32,
-        ab_glyph::PxScale::from(size),
-        font,
-        text,
-    );
+    // Inline of imageproc's draw_text_mut so the imageproc crate (and
+    // its nalgebra/rayon/rand tree) drops out of the build. Same
+    // semantics: advance by h_advance + kern, rasterize each outlined
+    // glyph, and blend every covered pixel by coverage over all four
+    // channels.
+    use ab_glyph::{Font as _, ScaleFont as _};
+    let scale = ab_glyph::PxScale::from(size);
+    let scaled = font.as_scaled(scale);
+    let x = p.0 as i32;
+    let y = (p.1 - size) as i32;
+    let iw = img.width() as i32;
+    let ih = img.height() as i32;
+    let mut w = 0f32;
+    let mut last: Option<ab_glyph::GlyphId> = None;
+    for c in text.chars() {
+        let glyph_id = scaled.glyph_id(c);
+        let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(w, scaled.ascent()));
+        w += scaled.h_advance(glyph_id);
+        if let Some(g) = scaled.outline_glyph(glyph) {
+            if let Some(last) = last {
+                w += scaled.kern(glyph_id, last);
+            }
+            last = Some(glyph_id);
+            let bb = g.px_bounds();
+            g.draw(|gx, gy, gv| {
+                let image_x = gx as i32 + x + bb.min.x.round() as i32;
+                let image_y = gy as i32 + y + bb.min.y.round() as i32;
+                let gv = gv.clamp(0.0, 1.0);
+                if (0..iw).contains(&image_x) && (0..ih).contains(&image_y) {
+                    let dst = img.get_pixel_mut(image_x as u32, image_y as u32);
+                    let inv = 1.0 - gv;
+                    for ch in 0..4 {
+                        dst[ch] = (dst[ch] as f32 * inv + px[ch] as f32 * gv).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            });
+        }
+    }
 }
 
 impl Render for Editor {
@@ -2891,6 +2920,23 @@ mod tests {
         assert!(painted(&img, 2, 5));
         assert!(painted(&img, 28, 5));
         assert!(painted(&img, 15, 5));
+    }
+
+    #[test]
+    fn text_action_paints_glyph_pixels() {
+        // draw_text was reimplemented on ab_glyph directly (imageproc
+        // dropped); a regression that silently renders nothing would
+        // otherwise pass every test. Assert a Text action darkens
+        // pixels inside its glyph box.
+        let mut img = image::RgbaImage::new(80, 40);
+        let mut a = action(Tool::Text, vec![(4.0, 30.0)], false);
+        a.text = Some("Hi".into());
+        a.font_size = 24.0;
+        rasterize(&mut img, &a, 1.0);
+        let painted = (0..80)
+            .flat_map(|x| (0..40).map(move |y| (x, y)))
+            .any(|(x, y)| img.get_pixel(x, y).0[3] > 0);
+        assert!(painted, "text action must paint glyph pixels");
     }
     #[test]
     fn arrow_paints_head_at_tip_not_tail() {
