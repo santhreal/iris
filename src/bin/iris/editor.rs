@@ -3211,6 +3211,32 @@ mod dirty_tests {
         assert_eq!(region, (0.0, 0.0, 40.0, 40.0), "and widens to the full image");
     }
 
+    // WHY: restore_region bands the row copies once the image clears
+    // par_bands_mut's 1MB gate. The 40x40 tests above all run the
+    // serial path, so a band that drops or shifts a row would pass
+    // them. A 1024x512 image (2MB) splits into ~64-row bands; a dirty
+    // region spanning several bands must restore every covered row.
+    #[test]
+    fn banded_restore_region_matches_full_rebuild() {
+        let base = image::RgbaImage::from_pixel(1024, 512, image::Rgba([10, 20, 30, 255]));
+        // Two strokes: one top-left, one bottom-right. Removing the
+        // bottom-right one dirties a region crossing band boundaries.
+        let a = stroke(vec![(20.0, 20.0), (200.0, 20.0)], (0.0, 0.0, 220.0, 40.0));
+        let b = stroke(
+            vec![(100.0, 150.0), (900.0, 400.0)],
+            (90.0, 140.0, 820.0, 280.0),
+        );
+        let mut dirty = full_rebuild(&base, &mut [a.clone(), b.clone()]);
+        let mut remaining = [a.clone()];
+        dirty_rebuild(&base, &mut dirty, &mut remaining, b.bbox.unwrap());
+        let full = full_rebuild(&base, &mut [a.clone()]);
+        assert_eq!(
+            dirty.as_raw(),
+            full.as_raw(),
+            "banded restore_region must equal the full rebuild"
+        );
+    }
+
     /// The pre-closure algorithm: restore only the edit's rect, then
     /// replay the suffix from the first intersecting action. Kept to
     /// prove the regression tests above observe the bug it produced.
