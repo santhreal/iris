@@ -33,40 +33,69 @@ impl Library {
 
     /// Read thumbnails off the main thread and fill the cache in one
     /// delivery: a first paint that blocks on N disk reads stutters.
-    pub(super) fn prefetch_thumbs(&mut self, cx: &mut Context<Self>) {
-        let missing: Vec<(std::path::PathBuf, std::path::PathBuf)> = self
-            .entries
-            .iter()
-            .filter(|e| !self.thumb_cache.contains_key(&e.path))
-            .map(|e| (e.path.clone(), e.thumb.clone()))
-            .collect();
-        if missing.is_empty() {
+    /// `range` is the entry-index window to decode (the keep window
+    /// render computed); a pass already in flight parks the newest
+    /// range in prefetch_want and the running task picks it up, so a
+    /// fast scroll never stacks decode waves.
+    pub(super) fn prefetch_thumbs(&mut self, range: (usize, usize), cx: &mut Context<Self>) {
+        if self.prefetch_in_flight {
+            self.prefetch_want = Some(range);
             return;
         }
+        self.prefetch_in_flight = true;
+        self.prefetch_want = Some(range);
         cx.spawn(async move |this, cx| {
-            // One background task per thumb: the executor is a pool,
-            // so N PNG decodes run across cores instead of serially
-            // on one task.
-            let tasks: Vec<_> = missing
-                .into_iter()
-                .map(|(p, t)| {
-                    cx.background_executor().spawn(async move {
-                        std::fs::read(&t)
-                            .ok()
-                            .and_then(|b| crate::widgets::render_image_from_png(&b))
-                            .map(|img| (p, img))
+            loop {
+                let Some(range) = this
+                    .update(cx, |this, _| this.prefetch_want.take())
+                    .unwrap_or(None)
+                else {
+                    break;
+                };
+                let missing: Vec<(std::path::PathBuf, std::path::PathBuf)> = match this
+                    .update(cx, |this, _| {
+                        let (lo, hi) = (range.0.min(this.entries.len()), range.1.min(this.entries.len()));
+                        this.entries[lo..hi]
+                            .iter()
+                            .filter(|e| !this.thumb_cache.contains_key(&e.path))
+                            .map(|e| (e.path.clone(), e.thumb.clone()))
+                            .collect()
+                    }) {
+                    Ok(m) => m,
+                    Err(_) => break,
+                };
+                // One background task per thumb: the executor is a
+                // pool, so the window's PNG decodes run across cores
+                // instead of serially on one task.
+                let tasks: Vec<_> = missing
+                    .into_iter()
+                    .map(|(p, t)| {
+                        cx.background_executor().spawn(async move {
+                            std::fs::read(&t)
+                                .ok()
+                                .and_then(|b| crate::widgets::render_image_from_png(&b))
+                                .map(|img| (p, img))
+                        })
                     })
-                })
-                .collect();
-            let mut loaded = Vec::with_capacity(tasks.len());
-            for task in tasks {
-                if let Some(pair) = task.await {
-                    loaded.push(pair);
+                    .collect();
+                let mut loaded = Vec::with_capacity(tasks.len());
+                for task in tasks {
+                    if let Some(pair) = task.await {
+                        loaded.push(pair);
+                    }
+                }
+                if this
+                    .update(cx, |this, cx| {
+                        this.thumb_cache.extend(loaded);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
                 }
             }
-            let _ = this.update(cx, |this, cx| {
-                this.thumb_cache.extend(loaded);
-                cx.notify();
+            let _ = this.update(cx, |this, _| {
+                this.prefetch_in_flight = false;
             });
         })
         .detach();
@@ -116,7 +145,9 @@ impl Library {
                         SharedString::from(format!("{} captures", this.entries.len()));
                     this.selected
                         .retain(|p| this.entries.iter().any(|e| &e.path == p));
-                    this.prefetch_thumbs(cx);
+                    // Decode the top of the list; render's keep-window
+                    // prefetch covers whatever the viewport shows.
+                    this.prefetch_thumbs((0, 48), cx);
                     cx.notify();
                 }
             });

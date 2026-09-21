@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::*;
@@ -241,6 +242,44 @@ impl Render for Library {
         }
         if bottom_h > 0.0 {
             grid = grid.child(div().w_full().h(px(bottom_h)));
+        }
+
+        // Bound the thumbnail cache to the keep window: rendered rows
+        // plus THUMB_KEEP_ROWS of slack. A large library holding every
+        // decoded thumb is unbounded GPU atlas memory; tiles outside
+        // the window are released and re-decoded on scroll-back. The
+        // range only moves when the viewport crosses a row boundary,
+        // so eviction and prefetch do not run per frame.
+        let keep = (
+            first_row.saturating_sub(super::THUMB_KEEP_ROWS) * cols,
+            ((last_row + 1 + super::THUMB_KEEP_ROWS) * cols).min(n),
+        );
+        if keep != self.thumb_keep {
+            self.thumb_keep = keep;
+            if self.thumb_cache.len() > keep.1 - keep.0 {
+                let keep_paths: std::collections::HashSet<&std::path::Path> = self.entries
+                    [keep.0..keep.1]
+                    .iter()
+                    .map(|e| e.path.as_path())
+                    .collect();
+                let mut evicted: Vec<Arc<RenderImage>> = Vec::new();
+                self.thumb_cache
+                    .retain(|p, img| match keep_paths.contains(p.as_path()) {
+                        true => true,
+                        false => {
+                            evicted.push(img.clone());
+                            false
+                        }
+                    });
+                if !evicted.is_empty() {
+                    cx.defer(move |cx| {
+                        for img in &evicted {
+                            crate::widgets::release_render(img, cx);
+                        }
+                    });
+                }
+            }
+            self.prefetch_thumbs(keep, cx);
         }
 
         let mut root = div()

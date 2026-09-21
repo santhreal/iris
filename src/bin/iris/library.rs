@@ -22,6 +22,10 @@ pub(super) const CARD_W: f32 = 216.0;
 pub(super) const THUMB_H: f32 = 132.0;
 pub(super) const GAP: f32 = 16.0;
 pub(super) const REFRESH: Duration = Duration::from_millis(1500);
+/// Rows of thumbnail slack kept decoded beyond the rendered range:
+/// scroll-back inside the window hits warm tiles, outside it pays a
+/// re-decode. 8 rows at 4 cols is ~64 tiles, ~13MB of atlas.
+pub(super) const THUMB_KEEP_ROWS: usize = 8;
 
 /// The card rows that intersect the scroll viewport, plus the heights
 /// of the full-width spacer rows that stand in for the rows above and
@@ -89,7 +93,21 @@ pub struct Library {
     pub(super) drag_start: Option<(usize, f32, f32)>,
     /// Decoded thumbnails, keyed by capture path. Reading and
     /// decoding every PNG on every animation frame was the judder.
+    /// Bounded to the viewport's keep window: a large library holding
+    /// every decoded thumb is unbounded GPU atlas memory, so render
+    /// evicts tiles outside the window and prefetch re-decodes them
+    /// on scroll-back.
     pub(super) thumb_cache: std::collections::HashMap<PathBuf, std::sync::Arc<RenderImage>>,
+    /// The index range the cache currently keeps: rendered rows plus
+    /// THUMB_KEEP_ROWS of slack either side. Recomputed per render;
+    /// eviction and prefetch only run when it moves.
+    pub(super) thumb_keep: (usize, usize),
+    /// A prefetch pass already decoding: scroll moves faster than PNG
+    /// decodes, so a new range is parked in prefetch_want instead of
+    /// stacking tasks.
+    pub(super) prefetch_in_flight: bool,
+    /// The newest keep range a prefetch has not covered yet.
+    pub(super) prefetch_want: Option<(usize, usize)>,
     /// Set when `entries` is reassigned: the next render rebuilds the
     /// live-path set and prunes `thumb_cache`, instead of rebuilding
     /// the set every frame.
@@ -179,6 +197,9 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         pressed: None,
                         last_frame: None,
                         drag_start: None,
+                        thumb_keep: (0, 0),
+                        prefetch_in_flight: false,
+                        prefetch_want: None,
                         thumb_cache: std::collections::HashMap::new(),
                         entries_dirty: false,
                         drag_fired: false,
