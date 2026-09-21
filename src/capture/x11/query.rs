@@ -117,10 +117,16 @@ fn list_top_level_windows_on(
             .map_err(|e| format!("query_tree: {e}"))?
             .reply()
             .map_err(|e| format!("query_tree reply: {e}"))?;
-        for win in tree.children {
-            let viewable = conn
-                .get_window_attributes(win)
-                .ok()
+        // Pipeline the attribute reads: a serial reply() per child is
+        // a round trip per window on a WM-less session.
+        let cookies: Vec<_> = tree
+            .children
+            .iter()
+            .map(|win| (*win, conn.get_window_attributes(*win).ok()))
+            .collect();
+        let _ = conn.flush();
+        for (win, cookie) in cookies {
+            let viewable = cookie
                 .and_then(|c| c.reply().ok())
                 .map(|a| {
                     a.map_state == x11rb::protocol::xproto::MapState::VIEWABLE
