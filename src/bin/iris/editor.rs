@@ -51,7 +51,14 @@ pub struct Editor {
     pub(crate) title: SharedString,
     /// The unedited pixels. Arc so crop/transform can share one buffer
     /// with composite instead of cloning a full-size image per op.
+    /// Until the background decode lands this is a 1x1 placeholder:
+    /// its pixels are never read before base_ready, and the real
+    /// dimensions live in `base_dims` so layout does not need them.
     pub(crate) base: Arc<image::RgbaImage>,
+    /// The image's real pixel dimensions, known from the PNG header
+    /// before the decode lands. Layout (view/fit_origin/to_image) and
+    /// stroke sizing read this, never `base`'s placeholder dims.
+    pub(crate) base_dims: (u32, u32),
     pub(crate) base_img: Arc<RenderImage>,
     /// CPU composite: base plus every committed action, used to sample
     /// blur patches and to rasterize the final PNG. After a crop or
@@ -211,7 +218,11 @@ pub fn open(
     }
     let (bw, bh) =
         png_dimensions(&header).ok_or_else(|| format!("not a PNG: {}", path.display()))?;
-    let base = image::RgbaImage::new(bw, bh);
+    // 1x1 placeholder, not a bw*bh buffer: the decode replaces it, and
+    // a 33MB zeroed alloc on the UI thread is a stall for pixels that
+    // are never read (base_ready gates every read; base_dims carries
+    // the real dimensions for layout).
+    let base = image::RgbaImage::new(1, 1);
     let base_img = crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0]);
     let focus = cx.focus_handle();
     let (origin, win) = resolve_window_placement(cx, from);
@@ -246,14 +257,11 @@ pub fn open(
                         .map(|f| f.to_string_lossy().into_owned())
                         .unwrap_or_else(|| "capture.png".to_string());
                     Editor {
-                        title: SharedString::from(format!(
-                            "{filename} · {}×{}",
-                            base.width(),
-                            base.height()
-                        )),
+                        title: SharedString::from(format!("{filename} · {bw}×{bh}")),
                         filename,
                         path: path.to_path_buf(),
                         base: Arc::new(base),
+                        base_dims: (bw, bh),
                         base_img,
                         composite: Arc::new(image::RgbaImage::new(1, 1)),
                         actions: Rc::new(std::cell::RefCell::new(Vec::new())),
@@ -334,11 +342,12 @@ pub fn open(
                             let old = std::mem::replace(&mut this.base_img, render);
                             crate::widgets::release_render(&old, cx);
                             this.base = base;
+                            this.base_dims = (this.base.width(), this.base.height());
                             this.title = SharedString::from(format!(
                                 "{} · {}×{}",
                                 this.filename,
-                                this.base.width(),
-                                this.base.height()
+                                this.base_dims.0,
+                                this.base_dims.1
                             ));
                             this.composite = composite;
                             this.base_ready = true;

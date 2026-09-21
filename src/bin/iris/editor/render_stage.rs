@@ -60,7 +60,7 @@ impl Editor {
         // Committed vector actions + blur patches + text.
         let actions = Rc::clone(&self.actions);
         let current = self.current.clone();
-        let (base_w, base_h) = (self.base.width(), self.base.height());
+        let (base_w, base_h) = self.base_dims;
         stage = stage.child(
             canvas(
                 move |_, _, _| (actions.clone(), current.clone()),

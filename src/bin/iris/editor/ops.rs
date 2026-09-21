@@ -12,7 +12,7 @@ use crate::pipeline;
 
 impl Editor {
     pub(crate) fn img_w(&self) -> u32 {
-        self.base.width()
+        self.base_dims.0
     }
 
     /// The next counter number: one past the highest committed step.
@@ -137,7 +137,7 @@ impl Editor {
         bbox: (f32, f32, f32, f32),
     ) -> (f32, f32) {
         let (x, y, w, h) = bbox;
-        let (iw, ih) = (self.base.width() as f32, self.base.height() as f32);
+        let (iw, ih) = (self.base_dims.0 as f32, self.base_dims.1 as f32);
         let dx = d.0.clamp(-x, iw - (x + w));
         let dy = d.1.clamp(-y, ih - (y + h));
         let mut actions = self.actions.borrow_mut();
@@ -215,11 +215,12 @@ impl Editor {
         // first post-crop edit pays it through make_mut instead.
         self.composite = Arc::new(cropped);
         self.base = Arc::clone(&self.composite);
+        self.base_dims = (w, h);
         self.title = SharedString::from(format!(
             "{} · {}×{}",
             self.filename,
-            self.base.width(),
-            self.base.height()
+            self.base_dims.0,
+            self.base_dims.1
         ));
         self.actions.borrow_mut().clear();
         self.undos.clear();
@@ -252,11 +253,12 @@ impl Editor {
         // full-size copy on the UI thread per transform.
         self.composite = Arc::new(out);
         self.base = Arc::clone(&self.composite);
+        self.base_dims = (w, h);
         self.title = SharedString::from(format!(
             "{} · {}×{}",
             self.filename,
-            self.base.width(),
-            self.base.height()
+            self.base_dims.0,
+            self.base_dims.1
         ));
         self.actions.borrow_mut().clear();
         self.undos.clear();
@@ -420,8 +422,8 @@ impl Editor {
     pub(crate) fn fit_origin(&self, window: &Window, scale: f32) -> (f32, f32) {
         let size = window.bounds().size;
         (
-            72.0 + (f32::from(size.width) - 72.0 - self.base.width() as f32 * scale) / 2.0,
-            72.0 + (f32::from(size.height) - 72.0 - self.base.height() as f32 * scale) / 2.0,
+            72.0 + (f32::from(size.width) - 72.0 - self.base_dims.0 as f32 * scale) / 2.0,
+            72.0 + (f32::from(size.height) - 72.0 - self.base_dims.1 as f32 * scale) / 2.0,
         )
     }
 
@@ -434,8 +436,8 @@ impl Editor {
         let size = window.bounds().size;
         let usable_w = (f32::from(size.width) - 72.0 - 24.0).max(100.0);
         let usable_h = (f32::from(size.height) - 72.0 - 24.0).max(100.0);
-        let fit = (usable_w / self.base.width() as f32)
-            .min(usable_h / self.base.height() as f32)
+        let fit = (usable_w / self.base_dims.0 as f32)
+            .min(usable_h / self.base_dims.1 as f32)
             .min(4.0);
         let scale = fit * self.zoom;
         let (fx, fy) = self.fit_origin(window, scale);
@@ -444,8 +446,8 @@ impl Editor {
 
     pub(crate) fn to_image(&self, pos: Point<Pixels>, window: &Window) -> (f32, f32) {
         let (ox, oy, scale) = self.view(window);
-        let x = ((f32::from(pos.x) - ox) / scale).clamp(0.0, self.base.width() as f32);
-        let y = ((f32::from(pos.y) - oy) / scale).clamp(0.0, self.base.height() as f32);
+        let x = ((f32::from(pos.x) - ox) / scale).clamp(0.0, self.base_dims.0 as f32);
+        let y = ((f32::from(pos.y) - oy) / scale).clamp(0.0, self.base_dims.1 as f32);
         (x.round(), y.round())
     }
 }
