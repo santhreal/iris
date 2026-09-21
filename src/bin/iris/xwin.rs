@@ -74,11 +74,10 @@ pub fn unique_id(base: &str) -> String {
 /// A post-map fixup the dispatcher applies once the window's XID
 /// exists. Each variant carries the geometry/state it asserts; the
 /// reassert schedule is per-variant (a Move re-places for a second
-/// against WM re-framing, a Span/Fullscreen re-asserts once).
+/// against WM re-framing, a Span re-asserts once).
 #[cfg(target_os = "linux")]
 enum Fixup {
     Move { x: i32, y: i32, notification: bool },
-    Fullscreen { x: i32, y: i32 },
     AlwaysOnTop,
     Span { x: i32, y: i32, w: u32, h: u32 },
     Unpark { x: i32, y: i32, w: u32, h: u32 },
@@ -293,15 +292,6 @@ fn apply_fixup(
             let _ = conn.configure_window(xid, &aux);
             let _ = conn.flush();
         }
-        Fixup::Fullscreen { x, y } => {
-            if initial {
-                suppress_decorations_on(conn, xid);
-            }
-            let aux = ConfigureWindowAux::new().x(*x).y(*y);
-            let _ = conn.configure_window(xid, &aux);
-            let _ = conn.flush();
-            request_fullscreen_on(conn, xid);
-        }
         Fixup::AlwaysOnTop => {
             if initial {
                 suppress_decorations_on(conn, xid);
@@ -353,7 +343,7 @@ fn apply_fixup(
 
 /// Queue a fixup's reassert schedule: a Move re-places ten times over
 /// a second (the WM's re-framing re-applies its own placement), a
-/// Span/Fullscreen re-asserts once after the re-frame settles.
+/// Span re-asserts once after the re-frame settles.
 #[cfg(target_os = "linux")]
 fn schedule_reassert(
     reasserts: &mut Vec<(std::time::Instant, u32, Fixup, u8)>,
@@ -365,7 +355,7 @@ fn schedule_reassert(
         Fixup::Move { .. } => {
             reasserts.push((now + std::time::Duration::from_millis(100), xid, fixup, 10))
         }
-        Fixup::Fullscreen { .. } | Fixup::Span { .. } => {
+        Fixup::Span { .. } => {
             reasserts.push((now + std::time::Duration::from_millis(200), xid, fixup, 1))
         }
         _ => {}
@@ -392,20 +382,6 @@ pub fn place_after_map_kind(class: String, x: f32, y: f32, notification: bool) {
     let _ = (class, x, y, notification);
 }
 
-/// Fullscreen on a specific monitor. GPUI's X11 backend has no
-/// creation-time fullscreen: its render-time toggle races the WM's
-/// own placement, so a second monitor's window can end up
-/// fullscreened onto the primary. This owns the ordering instead:
-/// place the window at the monitor's origin (defeating WM
-/// placement), let the re-frame settle, then request
-/// _NET_WM_STATE_FULLSCREEN, which the WM applies to the monitor
-/// the window is on.
-pub fn fullscreen_after_map(class: String, x: f32, y: f32) {
-    #[cfg(target_os = "linux")]
-    enqueue_fixup(class, Fixup::Fullscreen { x: x as i32, y: y as i32 });
-    #[cfg(not(target_os = "linux"))]
-    let _ = (class, x, y);
-}
 
 /// Interned atoms shared across every post-map fixup: intern_atom is
 /// a round trip, and the same handful of EWMH names is resolved on
@@ -486,11 +462,6 @@ fn activate_window_on(conn: &impl Connection, win: u32) {
     let _ = conn.send_event(false, root, mask, event);
 }
 
-/// _NET_WM_STATE += _NET_WM_STATE_FULLSCREEN via a client message.
-#[cfg(target_os = "linux")]
-fn request_fullscreen_on(conn: &impl Connection, win: u32) {
-    request_state_on(conn, win, b"_NET_WM_STATE_FULLSCREEN");
-}
 
 /// Pin a window above everything: _NET_WM_STATE_ABOVE via a client
 /// message once the window's XID exists. Used by the pin-to-screen

@@ -35,45 +35,48 @@ pub fn show(cx: &mut App) -> Result<(), String> {
             height: 800,
         });
     }
-    let mut first_err = None;
-    for m in monitors {
-        let win_id = crate::xwin::unique_id("dev.iris.flash");
-        let result = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Fullscreen(Bounds {
-                    origin: point(px(m.x as f32), px(m.y as f32)),
-                    size: size(px(m.width as f32), px(m.height as f32)),
-                })),
-                titlebar: None,
-                focus: false,
-                show: true,
-                kind: WindowKind::PopUp,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                display_id: None,
-                window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some(win_id.clone()),
-                window_min_size: None,
-                window_decorations: Some(WindowDecorations::Client),
-                tabbing_identifier: None,
-            },
-            |_, cx| {
-                cx.new(|_| Flash {
-                    started: Instant::now(),
-                })
-            },
-        );
-        if let Err(e) = result {
-            first_err = Some(format!("open flash window: {e}"));
-        } else {
-            crate::xwin::fullscreen_after_map(win_id, m.x as f32, m.y as f32);
-        }
+    // One window spanning the monitor union: the flash is a uniform
+    // fill, so a single window covers every screen and pays one
+    // renderer init instead of one per monitor. The overlay uses the
+    // same span for its frozen frame.
+    let (mut ux, mut uy, mut ux2, mut uy2) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for m in &monitors {
+        ux = ux.min(m.x);
+        uy = uy.min(m.y);
+        ux2 = ux2.max(m.x + m.width as i32);
+        uy2 = uy2.max(m.y + m.height as i32);
     }
-    match first_err {
-        Some(e) => Err(e),
-        None => Ok(()),
-    }
+    let (uw, uh) = ((ux2 - ux).max(1) as u32, (uy2 - uy).max(1) as u32);
+    let win_id = crate::xwin::unique_id("dev.iris.flash");
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(ux as f32), px(uy as f32)),
+                size: size(px(uw as f32), px(uh as f32)),
+            })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            display_id: None,
+            window_background: WindowBackgroundAppearance::Transparent,
+            app_id: Some(win_id.clone()),
+            window_min_size: None,
+            window_decorations: Some(WindowDecorations::Client),
+            tabbing_identifier: None,
+        },
+        |_, cx| {
+            cx.new(|_| Flash {
+                started: Instant::now(),
+            })
+        },
+    )
+    .map_err(|e| format!("open flash window: {e}"))?;
+    crate::xwin::span_after_map(win_id, ux, uy, uw, uh);
+    Ok(())
 }
 
 /// Total wall time of the blink; the caller waits this long before
