@@ -15,6 +15,14 @@ crate-type = ["rlib"]
 # workspace; this table keeps iris out of it.
 [workspace]
 
+# The shipped binary is `cargo build --release`. Thin LTO inlines the
+# hot pixel paths (swizzle, rasterize, encode) across the iris_lib /
+# bin / gpui crate boundary; codegen-units=1 maximizes within-crate
+# optimization. Compile time is a build cost, not a runtime one.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 parking_lot = "0.12"
