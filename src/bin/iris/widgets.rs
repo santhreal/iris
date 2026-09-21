@@ -1,8 +1,15 @@
 //! Shared chrome widgets: one implementation per control, used by
 //! every surface. The register lives in theme.rs; glyphs live in
-//! icons.rs. Buttons are ghost by default — a hover wash, no fill —
+//! icons.rs. Buttons are ghost by default (hover wash, no fill)
 //! because that is how Apple's chrome reads; filled is reserved for
 //! the single primary action.
+
+mod image;
+#[cfg(test)]
+mod tests;
+
+pub(crate) use self::image::swizzle_rgba_bgra;
+pub use self::image::*;
 
 use gpui::*;
 
@@ -42,13 +49,22 @@ pub fn button_with_icon(
     glyph: Icon,
     primary: bool,
 ) -> Stateful<Div> {
-    let color = if primary { theme::ACCENT_INK } else { theme::FG_DIM };
+    let color = if primary {
+        theme::ACCENT_INK
+    } else {
+        theme::FG_DIM
+    };
     button(id, label, primary).child(icons::icon(glyph, color, 10.0))
 }
 
 /// Icon-only button, `size`px square. `active` fills the chip and
 /// inverts the glyph; otherwise ghost with a hover wash.
-pub fn icon_button(id: impl Into<ElementId>, glyph: Icon, active: bool, size: f32) -> Stateful<Div> {
+pub fn icon_button(
+    id: impl Into<ElementId>,
+    glyph: Icon,
+    active: bool,
+    size: f32,
+) -> Stateful<Div> {
     div()
         .id(id)
         .w(px(size))
@@ -59,12 +75,32 @@ pub fn icon_button(id: impl Into<ElementId>, glyph: Icon, active: bool, size: f3
         .rounded(px(10.))
         .cursor_pointer()
         .flex_shrink_0()
-        .bg(if active { theme::FG } else { theme::alpha(theme::FG, 0.0) })
-        .hover(move |s| if active { s } else { s.bg(theme::SURFACE_HOVER) })
-        .active(move |s| if active { s } else { s.bg(theme::SURFACE_PRESS) })
+        .bg(if active {
+            theme::FG
+        } else {
+            theme::alpha(theme::FG, 0.0)
+        })
+        .hover(move |s| {
+            if active {
+                s
+            } else {
+                s.bg(theme::SURFACE_HOVER)
+            }
+        })
+        .active(move |s| {
+            if active {
+                s
+            } else {
+                s.bg(theme::SURFACE_PRESS)
+            }
+        })
         .child(icons::icon(
             glyph,
-            if active { theme::ACCENT_INK } else { theme::FG_DIM },
+            if active {
+                theme::ACCENT_INK
+            } else {
+                theme::FG_DIM
+            },
             size * 0.5,
         ))
 }
@@ -75,7 +111,11 @@ pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Di
 }
 
 /// Small icon button for card overlays, with optional active/highlight state.
-pub fn overlay_icon_button_active(id: impl Into<ElementId>, glyph: Icon, active: bool) -> Stateful<Div> {
+pub fn overlay_icon_button_active(
+    id: impl Into<ElementId>,
+    glyph: Icon,
+    active: bool,
+) -> Stateful<Div> {
     div()
         .id(id)
         .w(px(26.))
@@ -99,11 +139,7 @@ pub fn overlay_icon_button_active(id: impl Into<ElementId>, glyph: Icon, active:
         })
         .child(icons::icon(
             glyph,
-            if active {
-                theme::ACCENT_INK
-            } else {
-                theme::FG
-            },
+            if active { theme::ACCENT_INK } else { theme::FG },
             14.0,
         ))
 }
@@ -156,7 +192,11 @@ pub fn menu_row_owned(id: impl Into<ElementId>, label: impl Into<SharedString>) 
 /// A dropdown field: a button showing the current value with a
 /// chevron. The parent owns the open state and builds the option
 /// menu beneath it when open (see `dropdown_row` in settings).
-pub fn dropdown(id: impl Into<ElementId>, current: impl Into<SharedString>, open: bool) -> Stateful<Div> {
+pub fn dropdown(
+    id: impl Into<ElementId>,
+    current: impl Into<SharedString>,
+    open: bool,
+) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(28.))
@@ -184,7 +224,11 @@ pub fn toggle(id: &'static str, on: bool) -> Stateful<Div> {
         .w(px(40.))
         .h(px(22.))
         .rounded_full()
-        .bg(if on { theme::ACCENT } else { theme::alpha(theme::FG, 0.16) })
+        .bg(if on {
+            theme::ACCENT
+        } else {
+            theme::alpha(theme::FG, 0.16)
+        })
         .cursor_pointer()
         .child(
             div()
@@ -228,82 +272,6 @@ pub fn text_field(id: impl Into<ElementId>, text: String, active: bool) -> State
         .cursor_text()
         .child(text)
 }
-
-/// GPUI paints an `Arc<Image>` by decoding it into a `RenderImage` and
-/// caching both halves forever: `fetch_asset` never evicts the app-wide
-/// decode cache, and the sprite-atlas tile (keyed by the RenderImage's
-/// unique id) is only removed by an explicit `drop_image`, which the
-/// `ImageSource::Image` path never calls. Feeding unique images — every
-/// capture's frame, thumb and loupe — therefore leaks GPU memory
-/// without bound. The escape hatch is `ImageSource::Render`: the app
-/// constructs the `RenderImage` itself, so it can free the atlas tile
-/// with `cx.drop_image` when the surface closes. The pixel copy is also
-/// cheaper than the old path (BMP encode + decode round trip).
-///
-/// `rgba` is a tightly packed RGBA8 buffer; GPUI's atlas wants BGRA.
-/// RGBA→BGRA in place, one u32 per pixel: the rotate form vectorizes;
-/// a byte-wise swap does not.
-#[inline]
-pub(crate) fn swizzle_rgba_bgra(chunk: &mut [u8]) {
-    for px in chunk.chunks_exact_mut(4) {
-        let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
-        let bgr = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-        px.copy_from_slice(&bgr.to_le_bytes());
-    }
-}
-
-pub fn render_image_from_rgba(width: u32, height: u32, rgba: &[u8]) -> std::sync::Arc<gpui::RenderImage> {
-    // Uninit capacity, not a zeroed vec: the fused copy+swizzle writes
-    // every byte, and a multi-MB memset before a multi-MB fill is a
-    // wasted pass. On failure the buffer drops without being read.
-    let mut data: Vec<u8> = Vec::with_capacity(rgba.len());
-    #[allow(clippy::uninit_vec)]
-    unsafe { data.set_len(rgba.len()) };
-    // Fused copy+swizzle, banded across threads once the buffer is
-    // large enough to pay for the spawn (the 152px loupe, rebuilt
-    // every mousemove, stays inline).
-    let row = width as usize * 4;
-    iris_lib::par::par_bands_mut(&mut data, row, |dst, start| {
-        dst.copy_from_slice(&rgba[start..start + dst.len()]);
-        swizzle_rgba_bgra(dst);
-    });
-    let buf = image::RgbaImage::from_raw(width, height, data).expect("rgba buffer size");
-    std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]))
-}
-
-/// Same as `render_image_from_rgba` but takes ownership of the buffer
-/// and swizzles in place: no second copy of a multi-MB frame. The
-/// overlay uses this so the frozen frame's only CPU copy IS the
-/// RenderImage's buffer.
-pub fn render_image_from_rgba_owned(width: u32, height: u32, mut rgba: Vec<u8>) -> std::sync::Arc<gpui::RenderImage> {
-    let row = width as usize * 4;
-    iris_lib::par::par_bands_mut(&mut rgba, row, |band, _| {
-        swizzle_rgba_bgra(band);
-    });
-    let buf = image::RgbaImage::from_raw(width, height, rgba).expect("rgba buffer size");
-    std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buf)]))
-}
-/// Same construction from encoded PNG bytes (thumbs, editor base).
-pub fn render_image_from_png(bytes: &[u8]) -> Option<std::sync::Arc<gpui::RenderImage>> {
-    let mut data = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
-        .ok()?
-        .into_rgba8();
-    // Same banding as the rgba path: a 4K editor base is a 33MB
-    // swizzle, too big for one thread.
-    let row = data.width() as usize * 4;
-    iris_lib::par::par_bands_mut(data.as_mut(), row, |band, _| {
-        swizzle_rgba_bgra(band);
-    });
-    Some(std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(data)])))
-}
-
-/// Free a `RenderImage`'s sprite-atlas tile across every window.
-/// Release between frames (event handlers) or via `cx.defer` from
-/// render; dropping mid-paint blanks the frame.
-pub fn release_render(image: &std::sync::Arc<gpui::RenderImage>, cx: &mut App) {
-    cx.drop_image(image.clone(), None);
-}
-
 /// Transient status line, `left` px from the window's left edge,
 /// bottom-aligned, frosted.
 pub fn status_pill(text: &str, left: f32) -> Div {
@@ -484,51 +452,4 @@ pub fn shortcuts_sheet(rows: Vec<(&'static str, String)>) -> Stateful<Div> {
                 )
                 .child(list),
         )
-}
-
-// WHY: the class closed here is "the swizzle scrambles channels":
-// every capture, thumbnail, and RenderImage passes through it, so a
-// wrong lane silently recolors or drops alpha across the whole app.
-// The involution case matters because the same function is applied
-// symmetrically (RGBA->BGRA on the way in, BGRA->RGBA on the way out).
-// Not covered: the banding that calls it, which par.rs tests own.
-#[cfg(test)]
-mod tests {
-    use super::swizzle_rgba_bgra;
-
-    #[test]
-    fn swizzle_swaps_red_and_blue_keeps_green_alpha() {
-        let mut px = vec![0x11, 0x22, 0x33, 0x44];
-        swizzle_rgba_bgra(&mut px);
-        assert_eq!(px, vec![0x33, 0x22, 0x11, 0x44]);
-    }
-
-    #[test]
-    fn swizzle_is_an_involution() {
-        let original: Vec<u8> = (0..64).map(|i| (i * 37 + 11) as u8).collect();
-        let mut buf = original.clone();
-        swizzle_rgba_bgra(&mut buf);
-        swizzle_rgba_bgra(&mut buf);
-        assert_eq!(buf, original);
-    }
-
-    #[test]
-    fn swizzle_handles_many_pixels() {
-        // A multi-pixel buffer: each pixel swizzles independently, no
-        // cross-lane bleed.
-        let mut buf = vec![
-            0xAA, 0xBB, 0xCC, 0xDD, // px0
-            0x01, 0x02, 0x03, 0x04, // px1
-            0xFF, 0x00, 0x80, 0x7F, // px2
-        ];
-        swizzle_rgba_bgra(&mut buf);
-        assert_eq!(
-            buf,
-            vec![
-                0xCC, 0xBB, 0xAA, 0xDD, // px0
-                0x03, 0x02, 0x01, 0x04, // px1
-                0x80, 0x00, 0xFF, 0x7F, // px2
-            ]
-        );
-    }
 }
