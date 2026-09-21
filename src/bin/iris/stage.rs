@@ -121,9 +121,20 @@ struct Swipe {
 fn prepare_thumb(
     path: &Path,
 ) -> Result<(Arc<RenderImage>, Arc<Vec<u8>>, (f32, f32)), String> {
-    let img = image::open(path)
-        .map_err(|e| format!("cannot open {}: {e}", path.display()))?
-        .to_rgba8();
+    // Reuse the decoded pixels finalize stashed: a fresh capture's toast
+    // skips the ~100ms 4K PNG re-decode entirely. peek (not take) leaves
+    // the slot for the editor's annotate path, which reads it later. The
+    // borrow feeds thumbnail() directly, so no 33MB clone either.
+    let stashed = crate::pipeline::peek_decoded(path);
+    let owned;
+    let img: &image::RgbaImage = if let Some(arc) = &stashed {
+        arc
+    } else {
+        owned = image::open(path)
+            .map_err(|e| format!("cannot open {}: {e}", path.display()))?
+            .to_rgba8();
+        &owned
+    };
     let (iw, ih) = (img.width() as f32, img.height() as f32);
     let scale = (MAX_W / iw).min(MAX_H / ih).min(1.0);
     let (w, h) = ((iw * scale).round().max(1.0), (ih * scale).round().max(1.0));
@@ -131,9 +142,9 @@ fn prepare_thumb(
     // convolution resize: on a 4K capture a straight Lanczos3 resize
     // convolves 33MB to produce a ~216px card.
     let rgba = if scale < 1.0 {
-        image::imageops::thumbnail(&img, w as u32, h as u32)
+        image::imageops::thumbnail(img, w as u32, h as u32)
     } else {
-        img
+        img.clone()
     };
     // thumbnail() can land a pixel off the computed (w, h) on a
     // rounding boundary; report the real dims so the card layout
@@ -1052,5 +1063,29 @@ mod tests {
         }
         assert!(stage.closing_at.is_none());
         assert!(stage.pinned);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn prepare_thumb_reuses_stashed_decode() {
+        // The toast must read finalize's stashed pixels, not re-decode
+        // the PNG. Prove it by stashing a different color than the file
+        // holds: the thumb must match the stash, not the disk bytes.
+        let dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("cap.png");
+        // On-disk PNG is red; the stash is green.
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 255]))
+            .save(&img_path)
+            .unwrap();
+        let stashed = std::sync::Arc::new(image::RgbaImage::from_pixel(
+            8,
+            8,
+            image::Rgba([0, 255, 0, 255]),
+        ));
+        crate::pipeline::stash_decoded(img_path.clone(), stashed);
+        let (_thumb, thumb_rgba, _dims) = prepare_thumb(&img_path).unwrap();
+        // First pixel green proves the stash fed the thumb, not the
+        // red PNG on disk.
+        assert_eq!(&thumb_rgba[..4], &[0, 255, 0, 255]);
     }
 }

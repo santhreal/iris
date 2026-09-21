@@ -48,6 +48,18 @@ pub fn take_decoded(path: &Path) -> Option<std::sync::Arc<image::RgbaImage>> {
     }
 }
 
+/// Read the stashed image for `path` without consuming it: the toast's
+/// thumbnail and the editor's annotate path both reuse the same decode,
+/// so the first reader must not clear the slot for the second.
+pub fn peek_decoded(path: &Path) -> Option<std::sync::Arc<image::RgbaImage>> {
+    let guard = DECODED.lock();
+    if guard.as_ref().map(|(p, _)| p.as_path()) == Some(path) {
+        guard.as_ref().map(|(_, img)| img.clone())
+    } else {
+        None
+    }
+}
+
 /// Run `f` against the shared clipboard. An unavailable clipboard is
 /// an honest error, never a panic mid-capture.
 pub fn with_clipboard(
