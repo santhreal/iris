@@ -25,6 +25,29 @@ pub static CLIPBOARD: std::sync::LazyLock<Option<parking_lot::Mutex<arboard::Cli
             .ok()
     });
 
+/// The most recent capture's decoded pixels, stashed so the editor
+/// skips re-decoding the PNG finalize just wrote. Single-slot: only
+/// the latest capture is a plausible annotate target, and holding one
+/// 4K frame is bounded. take_decoded clears it on read.
+static DECODED: parking_lot::Mutex<Option<(PathBuf, std::sync::Arc<image::RgbaImage>)>> =
+    parking_lot::Mutex::new(None);
+
+/// Stash a capture's decoded image for the editor's decode path.
+pub fn stash_decoded(path: PathBuf, img: std::sync::Arc<image::RgbaImage>) {
+    *DECODED.lock() = Some((path, img));
+}
+
+/// Take the stashed image if it is for `path`; None on a miss or a
+/// different capture.
+pub fn take_decoded(path: &Path) -> Option<std::sync::Arc<image::RgbaImage>> {
+    let mut guard = DECODED.lock();
+    if guard.as_ref().map(|(p, _)| p.as_path()) == Some(path) {
+        guard.take().map(|(_, img)| img)
+    } else {
+        None
+    }
+}
+
 /// Run `f` against the shared clipboard. An unavailable clipboard is
 /// an honest error, never a panic mid-capture.
 pub fn with_clipboard(
@@ -166,6 +189,11 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
     // a 4K frame, and a screenshot's redundancy means Fast still
     // compresses well. The capture is durable sooner and the toast's
     // thumbnail source exists earlier.
+    let img = std::sync::Arc::new(img);
+    // Stash the decoded pixels: the editor's annotate path re-reads
+    // and re-decodes the PNG just written, a ~100ms+ 4K decode the
+    // stash skips entirely.
+    stash_decoded(path.clone(), img.clone());
     let mut png = std::io::Cursor::new(Vec::new());
     image::codecs::png::PngEncoder::new_with_quality(
         &mut png,
@@ -188,7 +216,7 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
     // re-encodes the pixels to PNG at arboard's default compression,
     // which is slower than the file encode above: it runs on its own
     // thread so the toast does not wait on a second encode.
-    let img = std::sync::Arc::new(img);
+    // img is already Arc'd above; the clipboard thread shares it.
     if cfg.copy_to_clipboard {
         let img = img.clone();
         std::thread::Builder::new()

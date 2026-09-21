@@ -415,18 +415,27 @@ pub fn open(
                 let decoded = cx
                     .background_executor()
                     .spawn(async move {
-                        let png = std::fs::read(&decode_path).map_err(|e| {
-                            format!("read {}: {e}", decode_path.display())
-                        })?;
-                        let i = image::load_from_memory(&png)
-                            .map_err(|e| format!("decode {}: {e}", decode_path.display()))?;
-                        let img = i.to_rgba8();
+                        // The capture pipeline stashes the decoded
+                        // pixels it just encoded; a hit skips the PNG
+                        // read+decode entirely.
+                        let img = match crate::pipeline::take_decoded(&decode_path) {
+                            Some(img) => img,
+                            None => {
+                                let png = std::fs::read(&decode_path).map_err(|e| {
+                                    format!("read {}: {e}", decode_path.display())
+                                })?;
+                                let i = image::load_from_memory(&png).map_err(|e| {
+                                    format!("decode {}: {e}", decode_path.display())
+                                })?;
+                                Arc::new(i.to_rgba8())
+                            }
+                        };
                         // base and composite share one buffer: the
                         // eager clone this replaced copied 33MB on
                         // the decode thread for a split the first
                         // mutation pays through make_mut anyway —
                         // and a crop-then-save never pays it at all.
-                        let base = Arc::new(img);
+                        let base = img;
                         let composite = base.clone();
                         let render = crate::widgets::render_image_from_rgba(
                             composite.width(),
