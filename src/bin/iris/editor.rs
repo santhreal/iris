@@ -707,10 +707,19 @@ fn restore_region(
     let stride = base.width() as usize * 4;
     let src = base.as_raw();
     let dst: &mut [u8] = composite.as_mut();
-    for row in 0..h as usize {
-        let off = (y as usize + row) * stride + x as usize * 4;
-        dst[off..off + w as usize * 4].copy_from_slice(&src[off..off + w as usize * 4]);
-    }
+    // Band the row copies: a large dirty region (a big blur, a
+    // whole-image undo) is an O(area) memcpy that splits across cores.
+    let (x, y, w, h) = (x as usize, y as usize, w as usize, h as usize);
+    let span = w * 4;
+    iris_lib::par::par_bands_mut(dst, stride, |band, start| {
+        let first_row = start / stride;
+        let band_rows = band.len() / stride;
+        for row in first_row.max(y)..(first_row + band_rows).min(y + h) {
+            let local = (row - first_row) * stride + x * 4;
+            let off = row * stride + x * 4;
+            band[local..local + span].copy_from_slice(&src[off..off + span]);
+        }
+    });
 }
 
 /// The rect an action can paint or sample, in image pixels: its
@@ -808,7 +817,14 @@ fn clamp_region(
         let needs_restore = !Arc::ptr_eq(&self.base, &self.composite);
         let composite = Arc::make_mut(&mut self.composite);
         if needs_restore {
-            composite.copy_from_slice(&self.base);
+            // A full-image restore is a 33MB memcpy on a 4K capture;
+            // band it so undo/crop/transform rebuilds split across
+            // cores instead of stalling the UI thread on one.
+            let dst: &mut [u8] = composite.as_mut();
+            let src = self.base.as_raw();
+            iris_lib::par::par_bands_mut(dst, 1 << 20, |band, start| {
+                band.copy_from_slice(&src[start..start + band.len()]);
+            });
         }
         Self::replay_actions(composite, &mut self.actions.borrow_mut(), 0);
     }
