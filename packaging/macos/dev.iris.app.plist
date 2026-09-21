@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  iris LaunchAgent for login autostart
+  Reference: packaging/CONTRACT.md
+
+  Install:
+    mkdir -p ~/Library/LaunchAgents
+    cp dev.iris.app.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/dev.iris.app.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/dev.iris.app.plist
+    rm -f ~/Library/LaunchAgents/dev.iris.app.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.iris.app</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/iris.app/Contents/MacOS/iris</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+</dict>
+</plist>

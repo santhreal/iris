@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=iris (Daemon)
+GenericName=Screenshot & Screen Recorder Daemon
+Comment=Start iris screen-capture daemon at login (tray, global hotkeys, IPC listener)
+Exec=iris
+Icon=iris
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2
+X-KDE-autostart-after=panel
+StartupNotify=false
+NoDisplay=true

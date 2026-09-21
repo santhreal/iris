@@ -98,6 +98,31 @@ impl Settings {
         cx.notify();
     }
 
+    /// Check GitHub for a newer release on a background thread and
+    /// report the result in the status pill. The network call never
+    /// touches the UI loop.
+    pub(super) fn check_updates(&mut self, cx: &mut Context<Self>) {
+        self.status = Some("checking…".to_string());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::update::check() })
+                .await;
+            let msg = match result {
+                Ok(Some(info)) => format!("update available: {}", info.version),
+                Ok(None) => "up to date".to_string(),
+                Err(e) => e,
+            };
+            this.update(cx, |this, cx| {
+                this.status = Some(msg);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Format a pressed keystroke the way config.toml stores hotkeys:
     /// "Ctrl+Shift+R", "Print", "Escape", "Enter".
     pub(super) fn format_keystroke(ev: &KeyDownEvent) -> Option<String> {

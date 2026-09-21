@@ -1,0 +1,34 @@
+// Windows resources for iris.exe: the app icon and version metadata.
+// embed-resource compiles this into the binary at build time.
+
+#include <windows.h>
+
+IDI_ICON1 ICON "..\\icons\\iris.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS__WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "Santh"
+            VALUE "FileDescription",  "iris - screenshot and screen recording"
+            VALUE "FileVersion",      "0.1.0"
+            VALUE "InternalName",     "iris"
+            VALUE "OriginalFilename", "iris.exe"
+            VALUE "ProductName",      "iris"
+            VALUE "ProductVersion",   "0.1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

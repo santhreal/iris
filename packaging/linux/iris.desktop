@@ -1,0 +1,33 @@
+[Desktop Entry]
+Type=Application
+Name=iris
+GenericName=Screenshot & Screen Recorder
+Comment=Screenshot and screen-recording utility
+Exec=iris --home
+Icon=iris
+Terminal=false
+Categories=Utility;
+StartupWMClass=iris
+StartupNotify=true
+Keywords=screenshot;screen;capture;recorder;snip;record;video;
+Actions=Capture;Record;Library;Settings;
+
+[Desktop Action Capture]
+Name=Capture Region
+Exec=iris --capture
+Icon=iris
+
+[Desktop Action Record]
+Name=Record Screen
+Exec=iris --record-window
+Icon=iris
+
+[Desktop Action Library]
+Name=Open Library
+Exec=iris --library
+Icon=iris
+
+[Desktop Action Settings]
+Name=Settings
+Exec=iris --settings
+Icon=iris

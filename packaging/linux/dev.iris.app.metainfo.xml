@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.iris.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>iris</name>
+  <summary>Screenshot and screen-recording utility</summary>
+  <description>
+    <p>
+      iris is a native, lightweight screen capture and screen recording utility
+      built with GPUI. It features a background daemon with tray controls,
+      global hotkeys, and an IPC listener, paired with region capture,
+      window capture, screen recording via PipeWire, and an annotation editor.
+    </p>
+  </description>
+  <launchable type="desktop-id">iris.desktop</launchable>
+  <url type="homepage">https://github.com/santhreal/iris</url>
+  <url type="bugtracker">https://github.com/santhreal/iris/issues</url>
+  <developer id="dev.iris">
+    <name>Santh</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>iris</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-09-21"/>
+  </releases>
+</component>

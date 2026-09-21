@@ -33,6 +33,40 @@ you look away.
 
 ## Install
 
+Download an installer from the
+[releases](https://github.com/santhreal/iris/releases) page. Each asset
+has a `.sha256` checksum beside it.
+
+### Windows
+
+Run `iris-<ver>-windows-x86_64-setup.exe`. The installer is per-user
+(no admin), puts `iris.exe` in `%LOCALAPPDATA%\Programs\iris`, adds a
+Start Menu shortcut, and registers iris to start at login. Uninstall
+from Add/Remove Programs.
+
+### macOS
+
+Open `iris-<ver>-macos-universal.dmg` and drag `iris.app` to
+Applications. iris is a menu-bar app (`LSUIElement`), so it does not
+appear in the Dock; control it from the status item. To start it at
+login, install the LaunchAgent:
+
+```sh
+mkdir -p ~/Library/LaunchAgents
+cp /Applications/iris.app/Contents/Resources/dev.iris.app.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/dev.iris.app.plist
+```
+
+### Linux
+
+Debian/Ubuntu: `sudo apt install ./iris-<ver>-linux-x86_64.deb`.
+Fedora/RHEL: `sudo dnf install ./iris-<ver>-linux-x86_64.rpm`.
+Anywhere else: make `iris-<ver>-linux-x86_64.AppImage` executable and
+run it. The deb/rpm install a `.desktop` launcher and an XDG autostart
+entry; the AppImage is self-contained.
+
+### From source
+
 Requires Rust and ffmpeg on `PATH`.
 
 ```sh
@@ -43,6 +77,15 @@ The binary is `iris`. Run it once to start the daemon (tray, global
 hotkeys); later invocations forward flags to the running instance.
 
 For development: `cargo run`.
+
+## Updates
+
+`iris --check-update` reports whether a newer release exists.
+`iris --update` downloads the platform asset and applies it: the NSIS
+installer on Windows, a `.app` swap on macOS, an in-place AppImage
+replace on Linux. A deb/rpm install updates through the package
+manager instead. The Settings window has a Check-for-updates button
+that reports through the status pill.
 
 ## Configuration
 
@@ -82,6 +125,9 @@ one process.
 | `iris --settings` | open the settings window |
 | `iris --annotate <file>` | edit an existing capture |
 | `iris --quit` | stop the daemon |
+| `iris --version` | print the version and exit |
+| `iris --check-update` | report whether a newer release exists |
+| `iris --update` | download and apply the latest release |
 
 ## Keys
 

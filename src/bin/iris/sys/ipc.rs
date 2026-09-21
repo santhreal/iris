@@ -63,6 +63,31 @@ pub fn forward_if_running(args: &[String]) -> bool {
     spawn_detached_daemon() && forward_when_ready(args)
 }
 
+/// Send `args` to a running daemon without spawning one. Returns true
+/// only when a daemon accepted the payload. Unlike
+/// `forward_if_running`, a missing daemon is a no-op — used by the
+/// updater to stop the old daemon before replacing the binary.
+pub fn send_to_daemon(args: &[String]) -> bool {
+    if let Ok(mut stream) = LocalSocketStream::connect(socket_name()) {
+        return stream.write_all(args.join("\n").as_bytes()).is_ok();
+    }
+    false
+}
+
+/// Wait until no daemon answers the socket (it exited), up to `ms`
+/// milliseconds. The updater polls this after sending `--quit` so the
+/// binary is free to overwrite before the swap.
+pub fn wait_for_daemon_exit(ms: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < deadline {
+        if LocalSocketStream::connect(socket_name()).is_err() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
 /// Spawn the daemon as a detached child: stdio to null, no console
 /// window on Windows, so it survives this process's exit and never
 /// holds the caller's terminal. The child runs `main` with no args,

@@ -392,6 +392,25 @@ impl Render for Settings {
             ],
         ));
 
+        // Updates section: current version + a manual check. The check
+        // runs off the UI loop and reports through the status pill.
+        let check_btn = crate::widgets::button("check-update", "Check for updates", false)
+            .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx)));
+        form = form.child(self.section(
+            "Updates",
+            vec![
+                self.row_shell(
+                    "Version",
+                    div()
+                        .text_sm()
+                        .text_color(theme::FG_DIM)
+                        .child(env!("CARGO_PKG_VERSION").to_string()),
+                )
+                .into_any_element(),
+                self.row_shell("Latest release", check_btn).into_any_element(),
+            ],
+        ));
+
         form = form.child(
             div().flex().justify_start().pt(px(4.)).child(
                 crate::widgets::button("reset-defaults", "Reset to defaults", false)

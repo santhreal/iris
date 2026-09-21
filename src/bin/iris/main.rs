@@ -21,6 +21,9 @@
 //!   --annotate <file>    edit an existing capture
 //!   --toast <file.png>   debug: show the toast stage for an existing file
 //!   --quit               ask the daemon to exit
+//!   --version            print the version and exit
+//!   --check-update       report whether a newer release exists
+//!   --update             download and apply the latest release
 
 #[cfg(target_os = "linux")]
 mod chip;
@@ -38,6 +41,7 @@ mod settings;
 mod stage;
 mod sys;
 mod theme;
+mod update;
 mod widgets;
 #[cfg(target_os = "linux")]
 mod xwin;
@@ -48,6 +52,42 @@ fn main() {
     iris_lib::log::init();
     // Skip argv[0]; daemon::parse_args handles the flags.
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Informational and self-update flags run in this process, not the
+    // daemon: they print to the caller's stdout and `--update` replaces
+    // the binary, so forwarding them to a running daemon would both
+    // hide the output and let the daemon overwrite its own exe.
+    if args.iter().any(|a| a == "--version") {
+        println!("iris {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    if args.iter().any(|a| a == "--check-update") {
+        match update::check() {
+            Ok(Some(info)) => println!("iris: update available: {}", info.version),
+            Ok(None) => println!("iris: up to date ({})", env!("CARGO_PKG_VERSION")),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if args.iter().any(|a| a == "--update") {
+        let result = match update::check() {
+            Ok(Some(info)) => update::apply(&info),
+            Ok(None) => {
+                println!("iris: up to date ({})", env!("CARGO_PKG_VERSION"));
+                Ok(())
+            }
+            Err(e) => Err(e),
+        };
+        if let Err(e) = result {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if sys::ipc::forward_if_running(&args) {
         return;
     }
