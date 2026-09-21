@@ -96,11 +96,13 @@ pub fn play_shutter_sound() {
 /// Save a frame under the config's screenshot template: placeholders
 /// {date} and {time}, numeric suffix on collision.
 fn unique_path(cfg: &Config) -> PathBuf {
-    let now = chrono::Local::now();
+    // One clock read: separate date and time calls could straddle
+    // midnight and write a name that never existed.
+    let (y, mo, d, h, mi, s) = iris_lib::time::local_now();
     let name = cfg
         .screenshot_template
-        .replace("{date}", &now.format("%Y-%m-%d").to_string())
-        .replace("{time}", &now.format("%H-%M-%S").to_string());
+        .replace("{date}", &format!("{y:04}-{mo:02}-{d:02}"))
+        .replace("{time}", &format!("{h:02}-{mi:02}-{s:02}"));
     let path = cfg.screenshots_dir.join(format!("{name}.png"));
     if !path.exists() {
         return path;

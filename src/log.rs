@@ -49,7 +49,7 @@ pub fn line(msg: &str) {
     eprintln!("{msg}");
     let mut guard = LOG_FILE.lock();
     if let Some((f, len)) = guard.as_mut() {
-        let now = chrono::Local::now().format("%H:%M:%S%.3f");
+        let now = crate::time::log_stamp();
         let line = format!("[{now}] {msg}\n");
         if *len + line.len() as u64 > MAX_LOG {
             // Rotate in place: truncate and restart rather than unlink,

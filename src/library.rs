@@ -138,7 +138,7 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
         thumb,
         width,
         height,
-        created_ms: chrono::Local::now().timestamp_millis(),
+        created_ms: crate::time::now_millis(),
     };
     let mut entries = read_store();
     entries.retain(|e| e.path != entry.path);

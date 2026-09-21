@@ -9,7 +9,8 @@ pub mod library;
 pub mod log;
 pub mod ocr;
 pub mod par;
-pub mod thumb;
 pub mod record;
+pub mod thumb;
+pub mod time;
 
 pub use config::Config;

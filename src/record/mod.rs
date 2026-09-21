@@ -218,8 +218,8 @@ pub fn ext_of(path: &Path) -> &str {
 /// and de-duplicating with a numeric suffix. `ext` is the container
 /// extension without a dot ("mp4", "gif", "webm").
 pub fn unique_recording_path(dir: &Path, ext: &str) -> PathBuf {
-    let now = chrono::Local::now();
-    let stem = format!("{}_{}", now.format("%Y-%m-%d"), now.format("%H-%M-%S"));
+    let (y, mo, d, h, mi, s) = crate::time::local_now();
+    let stem = format!("{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}");
     let candidate = dir.join(format!("{stem}.{ext}"));
     if !candidate.exists() {
         return candidate;
@@ -230,7 +230,7 @@ pub fn unique_recording_path(dir: &Path, ext: &str) -> PathBuf {
             return candidate;
         }
     }
-    dir.join(format!("{stem}_{}.{ext}", now.timestamp_millis()))
+    dir.join(format!("{stem}_{}.{ext}", crate::time::now_millis()))
 }
 
 // WHY: the class closed here is "a recording leaks or double-stops": a
