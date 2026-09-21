@@ -1012,17 +1012,17 @@ mod tests {
 
         cfg.toast_position = ToastPosition::BottomLeft;
         cfg.store().unwrap();
-        let (x, y, w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
+        let (x, y, _w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
         assert_eq!((x, y), (MARGIN, 1080.0 - MARGIN - h));
 
         cfg.toast_position = ToastPosition::TopRight;
         cfg.store().unwrap();
-        let (x, y, w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
+        let (x, y, w, _h) = card_rest_rect(1920.0, 1080.0, 400, 280);
         assert_eq!((x, y), (1920.0 - MARGIN - w, MARGIN));
 
         cfg.toast_position = ToastPosition::TopLeft;
         cfg.store().unwrap();
-        let (x, y, w, h) = card_rest_rect(1920.0, 1080.0, 400, 280);
+        let (x, y, _w, _h) = card_rest_rect(1920.0, 1080.0, 400, 280);
         assert_eq!((x, y), (MARGIN, MARGIN));
 
         let _ = Config::default().store();
