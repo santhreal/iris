@@ -138,13 +138,23 @@ fn load_proc<T: Copy>(
     lib: Option<&libloading::Library>,
     name: &str,
 ) -> Result<T, String> {
+    // Every T here is a GL/EGL function pointer, so it is exactly one
+    // pointer wide; transmute_copy carries no size check, so assert the
+    // invariant rather than let a future non-pointer T read out of
+    // bounds.
+    assert_eq!(
+        std::mem::size_of::<T>(),
+        std::mem::size_of::<*const ()>(),
+        "load_proc target {name} is not pointer-sized"
+    );
     if let Some(proc) = egl.get_proc_address(name) {
         return Ok(unsafe { std::mem::transmute_copy(&proc) });
     }
     if let Some(lib) = lib {
         let cname = std::ffi::CString::new(name).map_err(|e| e.to_string())?;
+        // Symbol<T> derefs to T; the value is already the right type.
         if let Ok(sym) = unsafe { lib.get::<T>(cname.as_bytes_with_nul()) } {
-            return Ok(unsafe { std::mem::transmute_copy(&*sym) });
+            return Ok(*sym);
         }
     }
     Err(format!("could not resolve GL/EGL symbol {name}"))
