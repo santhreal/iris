@@ -197,6 +197,11 @@ fn capture_region(cx: &mut App) -> Result<(), String> {
             Ok(false) => return Ok(()),
             Err(e) => {
                 iris_lib::ilog!("iris: capture: pooled handle dead ({e:?}), reopening");
+                // Drop the dead handle from the pool: leaving it means
+                // every later capture clones it, fails update() the
+                // same way, and pays a wasted round trip before the
+                // fresh open.
+                *overlay::POOL.lock() = None;
                 overlay::open_shell(cx, &layout)?
             }
         }
@@ -495,6 +500,10 @@ fn record_region_pick(cx: &mut App) -> Result<(), String> {
             Ok(false) => return Ok(()),
             Err(e) => {
                 iris_lib::ilog!("iris: record-region: pooled handle dead ({e:?}), reopening");
+                // Drop the dead handle from the pool, same as
+                // capture_region: a stale handle fails update() on
+                // every later pick before the fresh open.
+                *overlay::POOL.lock() = None;
                 let h = overlay::open_shell(cx, &layout)?;
                 h.update(cx, |o, _, cx| {
                     o.mode = overlay::OverlayMode::RecordPick;
