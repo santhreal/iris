@@ -6,7 +6,7 @@ use gpui::SharedString;
 use iris_lib::history::Edit;
 
 use super::action::{Action, Tool};
-use super::raster::{pixelated_patch_rgba, rasterize};
+use super::raster::{pixelate_region_bgra, rasterize};
 use super::Editor;
 
 impl Editor {
@@ -39,14 +39,11 @@ impl Editor {
             if w >= 1 && h >= 1 && x < composite.width() && y < composite.height() {
                 let w = w.min(composite.width() - x);
                 let h = h.min(composite.height() - y);
-                // One resample serves the GPU tile and the CPU
-                // pixelation; computing it twice per replayed blur
-                // was two crop+resize+resize chains.
-                if let Ok(patch) = pixelated_patch_rgba(composite, x, y, w, h) {
-                    let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
-                    image::imageops::overlay(composite, &patch, x as i64, y as i64);
-                    action.blur_patch = Some(render);
-                }
+                // One fused pass pixelates the region in place and
+                // returns the BGRA tile for the GPU sprite.
+                let bgra = pixelate_region_bgra(composite, x, y, w, h);
+                let render = crate::widgets::render_image_from_bgra_owned(w, h, bgra);
+                action.blur_patch = Some(render);
             }
         } else {
             rasterize(composite, action, 1.0);

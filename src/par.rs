@@ -21,10 +21,22 @@ pub fn par_bands_mut<T: Send>(
     band_elems: usize,
     f: impl Fn(&mut [T], usize) + Sync + Send,
 ) {
+    par_bands_mut_work(data, band_elems, std::mem::size_of_val(data), f);
+}
+
+/// `par_bands_mut` with an explicit work estimate for the size gate.
+/// Resampling writes a small output but reads a large input: gating on
+/// the output slice would run a 33MB scan inline. `work_bytes` names
+/// the real cost; the band split still comes from `data`.
+pub fn par_bands_mut_work<T: Send>(
+    data: &mut [T],
+    band_elems: usize,
+    work_bytes: usize,
+    f: impl Fn(&mut [T], usize) + Sync + Send,
+) {
     let band_elems = band_elems.max(1);
-    let total_bytes = std::mem::size_of_val(data);
     const PARALLEL_MIN: usize = 1 << 20;
-    if total_bytes < PARALLEL_MIN || data.len() <= band_elems {
+    if work_bytes < PARALLEL_MIN || data.len() <= band_elems {
         let start = 0;
         f(data, start);
         return;

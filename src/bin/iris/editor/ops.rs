@@ -6,7 +6,7 @@ use gpui::*;
 use iris_lib::history::{self, Edit};
 
 use super::action::{stroke_base, text_size, Action, Tool, Transform};
-use super::raster::{pixelated_patch_rgba, png_bytes, rasterize};
+use super::raster::{pixelate_region_bgra, png_bytes, rasterize};
 use super::Editor;
 use crate::pipeline;
 
@@ -60,24 +60,20 @@ impl Editor {
             if w == 0 || h == 0 {
                 return;
             }
-            match pixelated_patch_rgba(&self.composite, x, y, w, h) {
-                Ok(patch) => {
-                    // One resample serves both consumers: the GPU tile
-                    // the canvas shows and the CPU pixelation later
-                    // blurs sample through. Computing it twice per
-                    // commit was two crop+resize+resize chains.
-                    let render = crate::widgets::render_image_from_rgba(w, h, patch.as_raw());
-                    image::imageops::overlay(
-                        Arc::make_mut(&mut self.composite),
-                        &patch,
-                        x as i64,
-                        y as i64,
-                    );
-                    action.blur_patch = Some(render);
-                    action.blur_rect = (x as f32, y as f32, w as f32, h as f32);
-                }
-                Err(_) => return,
-            }
+            // One fused pass pixelates the composite region in place
+            // and returns the same pixels as a BGRA tile: the GPU
+            // sprite and the saved pixels can never diverge, and the
+            // old crop+resize+resize+overlay chain is gone.
+            let bgra = pixelate_region_bgra(
+                Arc::make_mut(&mut self.composite),
+                x,
+                y,
+                w,
+                h,
+            );
+            let render = crate::widgets::render_image_from_bgra_owned(w, h, bgra);
+            action.blur_patch = Some(render);
+            action.blur_rect = (x as f32, y as f32, w as f32, h as f32);
         } else {
             rasterize(Arc::make_mut(&mut self.composite), &action, 1.0);
         }

@@ -203,3 +203,53 @@ fn highlight_joint_blends_once() {
     );
     assert!(joint[0] < 110, "joint rgb {} shows compounding", joint[0]);
 }
+
+#[test]
+fn pixelate_region_averages_cells_and_swizzles_bgra() {
+    // WHY: the fused mosaic replaced crop+Triangle+Nearest+overlay.
+    // The contract: every output pixel is its cell's box average, the
+    // composite region and the returned BGRA tile carry the same
+    // pixels, and pixels outside the region are untouched.
+    use super::raster::pixelate_region_bgra;
+    // 48x24 image: left half red, right half blue, alpha 255.
+    let mut img = image::RgbaImage::from_fn(48, 24, |x, _| {
+        if x < 24 {
+            image::Rgba([200, 0, 0, 255])
+        } else {
+            image::Rgba([0, 0, 200, 255])
+        }
+    });
+    // Region (0,0,48,24) -> cells 4x2 of 12x12. Cells 0-1 red, 2-3 blue.
+    let bgra = pixelate_region_bgra(&mut img, 0, 0, 48, 24);
+    assert_eq!(bgra.len(), 48 * 24 * 4);
+    // Cell interior: (6,6) is cell (0,0) = red.
+    assert_eq!(img.get_pixel(6, 6).0, [200, 0, 0, 255]);
+    // BGRA tile at same pixel: B and R swapped.
+    let i = (6 * 48 + 6) * 4;
+    assert_eq!(&bgra[i..i + 4], &[0, 0, 200, 255]);
+    // (30,6) is cell (2,0) = blue.
+    assert_eq!(img.get_pixel(30, 6).0, [0, 0, 200, 255]);
+    let i = (6 * 48 + 30) * 4;
+    assert_eq!(&bgra[i..i + 4], &[200, 0, 0, 255]);
+}
+
+#[test]
+fn pixelate_region_respects_offsets_and_leaves_outside() {
+    use super::raster::pixelate_region_bgra;
+    let mut img = image::RgbaImage::from_fn(32, 32, |x, y| {
+        image::Rgba([(x * 8) as u8, (y * 8) as u8, 0, 255])
+    });
+    let before = img.clone();
+    // Region (8,8,16,16): one 16x16 cell (16/12 -> sw=sh=1).
+    let bgra = pixelate_region_bgra(&mut img, 8, 8, 16, 16);
+    // The single cell averages x in 8..24, y in 8..24:
+    // mean of (x*8) over 8..24 = 8*15.5 = 124; same for y.
+    assert_eq!(img.get_pixel(12, 12).0, [124, 124, 0, 255]);
+    assert_eq!(img.get_pixel(23, 23).0, [124, 124, 0, 255]);
+    // Outside the region is untouched.
+    assert_eq!(img.get_pixel(4, 4), before.get_pixel(4, 4));
+    assert_eq!(img.get_pixel(28, 28), before.get_pixel(28, 28));
+    // Tile is the region only: 16x16 BGRA of the averaged cell.
+    assert_eq!(bgra.len(), 16 * 16 * 4);
+    assert_eq!(&bgra[0..4], &[0, 124, 124, 255]);
+}
