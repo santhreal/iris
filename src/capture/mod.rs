@@ -57,6 +57,22 @@ pub fn backend() -> Result<Box<dyn CaptureBackend>, String> {
     Err("no usable capture backend for this session".to_string())
 }
 
+/// Root-space pixels per logical window pixel. Root space (monitors,
+/// window rects, frames) is physical; GPUI window bounds are logical.
+/// X11 root space is already what GPUI's X11 backend uses.
+pub fn root_scale() -> f32 {
+    #[cfg(windows)]
+    {
+        return windows::root_scale();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return macos::root_scale();
+    }
+    #[allow(unreachable_code)]
+    1.0
+}
+
 /// Per-monitor rectangles in root space, primary first. Used to slice
 /// the frozen frame per monitor and to place windows on the right
 /// display. Empty when the platform cannot enumerate monitors.
@@ -97,7 +113,8 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
 }
 
 /// The focused window's rect in root space, decorations included.
-/// X11 reads _NET_ACTIVE_WINDOW; Windows uses GetForegroundWindow.
+/// X11 reads _NET_ACTIVE_WINDOW; Windows uses GetForegroundWindow;
+/// macOS takes the frontmost on-screen window.
 pub fn active_window_rect() -> Result<WinRect, String> {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
@@ -106,6 +123,10 @@ pub fn active_window_rect() -> Result<WinRect, String> {
     #[cfg(windows)]
     {
         return windows::active_window_rect();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return macos::active_window_rect();
     }
     #[allow(unreachable_code)]
     Err("focused-window capture is not supported on this platform".to_string())

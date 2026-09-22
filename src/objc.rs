@@ -36,8 +36,8 @@ extern "C" {
     fn objc_msgSend();
 }
 
-/// Foundation must be loaded for its classes to resolve through
-/// `objc_getClass`; AppKit pulls it in for the pasteboard and tray.
+// Foundation must be loaded for its classes to resolve through
+// `objc_getClass`; AppKit pulls it in for the pasteboard and tray.
 #[link(name = "AppKit", kind = "framework")]
 extern "C" {}
 

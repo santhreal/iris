@@ -24,10 +24,9 @@ pub(super) fn wayland() -> bool {
 }
 
 pub fn layout() -> ShellLayout {
-    #[cfg(target_os = "linux")]
+    // Linux Wayland has no window list or client placement: the capture
+    // layer reports an error there and the shell opens fullscreen.
     let (monitors, windows) = iris_lib::capture::layout().unwrap_or((Vec::new(), Vec::new()));
-    #[cfg(not(target_os = "linux"))]
-    let (monitors, windows): (Vec<WinRect>, Vec<WinRect>) = (Vec::new(), Vec::new());
     let union = monitors.iter().skip(1).fold(
         monitors.first().copied().unwrap_or(WinRect {
             x: 0,
@@ -103,15 +102,17 @@ fn open_shell_opts(
     // spanning the virtual screen - _NET_WM_STATE_FULLSCREEN would pin
     // it to a single monitor.
     let bounds = {
+        // Root space is physical; window bounds are logical.
+        let s = iris_lib::capture::root_scale();
         let (w, h) = if wayland() {
             cx.primary_display()
                 .map(|d| (d.bounds().size.width, d.bounds().size.height))
                 .unwrap_or((px(1280.0), px(800.0)))
         } else {
-            (px(uw as f32), px(uh as f32))
+            (px(uw as f32 / s), px(uh as f32 / s))
         };
         WindowBounds::Windowed(Bounds {
-            origin: point(px(ux as f32), px(uy as f32)),
+            origin: point(px(ux as f32 / s), px(uy as f32 / s)),
             size: size(w, h),
         })
     };
@@ -182,22 +183,28 @@ fn open_shell_opts(
         )
         .map_err(|e| format!("open overlay window: {e}"))?;
     crate::sys::window::span_after_map(win_id.clone(), ux, uy, uw, uh);
-    // Pooling needs minimize+restore, which Wayland cannot do; the
-    // window is destroyed on park there instead.
-    if !wayland() {
+    // Pooling needs minimize+restore; elsewhere the window is destroyed
+    // on park instead.
+    if poolable() {
         *POOL.lock() = Some((handle, win_id));
     }
     Ok(handle)
+}
+
+/// True where a parked (minimized) overlay can be restored: X11, whose
+/// post-map fixup unminimizes and re-spans it. Wayland has no
+/// unminimize, and Windows and macOS have no restore fixup.
+pub(super) fn poolable() -> bool {
+    cfg!(target_os = "linux") && !wayland()
 }
 
 /// Pre-create the overlay at daemon start and park it into the pool,
 /// so the first capture reuses a live window instead of paying GPUI's
 /// ~130ms renderer init on the hotkey press. The shell maps unfocused
 /// and transparent, then minimizes in the same tick: invisible, and it
-/// never takes input focus. X11 only - Wayland cannot unminimize, so
-/// the pool stays empty there.
+/// never takes input focus. Only where [`poolable`].
 pub fn warmup(cx: &mut App) {
-    if wayland() {
+    if !poolable() {
         return;
     }
     if POOL.lock().is_some() {

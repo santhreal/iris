@@ -216,7 +216,7 @@ fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
         .rev()
         .find_map(|l| {
             l.split('\t')
-                .last()
+                .next_back()
                 .map(str::trim)
                 .filter(|s| s.starts_with('/'))
         })

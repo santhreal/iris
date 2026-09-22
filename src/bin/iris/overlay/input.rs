@@ -4,7 +4,7 @@ use gpui::*;
 use iris_lib::capture::WinRect;
 
 use super::{
-    shell::{close_other_overlays, wayland, ShellLayout},
+    shell::{close_other_overlays, poolable, wayland, ShellLayout},
     Flight, Overlay, OverlayMode, MIN_SIZE,
 };
 use crate::{pipeline, pipeline::Region, stage};
@@ -322,15 +322,15 @@ impl Overlay {
     /// Park the window (minimized) instead of destroying it: the next
     /// capture reuses the live window and skips GPUI's ~130ms init.
     /// Minimize goes through the WM, so no placement constraint can
-    /// fight it, and the GPU surface is freed while iconic. Wayland has
-    /// no unminimize, so the window is destroyed there instead.
+    /// fight it, and the GPU surface is freed while iconic. Where a
+    /// minimized window cannot be restored it is destroyed instead.
     pub(super) fn park(&mut self, window: &mut Window, cx: &mut App) {
         self.release_assets(cx);
         self.hidden = true;
-        if wayland() {
-            window.remove_window();
-        } else {
+        if poolable() {
             window.minimize_window();
+        } else {
+            window.remove_window();
         }
     }
 

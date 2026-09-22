@@ -1,16 +1,93 @@
-// macOS capture via ffmpeg avfoundation. ffmpeg is already the encoder
-// dependency, so this backend adds no crates. It records the whole
-// screen: the interactive picker is not implemented here, and macOS
-// requires Screen Recording permission for the app — the ffmpeg error
-// surfaces when that permission is missing.
+//! macOS capture through CoreGraphics.
+//!
+//! Root space is physical pixels, like the other backends: global
+//! display points scaled by the highest backing scale among the active
+//! displays. `CGWindowListCreateImage` renders a rect spanning several
+//! displays at that same scale, so frames, monitor rects, and window
+//! rects share one coordinate space. Recording still uses ffmpeg's
+//! avfoundation input (`capture_args`).
 #![cfg(target_os = "macos")]
 
-use crate::capture::Frame;
-use std::process::Command;
+use core::ffi::c_void;
 
-/// Screen device for `avfoundation`: ffmpeg indexes the main display as
-/// "1" on the standard device list ("Capture screen 0" is its name on
-/// recent ffmpeg builds; the numeric form is stable across versions).
+use crate::capture::{Frame, WinRect};
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGPoint {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGSize {
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
+}
+
+type CFTypeRef = *const c_void;
+type Ref = *mut c_void;
+
+const K_CG_WINDOW_LIST_ON_SCREEN_ONLY: u32 = 1 << 0;
+const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP: u32 = 1 << 4;
+const K_CG_NULL_WINDOW_ID: u32 = 0;
+const K_CG_WINDOW_IMAGE_DEFAULT: u32 = 0;
+const K_CG_IMAGE_ALPHA_PREMULTIPLIED_LAST: u32 = 1;
+const K_CG_BITMAP_BYTE_ORDER_32_BIG: u32 = 4 << 12;
+const K_CF_NUMBER_SINT32: isize = 3;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGMainDisplayID() -> u32;
+    fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
+    fn CGDisplayBounds(display: u32) -> CGRect;
+    fn CGDisplayCopyDisplayMode(display: u32) -> Ref;
+    fn CGDisplayModeGetPixelWidth(mode: Ref) -> usize;
+    fn CGDisplayModeRelease(mode: Ref);
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+    fn CGWindowListCreateImage(bounds: CGRect, list: u32, window: u32, image: u32) -> Ref;
+    fn CGWindowListCopyWindowInfo(list: u32, relative_to: u32) -> Ref;
+    fn CGRectMakeWithDictionaryRepresentation(dict: CFTypeRef, rect: *mut CGRect) -> bool;
+    fn CGImageGetWidth(image: Ref) -> usize;
+    fn CGImageGetHeight(image: Ref) -> usize;
+    fn CGImageRelease(image: Ref);
+    fn CGColorSpaceCreateDeviceRGB() -> Ref;
+    fn CGColorSpaceRelease(space: Ref);
+    fn CGBitmapContextCreate(
+        data: *mut c_void,
+        width: usize,
+        height: usize,
+        bits_per_component: usize,
+        bytes_per_row: usize,
+        space: Ref,
+        info: u32,
+    ) -> Ref;
+    fn CGContextDrawImage(ctx: Ref, rect: CGRect, image: Ref);
+    fn CGContextRelease(ctx: Ref);
+    static kCGWindowLayer: CFTypeRef;
+    static kCGWindowBounds: CFTypeRef;
+    static kCGWindowOwnerPID: CFTypeRef;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFArrayGetCount(array: Ref) -> isize;
+    fn CFArrayGetValueAtIndex(array: Ref, index: isize) -> CFTypeRef;
+    fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
+    fn CFNumberGetValue(number: CFTypeRef, kind: isize, out: *mut c_void) -> bool;
+    fn CFRelease(cf: CFTypeRef);
+}
+
+/// ffmpeg input arguments for recording the main display.
 pub fn capture_args() -> Vec<String> {
     vec![
         "-f".into(),
@@ -22,32 +99,234 @@ pub fn capture_args() -> Vec<String> {
     ]
 }
 
-pub fn capture_full_frame() -> Result<Frame, String> {
-    let out = std::env::temp_dir().join("iris-grab.png");
-    let _ = std::fs::remove_file(&out);
-    let status = Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error"])
-        .args(capture_args())
-        .args(["-frames:v", "1", "-y"])
-        .arg(&out)
-        .status()
-        .map_err(|e| format!("ffmpeg avfoundation failed to start (is ffmpeg installed?): {e}"))?;
-    if !status.success() {
-        return Err(format!(
-            "ffmpeg avfoundation exited {status}; macOS needs Screen Recording permission for iris"
-        ));
+/// Fail with a corrective message, and raise the system prompt, when
+/// Screen Recording permission is missing. Without it CoreGraphics
+/// returns the wallpaper with every window removed instead of failing.
+fn require_permission() -> Result<(), String> {
+    if unsafe { CGPreflightScreenCaptureAccess() } {
+        return Ok(());
     }
-    let png = std::fs::read(&out).map_err(|e| format!("read grab: {e}"))?;
-    let _ = std::fs::remove_file(&out);
-    let img = image::load_from_memory(&png)
-        .map_err(|e| format!("decode avfoundation frame: {e}"))?
-        .to_rgba8();
-    let (width, height) = img.dimensions();
+    unsafe { CGRequestScreenCaptureAccess() };
+    Err(
+        "iris needs Screen Recording permission: enable it in System Settings > \
+         Privacy & Security > Screen Recording, then restart iris"
+            .to_string(),
+    )
+}
+
+/// Active displays, main display first.
+fn displays() -> Result<Vec<u32>, String> {
+    let mut ids = [0u32; 16];
+    let mut count = 0u32;
+    let err = unsafe { CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) };
+    if err != 0 {
+        return Err(format!("CGGetActiveDisplayList failed ({err})"));
+    }
+    let main = unsafe { CGMainDisplayID() };
+    let mut out: Vec<u32> = ids[..count as usize].to_vec();
+    out.sort_by_key(|&d| d != main);
+    Ok(out)
+}
+
+/// Backing scale of `display`: physical pixel width over point width.
+fn display_scale(display: u32) -> f64 {
+    let points = unsafe { CGDisplayBounds(display) }.size.width;
+    let mode = unsafe { CGDisplayCopyDisplayMode(display) };
+    if mode.is_null() || points <= 0.0 {
+        return 1.0;
+    }
+    let pixels = unsafe { CGDisplayModeGetPixelWidth(mode) } as f64;
+    unsafe { CGDisplayModeRelease(mode) };
+    (pixels / points).max(1.0)
+}
+
+/// Points-to-root-pixels factor: the highest display backing scale.
+fn root_scale_of(displays: &[u32]) -> f64 {
+    displays
+        .iter()
+        .map(|&d| display_scale(d))
+        .fold(1.0, f64::max)
+}
+
+/// Root pixels per GPUI logical pixel (a point).
+pub fn root_scale() -> f32 {
+    displays().map(|d| root_scale_of(&d) as f32).unwrap_or(1.0)
+}
+
+fn to_root(r: CGRect, scale: f64) -> WinRect {
+    WinRect {
+        x: (r.origin.x * scale).round() as i32,
+        y: (r.origin.y * scale).round() as i32,
+        width: (r.size.width * scale).round().max(0.0) as u32,
+        height: (r.size.height * scale).round().max(0.0) as u32,
+    }
+}
+
+fn to_points(r: WinRect, scale: f64) -> CGRect {
+    CGRect {
+        origin: CGPoint {
+            x: r.x as f64 / scale,
+            y: r.y as f64 / scale,
+        },
+        size: CGSize {
+            width: r.width as f64 / scale,
+            height: r.height as f64 / scale,
+        },
+    }
+}
+
+/// Per-monitor rectangles in root pixels, main display first.
+pub fn monitors() -> Result<Vec<WinRect>, String> {
+    let ids = displays()?;
+    let scale = root_scale_of(&ids);
+    Ok(ids
+        .iter()
+        .map(|&d| to_root(unsafe { CGDisplayBounds(d) }, scale))
+        .collect())
+}
+
+/// On-screen normal-layer windows, front to back, excluding iris's own.
+fn windows(scale: f64) -> Result<Vec<WinRect>, String> {
+    let list = unsafe {
+        CGWindowListCopyWindowInfo(
+            K_CG_WINDOW_LIST_ON_SCREEN_ONLY | K_CG_WINDOW_LIST_EXCLUDE_DESKTOP,
+            K_CG_NULL_WINDOW_ID,
+        )
+    };
+    if list.is_null() {
+        return Err("CGWindowListCopyWindowInfo returned no list".to_string());
+    }
+    let own_pid = std::process::id() as i32;
+    let mut out = Vec::new();
+    unsafe {
+        for i in 0..CFArrayGetCount(list) {
+            let info = CFArrayGetValueAtIndex(list, i);
+            let int = |key: CFTypeRef| {
+                let n = CFDictionaryGetValue(info, key);
+                let mut v = 0i32;
+                (!n.is_null()
+                    && CFNumberGetValue(n, K_CF_NUMBER_SINT32, &mut v as *mut i32 as *mut c_void))
+                .then_some(v)
+            };
+            if int(kCGWindowLayer) != Some(0) || int(kCGWindowOwnerPID) == Some(own_pid) {
+                continue;
+            }
+            let bounds = CFDictionaryGetValue(info, kCGWindowBounds);
+            let mut r = CGRect::default();
+            if bounds.is_null() || !CGRectMakeWithDictionaryRepresentation(bounds, &mut r) {
+                continue;
+            }
+            let rect = to_root(r, scale);
+            if rect.width > 0 && rect.height > 0 {
+                out.push(rect);
+            }
+        }
+        CFRelease(list);
+    }
+    Ok(out)
+}
+
+/// Monitors plus on-screen windows for the overlay's hover-snap.
+pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
+    let ids = displays()?;
+    let scale = root_scale_of(&ids);
+    let mons = ids
+        .iter()
+        .map(|&d| to_root(unsafe { CGDisplayBounds(d) }, scale))
+        .collect();
+    Ok((mons, windows(scale)?))
+}
+
+/// The frontmost normal window: the window list is ordered front to
+/// back, so its first entry not owned by iris.
+pub fn active_window_rect() -> Result<WinRect, String> {
+    let scale = root_scale_of(&displays()?);
+    windows(scale)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no on-screen window to capture".to_string())
+}
+
+/// Render the on-screen contents of `rect` (points) into an RGBA frame.
+fn grab_points(rect: CGRect) -> Result<Frame, String> {
+    require_permission()?;
+    let image = unsafe {
+        CGWindowListCreateImage(
+            rect,
+            K_CG_WINDOW_LIST_ON_SCREEN_ONLY,
+            K_CG_NULL_WINDOW_ID,
+            K_CG_WINDOW_IMAGE_DEFAULT,
+        )
+    };
+    if image.is_null() {
+        return Err("CGWindowListCreateImage returned no image".to_string());
+    }
+    let (w, h) = unsafe { (CGImageGetWidth(image), CGImageGetHeight(image)) };
+    let mut rgba = vec![0u8; w * h * 4];
+    let drawn = unsafe {
+        let space = CGColorSpaceCreateDeviceRGB();
+        let ctx = CGBitmapContextCreate(
+            rgba.as_mut_ptr() as *mut c_void,
+            w,
+            h,
+            8,
+            w * 4,
+            space,
+            K_CG_IMAGE_ALPHA_PREMULTIPLIED_LAST | K_CG_BITMAP_BYTE_ORDER_32_BIG,
+        );
+        CGColorSpaceRelease(space);
+        let ok = !ctx.is_null();
+        if ok {
+            let full = CGRect {
+                origin: CGPoint::default(),
+                size: CGSize {
+                    width: w as f64,
+                    height: h as f64,
+                },
+            };
+            CGContextDrawImage(ctx, full, image);
+            CGContextRelease(ctx);
+        }
+        CGImageRelease(image);
+        ok
+    };
+    if !drawn || w == 0 || h == 0 {
+        return Err(format!("cannot read a {w}x{h} screen image"));
+    }
     Ok(Frame {
-        width,
-        height,
-        rgba: img.into_raw(),
+        width: w as u32,
+        height: h as u32,
+        rgba,
     })
+}
+
+/// Grab one rect of root space.
+pub fn grab_rect(rect: WinRect) -> Result<Frame, String> {
+    let scale = root_scale_of(&displays()?);
+    grab_points(to_points(rect, scale))
+}
+
+/// Grab the union of every display.
+pub fn capture_full_frame() -> Result<Frame, String> {
+    let ids = displays()?;
+    let union = ids
+        .iter()
+        .map(|&d| unsafe { CGDisplayBounds(d) })
+        .reduce(|a, b| {
+            let x0 = a.origin.x.min(b.origin.x);
+            let y0 = a.origin.y.min(b.origin.y);
+            let x1 = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
+            let y1 = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
+            CGRect {
+                origin: CGPoint { x: x0, y: y0 },
+                size: CGSize {
+                    width: x1 - x0,
+                    height: y1 - y0,
+                },
+            }
+        })
+        .ok_or("no active display")?;
+    grab_points(union)
 }
 
 pub struct MacosBackend;
@@ -56,32 +335,4 @@ impl crate::capture::CaptureBackend for MacosBackend {
     fn grab_screen(&self) -> Result<Frame, String> {
         capture_full_frame()
     }
-}
-
-// ---- geometry and region grabs --------------------------------------
-// avfoundation captures the whole screen; monitor enumeration and a
-// focused-window rect need CoreGraphics, which is not yet wired. These
-// return honest errors so the overlay and window capture degrade
-// cleanly instead of pretending a rect exists.
-
-use crate::capture::WinRect;
-
-/// Monitor enumeration needs CoreGraphics; not yet implemented.
-pub fn monitors() -> Result<Vec<WinRect>, String> {
-    Err("monitor enumeration is not implemented on macOS yet".to_string())
-}
-
-/// The overlay's monitor+window layout; empty until CoreGraphics lands.
-pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
-    Err("layout is not implemented on macOS yet".to_string())
-}
-
-/// A focused-window rect needs the Accessibility API; not implemented.
-pub fn active_window_rect() -> Result<WinRect, String> {
-    Err("focused-window capture is not implemented on macOS yet".to_string())
-}
-
-/// A region grab needs CoreGraphics; not yet implemented.
-pub fn grab_rect(_rect: WinRect) -> Result<Frame, String> {
-    Err("region grab is not implemented on macOS yet".to_string())
 }

@@ -19,6 +19,17 @@ pub fn capture_args() -> Vec<String> {
     vec!["-f".into(), "gdigrab".into(), "-i".into(), "desktop".into()]
 }
 
+/// Root pixels per GPUI logical pixel: the system DPI over 96. GPUI
+/// runs DPI-aware, so its window coordinates are logical.
+pub fn root_scale() -> f32 {
+    let dpi = unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForSystem() };
+    if dpi == 0 {
+        1.0
+    } else {
+        dpi as f32 / 96.0
+    }
+}
+
 pub fn capture_full_frame() -> Result<Frame, String> {
     let out = std::env::temp_dir().join("iris-grab.png");
     let _ = std::fs::remove_file(&out);

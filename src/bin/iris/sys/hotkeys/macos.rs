@@ -27,7 +27,6 @@ type EventHandlerRef = *mut core::ffi::c_void;
 type EventTargetRef = *mut core::ffi::c_void;
 type EventHandlerCallRef = *mut core::ffi::c_void;
 type EventHotKeyRef = *mut core::ffi::c_void;
-type CFRunLoopRef = *mut core::ffi::c_void;
 
 const K_EVENT_CLASS_APPLICATION: u32 = u32::from_be_bytes(*b"appl");
 const K_EVENT_HOT_KEY_PRESSED: u32 = 5;

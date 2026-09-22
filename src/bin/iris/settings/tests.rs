@@ -54,15 +54,17 @@ fn commit_edit_updates_fields_and_validates() {
 
 #[test]
 fn field_text_covers_all_field_variants() {
-    let mut cfg = Config::default();
-    cfg.screenshots_dir = PathBuf::from("/custom/shots");
-    cfg.recordings_dir = PathBuf::from("/custom/recs");
-    cfg.screenshot_template = "tmpl_{date}".into();
-    cfg.recording_fps = 45;
-    cfg.capture_hotkey = "Ctrl+Shift+3".into();
-    cfg.record_hotkey = "Ctrl+Shift+5".into();
-    cfg.cancel_keybind = "Ctrl+C".into();
-    cfg.confirm_keybind = "Ctrl+Enter".into();
+    let cfg = Config {
+        screenshots_dir: PathBuf::from("/custom/shots"),
+        recordings_dir: PathBuf::from("/custom/recs"),
+        screenshot_template: "tmpl_{date}".into(),
+        recording_fps: 45,
+        capture_hotkey: "Ctrl+Shift+3".into(),
+        record_hotkey: "Ctrl+Shift+5".into(),
+        cancel_keybind: "Ctrl+C".into(),
+        confirm_keybind: "Ctrl+Enter".into(),
+        ..Config::default()
+    };
 
     let s = Settings {
         cfg,
@@ -209,16 +211,16 @@ fn all_twenty_config_fields_persist_and_reload() {
     assert_eq!(loaded.screenshots_dir, PathBuf::from("/custom/screenshots"));
     assert_eq!(loaded.recordings_dir, PathBuf::from("/custom/recordings"));
     assert_eq!(loaded.screenshot_template, "custom_{date}_{time}");
-    assert_eq!(loaded.flash_on_capture, false);
-    assert_eq!(loaded.sound_on_capture, false);
-    assert_eq!(loaded.show_toast_after_capture, false);
-    assert_eq!(loaded.copy_to_clipboard, false);
+    assert!(!loaded.flash_on_capture);
+    assert!(!loaded.sound_on_capture);
+    assert!(!loaded.show_toast_after_capture);
+    assert!(!loaded.copy_to_clipboard);
     assert_eq!(loaded.toast_click_action, ToastClickAction::OpenFolder);
-    assert_eq!(loaded.toast_drag_enabled, false);
-    assert_eq!(loaded.toast_show_actions, false);
+    assert!(!loaded.toast_drag_enabled);
+    assert!(!loaded.toast_show_actions);
     assert_eq!(loaded.toast_duration_ms, 8000);
     assert_eq!(loaded.recording_fps, 60);
-    assert_eq!(loaded.record_mic_default, true);
+    assert!(loaded.record_mic_default);
     assert_eq!(
         loaded.recording_format,
         iris_lib::config::RecordingFormat::Webm
