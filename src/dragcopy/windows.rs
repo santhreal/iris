@@ -76,6 +76,96 @@ pub(super) fn copy_abs_paths(paths: &[std::path::PathBuf]) -> Result<(), String>
     Ok(())
 }
 
+/// Drag `paths` (absolute) out as files, from the pointer, until the
+/// button is released. The shell builds the data object (`CF_HDROP`
+/// plus shell IDs, so Explorer, browsers, and chat apps all accept it)
+/// and supplies the drop source and drag image.
+///
+/// Runs on its own STA thread: `SHDoDragDrop` pumps a modal loop, and
+/// pumping it inside a UI event handler re-enters the UI's window
+/// procedure while its state is borrowed. The thread attaches to the
+/// caller's input queue so the drag reads the same button state and
+/// mouse capture as the window the press began in.
+#[cfg(windows)]
+pub(super) fn drag_abs_paths(paths: Vec<std::path::PathBuf>) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Ole::{OleInitialize, OleUninitialize, DROPEFFECT_COPY};
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    use windows_sys::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHCreateDataObject, SHDoDragDrop};
+
+    // IID_IDataObject {0000010e-0000-0000-C000-000000000046}.
+    const IID_IDATAOBJECT: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(
+        0x0000010e_0000_0000_c000_000000000046,
+    );
+
+    if paths.is_empty() {
+        return Err("drag: no files".to_string());
+    }
+    let ui_tid = unsafe { GetCurrentThreadId() };
+    std::thread::Builder::new()
+        .name("iris-ole-drag".into())
+        .spawn(move || {
+            unsafe {
+                if OleInitialize(std::ptr::null()) < 0 {
+                    crate::ilog!("drag: OleInitialize failed");
+                    return;
+                }
+                let me = GetCurrentThreadId();
+                let attached = AttachThreadInput(me, ui_tid, 1) != 0;
+                let pidls: Vec<_> = paths
+                    .iter()
+                    .map(|p| {
+                        let w: Vec<u16> =
+                            p.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+                        ILCreateFromPathW(w.as_ptr())
+                    })
+                    .filter(|p| !p.is_null())
+                    .collect();
+                if pidls.len() == paths.len() {
+                    let mut obj: *mut core::ffi::c_void = std::ptr::null_mut();
+                    // Absolute ID lists with no parent folder: files may
+                    // come from different directories.
+                    let hr = SHCreateDataObject(
+                        std::ptr::null(),
+                        pidls.len() as u32,
+                        pidls.as_ptr() as *const *const _,
+                        std::ptr::null_mut(),
+                        &IID_IDATAOBJECT,
+                        &mut obj,
+                    );
+                    // The press may already be over (a flick shorter
+                    // than a thread spawn): a drag started then would
+                    // follow the pointer with no button held.
+                    if hr >= 0 && !obj.is_null() && GetAsyncKeyState(VK_LBUTTON as i32) < 0 {
+                        let mut effect = 0u32;
+                        SHDoDragDrop(std::ptr::null_mut(), obj, std::ptr::null_mut(), DROPEFFECT_COPY, &mut effect);
+                    } else if hr < 0 {
+                        crate::ilog!("drag: SHCreateDataObject failed: {hr:#x}");
+                    }
+                    if !obj.is_null() {
+                        // IUnknown::Release is vtable slot 2.
+                        let vtbl = *(obj as *const *const usize);
+                        let release: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32 =
+                            std::mem::transmute(*vtbl.add(2));
+                        release(obj);
+                    }
+                } else {
+                    crate::ilog!("drag: a path has no shell item");
+                }
+                for p in pidls {
+                    ILFree(p);
+                }
+                if attached {
+                    AttachThreadInput(me, ui_tid, 0);
+                }
+                OleUninitialize();
+            }
+        })
+        .map_err(|e| format!("spawn drag thread: {e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     // WHY: the class closed here is "Explorer reads a malformed file

@@ -155,12 +155,29 @@ pub fn start_file_drag_at_cursor(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows: an OLE drag of the files; the shell draws the drag image,
+/// so `icon` is unused.
+#[cfg(windows)]
+pub fn start_file_drag_at_cursor(
+    paths: Vec<PathBuf>,
+    _icon: Option<DragIcon>,
+) -> Result<(), String> {
+    let abs = paths
+        .iter()
+        .map(|p| absolute_existing(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    windows::drag_abs_paths(abs)
+}
+
+/// macOS drag-out needs an `NSDraggingSession` begun from the window's
+/// own view and mouse-down event, which the windowing layer does not
+/// expose; Copy puts the same files on the pasteboard.
+#[cfg(target_os = "macos")]
 pub fn start_file_drag_at_cursor(
     _paths: Vec<PathBuf>,
     _icon: Option<DragIcon>,
 ) -> Result<(), String> {
-    Err("file drag-out is implemented for Linux only".to_string())
+    Err("file drag-out is not available on macOS; use Copy".to_string())
 }
 
 /// The four atoms a clipboard serve answers on. Grouping them stops a
