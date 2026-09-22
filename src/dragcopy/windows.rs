@@ -92,12 +92,13 @@ pub(super) fn drag_abs_paths(paths: Vec<std::path::PathBuf>) -> Result<(), Strin
     use windows_sys::Win32::System::Ole::{OleInitialize, OleUninitialize, DROPEFFECT_COPY};
     use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-    use windows_sys::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHCreateDataObject, SHDoDragDrop};
+    use windows_sys::Win32::UI::Shell::{
+        ILCreateFromPathW, ILFree, SHCreateDataObject, SHDoDragDrop,
+    };
 
     // IID_IDataObject {0000010e-0000-0000-C000-000000000046}.
-    const IID_IDATAOBJECT: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(
-        0x0000010e_0000_0000_c000_000000000046,
-    );
+    const IID_IDATAOBJECT: windows_sys::core::GUID =
+        windows_sys::core::GUID::from_u128(0x0000010e_0000_0000_c000_000000000046);
 
     if paths.is_empty() {
         return Err("drag: no files".to_string());
@@ -116,8 +117,11 @@ pub(super) fn drag_abs_paths(paths: Vec<std::path::PathBuf>) -> Result<(), Strin
                 let pidls: Vec<_> = paths
                     .iter()
                     .map(|p| {
-                        let w: Vec<u16> =
-                            p.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+                        let w: Vec<u16> = p
+                            .as_os_str()
+                            .encode_wide()
+                            .chain(std::iter::once(0))
+                            .collect();
                         ILCreateFromPathW(w.as_ptr())
                     })
                     .filter(|p| !p.is_null())
@@ -139,7 +143,13 @@ pub(super) fn drag_abs_paths(paths: Vec<std::path::PathBuf>) -> Result<(), Strin
                     // follow the pointer with no button held.
                     if hr >= 0 && !obj.is_null() && GetAsyncKeyState(VK_LBUTTON as i32) < 0 {
                         let mut effect = 0u32;
-                        SHDoDragDrop(std::ptr::null_mut(), obj, std::ptr::null_mut(), DROPEFFECT_COPY, &mut effect);
+                        SHDoDragDrop(
+                            std::ptr::null_mut(),
+                            obj,
+                            std::ptr::null_mut(),
+                            DROPEFFECT_COPY,
+                            &mut effect,
+                        );
                     } else if hr < 0 {
                         crate::ilog!("drag: SHCreateDataObject failed: {hr:#x}");
                     }
