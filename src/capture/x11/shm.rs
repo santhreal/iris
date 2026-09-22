@@ -45,10 +45,7 @@ pub(crate) fn shm_supported() -> bool {
 pub(super) fn try_shm_grab_into<C>(
     conn: &C,
     root: x11rb::protocol::xproto::Window,
-    x: i16,
-    y: i16,
-    width: u16,
-    height: u16,
+    rect: super::GrabRect,
     out: &mut [u8],
     bgra: bool,
 ) -> Option<u8>
@@ -56,6 +53,12 @@ where
     C: Connection + x11rb::protocol::xproto::ConnectionExt,
 {
     use x11rb::protocol::shm::ConnectionExt as ShmExt;
+    let super::GrabRect {
+        x,
+        y,
+        width,
+        height,
+    } = rect;
     if !shm_supported() {
         return None;
     }

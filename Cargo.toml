@@ -82,10 +82,12 @@ tempfile = "3"
 serial_test = "3"
 
 # The santhreal gpui fork's gpui-0.2.2-iris branch is crates.io 0.2.2
-# (the "Bump gpui to 0.2.2" commit) plus one fix: wl_keyboard Modifiers
+# (the "Bump gpui to 0.2.2" commit) plus fixes: wl_keyboard Modifiers
 # and Key events that arrive before the first Keymap no longer panic on
 # a missing keymap_state. Without it a Wayland daemon restart crashes
-# when sway delivers early modifier state. Pinned to a rev so a later
+# when sway delivers early modifier state. It also sets the Wayland
+# xdg_toplevel app_id before the first commit, and keeps the macOS
+# window constructor compiling with that field. Pinned to a rev so a later
 # fork push cannot move the dependency under the build.
 [patch.crates-io]
-gpui = { git = "https://github.com/santhreal/gpui.git", rev = "3ef89c4ddb", version = "=0.2.2" }
+gpui = { git = "https://github.com/santhreal/gpui.git", rev = "360f9a4d01", version = "=0.2.2" }

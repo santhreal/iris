@@ -65,12 +65,16 @@ pub const TEXT_HEADING: f32 = 17.0;
 /// the family resolves on machines without it installed.
 pub const FONT: &str = "JetBrains Mono";
 
+/// The bold face, also used to bake text annotations into saved
+/// images so the output matches on every platform.
+pub const FONT_BOLD_TTF: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf");
+
 /// The bundled faces of `FONT`, one per weight the UI uses.
 const FONT_FACES: [&[u8]; 4] = [
     include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"),
     include_bytes!("../../../assets/fonts/JetBrainsMono-Medium.ttf"),
     include_bytes!("../../../assets/fonts/JetBrainsMono-SemiBold.ttf"),
-    include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf"),
+    FONT_BOLD_TTF,
 ];
 
 /// Register the bundled faces with GPUI's text system. Called once at

@@ -89,8 +89,18 @@ that reports through the status pill.
 
 ## Configuration
 
-`~/.config/iris/config.toml` (created on first run; an existing
-`~/.config/glint/config.toml` is migrated automatically):
+`config.toml` is created on first run at:
+
+| Platform | Path                                                        |
+|----------|-------------------------------------------------------------|
+| Linux    | `~/.config/iris/config.toml`                                |
+| Windows  | `%APPDATA%\iris\iris\config\config.toml`                    |
+| macOS    | `~/Library/Application Support/dev.iris.iris/config.toml`   |
+
+On Linux an existing `~/.config/glint/config.toml` is migrated
+automatically. Set `IRIS_HOME` to keep config, library data, cache,
+and the log under one directory (`config/`, `data/`, `cache/`,
+`state/`) on any platform.
 
 ```toml
 screenshots_dir = "~/Pictures/iris"

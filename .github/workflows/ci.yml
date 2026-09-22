@@ -41,11 +41,13 @@ jobs:
             libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
             libpipewire-0.3-dev libspa-0.2-dev \
             xdg-desktop-portal
-      # Clippy is advisory: rustc warnings are already denied via
-      # RUSTFLAGS=-Dwarnings, but the pre-existing pedantic style lints
-      # (type_complexity, too_many_arguments) are not gating defects.
+      # Clippy lints report but do not fail the job: --cap-lints warn
+      # overrides the job-wide RUSTFLAGS=-Dwarnings for this step only.
+      # rustc warnings stay denied in the test and build steps below.
       - name: Clippy
-        run: cargo clippy --locked --all-targets
+        run: cargo clippy --locked --all-targets -- --cap-lints warn
+      - name: Test
+        run: cargo test --locked
       - name: Build release
         run: cargo build --locked --release
 

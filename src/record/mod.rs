@@ -345,18 +345,19 @@ mod tests {
     #[test]
     fn manager_clears_active_after_stop() {
         let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RecordingManager::default();
-        mgr.active = Some(ActiveRecording::spawn(
-            dir.path().join("r.mp4"),
-            30,
-            false,
-            crate::config::RecordingFormat::Mp4,
-            crate::config::RecordingEncoder::Libx264,
-            |spec| {
-                spec.stop.recv().unwrap();
-                Ok(spec.output.clone())
-            },
-        ));
+        let mut mgr = RecordingManager {
+            active: Some(ActiveRecording::spawn(
+                dir.path().join("r.mp4"),
+                30,
+                false,
+                crate::config::RecordingFormat::Mp4,
+                crate::config::RecordingEncoder::Libx264,
+                |spec| {
+                    spec.stop.recv().unwrap();
+                    Ok(spec.output.clone())
+                },
+            )),
+        };
         assert!(mgr.is_active());
         mgr.stop().unwrap();
         assert!(!mgr.is_active());

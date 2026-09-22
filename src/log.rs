@@ -10,15 +10,9 @@ use std::path::PathBuf;
 static LOG_FILE: Mutex<Option<(std::fs::File, u64)>> = Mutex::new(None);
 const MAX_LOG: u64 = 256 * 1024;
 
-/// Path of the log file: `$XDG_STATE_HOME/iris/iris.log`, falling
-/// back to the config dir's parent so the file always lands beside
-/// the rest of iris's state.
+/// Path of the log file; see [`crate::dirs::log_file`].
 pub fn path() -> PathBuf {
-    let base = directories::BaseDirs::new()
-        .and_then(|b| b.state_dir().map(|p| p.to_path_buf()))
-        .or_else(|| directories::BaseDirs::new().map(|b| b.config_dir().to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("iris").join("iris.log")
+    crate::dirs::log_file()
 }
 
 /// Open (and bound) the log file. Idempotent; called once at daemon

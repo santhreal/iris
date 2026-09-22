@@ -15,23 +15,16 @@ pub struct CaptureEntry {
     pub created_ms: i64,
 }
 
-/// The shared data directory (dev.iris.app; the GPUI side passes the
-/// same path via directories::ProjectDirs with an empty organization).
+/// The shared data directory, created on first use.
 pub fn app_data_dir() -> Result<PathBuf, String> {
-    let dir = directories::ProjectDirs::from("", "", "dev.iris.app")
-        .ok_or("no project data dir")?
-        .data_dir()
-        .to_path_buf();
+    let dir = crate::dirs::data_dir().ok_or("no project data dir")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("create app data dir: {e}"))?;
     Ok(dir)
 }
 
 /// The shared cache directory (thumbnails, frozen frames).
 pub fn app_cache_dir() -> Result<PathBuf, String> {
-    let dir = directories::ProjectDirs::from("", "", "dev.iris.app")
-        .ok_or("no project cache dir")?
-        .cache_dir()
-        .to_path_buf();
+    let dir = crate::dirs::cache_dir().ok_or("no project cache dir")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("create app cache dir: {e}"))?;
     Ok(dir)
 }
@@ -56,14 +49,15 @@ fn path_key(path: &Path) -> String {
     format!("{hash:016x}")
 }
 
+/// mtime, length, and parsed entries of the store file.
+type StoreCache = parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)>;
+
 /// The parsed store behind an mtime+len check: the library window
 /// polls list() every 1.5s, and an unchanged file should not re-parse.
-fn store_cache(
-) -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)> {
+fn store_cache() -> &'static StoreCache {
     use std::sync::LazyLock;
-    static CACHE: LazyLock<
-        parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)>,
-    > = LazyLock::new(|| parking_lot::Mutex::new((None, 0, Vec::new())));
+    static CACHE: LazyLock<StoreCache> =
+        LazyLock::new(|| parking_lot::Mutex::new((None, 0, Vec::new())));
     &CACHE
 }
 
@@ -154,10 +148,11 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
 /// directory's mtime, so an unchanged stamp set means the per-entry
 /// exists() sweep would find nothing: the 1.5s library poll then
 /// costs one stat per parent dir instead of one per capture.
-fn dir_stamps() -> &'static parking_lot::Mutex<Vec<(PathBuf, Option<std::time::SystemTime>)>> {
+type DirStamps = parking_lot::Mutex<Vec<(PathBuf, Option<std::time::SystemTime>)>>;
+
+fn dir_stamps() -> &'static DirStamps {
     use std::sync::LazyLock;
-    static STAMPS: LazyLock<parking_lot::Mutex<Vec<(PathBuf, Option<std::time::SystemTime>)>>> =
-        LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+    static STAMPS: LazyLock<DirStamps> = LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
     &STAMPS
 }
 
@@ -274,16 +269,16 @@ pub fn delete_many(paths: &[PathBuf]) -> usize {
 // a store that does not round-trip, a delete that leaves the file, a cap
 // that keeps the wrong end, or a path_key that collides all surface as
 // missing thumbnails or vanished shots. Env-mutating tests run serially
-// with XDG pointed at a tempdir. Not covered: thumbnail pixel content.
+// with IRIS_HOME pointed at a tempdir. Not covered: thumbnail pixel content.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Point XDG data/cache at a fresh tempdir; returns it for file seeds.
-    fn xdg() -> tempfile::TempDir {
+    /// Root iris data/cache in a fresh tempdir via `IRIS_HOME` (on every
+    /// platform); returns it for file seeds.
+    fn isolated_home() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_DATA_HOME", dir.path().join("data"));
-        std::env::set_var("XDG_CACHE_HOME", dir.path().join("cache"));
+        std::env::set_var(crate::dirs::HOME_ENV, dir.path());
         dir
     }
 
@@ -308,7 +303,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn add_list_delete_round_trips() {
-        let d = xdg();
+        let d = isolated_home();
         let (shot, img) = png(d.path(), "a.png");
         let entry = add(&shot, &img).unwrap();
         assert!(entry.thumb.exists());
@@ -322,14 +317,14 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn delete_unknown_path_errors() {
-        let _d = xdg();
+        let _d = isolated_home();
         assert!(delete(Path::new("/nonexistent.png")).is_err());
     }
 
     #[test]
     #[serial_test::serial]
     fn list_prunes_entries_whose_file_vanished() {
-        let d = xdg();
+        let d = isolated_home();
         let (shot, img) = png(d.path(), "gone.png");
         add(&shot, &img).unwrap();
         std::fs::remove_file(&shot).unwrap();
@@ -339,7 +334,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn readding_same_path_replaces_not_duplicates() {
-        let d = xdg();
+        let d = isolated_home();
         let (shot, img) = png(d.path(), "dup.png");
         add(&shot, &img).unwrap();
         add(&shot, &img).unwrap();
@@ -349,7 +344,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn corrupt_store_starts_fresh() {
-        let _d = xdg();
+        let _d = isolated_home();
         let store = app_data_dir().unwrap().join("library.json");
         std::fs::write(&store, "{not json").unwrap();
         assert!(list().is_empty());
@@ -358,7 +353,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn store_caps_at_max_entries() {
-        let d = xdg();
+        let d = isolated_home();
         for i in 0..5 {
             let (shot, img) = png(d.path(), &format!("s{i}.png"));
             add(&shot, &img).unwrap();

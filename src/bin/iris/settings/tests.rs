@@ -161,8 +161,7 @@ fn format_keystroke_formats_keys_and_modifiers() {
 #[serial_test::serial]
 fn all_twenty_config_fields_persist_and_reload() {
     let dir = tempfile::tempdir().unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
-    std::env::set_var("XDG_DATA_HOME", dir.path().join("data"));
+    std::env::set_var(iris_lib::dirs::HOME_ENV, dir.path());
 
     let mut s = Settings {
         cfg: Config::default(),

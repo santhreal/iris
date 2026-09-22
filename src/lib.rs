@@ -3,6 +3,7 @@
 
 pub mod capture;
 pub mod config;
+pub mod dirs;
 pub mod dragcopy;
 pub mod history;
 pub mod library;

@@ -7,7 +7,7 @@ mod icon;
 #[cfg(target_os = "linux")]
 mod xdnd;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests;
 
 #[cfg(target_os = "linux")]

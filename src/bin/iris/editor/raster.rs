@@ -232,18 +232,14 @@ pub(crate) fn draw_text(
     text: &str,
     px: image::Rgba<u8>,
 ) {
-    // The font is read and parsed once per process: rasterize replays
-    // this for every text action on every rebuild, and a disk read +
-    // font parse per replay is pure waste.
-    static FONT: std::sync::LazyLock<Option<ab_glyph::FontVec>> = std::sync::LazyLock::new(|| {
-        let data = std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-            .or_else(|_| std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
-            .ok()?;
-        ab_glyph::FontVec::try_from_vec(data).ok()
+    // The bundled face, parsed once per process: rasterize replays this
+    // for every text action on every rebuild. Embedded, so text bakes
+    // identically on every platform with no system font dependency.
+    static FONT: std::sync::LazyLock<ab_glyph::FontRef<'static>> = std::sync::LazyLock::new(|| {
+        ab_glyph::FontRef::try_from_slice(crate::theme::FONT_BOLD_TTF)
+            .expect("bundled JetBrains Mono Bold parses")
     });
-    let Some(font) = FONT.as_ref() else {
-        return;
-    };
+    let font = &*FONT;
     // Inline of imageproc's draw_text_mut so the imageproc crate (and
     // its nalgebra/rayon/rand tree) drops out of the build. Same
     // semantics: advance by h_advance + kern, rasterize each outlined

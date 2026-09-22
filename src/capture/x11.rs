@@ -47,7 +47,13 @@ impl CaptureBackend for X11Backend {
         unsafe {
             rgba.set_len(pixels * 4)
         };
-        let depth = grab_pixels_into(&conn, root, 0, 0, geom.width, geom.height, &mut rgba, false)?;
+        let full = GrabRect {
+            x: 0,
+            y: 0,
+            width: geom.width,
+            height: geom.height,
+        };
+        let depth = grab_pixels_into(&conn, root, full, &mut rgba, false)?;
 
         if depth != 24 {
             return Err(format!(
@@ -85,7 +91,13 @@ pub fn grab_screen_bgra() -> Result<(u32, u32, Vec<u8>), String> {
     unsafe {
         bgra.set_len(pixels * 4)
     };
-    let depth = grab_pixels_into(&conn, root, 0, 0, geom.width, geom.height, &mut bgra, true)?;
+    let full = GrabRect {
+        x: 0,
+        y: 0,
+        width: geom.width,
+        height: geom.height,
+    };
+    let depth = grab_pixels_into(&conn, root, full, &mut bgra, true)?;
     if depth != 24 {
         return Err(format!(
             "unsupported root depth {}; only 24-bit TrueColor is implemented",
@@ -127,9 +139,13 @@ pub fn grab_root_rect(rect: WinRect) -> Result<Frame, String> {
     unsafe {
         rgba.set_len(pixels * 4)
     };
-    let depth = grab_pixels_into(
-        conn, root, x0 as i16, y0 as i16, w as u16, h as u16, &mut rgba, false,
-    )?;
+    let rect = GrabRect {
+        x: x0 as i16,
+        y: y0 as i16,
+        width: w as u16,
+        height: h as u16,
+    };
+    let depth = grab_pixels_into(conn, root, rect, &mut rgba, false)?;
     if depth != 24 {
         return Err(format!(
             "unsupported root depth {}; only 24-bit TrueColor is implemented",
@@ -213,6 +229,15 @@ pub(super) fn convert_frame(
     Ok(())
 }
 
+/// A grab rectangle inside the root window, in root coordinates.
+#[derive(Clone, Copy)]
+pub(super) struct GrabRect {
+    pub x: i16,
+    pub y: i16,
+    pub width: u16,
+    pub height: u16,
+}
+
 /// The pixel transfer, converted into `out`. A 4K-and-change root is
 /// ~200MB: over the X socket that is seconds, over MIT-SHM it is a
 /// page-faulted read. The SHM path converts straight out of the mapped
@@ -225,19 +250,22 @@ pub(super) fn convert_frame(
 fn grab_pixels_into<C>(
     conn: &C,
     root: x11rb::protocol::xproto::Window,
-    x: i16,
-    y: i16,
-    width: u16,
-    height: u16,
+    rect: GrabRect,
     out: &mut [u8],
     bgra: bool,
 ) -> Result<u8, String>
 where
     C: Connection + x11rb::protocol::xproto::ConnectionExt,
 {
-    if let Some(depth) = try_shm_grab_into(conn, root, x, y, width, height, out, bgra) {
+    if let Some(depth) = try_shm_grab_into(conn, root, rect, out, bgra) {
         return Ok(depth);
     }
+    let GrabRect {
+        x,
+        y,
+        width,
+        height,
+    } = rect;
     let reply = conn
         .get_image(ImageFormat::Z_PIXMAP, root, x, y, width, height, !0u32)
         .map_err(|e| format!("X11 get_image: {e}"))?

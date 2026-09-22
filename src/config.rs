@@ -136,8 +136,7 @@ impl Default for Config {
 
 impl Config {
     fn path() -> Option<PathBuf> {
-        directories::ProjectDirs::from("dev", "iris", "iris")
-            .map(|p| p.config_dir().join("config.toml"))
+        crate::dirs::config_file()
     }
 
     /// The shared parsed-config cache, keyed on the file's mtime+len.
@@ -182,9 +181,7 @@ impl Config {
         // One-time migration from the glint name: carry the existing
         // config over, then read only the new location.
         if !path.exists() {
-            if let Some(old) = directories::ProjectDirs::from("dev", "glint", "glint")
-                .map(|p| p.config_dir().join("config.toml"))
-            {
+            if let Some(old) = crate::dirs::legacy_glint_config_file() {
                 if old.exists() {
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
@@ -301,18 +298,28 @@ pub fn keybind_matches(
 mod tests {
     use super::*;
 
-    /// Point XDG at a fresh tempdir; returns it so the test can seed files.
-    fn xdg() -> tempfile::TempDir {
+    /// Root every iris location in a fresh tempdir via `IRIS_HOME`, on
+    /// every platform; returns it so the test can seed files.
+    fn isolated_home() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(crate::dirs::HOME_ENV, dir.path());
+        dir
+    }
+
+    /// XDG layout with `IRIS_HOME` cleared, for the legacy-path
+    /// migration that only exists on Linux.
+    #[cfg(target_os = "linux")]
+    fn xdg_without_iris_home() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::remove_var(crate::dirs::HOME_ENV);
         std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
-        std::env::set_var("XDG_DATA_HOME", dir.path().join("data"));
         dir
     }
 
     #[test]
     #[serial_test::serial]
     fn toml_round_trip_preserves_every_field() {
-        let _d = xdg();
+        let _d = isolated_home();
         let cfg = Config::default();
         let text = toml::to_string_pretty(&cfg).unwrap();
         let back: Config = toml::from_str(&text).unwrap();
@@ -335,7 +342,7 @@ mod tests {
     fn old_config_without_new_fields_loads_defaults() {
         // A config.toml written before the toast/keybind fields existed
         // must still load; serde(default) fills them.
-        let d = xdg();
+        let d = isolated_home();
         let path = Config::path().unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "recording_fps = 24\n").unwrap();
@@ -343,7 +350,7 @@ mod tests {
         assert_eq!(cfg.recording_fps, 24);
         assert_eq!(cfg.toast_click_action, ToastClickAction::Markup);
         assert_eq!(cfg.toast_position, ToastPosition::BottomRight);
-        assert_eq!(cfg.toast_pin_enabled, true);
+        assert!(cfg.toast_pin_enabled);
         assert_eq!(cfg.toast_duration_ms, 5000);
         assert_eq!(cfg.cancel_keybind, "Escape");
         drop(d);
@@ -362,7 +369,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn tilde_dirs_expand_to_home() {
-        let _d = xdg();
+        let _d = isolated_home();
         let home = directories::UserDirs::new()
             .unwrap()
             .home_dir()
@@ -380,7 +387,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn load_writes_defaults_when_missing() {
-        let _d = xdg();
+        let _d = isolated_home();
         let cfg = Config::load();
         assert!(Config::path().unwrap().exists());
         assert_eq!(cfg.recording_fps, 30);
@@ -389,7 +396,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn load_reads_stored_values() {
-        let d = xdg();
+        let d = isolated_home();
         let path = Config::path().unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "recording_fps = 24\ncapture_hotkey = \"F9\"\n").unwrap();
@@ -399,10 +406,11 @@ mod tests {
         drop(d);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     #[serial_test::serial]
     fn glint_config_migrates_to_iris_path() {
-        let d = xdg();
+        let d = xdg_without_iris_home();
         let old = d.path().join("config/glint/config.toml");
         std::fs::create_dir_all(old.parent().unwrap()).unwrap();
         std::fs::write(&old, "recording_fps = 12\n").unwrap();
@@ -412,10 +420,11 @@ mod tests {
         assert!(Config::path().unwrap().exists());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     #[serial_test::serial]
     fn existing_iris_config_wins_over_glint() {
-        let d = xdg();
+        let d = xdg_without_iris_home();
         let old = d.path().join("config/glint/config.toml");
         std::fs::create_dir_all(old.parent().unwrap()).unwrap();
         std::fs::write(&old, "recording_fps = 12\n").unwrap();
@@ -428,7 +437,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn invalid_toml_falls_back_to_defaults() {
-        let _d = xdg();
+        let _d = isolated_home();
         let path = Config::path().unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "this is not toml = = =\n").unwrap();
