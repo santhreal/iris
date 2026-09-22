@@ -7,6 +7,15 @@ mod icon;
 #[cfg(target_os = "linux")]
 mod xdnd;
 
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(any(windows, test))]
+mod windows;
+#[cfg(target_os = "macos")]
+use macos::copy_abs_paths;
+#[cfg(windows)]
+use windows::copy_abs_paths;
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
 
@@ -203,52 +212,43 @@ pub fn clipboard_set_text(cb: &mut arboard::Clipboard, text: &str) -> Result<(),
         .map_err(|e| format!("clipboard set_text: {e}"))
 }
 
-/// Copy several files as one text/uri-list payload: file managers paste
-/// the whole set, terminals receive the URI list.
+/// Copy files to the clipboard in the platform's file-list format:
+/// `text/uri-list` on Linux, `CF_HDROP` on Windows, `NSURL`s on macOS.
+/// File managers paste the files themselves.
 pub fn copy_file_paths(paths: &[PathBuf]) -> Result<(), String> {
     if paths.is_empty() {
         return Err("no paths provided".to_string());
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = paths;
-        Err("file copy needs an X11 session".to_string())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let mut first = String::new();
-        for pb in paths {
-            if !pb.exists() {
-                return Err(format!("file does not exist: {}", pb.display()));
-            }
-            if first.is_empty() {
-                first = std::fs::canonicalize(pb)
-                    .unwrap_or_else(|_| pb.clone())
-                    .to_string_lossy()
-                    .into_owned();
-            }
-        }
-        serve_uri_list(build_uri_list(paths), first)
-    }
+    let abs = paths
+        .iter()
+        .map(|p| absolute_existing(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    copy_abs_paths(&abs)
 }
 
-/// Copy one file to the clipboard as text/uri-list (file managers paste
-/// the file itself).
+/// [`copy_file_paths`] for one file.
 pub fn copy_file_path(path: &std::path::Path) -> Result<(), String> {
-    if !path.exists() {
-        return Err(format!("file does not exist: {}", path.display()));
+    copy_file_paths(&[path.to_path_buf()])
+}
+
+/// The absolute form of an existing path. Windows uses
+/// `path::absolute`, because `canonicalize` yields a `\\?\` verbatim
+/// path that some paste targets reject.
+fn absolute_existing(p: &std::path::Path) -> Result<PathBuf, String> {
+    if !p.exists() {
+        return Err(format!("file does not exist: {}", p.display()));
     }
-    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let abs_str = abs.to_string_lossy().into_owned();
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = abs_str;
-        Err("file copy needs an X11 session".to_string())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        serve_uri_list(format!("file://{}\r\n", uri_encode_path(&abs_str)), abs_str)
-    }
+    #[cfg(windows)]
+    let abs = std::path::absolute(p).map_err(|e| format!("resolve {}: {e}", p.display()))?;
+    #[cfg(not(windows))]
+    let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    Ok(abs)
+}
+
+#[cfg(target_os = "linux")]
+fn copy_abs_paths(abs: &[PathBuf]) -> Result<(), String> {
+    let first = abs[0].to_string_lossy().into_owned();
+    serve_uri_list(build_uri_list(abs), first)
 }
 
 /// Acquire CLIPBOARD with a text/uri-list payload and serve it from a

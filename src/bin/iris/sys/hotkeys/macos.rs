@@ -199,13 +199,20 @@ fn parse_hotkey(s: &str) -> Option<(u32, u32)> {
 
 // ---- registration state ----------------------------------------------
 
+/// An opaque Carbon hotkey handle. It is never dereferenced, only
+/// passed back to `UnregisterEventHotKey`, and `STATE`'s mutex
+/// serializes that, so moving it between threads is sound.
+struct HotKeyRef(EventHotKeyRef);
+// SAFETY: see the type's doc comment.
+unsafe impl Send for HotKeyRef {}
+
 /// Live hotkey registrations plus the command each id maps to. The
 /// handler reads the map; `register_all` rewrites it on regrab.
 struct State {
     /// (hotkey id, command): the id is what the event reports.
     map: Vec<(u32, Command)>,
     /// Carbon refs to unregister on the next regrab.
-    refs: Vec<EventHotKeyRef>,
+    refs: Vec<HotKeyRef>,
     /// Next hotkey id; never reused so a stale event cannot misfire.
     next_id: u32,
 }
@@ -219,7 +226,7 @@ fn register_all() {
         return;
     };
     unsafe {
-        for r in state.refs.drain(..) {
+        for HotKeyRef(r) in state.refs.drain(..) {
             UnregisterEventHotKey(r);
         }
     }
@@ -245,7 +252,7 @@ fn register_all() {
         if status != NO_ERR {
             iris_lib::ilog!("iris: cannot register hotkey {hotkey:?} (status {status})");
         } else {
-            state.refs.push(out);
+            state.refs.push(HotKeyRef(out));
             state.map.push((id, cmd));
         }
     }

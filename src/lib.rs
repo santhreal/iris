@@ -8,6 +8,8 @@ pub mod dragcopy;
 pub mod history;
 pub mod library;
 pub mod log;
+#[cfg(target_os = "macos")]
+pub mod objc;
 pub mod ocr;
 pub mod par;
 pub mod record;
