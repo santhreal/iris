@@ -155,19 +155,17 @@ fn resolve_window_placement(
         (120.0, 80.0)
     };
     if let Some((fx, fy, fw, fh)) = from {
-        #[cfg(target_os = "linux")]
+        // Monitors are physical pixels; `from` and window bounds are
+        // logical.
+        let s = iris_lib::capture::root_scale();
         let mons = iris_lib::capture::monitors().unwrap_or_default();
-        #[cfg(not(target_os = "linux"))]
-        let mons: Vec<iris_lib::capture::WinRect> = Vec::new();
         let host = mons.iter().copied().find(|m| {
-            fx >= m.x as f32
-                && fx < (m.x + m.width as i32) as f32
-                && fy >= m.y as f32
-                && fy < (m.y + m.height as i32) as f32
+            let (mx, my) = (m.x as f32 / s, m.y as f32 / s);
+            fx >= mx && fx < mx + m.width as f32 / s && fy >= my && fy < my + m.height as f32 / s
         });
         if let Some(m) = host {
-            let (mx, my) = (m.x as f32, m.y as f32);
-            let (mx1, my1) = (mx + m.width as f32, my + m.height as f32);
+            let (mx, my) = (m.x as f32 / s, m.y as f32 / s);
+            let (mx1, my1) = (mx + m.width as f32 / s, my + m.height as f32 / s);
             origin = (mx + 120.0, my + 80.0);
             let x0 = origin.0.min(fx).max(mx);
             let y0 = origin.1.min(fy).max(my);

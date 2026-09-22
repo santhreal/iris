@@ -2848,6 +2848,7 @@ dependencies = [
  "libloading",
  "parking_lot",
  "pipewire",
+ "raw-window-handle",
  "semver",
  "serde",
  "serde_json",

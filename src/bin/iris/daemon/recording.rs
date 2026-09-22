@@ -1,4 +1,3 @@
-#[cfg(target_os = "linux")]
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
@@ -7,14 +6,10 @@ use gpui::*;
 use iris_lib::config::Config;
 use iris_lib::record;
 
-#[cfg(target_os = "linux")]
-use crate::chip;
-#[cfg(target_os = "linux")]
-use crate::{overlay, pipeline};
+use crate::{chip, overlay, pipeline};
 
 use super::capture::recording_params;
 use super::RECORDING;
-#[cfg(target_os = "linux")]
 use super::{command_tx, Command};
 
 /// ChipFollow that moves the GPUI chip window by XID (no app round-trip
@@ -70,9 +65,7 @@ impl record::x11::ChipFollow for XcbChip {
 
 /// One action for the record hotkey/tray/CLI: stop when active, start a
 /// window-picked recording when idle.
-pub(super) fn toggle_recording(
-    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] cx: &mut App,
-) -> Result<(), String> {
+pub(super) fn toggle_recording(cx: &mut App) -> Result<(), String> {
     if RECORDING.lock().is_active() {
         // The join (ffmpeg's trailer flush) can take seconds on a long
         // recording; it runs off the UI thread so hotkeys and socket
@@ -84,17 +77,25 @@ pub(super) fn toggle_recording(
             Ok(None) => {}
             Err(e) => iris_lib::ilog!("iris: recording stop: {e}"),
         });
-        #[cfg(target_os = "linux")]
         chip::close(cx); // defensive: any exit path that missed hide
         return Ok(());
     }
-    let mut mgr = RECORDING.lock();
+    #[cfg(any(windows, target_os = "macos"))]
+    let active = start_desktop(cx, None)?;
+    #[cfg(target_os = "linux")]
+    let active = start_linux(cx)?;
+    RECORDING.lock().active = Some(active);
+    Ok(())
+}
+
+/// Window-picked recording: the Wayland portal, or X11 with the chip
+/// following the picked window.
+#[cfg(target_os = "linux")]
+fn start_linux(cx: &mut App) -> Result<record::ActiveRecording, String> {
     let cfg = Config::load();
     let (output, mic, format, encoder) = recording_params(&cfg);
-    #[cfg(target_os = "linux")]
     let wayland_only =
         std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_none();
-    #[cfg(target_os = "linux")]
     let active = if wayland_only {
         record::ActiveRecording::spawn(
             output,
@@ -105,7 +106,7 @@ pub(super) fn toggle_recording(
             record::wayland::record_window,
         )
     } else {
-        let xid = chip::open(cx, mic)?;
+        let xid = chip::open(cx, mic, None)?;
         let conn = iris_lib::capture::x11::shared_conn().ok().map(|(c, _)| c);
         let follower = std::sync::Arc::new(XcbChip {
             xid: std::sync::atomic::AtomicU32::new(xid),
@@ -121,28 +122,47 @@ pub(super) fn toggle_recording(
             move |spec| record::x11::record_window_follow(spec, follower),
         )
     };
-    // Windows and macOS record the primary desktop through ffmpeg
-    // (gdigrab / avfoundation); there is no per-window pick or chip.
-    #[cfg(any(windows, target_os = "macos"))]
-    let active = record::ActiveRecording::spawn(
+    Ok(active)
+}
+
+/// Desktop recording on Windows and macOS: the main display, or
+/// `region` (root pixels) of the display that holds it. The chip opens
+/// above the region; the source closes it when it ends, so an ffmpeg
+/// failure does not leave it on screen.
+#[cfg(any(windows, target_os = "macos"))]
+fn start_desktop(
+    cx: &mut App,
+    region: Option<iris_lib::capture::WinRect>,
+) -> Result<record::ActiveRecording, String> {
+    let cfg = Config::load();
+    let (output, mic, format, encoder) = recording_params(&cfg);
+    // GIF and WebM carry no audio track; the chip shows what is recorded.
+    let mic = mic && format == iris_lib::config::RecordingFormat::Mp4;
+    chip::open(cx, mic, region)?;
+    let done = command_tx();
+    Ok(record::ActiveRecording::spawn(
         output,
         cfg.recording_fps,
         mic,
         format,
         encoder,
-        record::desktop::record_desktop,
-    );
-    mgr.active = Some(active);
-    Ok(())
+        move |spec| {
+            let result = record::desktop::record_desktop(spec, region);
+            if let Some(tx) = &done {
+                let _ = tx.unbounded_send(Command::ChipHide);
+            }
+            result
+        },
+    ))
 }
 
 /// Region recording, step one: open the overlay in pick mode. The
 /// frozen frame is not needed for picking, so the shell opens on the
 /// live desktop and the grab still runs behind it for the loupe.
-#[cfg(target_os = "linux")]
 pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
     // Same dead end as record_region_start: the picked rect feeds an
     // X11-only source, so on Wayland-only fail before the overlay opens.
+    #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_none() {
         return Err("region recording needs X11; on Wayland record a window".to_string());
     }
@@ -228,13 +248,6 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
-/// Region recording reads the root window through X11 SHM; Windows and
-/// macOS record the whole desktop, so there is no region pick.
-#[cfg(not(target_os = "linux"))]
-pub(super) fn record_region_pick(_cx: &mut App) -> Result<(), String> {
-    Err("region recording needs X11; record the desktop instead".to_string())
-}
-
 /// Region recording, step two: the overlay committed a rect. Open the
 #[cfg(target_os = "linux")]
 pub(super) fn record_region_start(
@@ -256,7 +269,7 @@ pub(super) fn record_region_start(
     }
     let cfg = Config::load();
     let (output, mic, format, encoder) = recording_params(&cfg);
-    let xid = chip::open(cx, mic)?;
+    let xid = chip::open(cx, mic, None)?;
     let conn = iris_lib::capture::x11::shared_conn().ok().map(|(c, _)| c);
     let follower = std::sync::Arc::new(XcbChip {
         xid: std::sync::atomic::AtomicU32::new(xid),
@@ -281,15 +294,29 @@ pub(super) fn record_region_start(
     Ok(())
 }
 
-/// Non-Linux platforms have no region source; the pick never reaches
-/// this step because record_region_pick already returned an error.
-#[cfg(not(target_os = "linux"))]
+/// Region recording, step two, on Windows and macOS: record the
+/// committed rect.
+#[cfg(any(windows, target_os = "macos"))]
 pub(super) fn record_region_start(
-    _cx: &mut App,
-    _x: i32,
-    _y: i32,
-    _w: i32,
-    _h: i32,
+    cx: &mut App,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
 ) -> Result<(), String> {
-    Err("region recording needs X11; record the desktop instead".to_string())
+    if RECORDING.lock().is_active() {
+        return Err("a recording is already active".to_string());
+    }
+    if w <= 0 || h <= 0 {
+        return Err(format!("empty region {w}x{h}"));
+    }
+    let region = iris_lib::capture::WinRect {
+        x,
+        y,
+        width: w as u32,
+        height: h as u32,
+    };
+    let active = start_desktop(cx, Some(region))?;
+    RECORDING.lock().active = Some(active);
+    Ok(())
 }

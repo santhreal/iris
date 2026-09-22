@@ -142,6 +142,7 @@ impl Render for PinStage {
                     let origin = window.bounds().origin;
                     let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
                     crate::sys::window::begin_wm_move(
+                        window,
                         class.to_string(),
                         (f32::from(origin.x) + mx) as i32,
                         (f32::from(origin.y) + my) as i32,

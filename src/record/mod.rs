@@ -10,6 +10,9 @@ pub mod wayland;
 #[cfg(any(windows, target_os = "macos"))]
 pub mod desktop;
 
+#[cfg(any(windows, target_os = "macos", test))]
+mod devices;
+
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;

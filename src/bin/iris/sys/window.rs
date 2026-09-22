@@ -58,66 +58,60 @@ pub fn centered_origin(cx: &gpui::App, w: f32, h: f32, fallback: (f32, f32)) -> 
 }
 
 // ---- post-map fixups -------------------------------------------------
-// X11 WMs reposition and restyle a window at map time, so the fixups
-// below re-assert geometry, decorations, and stacking after the map.
-// Other platforms honor the requested bounds at creation; the fixups
-// are no-ops there.
+// X11 WMs reposition and restyle a window at map time, so the X11
+// implementation re-asserts geometry, decorations, and stacking after
+// the map. Windows and macOS honor the bounds GPUI requests at window
+// creation, so their fixups do nothing.
 
 #[cfg(target_os = "linux")]
-mod imp {
-    pub(crate) use crate::xwin::{
-        always_on_top_after_map, begin_wm_move, place_after_map, place_after_map_kind,
-        span_after_map, unpark_span,
-    };
-}
-
-/// Reassert `(x, y)` after the WM maps the window named by `class`.
+mod x11;
 #[cfg(target_os = "linux")]
-pub fn place_after_map(class: String, x: f32, y: f32) {
-    imp::place_after_map(class, x, y);
+pub use x11::{
+    always_on_top_after_map, find_xid_by_class_on, place_after_map, place_after_map_kind,
+    span_after_map, suppress_decorations_on, unpark_span,
+};
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(windows)]
+mod windows;
+
+/// Hand a left-button drag that began at root `(root_x, root_y)` to the
+/// window manager so it moves `window`. Call on the press (or the first
+/// move while pressed).
+pub fn begin_wm_move(window: &gpui::Window, class: String, root_x: i32, root_y: i32) {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = window;
+        x11::begin_wm_move(class, root_x, root_y);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (class, root_x, root_y);
+        #[cfg(windows)]
+        windows::begin_move(window);
+        #[cfg(target_os = "macos")]
+        macos::begin_move(window);
+    }
 }
 
-/// `place_after_map` for a notification-style window.
-#[cfg(target_os = "linux")]
-pub fn place_after_map_kind(class: String, x: f32, y: f32, notification: bool) {
-    imp::place_after_map_kind(class, x, y, notification);
-}
-
-/// Keep the window above its siblings after the map.
-#[cfg(target_os = "linux")]
-pub fn always_on_top_after_map(class: String) {
-    imp::always_on_top_after_map(class);
-}
-
-/// Span the window across the given root rect after the map.
-#[cfg(target_os = "linux")]
-pub fn span_after_map(class: String, x: i32, y: i32, w: u32, h: u32) {
-    imp::span_after_map(class, x, y, w, h);
-}
-
-/// Restore a parked window's span when it is reused.
-#[cfg(target_os = "linux")]
-pub fn unpark_span(class: String, x: i32, y: i32, w: u32, h: u32) {
-    imp::unpark_span(class, x, y, w, h);
-}
-
-/// Begin a WM-driven move drag at the root coordinates.
-#[cfg(target_os = "linux")]
-pub fn begin_wm_move(class: String, root_x: i32, root_y: i32) {
-    imp::begin_wm_move(class, root_x, root_y);
-}
-
-// Non-Linux platforms honor the bounds GPUI requests at window
-// creation, so the post-map fixups are no-ops.
+/// Keep `window` out of screen captures and recordings (the recording
+/// chip over a recorded region). X11 has no such flag; the chip there
+/// sits outside the recorded window instead.
 #[cfg(not(target_os = "linux"))]
-pub fn place_after_map(_class: String, _x: f32, _y: f32) {}
+pub fn exclude_from_capture(window: &gpui::Window) {
+    #[cfg(windows)]
+    windows::exclude_from_capture(window);
+    #[cfg(target_os = "macos")]
+    macos::exclude_from_capture(window);
+}
+
 #[cfg(not(target_os = "linux"))]
-pub fn place_after_map_kind(_class: String, _x: f32, _y: f32, _notification: bool) {}
+mod other {
+    pub fn place_after_map(_class: String, _x: f32, _y: f32) {}
+    pub fn place_after_map_kind(_class: String, _x: f32, _y: f32, _notification: bool) {}
+    pub fn always_on_top_after_map(_class: String) {}
+    pub fn span_after_map(_class: String, _x: i32, _y: i32, _w: u32, _h: u32) {}
+    pub fn unpark_span(_class: String, _x: i32, _y: i32, _w: u32, _h: u32) {}
+}
 #[cfg(not(target_os = "linux"))]
-pub fn always_on_top_after_map(_class: String) {}
-#[cfg(not(target_os = "linux"))]
-pub fn span_after_map(_class: String, _x: i32, _y: i32, _w: u32, _h: u32) {}
-#[cfg(not(target_os = "linux"))]
-pub fn unpark_span(_class: String, _x: i32, _y: i32, _w: u32, _h: u32) {}
-#[cfg(not(target_os = "linux"))]
-pub fn begin_wm_move(_class: String, _root_x: i32, _root_y: i32) {}
+pub use other::*;

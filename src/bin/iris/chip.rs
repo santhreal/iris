@@ -1,10 +1,12 @@
-//! Recording chip: the frosted badge pinned above the recorded window.
+//! Recording chip: the frosted badge pinned above the recorded area.
 //!
 //! A small transparent popup with the pulsing record dot, a tabular
-//! elapsed timer, and the mic badge. The border thread in
+//! elapsed timer, and the mic badge. On X11 the border thread in
 //! record::x11 moves it by XID (x11rb configure_window), so it follows
-//! the target window without going through the app event loop. The
-//! chip's input shape is emptied, so clicks pass straight through.
+//! the target window without going through the app event loop, and the
+//! chip's input shape is emptied, so clicks pass straight through. On
+//! Windows and macOS it opens above the recorded region and is excluded
+//! from screen capture, so it never appears in the recording.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
@@ -65,13 +67,20 @@ pub struct Chip {
     timer_text: SharedString,
 }
 
-/// Open the chip. Returns the X11 window id on X11, 0 elsewhere.
-pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
+/// Open the chip. `anchor` is the recorded rect in root pixels (`None`:
+/// the main display); X11 ignores it, the chip follower places the
+/// chip there. Returns the X11 window id on X11, 0 elsewhere.
+pub fn open(
+    cx: &mut App,
+    mic: bool,
+    anchor: Option<iris_lib::capture::WinRect>,
+) -> Result<u32, String> {
+    let origin = anchor_origin(cx, anchor);
     let handle = cx
         .open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    origin: point(px(0.), px(0.)),
+                    origin: point(px(origin.0), px(origin.1)),
                     size: size(px(CHIP_W + 2.0 * CHIP_BLEED), px(CHIP_H + 2.0 * CHIP_BLEED)),
                 })),
                 titlebar: None,
@@ -108,7 +117,7 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
         let xid = find_chip_xid().unwrap_or(0);
         if let Ok((conn, _)) = iris_lib::capture::x11::shared_conn() {
             if xid != 0 {
-                crate::xwin::suppress_decorations_on(conn, xid);
+                crate::sys::window::suppress_decorations_on(conn, xid);
             }
         }
         // The XID lookup above can beat the map; strip decorations with
@@ -118,7 +127,12 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
         xid
     };
     #[cfg(not(target_os = "linux"))]
-    let xid = 0u32;
+    let xid = {
+        let _ = handle.update(cx, |_, window, _| {
+            crate::sys::window::exclude_from_capture(window)
+        });
+        0u32
+    };
     CHIP_XID.store(xid, Ordering::SeqCst);
     MIC_ON.store(mic, Ordering::Relaxed);
     PAUSED.store(false, Ordering::Relaxed);
@@ -126,6 +140,24 @@ pub fn open(cx: &mut App, mic: bool) -> Result<u32, String> {
     *PAUSE_STARTED.lock() = None;
     *CHIP_HANDLE.lock() = Some(handle.into());
     Ok(xid)
+}
+
+/// Logical window origin that sets the pill above the top-right corner
+/// of `anchor` (root pixels), kept on the display: inside the rect when
+/// there is no room above it. `None` anchors to the main display.
+fn anchor_origin(cx: &App, anchor: Option<iris_lib::capture::WinRect>) -> (f32, f32) {
+    let s = iris_lib::capture::root_scale();
+    let (x, y, w) = match anchor {
+        Some(r) => (r.x as f32 / s, r.y as f32 / s, r.width as f32 / s),
+        None => match crate::sys::window::primary_monitor_rect(cx) {
+            Some((mx, my, mw, _)) => (mx, my + CHIP_H + 24.0, mw - 24.0),
+            None => (0.0, 0.0, 0.0),
+        },
+    };
+    let win_w = CHIP_W + 2.0 * CHIP_BLEED;
+    let win_h = CHIP_H + 2.0 * CHIP_BLEED;
+    let top = crate::sys::window::primary_monitor_rect(cx).map_or(0.0, |m| m.1);
+    ((x + w - win_w).max(x), (y - win_h).max(top))
 }
 
 /// Close the chip window, if open.
@@ -149,7 +181,7 @@ pub fn find_chip_xid() -> Option<u32> {
 /// direct child of the root.
 #[cfg(target_os = "linux")]
 pub fn find_chip_xid_on(conn: &impl x11rb::connection::Connection) -> Option<u32> {
-    crate::xwin::find_xid_by_class_on(conn, "iris.chip")
+    crate::sys::window::find_xid_by_class_on(conn, "iris.chip")
 }
 
 impl Render for Chip {

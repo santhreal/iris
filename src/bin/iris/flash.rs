@@ -22,11 +22,7 @@ struct Flash {
 /// and fullscreened by the post-map helper so no monitor is left
 /// out. Returns after the windows open; they dismiss themselves.
 pub fn show(cx: &mut App) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    let monitors = iris_lib::capture::monitors().unwrap_or_default();
-    #[cfg(not(target_os = "linux"))]
-    let monitors: Vec<iris_lib::capture::WinRect> = Vec::new();
-    let mut monitors = monitors;
+    let mut monitors = iris_lib::capture::monitors().unwrap_or_default();
     if monitors.is_empty() {
         monitors.push(iris_lib::capture::WinRect {
             x: 0,
@@ -47,12 +43,14 @@ pub fn show(cx: &mut App) -> Result<(), String> {
         uy2 = uy2.max(m.y + m.height as i32);
     }
     let (uw, uh) = ((ux2 - ux).max(1) as u32, (uy2 - uy).max(1) as u32);
+    let s = iris_lib::capture::root_scale();
     let win_id = crate::sys::window::unique_id("dev.iris.flash");
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: point(px(ux as f32), px(uy as f32)),
-                size: size(px(uw as f32), px(uh as f32)),
+                // Monitors are physical pixels; bounds are logical.
+                origin: point(px(ux as f32 / s), px(uy as f32 / s)),
+                size: size(px(uw as f32 / s), px(uh as f32 / s)),
             })),
             titlebar: None,
             focus: false,

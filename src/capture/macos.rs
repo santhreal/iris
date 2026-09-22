@@ -87,18 +87,6 @@ extern "C" {
     fn CFRelease(cf: CFTypeRef);
 }
 
-/// ffmpeg input arguments for recording the main display.
-pub fn capture_args() -> Vec<String> {
-    vec![
-        "-f".into(),
-        "avfoundation".into(),
-        "-capture_cursor".into(),
-        "1".into(),
-        "-i".into(),
-        "1:".into(),
-    ]
-}
-
 /// Fail with a corrective message, and raise the system prompt, when
 /// Screen Recording permission is missing. Without it CoreGraphics
 /// returns the wallpaper with every window removed instead of failing.
@@ -114,18 +102,57 @@ fn require_permission() -> Result<(), String> {
     )
 }
 
-/// Active displays, main display first.
-fn displays() -> Result<Vec<u32>, String> {
+/// Active displays in CoreGraphics order (the order ffmpeg's
+/// avfoundation numbers its `Capture screen N` devices).
+fn display_list() -> Result<Vec<u32>, String> {
     let mut ids = [0u32; 16];
     let mut count = 0u32;
     let err = unsafe { CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) };
     if err != 0 {
         return Err(format!("CGGetActiveDisplayList failed ({err})"));
     }
+    Ok(ids[..count as usize].to_vec())
+}
+
+/// Active displays, main display first.
+fn displays() -> Result<Vec<u32>, String> {
     let main = unsafe { CGMainDisplayID() };
-    let mut out: Vec<u32> = ids[..count as usize].to_vec();
+    let mut out = display_list()?;
     out.sort_by_key(|&d| d != main);
     Ok(out)
+}
+
+/// The display to record and the crop within it: `(ordinal, crop)`,
+/// where `ordinal` counts avfoundation screen devices and `crop` is
+/// `(x, y, w, h)` in that display's own pixels. `rect` (root pixels)
+/// selects the display holding its center; `None` records the main
+/// display uncropped.
+pub fn recording_screen(
+    rect: Option<WinRect>,
+) -> Result<(usize, Option<(u32, u32, u32, u32)>), String> {
+    require_permission()?;
+    let ids = display_list()?;
+    let root = root_scale_of(&ids);
+    let Some(r) = rect else {
+        let main = unsafe { CGMainDisplayID() };
+        let ord = ids.iter().position(|&d| d == main).unwrap_or(0);
+        return Ok((ord, None));
+    };
+    let (cx, cy) = (r.x + r.width as i32 / 2, r.y + r.height as i32 / 2);
+    for (ord, &d) in ids.iter().enumerate() {
+        let b = to_root(unsafe { CGDisplayBounds(d) }, root);
+        if cx < b.x || cy < b.y || cx >= b.x + b.width as i32 || cy >= b.y + b.height as i32 {
+            continue;
+        }
+        // Root pixels to this display's pixels.
+        let f = display_scale(d) / root;
+        let x = ((r.x - b.x).max(0) as f64 * f) as u32;
+        let y = ((r.y - b.y).max(0) as f64 * f) as u32;
+        let w = (r.width.min(b.width) as f64 * f) as u32;
+        let h = (r.height.min(b.height) as f64 * f) as u32;
+        return Ok((ord, Some((x, y, w, h))));
+    }
+    Err("the selected region is not on any display".to_string())
 }
 
 /// Backing scale of `display`: physical pixel width over point width.

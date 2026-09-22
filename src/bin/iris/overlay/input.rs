@@ -196,16 +196,21 @@ impl Overlay {
         }
         if self.mode == OverlayMode::RecordPick {
             // Hand the rect to the daemon; the overlay parks and the
-            // recording chip takes over the visual state.
-            let _ = crate::daemon::dispatch(
+            // recording chip takes over the visual state. The source
+            // reads root coordinates: frame-relative plus the union's
+            // origin, which is negative with a monitor left of or
+            // above the primary.
+            if let Err(e) = crate::daemon::dispatch(
                 cx,
                 &crate::daemon::Command::RecordRegion {
-                    x: region.x as i32,
-                    y: region.y as i32,
+                    x: region.x as i32 + self.origin.0,
+                    y: region.y as i32 + self.origin.1,
                     w: region.width as i32,
                     h: region.height as i32,
                 },
-            );
+            ) {
+                iris_lib::ilog!("iris: record-region: {e}");
+            }
             close_other_overlays(cx, Some(window.window_handle()));
             self.park(window, cx);
             return;

@@ -16,7 +16,8 @@ you look away.
   window pick on X11, portal source pick on Wayland. While recording, a
   click-through red border wraps the target window and a floating chip
   shows the elapsed time and mic state. Stop with the same hotkey, the
-  tray, or `iris --stop-recording`. Output is H.264/AAC mp4 via ffmpeg.
+  tray, or `iris --record-window` again. Output is H.264/AAC mp4 via
+  ffmpeg. On Windows and macOS the same toggle records the main display.
 - **Record region** (`iris --record-region`): drag a screen region and
   record just that area.
 - **Pin to screen**: pin a capture as an always-on-top reference image;
@@ -154,12 +155,14 @@ one process.
 | --- | --- | --- |
 | Linux/X11 | full support, window hover-snap | per-window, border + chip |
 | Linux/Wayland | xdg-desktop-portal | portal ScreenCast + PipeWire |
-| Windows | ffmpeg gdigrab | desktop record (gdigrab) |
-| macOS | ffmpeg avfoundation | desktop record (avfoundation) |
+| Windows | GDI (`BitBlt`) | ffmpeg gdigrab: display or region, chip |
+| macOS | CoreGraphics | ffmpeg avfoundation: display or region, chip |
 
 Wayland recording asks the portal for a window source; the compositor's
-own picker appears. Windows and macOS record the primary desktop and
-stop via hotkey, tray, or `--stop-recording`.
+own picker appears. On Windows and macOS the recording chip is excluded
+from screen capture, and `--record-pause` splits the recording into
+segments that are joined when it stops. The mic setting is fixed for the
+length of a Windows or macOS recording. ffmpeg must be on `PATH`.
 
 Single-instance IPC, global hotkeys, and the tray run on all three
 platforms: a local socket on Linux, a named pipe on Windows, and a

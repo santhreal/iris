@@ -25,7 +25,6 @@
 //!   --check-update       report whether a newer release exists
 //!   --update             download and apply the latest release
 
-#[cfg(target_os = "linux")]
 mod chip;
 mod daemon;
 mod editor;
@@ -43,8 +42,6 @@ mod sys;
 mod theme;
 mod update;
 mod widgets;
-#[cfg(target_os = "linux")]
-mod xwin;
 
 use gpui::*;
 

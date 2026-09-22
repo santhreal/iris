@@ -1,4 +1,4 @@
-//! X11 window helpers shared by the native surfaces: WM_CLASS-based
+//! X11 post-map window fixups for `sys::window`: WM_CLASS-based
 //! XID lookup (GPUI's X11 HasWindowHandle is unimplemented) and direct
 //! window moves for positions a window manager would otherwise
 //! override at map time.

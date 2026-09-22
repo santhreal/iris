@@ -8,8 +8,9 @@
 //!
 //! Wayland denies global key grabs; there the compositor-level binding
 //! runs `iris --capture`, which forwards here the same way. Recording
-//! runs through `record::x11::record_window_follow` with the chip window
-//! repositioned by XID through `XcbChip`.
+//! on X11 runs through `record::x11::record_window_follow` with the chip
+//! window repositioned by XID through `XcbChip`; Windows and macOS record
+//! through `record::desktop` with the chip placed at open.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -19,9 +20,7 @@ use futures::StreamExt;
 use gpui::*;
 use iris_lib::record;
 
-#[cfg(target_os = "linux")]
-use crate::chip;
-use crate::{library, overlay, settings, stage};
+use crate::{chip, library, overlay, settings, stage};
 
 mod capture;
 mod recording;
@@ -36,9 +35,8 @@ pub(crate) static RECORDING: std::sync::LazyLock<parking_lot::Mutex<record::Reco
 pub(crate) static COMMAND_TX: std::sync::OnceLock<UnboundedSender<Command>> =
     std::sync::OnceLock::new();
 
-/// The command channel sender for the X11 chip's hide callback; only
-/// Linux drives a chip that needs it.
-#[cfg(target_os = "linux")]
+/// The command channel sender for a recording source's chip-hide
+/// callback, which runs on the source thread.
 pub(crate) fn command_tx() -> Option<UnboundedSender<Command>> {
     COMMAND_TX.get().cloned()
 }
@@ -69,8 +67,7 @@ pub enum Command {
     },
     RecordPause,
     RecordMic,
-    /// The X11 chip window asked to close; only Linux has a chip.
-    #[cfg(target_os = "linux")]
+    /// The recording source ended; close the chip.
     ChipHide,
     Quit,
 }
@@ -150,12 +147,8 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::RecordPause => {
             let mgr = RECORDING.lock();
             if let Some(rec) = &mgr.active {
-                #[cfg(target_os = "linux")]
                 chip::set_paused(!chip::paused());
-                #[cfg(target_os = "linux")]
                 let paused = chip::paused();
-                #[cfg(not(target_os = "linux"))]
-                let paused = false;
                 rec.send_control(if paused {
                     record::RecControl::Pause
                 } else {
@@ -165,16 +158,19 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             Ok(())
         }
         Command::RecordMic => {
+            // A desktop recording joins its paused segments by stream
+            // copy, which needs one fixed set of streams.
+            if cfg!(not(target_os = "linux")) && RECORDING.lock().is_active() {
+                return Err("the mic is fixed for a recording on this platform".to_string());
+            }
             let mut mgr = RECORDING.lock();
             if let Some(rec) = &mut mgr.active {
                 rec.mic = !rec.mic;
-                #[cfg(target_os = "linux")]
                 chip::set_mic(rec.mic);
                 rec.send_control(record::RecControl::ToggleMic);
             }
             Ok(())
         }
-        #[cfg(target_os = "linux")]
         Command::ChipHide => {
             chip::close(cx);
             Ok(())
