@@ -134,14 +134,14 @@ pub fn check() -> Result<Option<UpdateInfo>, String> {
 
 /// Download `info.asset_url` to a temp file and return its path.
 fn download(info: &UpdateInfo) -> Result<PathBuf, String> {
-    let resp = http_get(&info.asset_url)
-        .map_err(|e| format!("update: GET {}: {e}", info.asset_url))?;
+    let resp =
+        http_get(&info.asset_url).map_err(|e| format!("update: GET {}: {e}", info.asset_url))?;
     let mut reader = resp.into_reader();
     let dir = std::env::temp_dir().join("iris-update");
     std::fs::create_dir_all(&dir).map_err(|e| format!("update: temp dir: {e}"))?;
     let path = dir.join(&info.asset_name);
-    let mut file =
-        std::fs::File::create(&path).map_err(|e| format!("update: create {}: {e}", path.display()))?;
+    let mut file = std::fs::File::create(&path)
+        .map_err(|e| format!("update: create {}: {e}", path.display()))?;
     std::io::copy(&mut reader, &mut file)
         .map_err(|e| format!("update: download {}: {e}", info.asset_name))?;
     Ok(path)
@@ -214,7 +214,12 @@ fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
     let mount = stdout
         .lines()
         .rev()
-        .find_map(|l| l.split('\t').last().map(str::trim).filter(|s| s.starts_with('/')))
+        .find_map(|l| {
+            l.split('\t')
+                .last()
+                .map(str::trim)
+                .filter(|s| s.starts_with('/'))
+        })
         .ok_or_else(|| "update: no mount point in hdiutil output".to_string())?;
     let src = Path::new(mount).join("iris.app");
     let dst = Path::new("/Applications/iris.app");
@@ -239,13 +244,11 @@ fn apply_file(file: &Path, _info: &UpdateInfo) -> Result<(), String> {
     // be overwritten in place (ETXTBSY), but a rename() over it is
     // atomic and allowed: copy the download to a sibling of $APPIMAGE,
     // then rename it onto the target.
-    let appimage = std::env::var("APPIMAGE").map_err(|_| {
-        "update: not an AppImage install; update via apt/dnf".to_string()
-    })?;
+    let appimage = std::env::var("APPIMAGE")
+        .map_err(|_| "update: not an AppImage install; update via apt/dnf".to_string())?;
     let target = PathBuf::from(appimage);
     let tmp = target.with_extension("new");
-    std::fs::copy(file, &tmp)
-        .map_err(|e| format!("update: stage {}: {e}", tmp.display()))?;
+    std::fs::copy(file, &tmp).map_err(|e| format!("update: stage {}: {e}", tmp.display()))?;
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))

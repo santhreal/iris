@@ -21,13 +21,16 @@ use icons::Icon;
 pub fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div> {
     let base = div()
         .id(ElementId::Name(id.into()))
-        .h(px(28.))
+        .h(px(theme::CONTROL_H))
         .px(px(12.))
         .flex()
+        .flex_shrink_0()
         .items_center()
-        .gap(px(5.))
-        .rounded(px(theme::RADIUS_SM))
-        .text_sm()
+        .justify_center()
+        .gap(px(6.))
+        .rounded(px(theme::RADIUS_CONTROL))
+        .text_size(px(theme::TEXT_BODY))
+        .whitespace_nowrap()
         .cursor_pointer()
         .child(label);
     if primary {
@@ -178,7 +181,8 @@ pub fn menu_row_owned(id: impl Into<ElementId>, label: impl Into<SharedString>) 
         .px(px(12.))
         .flex()
         .items_center()
-        .text_sm()
+        .text_size(px(theme::TEXT_BODY))
+        .whitespace_nowrap()
         .text_color(theme::FG)
         .cursor_pointer()
         // A menu floats above other interactive surfaces; without
@@ -199,17 +203,17 @@ pub fn dropdown(
 ) -> Stateful<Div> {
     div()
         .id(id)
-        .h(px(28.))
+        .h(px(theme::CONTROL_H))
         .px(px(10.))
         .flex()
         .items_center()
         .justify_between()
         .gap(px(8.))
-        .rounded(px(6.))
+        .rounded(px(theme::RADIUS_CONTROL))
         .bg(theme::FIELD_BG)
         .border_1()
         .border_color(if open { theme::ACCENT } else { theme::HAIRLINE })
-        .text_sm()
+        .text_size(px(theme::TEXT_BODY))
         .text_color(theme::FG)
         .cursor_pointer()
         .child(current.into())
@@ -255,11 +259,13 @@ pub fn text_field(id: impl Into<ElementId>, text: String, active: bool) -> State
     div()
         .id(id)
         .flex_1()
-        .h(px(28.))
+        .h(px(theme::CONTROL_H))
         .px(px(10.))
         .flex()
         .items_center()
-        .rounded(px(6.))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .rounded(px(theme::RADIUS_CONTROL))
         .bg(theme::FIELD_BG)
         .border_1()
         .border_color(if active {
@@ -267,7 +273,7 @@ pub fn text_field(id: impl Into<ElementId>, text: String, active: bool) -> State
         } else {
             theme::alpha(theme::FG, 0.0)
         })
-        .text_sm()
+        .text_size(px(theme::TEXT_BODY))
         .text_color(theme::FG)
         .cursor_text()
         .child(text)
@@ -284,7 +290,7 @@ pub fn status_pill(text: &str, left: f32) -> Div {
         .rounded(px(theme::RADIUS_SM))
         .bg(theme::alpha(theme::BG_ELEV, 0.95))
         .shadow(theme::shadow_float())
-        .text_xs()
+        .text_size(px(theme::TEXT_SMALL))
         .text_color(theme::FG_DIM)
         .child(text.to_string())
 }
@@ -336,7 +342,7 @@ pub fn window_frame(
     right: Vec<AnyElement>,
     content: impl IntoElement,
 ) -> Div {
-    let mut cluster = div().flex().items_center().gap(px(6.));
+    let mut cluster = div().flex().items_center().gap(px(8.));
     for el in right {
         cluster = cluster.child(el);
     }
@@ -344,6 +350,7 @@ pub fn window_frame(
     cluster = cluster.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
     div()
         .size_full()
+        .font_family(theme::FONT)
         .rounded(px(12.))
         .overflow_hidden()
         .bg(theme::BG)
@@ -385,7 +392,7 @@ pub fn window_frame(
                         ))
                         .child(
                             div()
-                                .text_sm()
+                                .text_size(px(theme::TEXT_TITLE))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme::FG)
                                 .child(title),
@@ -409,14 +416,19 @@ pub fn shortcuts_sheet(rows: Vec<(&'static str, SharedString)>) -> Stateful<Div>
                 .items_center()
                 .justify_between()
                 .gap(px(24.))
-                .child(div().text_sm().text_color(theme::FG).child(action))
+                .child(
+                    div()
+                        .text_size(px(theme::TEXT_BODY))
+                        .text_color(theme::FG)
+                        .child(action),
+                )
                 .child(
                     div()
                         .px(px(8.))
                         .py(px(3.))
                         .rounded(px(6.))
                         .bg(theme::FIELD_BG)
-                        .text_xs()
+                        .text_size(px(theme::TEXT_SMALL))
                         .text_color(theme::FG_DIM)
                         .child(keys),
                 ),
@@ -445,7 +457,7 @@ pub fn shortcuts_sheet(rows: Vec<(&'static str, SharedString)>) -> Stateful<Div>
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
-                        .text_sm()
+                        .text_size(px(theme::TEXT_BODY))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme::FG)
                         .child("Keyboard shortcuts"),

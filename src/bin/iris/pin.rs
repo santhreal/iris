@@ -39,8 +39,8 @@ pub fn open(cx: &mut App, path: &std::path::Path) -> Result<(), String> {
                         img.as_raw(),
                     ));
                 }
-                let bytes = std::fs::read(&path)
-                    .map_err(|e| format!("read {}: {e}", path.display()))?;
+                let bytes =
+                    std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
                 crate::widgets::render_image_from_png(&bytes)
                     .ok_or_else(|| format!("decode {}: not a supported image", path.display()))
             })
@@ -140,8 +140,7 @@ impl Render for PinStage {
                     // Hand the move to the WM: the root pointer position
                     // is window origin + local position.
                     let origin = window.bounds().origin;
-                    let (mx, my): (f32, f32) =
-                        (ev.position.x.into(), ev.position.y.into());
+                    let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
                     crate::sys::window::begin_wm_move(
                         class.to_string(),
                         (f32::from(origin.x) + mx) as i32,
@@ -165,4 +164,3 @@ impl Render for PinStage {
             )
     }
 }
-

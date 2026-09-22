@@ -2,7 +2,6 @@
 
 use std::{path::Path, sync::Arc, time::Instant};
 
-
 use super::*;
 use crate::motion;
 

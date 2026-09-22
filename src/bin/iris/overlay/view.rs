@@ -66,7 +66,7 @@ impl Overlay {
                     .py(px(2.))
                     .rounded(px(6.))
                     .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                    .text_xs()
+                    .text_size(px(theme::TEXT_SMALL))
                     .child(coord_label),
             );
         }
@@ -164,7 +164,7 @@ impl Overlay {
                     .py(px(3.))
                     .rounded(px(6.))
                     .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                    .text_xs()
+                    .text_size(px(theme::TEXT_SMALL))
                     .text_color(theme::FG)
                     .child(size_label),
             );
@@ -183,7 +183,7 @@ impl Overlay {
                         .py(px(3.))
                         .rounded(px(6.))
                         .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                        .text_xs()
+                        .text_size(px(theme::TEXT_SMALL))
                         .text_color(theme::FG_DIM)
                         .child(hint),
                 );
@@ -214,7 +214,11 @@ impl Overlay {
     // Loupe while dragging or resizing: the window-snap highlight
     // is the hover feedback; no circle chasing the cursor. Flips
     // to the other side of the cursor near the screen edges.
-    pub(super) fn render_loupe_widget(&self, mut root: Stateful<Div>, window: &Window) -> Stateful<Div> {
+    pub(super) fn render_loupe_widget(
+        &self,
+        mut root: Stateful<Div>,
+        window: &Window,
+    ) -> Stateful<Div> {
         if self.dragging || self.resize.is_some() {
             if let Some((loupe, info)) = &self.loupe {
                 let win = window.bounds().size;
@@ -257,7 +261,7 @@ impl Overlay {
                                 .py(px(2.))
                                 .rounded(px(6.))
                                 .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                                .text_xs()
+                                .text_size(px(theme::TEXT_SMALL))
                                 .text_color(theme::FG_DIM)
                                 .child(info.clone()),
                         ),

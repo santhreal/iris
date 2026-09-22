@@ -7,8 +7,8 @@ use x11rb::protocol::xproto::{
     SELECTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::Event;
-use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
 use super::CbAtoms;
 

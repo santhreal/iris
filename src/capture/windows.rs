@@ -16,12 +16,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 pub fn capture_args() -> Vec<String> {
-    vec![
-        "-f".into(),
-        "gdigrab".into(),
-        "-i".into(),
-        "desktop".into(),
-    ]
+    vec!["-f".into(), "gdigrab".into(), "-i".into(), "desktop".into()]
 }
 
 pub fn capture_full_frame() -> Result<Frame, String> {
@@ -76,12 +71,7 @@ fn rect_to_winrect(r: RECT) -> WinRect {
 /// every display; MONITORINFOF_PRIMARY marks the primary, which the
 /// overlay expects at index 0.
 pub fn monitors() -> Result<Vec<WinRect>, String> {
-    unsafe extern "system" fn cb(
-        mon: HMONITOR,
-        _hdc: HDC,
-        _rect: *mut RECT,
-        data: LPARAM,
-    ) -> BOOL {
+    unsafe extern "system" fn cb(mon: HMONITOR, _hdc: HDC, _rect: *mut RECT, data: LPARAM) -> BOOL {
         let out = &mut *(data as *mut Vec<(WinRect, bool)>);
         let mut info: MONITORINFOEXW = std::mem::zeroed();
         info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;

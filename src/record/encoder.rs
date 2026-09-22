@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread::JoinHandle;
 
 /// The raw pixel format frames arrive in, declared to ffmpeg through
@@ -135,7 +135,8 @@ impl Encoder {
                     RecordingEncoder::Nvenc => true,
                     RecordingEncoder::Libx264 => false,
                     RecordingEncoder::Auto => nvenc_available(),
-                } && cfg.width >= 145 && cfg.height >= 49;
+                } && cfg.width >= 145
+                    && cfg.height >= 49;
                 if use_nvenc {
                     args.extend([
                         "-c:v".into(),
@@ -159,10 +160,7 @@ impl Encoder {
                         "yuv420p".into(),
                     ]);
                 }
-                args.extend([
-                    "-vf".into(),
-                    "scale=trunc(iw/2)*2:trunc(ih/2)*2".into(),
-                ]);
+                args.extend(["-vf".into(), "scale=trunc(iw/2)*2:trunc(ih/2)*2".into()]);
             }
             RecordingFormat::Gif => {
                 // Per-frame palettes keep memory bounded on long
@@ -424,11 +422,7 @@ impl Encoder {
             let _ = err.read_to_string(&mut stderr);
         }
         if !status.success() {
-            return Err(format!(
-                "ffmpeg exited with {}: {}",
-                status,
-                stderr.trim()
-            ));
+            return Err(format!("ffmpeg exited with {}: {}", status, stderr.trim()));
         }
         let meta = std::fs::metadata(&self.output)
             .map_err(|e| format!("output {} missing after encode: {e}", self.output.display()))?;
@@ -470,12 +464,18 @@ fn nvenc_available() -> bool {
         Command::new("ffmpeg")
             .args([
                 "-hide_banner",
-                "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "color=black:s=256x256:d=0.1:r=1",
-                "-frames:v", "1",
-                "-c:v", "h264_nvenc",
-                "-f", "null",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=black:s=256x256:d=0.1:r=1",
+                "-frames:v",
+                "1",
+                "-c:v",
+                "h264_nvenc",
+                "-f",
+                "null",
                 "-",
             ])
             .output()

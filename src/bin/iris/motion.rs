@@ -83,8 +83,6 @@ impl Spring {
     pub fn settled(&self, target: f32) -> bool {
         (self.value - target).abs() < 0.002 && self.velocity.abs() < 0.02
     }
-
-
 }
 
 // WHY: the class closed here is "motion math breaks the animation
@@ -99,7 +97,11 @@ mod tests {
     fn spring_curve_stays_in_unit_range() {
         for i in 0..=200 {
             let v = spring(i as f32 / 200.0);
-            assert!((0.0..=1.0).contains(&v), "spring({}) = {v}", i as f32 / 200.0);
+            assert!(
+                (0.0..=1.0).contains(&v),
+                "spring({}) = {v}",
+                i as f32 / 200.0
+            );
         }
         assert_eq!(spring(0.0), 0.0);
         assert!((spring(1.0) - 1.0).abs() < 0.01);

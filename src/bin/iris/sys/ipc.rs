@@ -10,12 +10,10 @@
 //! `poll()`ed the listener fd inside the GPUI executor: a blocking
 //! thread is the same shape on every platform and needs no raw fd.
 
+use futures::channel::mpsc::{self, UnboundedReceiver};
+use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions, Name};
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
-use futures::channel::mpsc::{self, UnboundedReceiver};
-use interprocess::local_socket::{
-    prelude::*, GenericFilePath, ListenerOptions, Name,
-};
 
 /// The well-known socket name. A filesystem path on Unix (the runtime
 /// dir holds `iris.sock`, mode 0600), a `\\.\pipe\` name on Windows —

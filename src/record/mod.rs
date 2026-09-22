@@ -147,7 +147,10 @@ impl ActiveRecording {
     /// trailer flush can take seconds on a long recording, and joining
     /// on the UI thread freezes hotkeys and socket commands for the
     /// whole flush. `done` runs on the joining thread with the result.
-    pub fn stop_async(mut self, done: impl FnOnce(Result<Option<PathBuf>, String>) + Send + 'static) {
+    pub fn stop_async(
+        mut self,
+        done: impl FnOnce(Result<Option<PathBuf>, String>) + Send + 'static,
+    ) {
         if let Some(tx) = self.stop.take() {
             let _ = tx.send(());
         }
@@ -161,7 +164,6 @@ impl ActiveRecording {
             done(result);
         });
     }
-
 }
 
 impl Drop for ActiveRecording {
@@ -256,11 +258,18 @@ mod tests {
     fn stop_returns_output_on_clean_source() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
-        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
-            spec.stop.recv().unwrap();
-            std::fs::write(&spec.output, b"mp4").unwrap();
-            Ok(spec.output.clone())
-        });
+        let rec = ActiveRecording::spawn(
+            out.clone(),
+            30,
+            false,
+            crate::config::RecordingFormat::Mp4,
+            crate::config::RecordingEncoder::Libx264,
+            |spec| {
+                spec.stop.recv().unwrap();
+                std::fs::write(&spec.output, b"mp4").unwrap();
+                Ok(spec.output.clone())
+            },
+        );
         assert_eq!(rec.stop().unwrap(), Some(out));
     }
 
@@ -269,10 +278,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
         std::fs::write(&out, b"partial").unwrap();
-        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
-            spec.stop.recv().unwrap();
-            Err(format!("{}user escaped the pick", CANCELLED_PREFIX))
-        });
+        let rec = ActiveRecording::spawn(
+            out.clone(),
+            30,
+            false,
+            crate::config::RecordingFormat::Mp4,
+            crate::config::RecordingEncoder::Libx264,
+            |spec| {
+                spec.stop.recv().unwrap();
+                Err(format!("{}user escaped the pick", CANCELLED_PREFIX))
+            },
+        );
         assert_eq!(rec.stop().unwrap(), None);
         assert!(!out.exists());
     }
@@ -282,10 +298,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
         std::fs::write(&out, b"").unwrap();
-        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
-            spec.stop.recv().unwrap();
-            Err("encoder died".to_string())
-        });
+        let rec = ActiveRecording::spawn(
+            out.clone(),
+            30,
+            false,
+            crate::config::RecordingFormat::Mp4,
+            crate::config::RecordingEncoder::Libx264,
+            |spec| {
+                spec.stop.recv().unwrap();
+                Err("encoder died".to_string())
+            },
+        );
         assert!(rec.stop().is_err());
         assert!(!out.exists());
     }
@@ -297,10 +320,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("r.mp4");
         std::fs::write(&out, b"partial").unwrap();
-        let rec = ActiveRecording::spawn(out.clone(), 30, false, crate::config::RecordingFormat::Mp4, crate::config::RecordingEncoder::Libx264, |spec| {
-            spec.stop.recv().unwrap();
-            Err("encoder died".to_string())
-        });
+        let rec = ActiveRecording::spawn(
+            out.clone(),
+            30,
+            false,
+            crate::config::RecordingFormat::Mp4,
+            crate::config::RecordingEncoder::Libx264,
+            |spec| {
+                spec.stop.recv().unwrap();
+                Err("encoder died".to_string())
+            },
+        );
         assert!(rec.stop().is_err());
         assert!(out.exists());
     }

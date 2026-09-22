@@ -17,7 +17,7 @@ impl Render for Library {
         if selecting {
             cluster.push(
                 div()
-                    .text_xs()
+                    .text_size(px(theme::TEXT_SMALL))
                     .text_color(theme::FG_DIM)
                     .child(self.sel_label.clone())
                     .into_any_element(),
@@ -44,7 +44,7 @@ impl Render for Library {
         } else {
             cluster.push(
                 div()
-                    .text_xs()
+                    .text_size(px(theme::TEXT_SMALL))
                     .text_color(theme::FG_FAINT)
                     .child(self.count_label.clone())
                     .into_any_element(),
@@ -122,7 +122,7 @@ impl Render for Library {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .text_sm()
+                    .text_size(px(theme::TEXT_BODY))
                     .text_color(theme::FG_FAINT)
                     .child(self.empty_label.clone()),
             );

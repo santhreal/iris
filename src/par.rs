@@ -65,11 +65,7 @@ pub fn par_bands_mut_work<T: Send>(
 /// Same banding for a read-only source: `f` gets the source band and
 /// its start index. Used where the destination is derived per band
 /// (e.g. a strided source feeding a packed destination).
-pub fn par_bands<T: Sync>(
-    data: &[T],
-    band_elems: usize,
-    f: impl Fn(&[T], usize) + Sync + Send,
-) {
+pub fn par_bands<T: Sync>(data: &[T], band_elems: usize, f: impl Fn(&[T], usize) + Sync + Send) {
     let band_elems = band_elems.max(1);
     let total_bytes = std::mem::size_of_val(data);
     const PARALLEL_MIN: usize = 1 << 20;

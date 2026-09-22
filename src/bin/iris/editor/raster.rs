@@ -49,7 +49,10 @@ pub(crate) fn pixelate_region_bgra(
     }
     let iw = img.width() as usize;
     let (x, y, w, h) = (x as usize, y as usize, w as usize, h as usize);
-    let (sw, sh) = ((w / BLUR_BLOCK as usize).max(1), (h / BLUR_BLOCK as usize).max(1));
+    let (sw, sh) = (
+        (w / BLUR_BLOCK as usize).max(1),
+        (h / BLUR_BLOCK as usize).max(1),
+    );
     let src = img.as_raw();
     // Phase 1: average each cell's source rect into `small`. Cells
     // partition the region, so every source pixel is read once.

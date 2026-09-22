@@ -13,9 +13,9 @@ use crate::chip;
 use crate::{overlay, pipeline};
 
 use super::capture::recording_params;
+use super::RECORDING;
 #[cfg(target_os = "linux")]
 use super::{command_tx, Command};
-use super::RECORDING;
 
 /// ChipFollow that moves the GPUI chip window by XID (no app round-trip
 /// per move) and asks the daemon to close it at the end. The XID is
@@ -70,7 +70,9 @@ impl record::x11::ChipFollow for XcbChip {
 
 /// One action for the record hotkey/tray/CLI: stop when active, start a
 /// window-picked recording when idle.
-pub(super) fn toggle_recording(#[cfg_attr(not(target_os = "linux"), allow(unused_variables))] cx: &mut App) -> Result<(), String> {
+pub(super) fn toggle_recording(
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] cx: &mut App,
+) -> Result<(), String> {
     if RECORDING.lock().is_active() {
         // The join (ffmpeg's trailer flush) can take seconds on a long
         // recording; it runs off the UI thread so hotkeys and socket

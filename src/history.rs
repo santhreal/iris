@@ -62,11 +62,7 @@ mod tests {
     fn every_variant_round_trips() {
         // The recorded value must match the content at the index, as
         // the editor records it when the edit happens.
-        for edit in [
-            Edit::Add(10),
-            Edit::Remove(0, 1),
-            Edit::Move(0, 1, 31),
-        ] {
+        for edit in [Edit::Add(10), Edit::Remove(0, 1), Edit::Move(0, 1, 31)] {
             let mut items = vec![1, 2, 3];
             let before = items.clone();
             apply_forward(&mut items, &edit);

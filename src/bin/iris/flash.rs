@@ -95,8 +95,6 @@ impl Render for Flash {
         }
         // Fast attack, soft decay: opacity peaks immediately, eases out.
         let opacity = PEAK * (1.0 - t) * (1.0 - t);
-        div()
-            .size_full()
-            .bg(theme::alpha(theme::FG, opacity))
+        div().size_full().bg(theme::alpha(theme::FG, opacity))
     }
 }

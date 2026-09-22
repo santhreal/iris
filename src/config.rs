@@ -199,7 +199,10 @@ impl Config {
                     cfg.expand_dirs();
                     return cfg;
                 }
-                Err(e) => crate::ilog!("iris: invalid config {}: {e}; using defaults", path.display()),
+                Err(e) => crate::ilog!(
+                    "iris: invalid config {}: {e}; using defaults",
+                    path.display()
+                ),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => crate::ilog!("iris: cannot read {}: {e}; using defaults", path.display()),
@@ -235,8 +238,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("create config dir: {e}"))?;
         }
-        let text = toml::to_string_pretty(self)
-            .map_err(|e| format!("serialize config: {e}"))?;
+        let text = toml::to_string_pretty(self).map_err(|e| format!("serialize config: {e}"))?;
         std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
         // Keep the load() cache coherent: a save must be visible to the
         // next reader even when the mtime granularity misses the write.
@@ -361,7 +363,10 @@ mod tests {
     #[serial_test::serial]
     fn tilde_dirs_expand_to_home() {
         let _d = xdg();
-        let home = directories::UserDirs::new().unwrap().home_dir().to_path_buf();
+        let home = directories::UserDirs::new()
+            .unwrap()
+            .home_dir()
+            .to_path_buf();
         let mut cfg = Config {
             screenshots_dir: PathBuf::from("~/shots"),
             recordings_dir: PathBuf::from("~/recs"),

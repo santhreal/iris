@@ -28,12 +28,7 @@ pub fn record_desktop(spec: RecordingSpec) -> Result<std::path::PathBuf, String>
             "audio=default".into(),
         ]);
         #[cfg(target_os = "macos")]
-        args.extend([
-            "-f".into(),
-            "avfoundation".into(),
-            "-i".into(),
-            ":0".into(),
-        ]);
+        args.extend(["-f".into(), "avfoundation".into(), "-i".into(), ":0".into()]);
         map_audio = true;
     }
     args.extend([

@@ -23,8 +23,7 @@ const CHIP_BLEED: f32 = 16.0;
 pub static CHIP_XID: AtomicU32 = AtomicU32::new(0);
 
 /// The open chip window, so `close` can remove it without downcasting.
-static CHIP_HANDLE: parking_lot::Mutex<Option<AnyWindowHandle>> =
-    parking_lot::Mutex::new(None);
+static CHIP_HANDLE: parking_lot::Mutex<Option<AnyWindowHandle>> = parking_lot::Mutex::new(None);
 
 /// Live recording state the daemon flips; the chip re-renders every
 /// frame so these read through without a notify round-trip.
@@ -162,19 +161,17 @@ impl Render for Chip {
         // Paused skips the notify, so a still pill costs no wakes.
         if !self.timer_started {
             self.timer_started = true;
-            cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(33))
-                        .await;
-                    let alive = this.update(cx, |_, cx| {
-                        if !crate::chip::paused() {
-                            cx.notify();
-                        }
-                    });
-                    if alive.is_err() {
-                        break;
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(33))
+                    .await;
+                let alive = this.update(cx, |_, cx| {
+                    if !crate::chip::paused() {
+                        cx.notify();
                     }
+                });
+                if alive.is_err() {
+                    break;
                 }
             })
             .detach();
@@ -193,7 +190,11 @@ impl Render for Chip {
             .as_millis()
             .saturating_sub(paused_ms as u128) as f32
             / 1000.0;
-        let pulse = if paused { 0.35 } else { 0.55 + 0.45 * (t * std::f32::consts::TAU / 1.6).sin().abs() };
+        let pulse = if paused {
+            0.35
+        } else {
+            0.55 + 0.45 * (t * std::f32::consts::TAU / 1.6).sin().abs()
+        };
         let secs = t as u64;
         if self.timer_at != secs {
             self.timer_at = secs;
@@ -220,14 +221,18 @@ impl Render for Chip {
                     .w(px(9.))
                     .h(px(9.))
                     .rounded_full()
-                    .bg(if paused { theme::FG_FAINT } else { theme::DANGER })
+                    .bg(if paused {
+                        theme::FG_FAINT
+                    } else {
+                        theme::DANGER
+                    })
                     .opacity(pulse),
             )
             .child(
                 div()
-                    .text_sm()
+                    .text_size(px(theme::TEXT_BODY))
                     .text_color(theme::FG)
-                    .font_family("monospace")
+                    .font_family(theme::FONT)
                     .child(timer),
             )
             .child(
@@ -238,7 +243,11 @@ impl Render for Chip {
                         let _ = crate::daemon::dispatch(cx, &crate::daemon::Command::RecordPause);
                     }))
                     .child(crate::icons::icon(
-                        if paused { crate::icons::Icon::Play } else { crate::icons::Icon::Pause },
+                        if paused {
+                            crate::icons::Icon::Play
+                        } else {
+                            crate::icons::Icon::Pause
+                        },
                         theme::FG_DIM,
                         14.0,
                     )),
@@ -251,7 +260,11 @@ impl Render for Chip {
                         let _ = crate::daemon::dispatch(cx, &crate::daemon::Command::RecordMic);
                     }))
                     .child(crate::icons::icon(
-                        if mic_on { crate::icons::Icon::Mic } else { crate::icons::Icon::MicOff },
+                        if mic_on {
+                            crate::icons::Icon::Mic
+                        } else {
+                            crate::icons::Icon::MicOff
+                        },
                         theme::FG_DIM,
                         14.0,
                     )),

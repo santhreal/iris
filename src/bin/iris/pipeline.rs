@@ -62,9 +62,7 @@ pub fn peek_decoded(path: &Path) -> Option<std::sync::Arc<image::RgbaImage>> {
 
 /// Run `f` against the shared clipboard. An unavailable clipboard is
 /// an honest error, never a panic mid-capture.
-pub fn with_clipboard(
-    f: impl FnOnce(&mut arboard::Clipboard),
-) -> Result<(), String> {
+pub fn with_clipboard(f: impl FnOnce(&mut arboard::Clipboard)) -> Result<(), String> {
     let Some(clipboard) = CLIPBOARD.as_ref() else {
         return Err("clipboard unavailable".into());
     };
@@ -158,7 +156,6 @@ impl Region {
     }
 }
 
-
 /// Crop a region out of a BGRA buffer (the overlay's RenderImage
 /// holds the frame's only CPU copy, already swizzled for the GPU).
 /// Pure banded copy: the flight tile wraps the result as BGRA
@@ -172,7 +169,9 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
     // pass.
     let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
     #[allow(clippy::uninit_vec)] // the banded fill writes every byte
-    unsafe { buf.set_len(buf.capacity()) };
+    unsafe {
+        buf.set_len(buf.capacity())
+    };
     let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;
     iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
@@ -210,7 +209,9 @@ pub fn finalize_bgra(
     check_region(width, height, region)?;
     let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
     #[allow(clippy::uninit_vec)] // the banded fill writes every byte
-    unsafe { buf.set_len(buf.capacity()) };
+    unsafe {
+        buf.set_len(buf.capacity())
+    };
     let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;
     iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
@@ -231,7 +232,6 @@ pub fn finalize_bgra(
         .ok_or_else(|| "crop buffer size mismatch".to_string())?;
     finalize(img)
 }
-
 
 /// Save an RGBA image to the screenshots dir, put it on the clipboard and
 /// register it in the library. The capture is durable and paste-able
@@ -264,8 +264,7 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
         image::ExtendedColorType::Rgba8,
     )
     .map_err(|e| format!("encode screenshot: {e}"))?;
-    std::fs::write(&path, png.into_inner())
-        .map_err(|e| format!("save screenshot: {e}"))?;
+    std::fs::write(&path, png.into_inner()).map_err(|e| format!("save screenshot: {e}"))?;
     iris_lib::ilog!("iris: capture: png written in {:?}", t_png.elapsed());
     // The file is the product; a clipboard failure degrades to a
     // log line, never a lost capture. copy_to_clipboard gates whether
@@ -339,7 +338,6 @@ pub fn copy_ocr_text(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-
 // WHY: the class closed here is "captures land in the wrong place or
 // clobber each other": a template that stops substituting, a suffix
 // collision that overwrites, or a region that crops out of bounds all
@@ -371,17 +369,55 @@ mod tests {
     fn region_from_corners_normalizes_and_clamps() {
         // Reversed drag direction.
         let r = Region::from_corners((50.0, 40.0), (10.0, 5.0), 100, 100);
-        assert_eq!(r, Region { x: 10, y: 5, width: 40, height: 35 });
+        assert_eq!(
+            r,
+            Region {
+                x: 10,
+                y: 5,
+                width: 40,
+                height: 35
+            }
+        );
         // Drag past the frame edges clamps to the frame.
         let r = Region::from_corners((-20.0, -10.0), (150.0, 120.0), 100, 100);
-        assert_eq!(r, Region { x: 0, y: 0, width: 100, height: 100 });
+        assert_eq!(
+            r,
+            Region {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100
+            }
+        );
     }
 
     #[test]
     fn crop_rejects_empty_and_out_of_bounds() {
         let bgra = vec![0u8; 64];
-        assert!(crop_bgra(&bgra, 4, 4, Region { x: 0, y: 0, width: 0, height: 2 }).is_err());
-        assert!(crop_bgra(&bgra, 4, 4, Region { x: 3, y: 0, width: 2, height: 2 }).is_err());
+        assert!(crop_bgra(
+            &bgra,
+            4,
+            4,
+            Region {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 2
+            }
+        )
+        .is_err());
+        assert!(crop_bgra(
+            &bgra,
+            4,
+            4,
+            Region {
+                x: 3,
+                y: 0,
+                width: 2,
+                height: 2
+            }
+        )
+        .is_err());
     }
 
     #[test]
@@ -391,7 +427,18 @@ mod tests {
         for (i, b) in bgra.iter_mut().enumerate() {
             *b = i as u8;
         }
-        let out = crop_bgra(&bgra, 4, 4, Region { x: 1, y: 1, width: 2, height: 2 }).unwrap();
+        let out = crop_bgra(
+            &bgra,
+            4,
+            4,
+            Region {
+                x: 1,
+                y: 1,
+                width: 2,
+                height: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(out.len(), 2 * 2 * 4);
         // Top-left of the crop is frame pixel (1,1) = byte offset 20.
         assert_eq!(&out[..4], &[20, 21, 22, 23]);
@@ -405,7 +452,12 @@ mod tests {
         for (i, b) in bgra.iter_mut().enumerate() {
             *b = i as u8;
         }
-        let region = Region { x: 1, y: 1, width: 2, height: 2 };
+        let region = Region {
+            x: 1,
+            y: 1,
+            width: 2,
+            height: 2,
+        };
         // Reproduce finalize_bgra's inner pass on the same input.
         let mut buf = crop_bgra(&bgra, 4, 4, region).unwrap();
         crate::widgets::swizzle_rgba_bgra(&mut buf);
@@ -425,7 +477,12 @@ mod tests {
             bgra[i * 4 + 2] = (i % 255) as u8;
             bgra[i * 4 + 3] = 255;
         }
-        let region = Region { x: 300, y: 200, width: 600, height: 450 };
+        let region = Region {
+            x: 300,
+            y: 200,
+            width: 600,
+            height: 450,
+        };
         let out = crop_bgra(&bgra, w, h, region).unwrap();
         assert_eq!(out.len(), 600 * 450 * 4);
         // Spot-check first, middle and last pixels of the crop.

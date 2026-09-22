@@ -321,7 +321,7 @@ impl Library {
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .text_xs()
+                            .text_size(px(theme::TEXT_SMALL))
                             .text_color(theme::FG)
                             .child(
                                 self.entry_names
@@ -333,7 +333,7 @@ impl Library {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_xs()
+                            .text_size(px(theme::TEXT_SMALL))
                             .text_color(theme::FG_FAINT)
                             .child(
                                 self.entry_names

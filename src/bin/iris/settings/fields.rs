@@ -241,7 +241,7 @@ impl Settings {
                 div()
                     .ml(px(4.))
                     .mb(px(6.))
-                    .text_xs()
+                    .text_size(px(theme::TEXT_SMALL))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::FG_DIM)
                     .child(title),
@@ -256,7 +256,12 @@ impl Settings {
             .flex()
             .items_center()
             .justify_between()
-            .child(div().text_sm().text_color(theme::FG).child(label))
+            .child(
+                div()
+                    .text_size(px(theme::TEXT_BODY))
+                    .text_color(theme::FG)
+                    .child(label),
+            )
             .child(control)
     }
 

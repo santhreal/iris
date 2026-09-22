@@ -7,8 +7,8 @@ mod fixup;
 mod move_drag;
 
 pub use fixup::{
-    always_on_top_after_map, place_after_map, place_after_map_kind,
-    span_after_map, suppress_decorations_on, unpark_span,
+    always_on_top_after_map, place_after_map, place_after_map_kind, span_after_map,
+    suppress_decorations_on, unpark_span,
 };
 pub use move_drag::begin_wm_move;
 

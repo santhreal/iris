@@ -2,13 +2,9 @@
 
 use std::{
     path::Path,
-    sync::{
-        atomic::AtomicBool,
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
     time::{Duration, Instant},
 };
-
 
 use super::*;
 use crate::{motion, pipeline};

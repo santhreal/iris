@@ -49,18 +49,21 @@ impl Library {
                 .update(cx, |this, _| this.prefetch_want.take())
                 .unwrap_or(None)
             {
-                let missing: Vec<(std::path::PathBuf, std::path::PathBuf)> = match this
-                    .update(cx, |this, _| {
-                        let (lo, hi) = (range.0.min(this.entries.len()), range.1.min(this.entries.len()));
+                let missing: Vec<(std::path::PathBuf, std::path::PathBuf)> =
+                    match this.update(cx, |this, _| {
+                        let (lo, hi) = (
+                            range.0.min(this.entries.len()),
+                            range.1.min(this.entries.len()),
+                        );
                         this.entries[lo..hi]
                             .iter()
                             .filter(|e| !this.thumb_cache.contains_key(&e.path))
                             .map(|e| (e.path.clone(), e.thumb.clone()))
                             .collect()
                     }) {
-                    Ok(m) => m,
-                    Err(_) => break,
-                };
+                        Ok(m) => m,
+                        Err(_) => break,
+                    };
                 // One background task per thumb: the executor is a
                 // pool, so the window's PNG decodes run across cores
                 // instead of serially on one task.

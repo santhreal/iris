@@ -1,8 +1,8 @@
 //! Home: the launch surface. An iris/aperture mark opens with a
-//! spring — the brand moment — then the minimal home settles in:
-//! two action tiles (New Screenshot, Library) centered, settings as
-//! a small gear in the bottom-right corner. Bare `iris` launches
-//! here; the daemon stays headless.
+//! spring (the brand moment), then the minimal home settles in:
+//! three action tiles (New Screenshot, Record Window, Library)
+//! centered, settings as a small gear in the bottom-right corner.
+//! Bare `iris` launches here; the daemon stays headless.
 
 use std::time::{Duration, Instant};
 
@@ -15,6 +15,27 @@ const WIN: (f32, f32) = (560.0, 420.0);
 /// Loading beat: the iris opens, a breath, then the content fades.
 const LOADING: Duration = Duration::from_millis(1100);
 
+/// What a home tile does when clicked.
+#[derive(Clone, Copy)]
+enum Tile {
+    Capture,
+    Record,
+    Library,
+}
+
+/// The home tiles, left to right. The spring arrays on `Home` are
+/// sized from this table.
+const TILES: [(&str, Icon, &str, Tile); 3] = [
+    (
+        "act-shot",
+        Icon::Viewfinder,
+        "New Screenshot",
+        Tile::Capture,
+    ),
+    ("act-rec", Icon::Record, "Record Window", Tile::Record),
+    ("act-lib", Icon::Grid, "Library", Tile::Library),
+];
+
 pub struct Home {
     focus: FocusHandle,
     opened: Option<Instant>,
@@ -24,8 +45,8 @@ pub struct Home {
     class: SharedString,
     /// Pointer-coupled springs per tile. They reverse mid-flight
     /// when the pointer leaves or the button releases early.
-    hover: [motion::Spring; 3],
-    press: [motion::Spring; 3],
+    hover: [motion::Spring; TILES.len()],
+    press: [motion::Spring; TILES.len()],
     last_frame: Option<Instant>,
 }
 
@@ -60,8 +81,8 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 opened: None,
                 hovered: None,
                 pressed: None,
-                hover: [motion::Spring::default(); 3],
-                press: [motion::Spring::default(); 3],
+                hover: [motion::Spring::default(); TILES.len()],
+                press: [motion::Spring::default(); TILES.len()],
                 last_frame: None,
                 class: SharedString::from(win_id.clone()),
             })
@@ -109,7 +130,11 @@ fn iris_mark(t: f32, size: f32) -> Div {
                             let i1 = point(px(c.0 + hole * a1.cos()), px(c.1 + hole * a1.sin()));
                             icons::push_quad(&mut path, o0, o1, i1, i0);
                         }
-                        let shade = if pass == 0 { theme::FG } else { theme::alpha(theme::FG, 0.78) };
+                        let shade = if pass == 0 {
+                            theme::FG
+                        } else {
+                            theme::alpha(theme::FG, 0.78)
+                        };
                         window.paint_path(path, shade);
                     }
                 },
@@ -155,12 +180,14 @@ fn action_tile(
         .border_color(theme::SEPARATOR)
         .shadow(vec![shadow])
         .opacity(enter)
-        .mt(px((1.0 - motion::ease_out_cubic(enter)) * 12.0 + 1.0 * squish))
+        .mt(px(
+            (1.0 - motion::ease_out_cubic(enter)) * 12.0 + 1.0 * squish
+        ))
         .cursor_pointer()
         .child(icons::icon(glyph, theme::FG, 22.0))
         .child(
             div()
-                .text_sm()
+                .text_size(px(theme::TEXT_BODY))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(theme::FG)
                 .child(label),
@@ -183,7 +210,7 @@ impl Render for Home {
             .unwrap_or(1.0 / 60.0);
         self.last_frame = Some(now);
         let mut live = loading_t < 1.0;
-        for ix in 0..3 {
+        for ix in 0..TILES.len() {
             let h_target = if self.hovered == Some(ix) { 1.0 } else { 0.0 };
             let p_target = if self.pressed == Some(ix) { 1.0 } else { 0.0 };
             self.hover[ix].to(h_target, dt);
@@ -204,15 +231,59 @@ impl Render for Home {
         } else {
             // Content: mark, wordmark, tiles; each enters staggered.
             let content_t = ((loading_t - 0.72) / 0.28).clamp(0.0, 1.0);
-            let stagger = |i: u32| {
-                ((content_t - i as f32 * 0.18) / 0.64).clamp(0.0, 1.0)
-            };
+            let stagger = |i: u32| ((content_t - i as f32 * 0.18) / 0.64).clamp(0.0, 1.0);
             if content_t < 1.0 {
                 window.request_animation_frame();
             }
-            let shot_enter = motion::ease_out_cubic(stagger(0));
-            let rec_enter = motion::ease_out_cubic(stagger(1));
-            let lib_enter = motion::ease_out_cubic(stagger(2));
+            let enters: [f32; TILES.len()] =
+                std::array::from_fn(|i| motion::ease_out_cubic(stagger(i as u32)));
+            let mut tiles = div().flex().gap(px(14.));
+            for (ix, &(id, glyph, label, act)) in TILES.iter().enumerate() {
+                tiles = tiles.child(
+                    action_tile(
+                        id,
+                        glyph,
+                        label,
+                        enters[ix],
+                        self.hover[ix].value,
+                        self.press[ix].value,
+                        self.hovered == Some(ix),
+                    )
+                    .on_hover(cx.listener(move |this, h: &bool, _, cx| {
+                        this.hovered = if *h {
+                            Some(ix)
+                        } else {
+                            this.hovered.filter(|&v| v != ix)
+                        };
+                        cx.notify();
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.pressed = Some(ix);
+                            cx.notify();
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.pressed = None;
+                            cx.notify();
+                        }),
+                    )
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        window.remove_window();
+                        let r = match act {
+                            Tile::Capture => daemon::dispatch(cx, &daemon::Command::Capture),
+                            Tile::Record => daemon::dispatch(cx, &daemon::Command::RecordToggle),
+                            Tile::Library => crate::library::open(cx),
+                        };
+                        if let Err(e) = r {
+                            iris_lib::ilog!("iris: {e}");
+                        }
+                    })),
+                );
+            }
             content = content.child(
                 div()
                     .flex()
@@ -225,112 +296,17 @@ impl Render for Home {
                             .flex_col()
                             .items_center()
                             .gap(px(12.))
-                            .opacity(shot_enter)
+                            .opacity(enters[0])
                             .child(iris_mark(1.0, 56.0))
                             .child(
                                 div()
-                                    .text_lg()
+                                    .text_size(px(theme::TEXT_HEADING))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::FG)
                                     .child("Iris"),
                             ),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(14.))
-                            .child(
-                                action_tile(
-                                    "act-shot",
-                                    Icon::Viewfinder,
-                                    "New Screenshot",
-                                    shot_enter,
-                                    self.hover[0].value,
-                                    self.press[0].value,
-                                    self.hovered == Some(0),
-                                )
-                                .on_hover(cx.listener(|this, h: &bool, _, cx| {
-                                    this.hovered = if *h { Some(0) } else { None };
-                                    cx.notify();
-                                }))
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.pressed = Some(0);
-                                    cx.notify();
-                                }))
-                                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.pressed = None;
-                                    cx.notify();
-                                }))
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.remove_window();
-                                    if let Err(e) =
-                                        daemon::dispatch(cx, &daemon::Command::Capture)
-                                    {
-                                        iris_lib::ilog!("iris: {e}");
-                                    }
-                                })),
-                            )
-                            .child(
-                                action_tile(
-                                    "act-rec",
-                                    Icon::Record,
-                                    "Record Window",
-                                    rec_enter,
-                                    self.hover[1].value,
-                                    self.press[1].value,
-                                    self.hovered == Some(1),
-                                )
-                                .on_hover(cx.listener(|this, h: &bool, _, cx| {
-                                    this.hovered = if *h { Some(1) } else { None };
-                                    cx.notify();
-                                }))
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.pressed = Some(1);
-                                    cx.notify();
-                                }))
-                                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.pressed = None;
-                                    cx.notify();
-                                }))
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.remove_window();
-                                    if let Err(e) =
-                                        daemon::dispatch(cx, &daemon::Command::RecordToggle)
-                                    {
-                                        iris_lib::ilog!("iris: {e}");
-                                    }
-                                })),
-                            )
-                            .child(
-                                action_tile(
-                                    "act-lib",
-                                    Icon::Grid,
-                                    "Library",
-                                    lib_enter,
-                                    self.hover[2].value,
-                                    self.press[2].value,
-                                    self.hovered == Some(2),
-                                )
-                                .on_hover(cx.listener(|this, h: &bool, _, cx| {
-                                    this.hovered = if *h { Some(2) } else { None };
-                                    cx.notify();
-                                }))
-                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.pressed = Some(2);
-                                    cx.notify();
-                                }))
-                                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                    this.pressed = None;
-                                    cx.notify();
-                                }))
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.remove_window();
-                                    if let Err(e) = crate::library::open(cx) {
-                                        iris_lib::ilog!("iris: {e}");
-                                    }
-                                })),
-                            ),
-                    ),
+                    .child(tiles),
             );
         }
 
@@ -346,23 +322,27 @@ impl Render for Home {
                     .right(px(14.))
                     .opacity(motion::ease_out_cubic(gear_enter.clamp(0.0, 1.0)))
                     .child(
-                        widgets::icon_button(ElementId::Name("home-settings".into()), Icon::Gear, false, 30.0).on_click(
-                            cx.listener(|_, _, _, cx| {
-                                if let Err(e) = crate::settings::open(cx) {
-                                    iris_lib::ilog!("iris: {e}");
-                                }
-                            }),
-                        ),
+                        widgets::icon_button(
+                            ElementId::Name("home-settings".into()),
+                            Icon::Gear,
+                            false,
+                            30.0,
+                        )
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            if let Err(e) = crate::settings::open(cx) {
+                                iris_lib::ilog!("iris: {e}");
+                            }
+                        })),
                     ),
             );
         }
-        frame = frame.track_focus(&self.focus).on_key_down(
-            cx.listener(|_, ev: &KeyDownEvent, window, _| {
+        frame = frame.track_focus(&self.focus).on_key_down(cx.listener(
+            |_, ev: &KeyDownEvent, window, _| {
                 if ev.keystroke.key == "escape" {
                     window.remove_window();
                 }
-            }),
-        );
+            },
+        ));
         frame
     }
 }

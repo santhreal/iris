@@ -181,7 +181,55 @@ impl Editor {
             .rounded(px(12.))
             .bg(theme::alpha(theme::BG_ELEV, 0.96))
             .shadow(theme::shadow_float())
-            .child(div().text_sm().text_color(theme::FG_DIM).child(title))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .mr(px(8.))
+                            .text_size(px(theme::TEXT_BODY))
+                            .text_color(theme::FG_DIM)
+                            .child(title),
+                    )
+                    .child(
+                        crate::widgets::icon_button(
+                            "action-undo",
+                            Icon::Undo,
+                            false,
+                            theme::CONTROL_H,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.undo();
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        crate::widgets::icon_button(
+                            "action-redo",
+                            Icon::Redo,
+                            false,
+                            theme::CONTROL_H,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.redo();
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        crate::widgets::icon_button(
+                            "action-clear",
+                            Icon::Trash,
+                            false,
+                            theme::CONTROL_H,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.clear();
+                            cx.notify();
+                        })),
+                    ),
+            )
             .child({
                 let mut buttons = div().flex().items_center().gap(px(6.));
                 buttons = buttons
@@ -249,7 +297,7 @@ impl Editor {
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(4.))
+            .gap(px(2.))
             .py(px(10.))
             .overflow_y_scroll()
             .rounded(px(12.))
@@ -258,12 +306,17 @@ impl Editor {
         for (tool, glyph, label) in TOOLS {
             let active = self.tool == tool;
             bar = bar.child(
-                crate::widgets::icon_button(ElementId::Name(label.into()), glyph, active, 32.0)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.commit_text(true);
-                        this.tool = tool;
-                        cx.notify();
-                    })),
+                crate::widgets::icon_button(
+                    ElementId::Name(label.into()),
+                    glyph,
+                    active,
+                    theme::CONTROL_H,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.commit_text(true);
+                    this.tool = tool;
+                    cx.notify();
+                })),
             );
         }
         bar = bar.child(
@@ -285,7 +338,7 @@ impl Editor {
                     ElementId::NamedInteger("stroke".into(), i as u64),
                     glyph,
                     active,
-                    32.0,
+                    theme::CONTROL_H,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.stroke = i as u8;
@@ -300,66 +353,21 @@ impl Editor {
                 ElementId::Name("fill-toggle".into()),
                 Icon::Rect,
                 self.fill,
-                32.0,
+                theme::CONTROL_H,
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.fill = !this.fill;
                 cx.notify();
             })),
         );
-        bar = bar
-            .child(
-                div()
-                    .h(px(1.))
-                    .w(px(28.))
-                    .my(px(4.))
-                    .flex_shrink_0()
-                    .bg(theme::HAIRLINE),
-            )
-            .child(
-                crate::widgets::icon_button(
-                    ElementId::Name("action-undo".into()),
-                    Icon::Undo,
-                    false,
-                    32.0,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.undo();
-                    cx.notify();
-                })),
-            )
-            .child(
-                crate::widgets::icon_button(
-                    ElementId::Name("action-redo".into()),
-                    Icon::Redo,
-                    false,
-                    32.0,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.redo();
-                    cx.notify();
-                })),
-            )
-            .child(
-                crate::widgets::icon_button(
-                    ElementId::Name("action-clear".into()),
-                    Icon::Trash,
-                    false,
-                    32.0,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.clear();
-                    cx.notify();
-                })),
-            )
-            .child(
-                div()
-                    .h(px(1.))
-                    .w(px(28.))
-                    .my(px(4.))
-                    .flex_shrink_0()
-                    .bg(theme::HAIRLINE),
-            );
+        bar = bar.child(
+            div()
+                .h(px(1.))
+                .w(px(28.))
+                .my(px(4.))
+                .flex_shrink_0()
+                .bg(theme::HAIRLINE),
+        );
         // Swatches in a two-column grid; the active color gets a
         // ring, like Markup's swatch selection.
         let mut swatches = div()
@@ -373,8 +381,8 @@ impl Editor {
             swatches = swatches.child(
                 div()
                     .id(ElementId::Name(c.into()))
-                    .w(px(18.))
-                    .h(px(18.))
+                    .w(px(16.))
+                    .h(px(16.))
                     .flex_shrink_0()
                     .rounded_full()
                     .flex()

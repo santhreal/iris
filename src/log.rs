@@ -3,9 +3,9 @@
 //! still leaves a trail. The file is truncated at 256 KiB on open so
 //! a long-lived daemon cannot grow it without bound.
 
+use parking_lot::Mutex;
 use std::io::{Seek, Write};
 use std::path::PathBuf;
-use parking_lot::Mutex;
 
 static LOG_FILE: Mutex<Option<(std::fs::File, u64)>> = Mutex::new(None);
 const MAX_LOG: u64 = 256 * 1024;
@@ -37,7 +37,11 @@ pub fn init() {
             len = meta.len();
         }
     }
-    if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+    if let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+    {
         *LOG_FILE.lock() = Some((f, len));
     }
 }

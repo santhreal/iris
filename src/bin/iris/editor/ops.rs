@@ -64,13 +64,7 @@ impl Editor {
             // and returns the same pixels as a BGRA tile: the GPU
             // sprite and the saved pixels can never diverge, and the
             // old crop+resize+resize+overlay chain is gone.
-            let bgra = pixelate_region_bgra(
-                Arc::make_mut(&mut self.composite),
-                x,
-                y,
-                w,
-                h,
-            );
+            let bgra = pixelate_region_bgra(Arc::make_mut(&mut self.composite), x, y, w, h);
             let render = crate::widgets::render_image_from_bgra_owned(w, h, bgra);
             action.blur_patch = Some(render);
             action.blur_rect = (x as f32, y as f32, w as f32, h as f32);
@@ -214,9 +208,7 @@ impl Editor {
         self.base_dims = (w, h);
         self.title = SharedString::from(format!(
             "{} · {}×{}",
-            self.filename,
-            self.base_dims.0,
-            self.base_dims.1
+            self.filename, self.base_dims.0, self.base_dims.1
         ));
         self.actions.borrow_mut().clear();
         self.undos.clear();
@@ -252,9 +244,7 @@ impl Editor {
         self.base_dims = (w, h);
         self.title = SharedString::from(format!(
             "{} · {}×{}",
-            self.filename,
-            self.base_dims.0,
-            self.base_dims.1
+            self.filename, self.base_dims.0, self.base_dims.1
         ));
         self.actions.borrow_mut().clear();
         self.undos.clear();

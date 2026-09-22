@@ -118,7 +118,16 @@ where
         let src = unsafe { std::slice::from_raw_parts(s.addr as *const u8, s.size) };
         let pixels = width as usize * height as usize;
         let bpp = src.len() / pixels.max(1);
-        convert_frame(src, pixels, bpp, out, u32::from(width), u32::from(height), bgra).ok()?;
+        convert_frame(
+            src,
+            pixels,
+            bpp,
+            out,
+            u32::from(width),
+            u32::from(height),
+            bgra,
+        )
+        .ok()?;
     }
     Some(reply.depth)
 }

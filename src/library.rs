@@ -58,10 +58,12 @@ fn path_key(path: &Path) -> String {
 
 /// The parsed store behind an mtime+len check: the library window
 /// polls list() every 1.5s, and an unchanged file should not re-parse.
-fn store_cache() -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)> {
+fn store_cache(
+) -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)> {
     use std::sync::LazyLock;
-    static CACHE: LazyLock<parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)>> =
-        LazyLock::new(|| parking_lot::Mutex::new((None, 0, Vec::new())));
+    static CACHE: LazyLock<
+        parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)>,
+    > = LazyLock::new(|| parking_lot::Mutex::new((None, 0, Vec::new())));
     &CACHE
 }
 
@@ -70,8 +72,7 @@ fn store_cache() -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, 
 /// pair can drop a capture that landed between the two calls.
 fn store_lock() -> &'static parking_lot::Mutex<()> {
     use std::sync::LazyLock;
-    static LOCK: LazyLock<parking_lot::Mutex<()>> =
-        LazyLock::new(|| parking_lot::Mutex::new(()));
+    static LOCK: LazyLock<parking_lot::Mutex<()>> = LazyLock::new(|| parking_lot::Mutex::new(()));
     &LOCK
 }
 
@@ -192,8 +193,9 @@ pub fn list() -> Vec<CaptureEntry> {
         .map(|n| n.get().min(8))
         .unwrap_or(4)
         .min(entries.len().max(1));
-    let mut alive_flags: Vec<std::sync::atomic::AtomicBool> =
-        (0..entries.len()).map(|_| std::sync::atomic::AtomicBool::new(false)).collect();
+    let mut alive_flags: Vec<std::sync::atomic::AtomicBool> = (0..entries.len())
+        .map(|_| std::sync::atomic::AtomicBool::new(false))
+        .collect();
     std::thread::scope(|scope| {
         let flags = &alive_flags;
         let entries_ref = &entries;
@@ -215,10 +217,7 @@ pub fn list() -> Vec<CaptureEntry> {
             let _ = h.join();
         }
     });
-    let alive_flags: Vec<bool> = alive_flags
-        .iter_mut()
-        .map(|f| *f.get_mut())
-        .collect();
+    let alive_flags: Vec<bool> = alive_flags.iter_mut().map(|f| *f.get_mut()).collect();
     let (alive, dead): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .zip(alive_flags)
@@ -259,7 +258,11 @@ pub fn delete_many(paths: &[PathBuf]) -> usize {
     let _ = write_store(&entries);
     let mut errors = 0;
     for path in paths {
-        let _ = std::fs::remove_file(thumbs_dir().unwrap_or_default().join(format!("{}.png", path_key(path))));
+        let _ = std::fs::remove_file(
+            thumbs_dir()
+                .unwrap_or_default()
+                .join(format!("{}.png", path_key(path))),
+        );
         if path.exists() && std::fs::remove_file(path).is_err() {
             errors += 1;
         }

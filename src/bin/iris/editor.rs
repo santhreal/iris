@@ -300,6 +300,10 @@ pub fn open(
             },
         )
         .map_err(|e| format!("open editor window: {e}"))?;
+    // Same after-map fixup every other Normal window gets: without it
+    // an X11 WM draws its own frame ("Unnamed Window") around the
+    // client-side chrome and places the window itself.
+    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
 
     let decode_path = path.to_path_buf();
     handle
@@ -345,9 +349,7 @@ pub fn open(
                             this.base_dims = (this.base.width(), this.base.height());
                             this.title = SharedString::from(format!(
                                 "{} · {}×{}",
-                                this.filename,
-                                this.base_dims.0,
-                                this.base_dims.1
+                                this.filename, this.base_dims.0, this.base_dims.1
                             ));
                             this.composite = composite;
                             this.base_ready = true;

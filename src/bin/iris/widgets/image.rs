@@ -48,7 +48,6 @@ pub fn render_image_from_rgba(
     std::sync::Arc::new(gpui::RenderImage::new([::image::Frame::new(buf)]))
 }
 
-
 /// Wrap an already-BGRA buffer into a `RenderImage` with no swizzle:
 /// the X11 capture path can produce BGRA directly, so the frame's
 /// only CPU copy moves straight into the GPU-bound image.

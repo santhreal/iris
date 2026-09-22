@@ -402,7 +402,7 @@ impl Render for Settings {
                 self.row_shell(
                     "Version",
                     div()
-                        .text_sm()
+                        .text_size(px(theme::TEXT_BODY))
                         .text_color(theme::FG_DIM)
                         .child(env!("CARGO_PKG_VERSION").to_string()),
                 )

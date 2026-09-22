@@ -28,13 +28,13 @@
 #[cfg(target_os = "linux")]
 mod chip;
 mod daemon;
-mod home;
-mod flash;
-mod icons;
-mod motion;
 mod editor;
-mod overlay;
+mod flash;
+mod home;
+mod icons;
 mod library;
+mod motion;
+mod overlay;
 mod pin;
 mod pipeline;
 mod settings;
@@ -93,27 +93,7 @@ fn main() {
     }
 
     Application::new().run(move |cx: &mut App| {
-        // Inter, bundled: the register is SF Pro, and fontconfig's
-        // default sans on Linux (DejaVu) cannot carry it. Loaded
-        // into the text system so the family resolves on machines
-        // without Inter installed; surfaces set font_family("Inter")
-        // on their root and the style cascades.
-        if let Err(e) = cx.text_system().add_fonts(vec![
-            std::borrow::Cow::Borrowed(
-                include_bytes!("../../../assets/fonts/Inter-Regular.otf") as &[u8],
-            ),
-            std::borrow::Cow::Borrowed(
-                include_bytes!("../../../assets/fonts/Inter-Medium.otf") as &[u8],
-            ),
-            std::borrow::Cow::Borrowed(
-                include_bytes!("../../../assets/fonts/Inter-SemiBold.otf") as &[u8],
-            ),
-            std::borrow::Cow::Borrowed(
-                include_bytes!("../../../assets/fonts/Inter-Bold.otf") as &[u8],
-            ),
-        ]) {
-            iris_lib::ilog!("iris: fonts: {e}");
-        }
+        theme::load_fonts(cx);
         daemon::start(cx);
         for cmd in daemon::parse_args(&args) {
             if let Err(e) = daemon::dispatch(cx, &cmd) {

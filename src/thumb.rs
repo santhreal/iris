@@ -13,11 +13,7 @@ use crate::par::par_bands_mut_work;
 /// Pixel-identical, banded `image::imageops::thumbnail` for RGBA8.
 /// Bands split output rows; the size gate keys on the INPUT bytes
 /// because the work is the source scan, not the small output.
-pub fn thumbnail_rgba(
-    img: &image::RgbaImage,
-    new_width: u32,
-    new_height: u32,
-) -> image::RgbaImage {
+pub fn thumbnail_rgba(img: &image::RgbaImage, new_width: u32, new_height: u32) -> image::RgbaImage {
     let (width, height) = img.dimensions();
     let mut out = image::RgbaImage::new(new_width, new_height);
     if width == 0 || height == 0 || new_width == 0 || new_height == 0 {
@@ -32,48 +28,43 @@ pub fn thumbnail_rgba(
     let x_ratio = width as f32 / new_width as f32;
     let y_ratio = height as f32 / new_height as f32;
     let stride = new_width as usize * 4;
-    par_bands_mut_work(
-        out.as_mut(),
-        stride,
-        src.len(),
-        |band, start| {
-            let first = start / stride;
-            for (row, out_row) in band.chunks_exact_mut(stride).enumerate() {
-                let outy = first as u32 + row as u32;
-                let bottomf = outy as f32 * y_ratio;
-                let topf = bottomf + y_ratio;
-                let bottom = (bottomf.ceil() as u32).min(height - 1);
-                let top = (topf.ceil() as u32).clamp(bottom, height);
-                for outx in 0..new_width {
-                    let leftf = outx as f32 * x_ratio;
-                    let rightf = leftf + x_ratio;
-                    let left = (leftf.ceil() as u32).min(width - 1);
-                    let right = (rightf.ceil() as u32).clamp(left, width);
-                    let avg = if bottom != top && left != right {
-                        sample_block(&px, left, right, bottom, top)
-                    } else if bottom != top {
-                        // left == right: interpolate the two columns
-                        // flanking the empty window.
-                        let frac = (leftf.fract() + rightf.fract()) / 2.;
-                        sample_fraction_h(&px, right - 1, frac, bottom, top)
-                    } else if left != right {
-                        // bottom == top: interpolate the two rows
-                        // flanking the empty window.
-                        let frac = (topf.fract() + bottomf.fract()) / 2.;
-                        sample_fraction_v(&px, left, right, top - 1, frac)
-                    } else {
-                        // Empty window both ways: bilinear over the
-                        // four surrounding pixels.
-                        let frac_h = (topf.fract() + bottomf.fract()) / 2.;
-                        let frac_v = (leftf.fract() + rightf.fract()) / 2.;
-                        sample_fraction_both(&px, right - 1, frac_h, top - 1, frac_v)
-                    };
-                    let i = outx as usize * 4;
-                    out_row[i..i + 4].copy_from_slice(&avg);
-                }
+    par_bands_mut_work(out.as_mut(), stride, src.len(), |band, start| {
+        let first = start / stride;
+        for (row, out_row) in band.chunks_exact_mut(stride).enumerate() {
+            let outy = first as u32 + row as u32;
+            let bottomf = outy as f32 * y_ratio;
+            let topf = bottomf + y_ratio;
+            let bottom = (bottomf.ceil() as u32).min(height - 1);
+            let top = (topf.ceil() as u32).clamp(bottom, height);
+            for outx in 0..new_width {
+                let leftf = outx as f32 * x_ratio;
+                let rightf = leftf + x_ratio;
+                let left = (leftf.ceil() as u32).min(width - 1);
+                let right = (rightf.ceil() as u32).clamp(left, width);
+                let avg = if bottom != top && left != right {
+                    sample_block(&px, left, right, bottom, top)
+                } else if bottom != top {
+                    // left == right: interpolate the two columns
+                    // flanking the empty window.
+                    let frac = (leftf.fract() + rightf.fract()) / 2.;
+                    sample_fraction_h(&px, right - 1, frac, bottom, top)
+                } else if left != right {
+                    // bottom == top: interpolate the two rows
+                    // flanking the empty window.
+                    let frac = (topf.fract() + bottomf.fract()) / 2.;
+                    sample_fraction_v(&px, left, right, top - 1, frac)
+                } else {
+                    // Empty window both ways: bilinear over the
+                    // four surrounding pixels.
+                    let frac_h = (topf.fract() + bottomf.fract()) / 2.;
+                    let frac_v = (leftf.fract() + rightf.fract()) / 2.;
+                    sample_fraction_both(&px, right - 1, frac_h, top - 1, frac_v)
+                };
+                let i = outx as usize * 4;
+                out_row[i..i + 4].copy_from_slice(&avg);
             }
-        },
-    );
+        }
+    });
     out
 }
 

@@ -47,10 +47,43 @@ pub const WIN_ZOOM: Rgba = rgb(0.157, 0.784, 0.251);
 pub const RADIUS_SM: f32 = 9.0;
 /// Grouped-list card corners.
 pub const RADIUS_GROUP: f32 = 12.0;
+/// Buttons, fields, and dropdowns share one corner radius and height
+/// so a row of mixed controls lines up edge to edge.
+pub const RADIUS_CONTROL: f32 = 7.0;
+pub const CONTROL_H: f32 = 28.0;
 
-/// UI font family, bundled in main.rs. Set on each surface's root;
-/// GPUI cascades text styles down the element tree.
-pub const FONT: &str = "Inter";
+/// Type scale, px. JetBrains Mono has a 0.6 em advance, wider than a
+/// proportional sans, so body text is 13px rather than GPUI's 14px
+/// `text_sm` to keep labels inside fixed-width controls.
+pub const TEXT_SMALL: f32 = 11.5;
+pub const TEXT_BODY: f32 = 13.0;
+pub const TEXT_TITLE: f32 = 13.5;
+pub const TEXT_HEADING: f32 = 17.0;
+
+/// UI font family. Every surface sets it on its root; GPUI cascades
+/// text styles down the element tree. Bundled (see `load_fonts`) so
+/// the family resolves on machines without it installed.
+pub const FONT: &str = "JetBrains Mono";
+
+/// The bundled faces of `FONT`, one per weight the UI uses.
+const FONT_FACES: [&[u8]; 4] = [
+    include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/JetBrainsMono-Medium.ttf"),
+    include_bytes!("../../../assets/fonts/JetBrainsMono-SemiBold.ttf"),
+    include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf"),
+];
+
+/// Register the bundled faces with GPUI's text system. Called once at
+/// startup, before any window opens.
+pub fn load_fonts(cx: &mut gpui::App) {
+    let faces = FONT_FACES
+        .iter()
+        .map(|b| std::borrow::Cow::Borrowed(*b))
+        .collect();
+    if let Err(e) = cx.text_system().add_fonts(faces) {
+        iris_lib::ilog!("iris: fonts: {e}");
+    }
+}
 
 use gpui::{point, px, BoxShadow};
 

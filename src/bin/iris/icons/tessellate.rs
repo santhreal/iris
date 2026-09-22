@@ -1,6 +1,5 @@
 //! Path-tessellation helpers and per-glyph drawing for icons.
 
-
 use super::*;
 
 /// Anything that accepts filled triangles: a `Path` being built for
