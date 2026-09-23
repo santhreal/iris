@@ -10,11 +10,12 @@
 //!
 //! `ipc` is fully cross-platform (interprocess local sockets map to
 //! Unix domain sockets on Unix and named pipes on Windows). `hotkeys`,
-//! `record`, `tray`, and `window` have a per-OS implementation each.
+//! `install`, `record`, `tray`, and `window` have a per-OS implementation each.
 
 pub mod ipc;
 
 pub mod hotkeys;
+pub mod install;
 pub mod record;
 pub mod tray;
 pub mod window;
