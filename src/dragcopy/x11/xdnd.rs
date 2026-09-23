@@ -14,7 +14,7 @@ use x11rb::CURRENT_TIME;
 
 use super::atom_cached;
 use super::icon::IconWindow;
-use super::DragIcon;
+use crate::dragcopy::DragIcon;
 
 pub(super) struct XdndAtoms {
     pub(super) selection: Atom,

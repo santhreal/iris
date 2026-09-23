@@ -7,7 +7,7 @@ use x11rb::protocol::xproto::{
     ImageFormat, ImageOrder, Pixmap, Rectangle, Window, WindowClass,
 };
 
-use super::DragIcon;
+use crate::dragcopy::DragIcon;
 
 /// The pointer-following icon window: opaque 24-bit with the thumbnail
 /// as its background pixmap and a 1-bit rounded-rect shape mask.
