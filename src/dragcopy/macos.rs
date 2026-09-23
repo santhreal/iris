@@ -42,8 +42,8 @@ pub(super) fn copy_abs_paths(paths: &[PathBuf]) -> Result<(), String> {
         }
         let urls: Id = send(class(c"NSMutableArray"), sel(c"array"));
         for p in paths {
-            let url = file_url(p)
-                .ok_or_else(|| format!("cannot form a file URL for {}", p.display()))?;
+            let url =
+                file_url(p).ok_or_else(|| format!("cannot form a file URL for {}", p.display()))?;
             send1::<Id, ()>(urls, sel(c"addObject:"), url);
         }
         let _: isize = send(pb, sel(c"clearContents"));
@@ -58,7 +58,12 @@ pub(super) fn copy_abs_paths(paths: &[PathBuf]) -> Result<(), String> {
 /// `NSDragOperationCopy`: the drop target receives copies of the files.
 const NS_DRAG_OPERATION_COPY: usize = 1;
 
-unsafe extern "C" fn source_operation_mask(_this: Id, _cmd: Sel, _session: Id, _ctx: isize) -> usize {
+unsafe extern "C" fn source_operation_mask(
+    _this: Id,
+    _cmd: Sel,
+    _session: Id,
+    _ctx: isize,
+) -> usize {
     NS_DRAG_OPERATION_COPY
 }
 
@@ -105,8 +110,8 @@ pub(super) fn drag_abs_paths(ns_view: Id, paths: &[PathBuf]) -> Result<(), Strin
         let workspace: Id = send(class(c"NSWorkspace"), sel(c"sharedWorkspace"));
         let items: Id = send(class(c"NSMutableArray"), sel(c"array"));
         for (i, p) in paths.iter().enumerate() {
-            let url = file_url(p)
-                .ok_or_else(|| format!("cannot form a file URL for {}", p.display()))?;
+            let url =
+                file_url(p).ok_or_else(|| format!("cannot form a file URL for {}", p.display()))?;
             let alloc: Id = send(class(c"NSDraggingItem"), sel(c"alloc"));
             let item: Id = send1(alloc, sel(c"initWithPasteboardWriter:"), url);
             let path = nsstring(&p.to_string_lossy());

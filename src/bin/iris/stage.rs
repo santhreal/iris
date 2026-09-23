@@ -300,7 +300,6 @@ impl Render for ToastStage {
                     };
                     if let Err(e) = crate::sys::window::start_file_drag(
                         window,
-                        
                         vec![stage.path.clone()],
                         Some(icon),
                     ) {
