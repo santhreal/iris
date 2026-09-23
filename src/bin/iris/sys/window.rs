@@ -67,8 +67,8 @@ pub fn centered_origin(cx: &gpui::App, w: f32, h: f32, fallback: (f32, f32)) -> 
 mod x11;
 #[cfg(target_os = "linux")]
 pub use x11::{
-    always_on_top_after_map, find_xid_by_class_on, place_after_map, place_after_map_kind,
-    span_after_map, suppress_decorations_on, unpark_span,
+    always_on_top_after_map, chip_xid_on, place_after_map, place_after_map_kind, span_after_map,
+    unpark_span,
 };
 #[cfg(target_os = "macos")]
 mod macos;
@@ -122,15 +122,27 @@ pub fn start_file_drag(
     }
 }
 
-/// Keep `window` out of screen captures and recordings (the recording
-/// chip over a recorded region). X11 has no such flag; the chip there
-/// sits outside the recorded window instead.
-#[cfg(not(target_os = "linux"))]
-pub fn exclude_from_capture(window: &gpui::Window) {
-    #[cfg(windows)]
-    windows::exclude_from_capture(window);
-    #[cfg(target_os = "macos")]
-    macos::exclude_from_capture(window);
+/// Finish opening the recording chip `handle`, and return its X11 id
+/// (0 elsewhere). X11 positions the chip by XID and strips its
+/// decorations; Windows and macOS keep it out of screen captures, so a
+/// chip over a recorded region is not in the recording. X11 has no such
+/// flag; the chip there sits outside the recorded rect instead.
+pub fn prepare_chip(cx: &mut gpui::App, handle: gpui::AnyWindowHandle) -> u32 {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (cx, handle);
+        x11::prepare_chip()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = handle.update(cx, |_, window, _| {
+            #[cfg(windows)]
+            windows::exclude_from_capture(window);
+            #[cfg(target_os = "macos")]
+            macos::exclude_from_capture(window);
+        });
+        0
+    }
 }
 
 #[cfg(not(target_os = "linux"))]

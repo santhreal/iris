@@ -7,8 +7,7 @@ mod fixup;
 mod move_drag;
 
 pub use fixup::{
-    always_on_top_after_map, place_after_map, place_after_map_kind, span_after_map,
-    suppress_decorations_on, unpark_span,
+    always_on_top_after_map, place_after_map, place_after_map_kind, span_after_map, unpark_span,
 };
 pub use move_drag::begin_wm_move;
 
@@ -64,4 +63,27 @@ pub fn find_xid_by_class_on(conn: &impl Connection, class_substr: &str) -> Optio
         }
     }
     newest
+}
+
+/// The recording chip's X11 id on `conn`, by its WM_CLASS.
+pub fn chip_xid_on(conn: &impl Connection) -> Option<u32> {
+    find_xid_by_class_on(conn, "iris.chip")
+}
+
+/// Strip the freshly opened chip's decorations and return its XID (0
+/// when it is not in the client list yet; recording resolves it later).
+pub(super) fn prepare_chip() -> u32 {
+    let xid = iris_lib::capture::x11::shared_conn()
+        .ok()
+        .and_then(|(conn, _)| {
+            let xid = chip_xid_on(conn)?;
+            fixup::suppress_decorations_on(conn, xid);
+            Some(xid)
+        })
+        .unwrap_or(0);
+    // The lookup above can beat the map; strip decorations with the
+    // persistent fixup too: openbox decorates at map time and only
+    // re-reads the hint when forced to re-frame the window.
+    place_after_map("dev.iris.chip".to_string(), 0.0, 0.0);
+    xid
 }

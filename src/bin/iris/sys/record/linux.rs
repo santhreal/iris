@@ -79,7 +79,7 @@ impl XcbChip {
             return cached;
         }
         let Some(conn) = &self.conn else { return 0 };
-        if let Some(xid) = chip::find_chip_xid_on(conn) {
+        if let Some(xid) = crate::sys::window::chip_xid_on(*conn) {
             self.xid.store(xid, Ordering::SeqCst);
             return xid;
         }

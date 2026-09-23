@@ -21,9 +21,6 @@ const CHIP_H: f32 = 36.0;
 /// by the window bounds.
 const CHIP_BLEED: f32 = 16.0;
 
-/// The chip window's X11 id, read by the record thread's chip follower.
-pub static CHIP_XID: AtomicU32 = AtomicU32::new(0);
-
 /// The open chip window, so `close` can remove it without downcasting.
 static CHIP_HANDLE: parking_lot::Mutex<Option<AnyWindowHandle>> = parking_lot::Mutex::new(None);
 
@@ -110,30 +107,7 @@ pub fn open(
         )
         .map_err(|e| format!("open chip window: {e}"))?;
 
-    // X11: the chip is positioned by XID and undecorated via a motif
-    // hint; other platforms honor the bounds GPUI requests at creation.
-    #[cfg(target_os = "linux")]
-    let xid = {
-        let xid = find_chip_xid().unwrap_or(0);
-        if let Ok((conn, _)) = iris_lib::capture::x11::shared_conn() {
-            if xid != 0 {
-                crate::sys::window::suppress_decorations_on(conn, xid);
-            }
-        }
-        // The XID lookup above can beat the map; strip decorations with
-        // the persistent fixup: openbox decorates at map time and only
-        // re-reads the hint when forced to re-frame the window.
-        crate::sys::window::place_after_map("dev.iris.chip".to_string(), 0.0, 0.0);
-        xid
-    };
-    #[cfg(not(target_os = "linux"))]
-    let xid = {
-        let _ = handle.update(cx, |_, window, _| {
-            crate::sys::window::exclude_from_capture(window)
-        });
-        0u32
-    };
-    CHIP_XID.store(xid, Ordering::SeqCst);
+    let xid = crate::sys::window::prepare_chip(cx, handle.into());
     MIC_ON.store(mic, Ordering::Relaxed);
     PAUSED.store(false, Ordering::Relaxed);
     PAUSED_MS.store(0, Ordering::Relaxed);
@@ -162,26 +136,9 @@ fn anchor_origin(cx: &App, anchor: Option<iris_lib::capture::WinRect>) -> (f32, 
 
 /// Close the chip window, if open.
 pub fn close(cx: &mut App) {
-    CHIP_XID.store(0, Ordering::SeqCst);
     if let Some(handle) = CHIP_HANDLE.lock().take() {
         let _ = handle.update(cx, |_, window, _| window.remove_window());
     }
-}
-/// The chip window's X11 id: the one top-level window whose WM_CLASS
-/// is dev.iris.chip. X11-only: other platforms position the chip by
-/// the bounds GPUI requests, not by a server window id.
-#[cfg(target_os = "linux")]
-pub fn find_chip_xid() -> Option<u32> {
-    let (conn, _) = iris_lib::capture::x11::shared_conn().ok()?;
-    find_chip_xid_on(conn)
-}
-
-/// Same lookup on a caller-owned connection. Uses _NET_CLIENT_LIST:
-/// WMs reparent client windows into frames, so the chip is not a
-/// direct child of the root.
-#[cfg(target_os = "linux")]
-pub fn find_chip_xid_on(conn: &impl x11rb::connection::Connection) -> Option<u32> {
-    crate::sys::window::find_xid_by_class_on(conn, "iris.chip")
 }
 
 impl Render for Chip {
