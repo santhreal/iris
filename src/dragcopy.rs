@@ -51,17 +51,10 @@ fn validate_drag_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     Ok(path_bufs)
 }
 
-/// Drag-out: speaks the XDnD protocol directly from a 1x1 window.
-/// Grab-less by design: pointer motion is tracked by polling
-/// XQueryPointer, so a window manager's passive-grab activation on the
-/// press that started the gesture cannot block the drag (GTK's
-/// drag_begin fails with AlreadyGrabbed in that state). Selection
-/// requests and XdndStatus/XdndFinished arrive as events on our own
-/// connection, which grabs do not affect.
-/// Thumbnail carried under the pointer during a drag: an
+/// Thumbnail carried under the pointer during a drag. On X11 it is an
 /// override-redirect window with a rounded shape mask, moved at poll
-/// rate by the drag thread. Plain data; defined on every platform so
-/// the non-Linux drag stub keeps the same signature.
+/// rate by the drag thread; Windows and macOS draw the shell's own drag
+/// image instead. Plain data, defined on every platform.
 pub struct DragIcon {
     /// Shared so a surface that already holds the pixels (the toast's
     /// thumb_rgba) hands over a refcount, not a multi-MB clone.
@@ -103,6 +96,13 @@ pub fn uri_encode_path(path: &str) -> String {
     out
 }
 
+/// Drag-out: speaks the XDnD protocol directly from a 1x1 window.
+/// Grab-less by design: pointer motion is tracked by polling
+/// XQueryPointer, so a window manager's passive-grab activation on the
+/// press that started the gesture cannot block the drag (GTK's
+/// drag_begin fails with AlreadyGrabbed in that state). Selection
+/// requests and XdndStatus/XdndFinished arrive as events on our own
+/// connection, which grabs do not affect.
 #[cfg(target_os = "linux")]
 pub fn start_file_drag_at_cursor(
     paths: Vec<PathBuf>,
@@ -169,15 +169,19 @@ pub fn start_file_drag_at_cursor(
     windows::drag_abs_paths(abs)
 }
 
-/// macOS drag-out needs an `NSDraggingSession` begun from the window's
-/// own view and mouse-down event, which the windowing layer does not
-/// expose; Copy puts the same files on the pasteboard.
+/// macOS: an `NSDraggingSession` begun from `ns_view` (the window's
+/// content view) and the mouse event being handled. AppKit images each
+/// file with its Finder icon. Main thread only.
 #[cfg(target_os = "macos")]
-pub fn start_file_drag_at_cursor(
-    _paths: Vec<PathBuf>,
-    _icon: Option<DragIcon>,
+pub fn start_file_drag_from_view(
+    ns_view: *mut core::ffi::c_void,
+    paths: Vec<PathBuf>,
 ) -> Result<(), String> {
-    Err("file drag-out is not available on macOS; use Copy".to_string())
+    let abs = paths
+        .iter()
+        .map(|p| absolute_existing(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    macos::drag_abs_paths(ns_view, &abs)
 }
 
 /// The four atoms a clipboard serve answers on. Grouping them stops a

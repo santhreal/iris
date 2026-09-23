@@ -66,6 +66,14 @@ pub unsafe fn send1<A, R>(obj: Id, sel: Sel, a: A) -> R {
 }
 
 /// # Safety
+/// `obj` must respond to `sel` with signature `R (A, B)`.
+pub unsafe fn send2<A, B, R>(obj: Id, sel: Sel, a: A, b: B) -> R {
+    let f: unsafe extern "C" fn(Id, Sel, A, B) -> R =
+        core::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+    f(obj, sel, a, b)
+}
+
+/// # Safety
 /// `obj` must respond to `sel` with signature `R (A, B, C)`.
 pub unsafe fn send3<A, B, C, R>(obj: Id, sel: Sel, a: A, b: B, c: C) -> R {
     let f: unsafe extern "C" fn(Id, Sel, A, B, C) -> R =

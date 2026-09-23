@@ -255,7 +255,7 @@ impl Library {
                     }
                 }),
             )
-            .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
                 if ev.pressed_button != Some(MouseButton::Left) && this.pressed.is_some() {
                     this.pressed = None;
                     cx.notify();
@@ -304,7 +304,7 @@ impl Library {
                         rgba: std::sync::Arc::new(rgba),
                     })
                 });
-                if let Err(e) = iris_lib::dragcopy::start_file_drag_at_cursor(paths, icon) {
+                if let Err(e) = crate::sys::window::start_file_drag(window, paths, icon) {
                     this.status = Some(e);
                 }
             }))

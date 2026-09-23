@@ -1,4 +1,5 @@
-//! AppKit window operations: capture exclusion through the window's
+//! AppKit window operations: the content view for file drags, capture
+//! exclusion through the window's
 //! sharing type, and moves through `performWindowDragWithEvent:` with
 //! the mouse event being handled, which starts the system's drag and
 //! follows the held button until release.
@@ -6,11 +7,16 @@
 use iris_lib::objc::{class, sel, send, send1, Id};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-fn ns_window(window: &gpui::Window) -> Option<Id> {
+/// The window's content `NSView`.
+pub fn ns_view(window: &gpui::Window) -> Option<Id> {
     let RawWindowHandle::AppKit(h) = HasWindowHandle::window_handle(window).ok()?.as_raw() else {
         return None;
     };
-    let w: Id = unsafe { send(h.ns_view.as_ptr() as Id, sel(c"window")) };
+    Some(h.ns_view.as_ptr() as Id)
+}
+
+fn ns_window(window: &gpui::Window) -> Option<Id> {
+    let w: Id = unsafe { send(ns_view(window)?, sel(c"window")) };
     (!w.is_null()).then_some(w)
 }
 

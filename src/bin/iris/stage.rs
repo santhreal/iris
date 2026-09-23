@@ -247,7 +247,7 @@ impl Render for ToastStage {
                     cx.notify();
                 }),
             )
-            .on_mouse_move(cx.listener(|stage, ev: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(cx.listener(|stage, ev: &MouseMoveEvent, window, cx| {
                 if ev.pressed_button != Some(MouseButton::Left)
                     || stage.gesture == Gesture::FileDrag
                 {
@@ -298,7 +298,9 @@ impl Render for ToastStage {
                         // an Arc: a refcount, not a multi-MB clone.
                         rgba: stage.thumb_rgba.clone(),
                     };
-                    if let Err(e) = iris_lib::dragcopy::start_file_drag_at_cursor(
+                    if let Err(e) = crate::sys::window::start_file_drag(
+                        window,
+                        
                         vec![stage.path.clone()],
                         Some(icon),
                     ) {

@@ -100,6 +100,28 @@ pub fn begin_wm_move(window: &gpui::Window, class: String, root_x: i32, root_y: 
     }
 }
 
+/// Drag `paths` out of `window` as files, from the press in progress.
+/// macOS begins the session from the window's view and current event;
+/// X11 and Windows track the pointer themselves. `icon` is the X11 drag
+/// image; the Windows and macOS shells draw their own.
+pub fn start_file_drag(
+    window: &gpui::Window,
+    paths: Vec<std::path::PathBuf>,
+    icon: Option<iris_lib::dragcopy::DragIcon>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = icon;
+        let view = macos::ns_view(window).ok_or("drag: no window view")?;
+        iris_lib::dragcopy::start_file_drag_from_view(view, paths)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        iris_lib::dragcopy::start_file_drag_at_cursor(paths, icon)
+    }
+}
+
 /// Keep `window` out of screen captures and recordings (the recording
 /// chip over a recorded region). X11 has no such flag; the chip there
 /// sits outside the recorded window instead.
