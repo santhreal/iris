@@ -33,15 +33,19 @@ fn list_devices(format: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
+/// An ffmpeg command. On Windows it gets no console window: the daemon
+/// is a GUI process, and a console per segment would flash on screen.
 fn ffmpeg() -> Command {
-    let mut c = Command::new("ffmpeg");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut c = Command::new("ffmpeg");
         c.creation_flags(CREATE_NO_WINDOW);
+        c
     }
-    c
+    #[cfg(not(windows))]
+    Command::new("ffmpeg")
 }
 
 /// The ffmpeg inputs for one segment, resolved once per recording.

@@ -122,14 +122,15 @@ fn displays() -> Result<Vec<u32>, String> {
     Ok(out)
 }
 
+/// `(x, y, w, h)` in one display's own pixels.
+pub type Crop = (u32, u32, u32, u32);
+
 /// The display to record and the crop within it: `(ordinal, crop)`,
 /// where `ordinal` counts avfoundation screen devices and `crop` is
 /// `(x, y, w, h)` in that display's own pixels. `rect` (root pixels)
 /// selects the display holding its center; `None` records the main
 /// display uncropped.
-pub fn recording_screen(
-    rect: Option<WinRect>,
-) -> Result<(usize, Option<(u32, u32, u32, u32)>), String> {
+pub fn recording_screen(rect: Option<WinRect>) -> Result<(usize, Option<Crop>), String> {
     require_permission()?;
     let ids = display_list()?;
     let root = root_scale_of(&ids);
@@ -356,9 +357,9 @@ pub fn capture_full_frame() -> Result<Frame, String> {
     grab_points(union)
 }
 
-pub struct MacosBackend;
+pub struct Backend;
 
-impl crate::capture::CaptureBackend for MacosBackend {
+impl crate::capture::CaptureBackend for Backend {
     fn grab_screen(&self) -> Result<Frame, String> {
         capture_full_frame()
     }
