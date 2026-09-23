@@ -6,7 +6,6 @@ use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 /// exists. Each variant carries the geometry/state it asserts; the
 /// reassert schedule is per-variant (a Move re-places for a second
 /// against WM re-framing, a Span re-asserts once).
-#[cfg(target_os = "linux")]
 enum Fixup {
     Move { x: i32, y: i32, notification: bool },
     AlwaysOnTop,
@@ -16,7 +15,6 @@ enum Fixup {
 
 /// One queued fixup: the WM_CLASS substring to match and the work to
 /// apply once its window appears in _NET_CLIENT_LIST.
-#[cfg(target_os = "linux")]
 struct Pending {
     class: String,
     fixup: Fixup,
@@ -28,13 +26,10 @@ struct Pending {
 /// _NET_CLIENT_LIST scan per change, replacing the old design where
 /// each helper spawned a thread that re-scanned the client list every
 /// 15-50ms (a round trip per scan per window).
-#[cfg(target_os = "linux")]
 static PENDING: parking_lot::Mutex<Vec<Pending>> = parking_lot::Mutex::new(Vec::new());
-#[cfg(target_os = "linux")]
 static WAKE_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
 /// Queue a fixup and wake the dispatcher. No-op under Wayland.
-#[cfg(target_os = "linux")]
 fn enqueue_fixup(class: String, fixup: Fixup) {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         return;
@@ -55,7 +50,6 @@ fn enqueue_fixup(class: String, fixup: Fixup) {
 /// dedicated connection (separate from `shared_conn`, which
 /// `begin_wm_move` reads events on) and selects PropertyChange on the
 /// root so _NET_CLIENT_LIST updates arrive as events.
-#[cfg(target_os = "linux")]
 fn dispatcher() {
     static START: std::sync::Once = std::sync::Once::new();
     START.call_once(|| {
@@ -71,7 +65,6 @@ fn dispatcher() {
 /// The dispatcher loop: block on the X fd and the wake pipe, resolve
 /// pending fixups when the client list changes (or the 50ms scan cap
 /// elapses, covering a missed event), and fire scheduled reasserts.
-#[cfg(target_os = "linux")]
 fn dispatcher_loop(wake_fd: i32) {
     use std::os::unix::io::AsRawFd;
     use std::time::{Duration, Instant};
@@ -159,7 +152,6 @@ fn dispatcher_loop(wake_fd: i32) {
 /// One _NET_CLIENT_LIST scan resolving every pending fixup: read the
 /// list once, batch the WM_CLASS reads, and match each pending class
 /// against the newest (last in map order) window carrying it.
-#[cfg(target_os = "linux")]
 fn scan_and_resolve(
     conn: &x11rb::rust_connection::RustConnection,
     reasserts: &mut Vec<(std::time::Instant, u32, Fixup, u8)>,
@@ -211,7 +203,6 @@ fn scan_and_resolve(
 /// Apply a resolved fixup. `initial` runs the one-time setup
 /// (decorations, window type, map, focus); a reassert only re-runs
 /// the geometry/state the WM may have overridden.
-#[cfg(target_os = "linux")]
 fn apply_fixup(
     conn: &x11rb::rust_connection::RustConnection,
     xid: u32,
@@ -283,7 +274,6 @@ fn apply_fixup(
 /// Queue a fixup's reassert schedule: a Move re-places ten times over
 /// a second (the WM's re-framing re-applies its own placement), a
 /// Span re-asserts once after the re-frame settles.
-#[cfg(target_os = "linux")]
 fn schedule_reassert(
     reasserts: &mut Vec<(std::time::Instant, u32, Fixup, u8)>,
     xid: u32,
@@ -315,7 +305,6 @@ pub fn place_after_map(class: String, x: f32, y: f32) {
 /// cascade, which is what throws a replacement toast out of the
 /// corner while its predecessor is still fading there.
 pub fn place_after_map_kind(class: String, x: f32, y: f32, notification: bool) {
-    #[cfg(target_os = "linux")]
     enqueue_fixup(
         class,
         Fixup::Move {
@@ -324,14 +313,11 @@ pub fn place_after_map_kind(class: String, x: f32, y: f32, notification: bool) {
             notification,
         },
     );
-    #[cfg(not(target_os = "linux"))]
-    let _ = (class, x, y, notification);
 }
 
 /// Interned atoms shared across every post-map fixup: intern_atom is
 /// a round trip, and the same handful of EWMH names is resolved on
 /// every window that maps.
-#[cfg(target_os = "linux")]
 pub(super) fn atom_cached(conn: &impl Connection, name: &'static [u8]) -> Option<u32> {
     static CACHE: std::sync::LazyLock<
         parking_lot::Mutex<std::collections::HashMap<&'static [u8], u32>>,
@@ -344,13 +330,7 @@ pub(super) fn atom_cached(conn: &impl Connection, name: &'static [u8]) -> Option
     Some(atom)
 }
 
-#[cfg(not(target_os = "linux"))]
-pub(super) fn atom_cached(_conn: &impl Connection, _name: &'static [u8]) -> Option<u32> {
-    None
-}
-
 /// _NET_WM_STATE += the named state via a client message.
-#[cfg(target_os = "linux")]
 fn request_state_on(conn: &impl Connection, win: u32, atom_name: &'static [u8]) {
     let Some(state) = atom_cached(conn, b"_NET_WM_STATE") else {
         return;
@@ -380,7 +360,6 @@ fn request_state_on(conn: &impl Connection, win: u32, atom_name: &'static [u8]) 
 /// _NET_ACTIVE_WINDOW client message: the EWMH activation request a
 /// reparenting WM honors. Falls back to nothing under a WM that does
 /// not read it; the caller still sets input focus directly.
-#[cfg(target_os = "linux")]
 fn activate_window_on(conn: &impl Connection, win: u32) {
     let Some(active) = atom_cached(conn, b"_NET_ACTIVE_WINDOW") else {
         return;
@@ -409,23 +388,16 @@ fn activate_window_on(conn: &impl Connection, win: u32) {
 /// message once the window's XID exists. Used by the pin-to-screen
 /// reference window.
 pub fn always_on_top_after_map(class: String) {
-    #[cfg(target_os = "linux")]
     enqueue_fixup(class, Fixup::AlwaysOnTop);
-    #[cfg(not(target_os = "linux"))]
-    let _ = class;
 }
 
 /// Span the virtual screen with one window: explicit placement at the
 /// union rect plus _NET_WM_STATE_ABOVE. _NET_WM_STATE_FULLSCREEN pins
 /// a window to a single monitor, so the overlay does not use it.
 pub fn span_after_map(class: String, x: i32, y: i32, w: u32, h: u32) {
-    #[cfg(target_os = "linux")]
     enqueue_fixup(class, Fixup::Span { x, y, w, h });
-    #[cfg(not(target_os = "linux"))]
-    let _ = (class, x, y, w, h);
 }
 
-#[cfg(target_os = "linux")]
 pub fn set_window_type_notification_on(conn: &impl Connection, win: u32) {
     let (Some(ty), Some(notif)) = (
         atom_cached(conn, b"_NET_WM_WINDOW_TYPE"),
@@ -443,17 +415,11 @@ pub fn set_window_type_notification_on(conn: &impl Connection, win: u32) {
     let _ = conn.flush();
 }
 
-#[cfg(not(target_os = "linux"))]
-pub fn set_window_type_notification_on(_conn: &impl Connection, _win: u32) {}
-
 /// Bring a parked window back over the virtual screen: configure the
 /// union rect, raise, focus. The window was never unmapped, so this
 /// skips renderer init entirely; one XCB round trip of latency.
 pub fn unpark_span(class: String, x: i32, y: i32, w: u32, h: u32) {
-    #[cfg(target_os = "linux")]
     enqueue_fixup(class, Fixup::Unpark { x, y, w, h });
-    #[cfg(not(target_os = "linux"))]
-    let _ = (class, x, y, w, h);
 }
 
 /// _MOTIF_WM_HINTS decorations=0: GPUI falls back to server-side

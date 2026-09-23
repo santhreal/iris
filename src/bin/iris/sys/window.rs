@@ -81,8 +81,14 @@ mod windows;
 pub fn begin_wm_move(window: &gpui::Window, class: String, root_x: i32, root_y: i32) {
     #[cfg(target_os = "linux")]
     {
-        let _ = window;
-        x11::begin_wm_move(class, root_x, root_y);
+        // Wayland: the compositor moves the window (xdg_toplevel.move);
+        // X11 slides it from the root pointer, since _NET_WM_MOVERESIZE
+        // loses the grab to GPUI's click grab.
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            window.start_window_move();
+        } else {
+            x11::begin_wm_move(class, root_x, root_y);
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
