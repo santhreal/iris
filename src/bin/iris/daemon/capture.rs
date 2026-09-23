@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 
 use gpui::*;
 use iris_lib::config::Config;
-use iris_lib::record;
 
 use crate::{flash, overlay, pipeline, stage};
 
@@ -182,27 +181,4 @@ pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
     })
     .detach();
     Ok(())
-}
-
-/// The recording parameters every source shares: output path under
-/// the configured template, mic default, container and codec.
-pub(super) fn recording_params(
-    cfg: &Config,
-) -> (
-    PathBuf,
-    bool,
-    iris_lib::config::RecordingFormat,
-    iris_lib::config::RecordingEncoder,
-) {
-    let ext = match cfg.recording_format {
-        iris_lib::config::RecordingFormat::Mp4 => "mp4",
-        iris_lib::config::RecordingFormat::Gif => "gif",
-        iris_lib::config::RecordingFormat::Webm => "webm",
-    };
-    (
-        record::unique_recording_path(&cfg.recordings_dir, ext),
-        cfg.record_mic_default,
-        cfg.recording_format,
-        cfg.recording_encoder,
-    )
 }

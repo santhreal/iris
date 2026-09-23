@@ -8,9 +8,7 @@
 //!
 //! Wayland denies global key grabs; there the compositor-level binding
 //! runs `iris --capture`, which forwards here the same way. Recording
-//! on X11 runs through `record::x11::record_window_follow` with the chip
-//! window repositioned by XID through `XcbChip`; Windows and macOS record
-//! through `record::desktop` with the chip placed at open.
+//! sources are started through `sys::record`.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,8 +24,7 @@ mod capture;
 mod recording;
 
 /// The daemon-owned recording session. The record thread owns the
-/// border strips; the chip window is a GPUI surface repositioned by
-/// XID through `XcbChip`.
+/// border strips; the chip window is a GPUI surface.
 pub(crate) static RECORDING: std::sync::LazyLock<parking_lot::Mutex<record::RecordingManager>> =
     std::sync::LazyLock::new(|| parking_lot::Mutex::new(record::RecordingManager::default()));
 
