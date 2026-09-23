@@ -115,35 +115,14 @@ if ! command -v dpkg-deb >/dev/null 2>&1; then
   exit 1
 fi
 
-# Locate iris executable binary
+# Locate the iris release binary in cargo's configured target directory.
 if [[ -z "$IRIS_BIN" ]]; then
-  CANDIDATES=(
-    "$REPO_ROOT/target/release/iris"
-    "target/release/iris"
-    "target/release/iris"
-  )
-  for cand in "${CANDIDATES[@]}"; do
-    if [[ -x "$cand" ]]; then
-      IRIS_BIN="$cand"
-      break
-    fi
-  done
-fi
-
-if [[ -z "$IRIS_BIN" || ! -f "$IRIS_BIN" ]]; then
-  echo "No pre-built iris binary found. Building with cargo..."
-  (cd "$REPO_ROOT" && cargo build --release)
-  if [[ -x "$REPO_ROOT/target/release/iris" ]]; then
-    IRIS_BIN="$REPO_ROOT/target/release/iris"
-  else
-    # Try cargo target dir
-    TARGET_FOUND=$(find target -name iris -type f -perm -111 2>/dev/null | grep release/iris | head -n 1 || true)
-    if [[ -n "$TARGET_FOUND" && -x "$TARGET_FOUND" ]]; then
-      IRIS_BIN="$TARGET_FOUND"
-    else
-      echo "Error: Failed to find or build iris binary" >&2
-      exit 1
-    fi
+  TARGET_DIR=$(cd "$REPO_ROOT" && cargo metadata --format-version 1 --no-deps \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+  IRIS_BIN="$TARGET_DIR/release/iris"
+  if [[ ! -x "$IRIS_BIN" ]]; then
+    echo "No release binary at $IRIS_BIN. Building with cargo..."
+    (cd "$REPO_ROOT" && cargo build --release --locked)
   fi
 fi
 

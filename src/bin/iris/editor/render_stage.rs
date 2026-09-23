@@ -280,6 +280,11 @@ impl Editor {
                         cx.notify();
                         return;
                     }
+                    // The backdrop behind the stage settles an open text
+                    // entry on press; this press is the stage's own, so
+                    // it must not reach the backdrop and commit the entry
+                    // the Text tool opens below.
+                    cx.stop_propagation();
                     let p = this.to_image(ev.position, window);
                     if this.tool == Tool::Select {
                         this.commit_text(true);
