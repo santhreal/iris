@@ -11,7 +11,7 @@
 use std::io::{Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
@@ -34,6 +34,10 @@ struct Rig {
     /// How often the loop drained its events, and grabbed a frame.
     events: Arc<AtomicUsize>,
     grabs: Arc<AtomicUsize>,
+    /// Whether the loop drained its events since its last grab. A loop
+    /// is busy from a grab to the next drain, and the first grab starts
+    /// the encoder, which can outlast any sampling interval.
+    drained: Arc<AtomicBool>,
     done: Receiver<Result<PathBuf, String>>,
     dir: tempfile::TempDir,
 }
@@ -61,7 +65,8 @@ fn rig(fps: u32, stopped: bool) -> Rig {
     input.set_nonblocking(true).unwrap();
     let events = Arc::new(AtomicUsize::new(0));
     let grabs = Arc::new(AtomicUsize::new(0));
-    let (seen, grabbed) = (events.clone(), grabs.clone());
+    let drained = Arc::new(AtomicBool::new(false));
+    let (seen, grabbed, settled) = (events.clone(), grabs.clone(), drained.clone());
     let (done_tx, done) = channel();
     thread::spawn(move || {
         let wake = Wake::install(&spec.bell).unwrap();
@@ -71,9 +76,11 @@ fn rig(fps: u32, stopped: bool) -> Rig {
             while let Ok(1..) = (&input).read(&mut buf) {
                 dirty = true;
             }
+            settled.store(true, Ordering::SeqCst);
             Some(((64, 48), dirty))
         };
         let grab = |w: u32, h: u32, buf: &mut Vec<u8>| {
+            settled.store(false, Ordering::SeqCst);
             grabbed.fetch_add(1, Ordering::SeqCst);
             buf.clear();
             buf.resize(w as usize * h as usize * 4, 0x80);
@@ -89,6 +96,7 @@ fn rig(fps: u32, stopped: bool) -> Rig {
         bell,
         events,
         grabs,
+        drained,
         done,
         dir,
     }
@@ -121,14 +129,15 @@ impl Rig {
         }
     }
 
-    /// Let the loop go to sleep, then check it stays asleep.
+    /// Let the loop go to sleep, then check it stays asleep. Asleep is
+    /// a drain after the last grab, then no drain or grab for a while.
     fn stays_asleep(&self, what: &str) {
         let t0 = Instant::now();
         let mut before = (self.events(), self.grabs());
         loop {
             thread::sleep(Duration::from_millis(50));
             let now = (self.events(), self.grabs());
-            if now == before {
+            if now == before && self.drained.load(Ordering::SeqCst) {
                 break;
             }
             assert!(t0.elapsed() < LONG, "{what}: the loop never went to sleep");
