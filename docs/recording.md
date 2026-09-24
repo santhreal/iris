@@ -235,6 +235,6 @@ Search path order:
    - **Linux**: Process `PATH` directories.
 
 If `ffmpeg` is not found, iris returns an error with platform installation instructions before opening any recording interface:
-- **Linux**: `ffmpeg is not installed: install the ffmpeg package`
+- **Linux**: `ffmpeg is not installed: install the ffmpeg package (ffmpeg-free on Fedora)`
 - **macOS**: `ffmpeg is not installed: run \`brew install ffmpeg\``
 - **Windows**: `ffmpeg is not installed: run \`winget install Gyan.FFmpeg\``

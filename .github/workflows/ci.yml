@@ -226,24 +226,39 @@ jobs:
           bash packaging/linux/build_deb.sh --bin target/release/iris --out dist
           bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
           bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
-      # The deb installs on this runner; the rpm installs on a clean
-      # Fedora container; the AppImage runs without FUSE.
+      # Each package installs in a clean container without the packages
+      # it recommends, so a library it does not depend on is missing
+      # there: the deb on ubuntu:24.04, the rpm on fedora:42. In each,
+      # check_installed.sh starts the daemon on Xvfb with the lavapipe
+      # Vulkan driver, waits for the home window, and quits it. The
+      # AppImage runs without FUSE.
       - name: Install, run, and remove each package
         run: |
           set -euo pipefail
           version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           (cd dist && sha256sum -c ./*.sha256)
           files="/usr/bin/iris /usr/share/applications/dev.iris.app.desktop /etc/xdg/autostart/iris-autostart.desktop"
-          sudo apt-get install -y "./dist/iris-${version}-linux-x86_64.deb"
-          [ "$(iris --version)" = "iris $version" ]
-          for f in $files; do dpkg -L iris | grep -qx "$f" || { echo "deb lacks $f"; exit 1; }; done
-          sudo apt-get remove -y iris
-          for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
-          docker run --rm -v "$PWD/dist:/pkg:ro" -e version="$version" -e files="$files" fedora:42 bash -c '
-            set -euo pipefail
-            dnf install -y -q "/pkg/iris-${version}-linux-x86_64.rpm" >/dev/null
+          in_container() {
+            docker run --rm -v "$PWD/dist:/pkg:ro" -v "$PWD/packaging/linux:/linux:ro" \
+              -e version="$version" -e files="$files" "$1" bash -euo pipefail -c "$2"
+          }
+          in_container ubuntu:24.04 '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends "/pkg/iris-${version}-linux-x86_64.deb" >/dev/null
+            [ "$(iris --version)" = "iris $version" ]
+            for f in $files; do dpkg -L iris | grep -qx "$f" || { echo "deb lacks $f"; exit 1; }; done
+            apt-get install -y -qq --no-install-recommends xvfb x11-utils mesa-vulkan-drivers >/dev/null
+            bash /linux/check_installed.sh
+            apt-get remove -y -qq iris >/dev/null
+            for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
+          '
+          in_container fedora:42 '
+            dnf install -y -q --setopt=install_weak_deps=False "/pkg/iris-${version}-linux-x86_64.rpm" >/dev/null
             [ "$(iris --version)" = "iris $version" ]
             for f in $files; do rpm -ql iris | grep -qx "$f" || { echo "rpm lacks $f"; exit 1; }; done
+            dnf install -y -q --setopt=install_weak_deps=False xorg-x11-server-Xvfb xdpyinfo xwininfo mesa-vulkan-drivers >/dev/null
+            bash /linux/check_installed.sh
             dnf remove -y -q iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '

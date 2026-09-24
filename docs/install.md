@@ -212,7 +212,7 @@ iris searches for external tool binaries in directories listed in `PATH`. On mac
 `ffmpeg` is required for video recording across all platforms and for probing NVIDIA NVENC encoder availability.
 
 Installation instructions:
-- Linux: install the `ffmpeg` package via distribution package manager (`sudo apt install ffmpeg` or `sudo dnf install ffmpeg`).
+- Linux: `sudo apt install ffmpeg` on Debian and Ubuntu, `sudo dnf install ffmpeg-free` on Fedora. The deb recommends `ffmpeg` and the rpm recommends `/usr/bin/ffmpeg`; `apt` and `dnf` install recommended packages by default. The AppImage does not include ffmpeg.
 - macOS: `brew install ffmpeg`
 - Windows: `winget install Gyan.FFmpeg`
 
@@ -221,7 +221,7 @@ Installation instructions:
 `tesseract` is required for optical character recognition (OCR) when copying text from captures.
 
 Installation instructions:
-- Linux: install the `tesseract` package (`tesseract-ocr` on Debian and Ubuntu: `sudo apt install tesseract-ocr`, or `sudo dnf install tesseract` on Fedora).
+- Linux: `sudo apt install tesseract-ocr` on Debian and Ubuntu, `sudo dnf install tesseract` on Fedora. The deb and the rpm suggest it; `apt` and `dnf` do not install a suggested package by default.
 - macOS: `brew install tesseract`
 - Windows: `winget install UB-Mannheim.TesseractOCR`
 

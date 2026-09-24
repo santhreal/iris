@@ -247,13 +247,15 @@ Maintainer: Santh <64453045+santhreal@users.noreply.github.com>
 Installed-Size: ${INSTALLED_SIZE}
 Homepage: https://github.com/santhreal/iris
 Depends: libc6 (>= ${GLIBC_MIN}), libpipewire-0.3-0 (>= 0.3.0), libxkbcommon0, libxkbcommon-x11-0, libxcb1, libfontconfig1, libwayland-client0, libvulkan1, libegl1, libgles2
-Recommends: wl-clipboard | xclip
+Recommends: ffmpeg
+Suggests: tesseract-ocr
 Description: Screenshot and screen-recording utility
- iris is a native, lightweight screen capture and screen recording
- utility built with GPUI. It runs a background daemon with tray
- controls, global hotkeys, and an IPC listener, paired with region
- capture, window capture, screen recording via PipeWire, and an
- annotation editor.
+ iris is a screenshot and screen-recording tool for X11 and Wayland. A
+ background daemon holds the global hotkeys and the tray icon. A capture
+ freezes the screen for region selection, saves a PNG, copies it to the
+ clipboard, and shows a thumbnail toast that opens the annotation editor.
+ Recording runs ffmpeg; the text copy in the toast and the editor runs
+ tesseract.
 EOF
 chmod 0644 "$PKG_DIR/DEBIAN/control"
 

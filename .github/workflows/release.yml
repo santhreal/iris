@@ -26,6 +26,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      # The updater compares the release tag with the version the
+      # installed binary reports (CARGO_PKG_VERSION): a tag naming any
+      # other version would offer the same release again after it is
+      # installed.
+      - name: The tag names the Cargo.toml version
+        run: |
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not name the Cargo.toml version $version (v$version)"
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable

@@ -30,18 +30,21 @@ Requires:       libwayland-client
 Requires:       vulkan-loader
 Requires:       libglvnd-egl
 Requires:       libglvnd-gles
-Recommends:     wl-clipboard
-Recommends:     xclip
+# Recording runs ffmpeg, which Fedora ships as ffmpeg-free and RPM
+# Fusion as ffmpeg: the path dependency accepts either.
+Recommends:     /usr/bin/ffmpeg
+Suggests:       tesseract
 
 # Disable automatic debuginfo generation when packaging pre-stripped binary
 %global debug_package %{nil}
 
 %description
-iris is a native, lightweight screen capture and screen recording
-utility built with GPUI. It runs a background daemon with tray
-controls, global hotkeys, and an IPC listener, paired with region
-capture, window capture, screen recording via PipeWire, and an
-annotation editor.
+iris is a screenshot and screen-recording tool for X11 and Wayland. A
+background daemon holds the global hotkeys and the tray icon. A capture
+freezes the screen for region selection, saves a PNG, copies it to the
+clipboard, and shows a thumbnail toast that opens the annotation editor.
+Recording runs ffmpeg; the text copy in the toast and the editor runs
+tesseract.
 
 %prep
 %autosetup -n %{name}-%{version}

@@ -35,7 +35,7 @@ impl Tool {
     fn install(self) -> &'static str {
         let (linux, macos, windows) = match self {
             Tool::Ffmpeg => (
-                "install the ffmpeg package",
+                "install the ffmpeg package (ffmpeg-free on Fedora)",
                 "run `brew install ffmpeg`",
                 "run `winget install Gyan.FFmpeg`",
             ),

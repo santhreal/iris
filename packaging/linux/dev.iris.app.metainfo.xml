@@ -7,10 +7,10 @@
   <summary>Screenshot and screen-recording utility</summary>
   <description>
     <p>
-      iris is a native, lightweight screen capture and screen recording utility
-      built with GPUI. It features a background daemon with tray controls,
-      global hotkeys, and an IPC listener, paired with region capture,
-      window capture, screen recording via PipeWire, and an annotation editor.
+      iris is a screenshot and screen-recording tool for X11 and Wayland. A
+      background daemon holds the global hotkeys and the tray icon. A capture
+      freezes the screen for region selection, saves a PNG, copies it to the
+      clipboard, and shows a thumbnail toast that opens the annotation editor.
     </p>
   </description>
   <launchable type="desktop-id">dev.iris.app.desktop</launchable>

@@ -9,7 +9,10 @@ deviate without updating this file and every consumer.
 - Bundle / app id: `dev.iris.app`
 - Version source: `Cargo.toml` `[package].version` (currently `0.1.0`)
 - Repo: `https://github.com/santhreal/iris`
-- Release tag format: `v{version}` (e.g. `v0.1.0`)
+- Release tag format: `v{version}` (e.g. `v0.1.0`). The release
+  workflow's gate fails on a tag that is not `v` plus the Cargo.toml
+  version: the updater compares the tag with the version the binary
+  reports.
 - Latest-release API: `https://api.github.com/repos/santhreal/iris/releases/latest`
 
 ## Icons (already generated in packaging/icons/)
