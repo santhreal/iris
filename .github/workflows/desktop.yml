@@ -1,0 +1,55 @@
+name: Desktop
+
+# tests/dragout.rs on the runners' desktops: a toast drag into an
+# Explorer folder window on Windows and a Finder one on macOS. The test
+# moves the runner's pointer with synthetic input.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  dragout:
+    name: Drag-out (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+      - name: Build the test and iris
+        run: cargo test --locked --test dragout --no-run
+      - name: Drag a capture from the toast into a folder window
+        env:
+          IRIS_DESKTOP_TEST: "1"
+        run: cargo test --locked --test dragout -- --nocapture
+      - name: Screenshot the desktop (Windows)
+        if: always() && runner.os == 'Windows'
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+          New-Item -ItemType Directory -Force screen | Out-Null
+          $bmp.Save("screen\desktop.png")
+      - name: Screenshot the desktop (macOS)
+        if: always() && runner.os == 'macOS'
+        run: mkdir -p screen && screencapture -x screen/desktop.png
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: desktop-${{ matrix.os }}
+          path: screen/
+          if-no-files-found: warn
