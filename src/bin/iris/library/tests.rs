@@ -4,7 +4,10 @@ use std::prelude::v1::test;
 use iris_lib::library::CaptureEntry;
 
 use super::entries::{fit_name, name_cols};
-use super::{visible_rows, Library, CARD_W, GAP, LABEL_GAP, LABEL_PAD, THUMB_H};
+use super::listing::Listing;
+use super::{
+    cascade, visible_rows, Library, CARD_W, CASCADE_END, GAP, LABEL_GAP, LABEL_PAD, THUMB_H,
+};
 use crate::theme::SMALL_ADVANCE;
 
 // The virtualized grid must place every rendered card at the same
@@ -131,5 +134,103 @@ fn names_that_differ_only_at_the_end_stay_apart() {
     let (a, b) = ("2026-09-23_10-51-52-2", "2026-09-23_10-51-52-3");
     for cols in 3..=a.len() + 2 {
         assert_ne!(fit_name(a, cols), fit_name(b, cols), "{cols} columns");
+    }
+}
+
+// WHY: the toolbar count, the card labels, the selection, and the
+// thumbnail cache all derive from the shown listing, and each site that
+// replaced the listing used to update them by hand: a delete left the
+// count stale, and a refresh pruned the selection without saying so.
+// Listing::set is the one way a listing is shown. Closed here: a derived
+// value that disagrees with the listing, a selection naming a capture
+// no longer shown, a capture re-saved in place whose old thumbnail
+// survives, and an empty state shown before the store answers. Not
+// covered: the render code that reads these values.
+
+fn saved(file: &str, created_ms: i64) -> CaptureEntry {
+    CaptureEntry {
+        created_ms,
+        ..entry(file, 1920, 1080)
+    }
+}
+
+fn shot(file: &str) -> PathBuf {
+    PathBuf::from("shots").join(file)
+}
+
+#[test]
+fn a_listing_is_unknown_until_the_store_answers() {
+    let mut listing = Listing::default();
+    assert_eq!(listing.listed(), None);
+    assert_eq!(*listing.count(), "");
+    // An empty store is an answer: the empty state shows from here on.
+    assert_eq!(listing.set(Vec::new(), &mut Vec::new()), Some(Vec::new()));
+    assert!(listing.listed().is_some());
+    assert_eq!(*listing.count(), "0 captures");
+    // The same answer again is not a new listing.
+    assert_eq!(listing.set(Vec::new(), &mut Vec::new()), None);
+}
+
+#[test]
+fn the_count_and_labels_follow_the_listing() {
+    let mut listing = Listing::default();
+    for (n, count) in [
+        (1, "1 capture"),
+        (2, "2 captures"),
+        (48, "48 captures"),
+        (0, "0 captures"),
+    ] {
+        let fresh: Vec<_> = (0..n).map(|i| saved(&format!("{i}.png"), i)).collect();
+        let names: Vec<_> = fresh.iter().map(Library::entry_name).collect();
+        assert!(listing.set(fresh.clone(), &mut Vec::new()).is_some());
+        assert_eq!(*listing.count(), count);
+        assert_eq!(listing.names(), names.as_slice());
+        let shown = listing.entries().iter().map(|e| &e.path);
+        assert!(shown.eq(fresh.iter().map(|e| &e.path)));
+    }
+}
+
+#[test]
+fn a_new_listing_prunes_the_selection_and_names_resaved_captures() {
+    let mut listing = Listing::default();
+    let first = vec![saved("c.png", 3), saved("b.png", 2), saved("a.png", 1)];
+    listing.set(first, &mut Vec::new());
+    let mut selected = vec![shot("c.png"), shot("a.png"), shot("b.png")];
+    // b.png deleted, a.png re-saved in place, d.png new.
+    let second = vec![saved("d.png", 4), saved("a.png", 5), saved("c.png", 3)];
+    assert_eq!(
+        listing.set(second, &mut selected),
+        Some(vec![shot("a.png")])
+    );
+    assert_eq!(selected, [shot("c.png"), shot("a.png")]);
+    // The same paths with one re-saved again: still a new listing.
+    let third = vec![saved("d.png", 4), saved("a.png", 6), saved("c.png", 3)];
+    assert_eq!(listing.set(third, &mut selected), Some(vec![shot("a.png")]));
+    assert_eq!(selected, [shot("c.png"), shot("a.png")]);
+}
+
+// WHY: the open cascade hides each card until its turn in the wave.
+// Closed here: a card still hidden or lowered when the wave ends, which
+// jumps into place when the cascade stops animating (every card past
+// the 50th did, and one scrolled into view early stayed invisible), and
+// a wave that runs out of card order or reverses. Not covered: the frame
+// requests that drive it.
+#[test]
+fn every_card_is_in_place_when_the_cascade_ends() {
+    for index in 0..2000 {
+        assert_eq!(cascade(0.0, index), 0.0, "card {index}");
+        assert_eq!(cascade(CASCADE_END, index), 1.0, "card {index}");
+    }
+}
+
+#[test]
+fn the_cascade_runs_in_card_order_and_never_reverses() {
+    let steps = 400;
+    let at = |step: usize| CASCADE_END * step as f32 / steps as f32;
+    for step in 0..steps {
+        for index in 0..100 {
+            assert!(cascade(at(step), index) >= cascade(at(step), index + 1));
+            assert!(cascade(at(step + 1), index) >= cascade(at(step), index));
+        }
     }
 }

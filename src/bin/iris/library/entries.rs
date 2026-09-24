@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::rc::Rc;
 
 use gpui::*;
 use iris_lib::library::{self, CaptureEntry};
@@ -69,11 +68,9 @@ impl Library {
                 .unwrap_or(None)
             {
                 let missing: Vec<CaptureEntry> = match this.update(cx, |this, _| {
-                    let (lo, hi) = (
-                        range.0.min(this.entries.len()),
-                        range.1.min(this.entries.len()),
-                    );
-                    this.entries[lo..hi]
+                    let shown = this.listing.entries();
+                    let (lo, hi) = (range.0.min(shown.len()), range.1.min(shown.len()));
+                    shown[lo..hi]
                         .iter()
                         .filter(|e| !this.thumb_cache.contains_key(&e.path))
                         // Owned copies: the Rc is not Send, and each
@@ -137,42 +134,30 @@ impl Library {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.refresh_in_flight = false;
-                // Path AND timestamp: an editor re-save keeps the
-                // path but bumps created_ms, and a path-only diff
-                // would keep showing the stale thumbnail.
-                let changed = fresh.len() != this.entries.len()
-                    || !fresh
-                        .iter()
-                        .map(|e| (&e.path, e.created_ms))
-                        .eq(this.entries.iter().map(|e| (&e.path, e.created_ms)));
-                if changed {
-                    // Drop cached thumbs whose entry changed under
-                    // the same path so prefetch re-decodes them.
-                    let stale: std::collections::HashSet<&std::path::Path> = fresh
-                        .iter()
-                        .filter(|e| {
-                            this.entries
-                                .iter()
-                                .any(|o| o.path == e.path && o.created_ms != e.created_ms)
-                        })
-                        .map(|e| e.path.as_path())
-                        .collect();
-                    super::evict_thumbs(&mut this.thumb_cache, |p| !stale.contains(p), cx);
-                    this.entries = fresh.into_iter().map(Rc::new).collect();
-                    this.entries_dirty = true;
-                    this.entry_names = this.entries.iter().map(|e| Self::entry_name(e)).collect();
-                    this.count_label =
-                        SharedString::from(format!("{} captures", this.entries.len()));
-                    this.selected
-                        .retain(|p| this.entries.iter().any(|e| &e.path == p));
-                    // Decode the top of the list; render's keep-window
-                    // prefetch covers whatever the viewport shows.
-                    this.prefetch_thumbs((0, 48), cx);
-                    cx.notify();
-                }
+                this.show(fresh, cx);
             });
         })
         .detach();
+    }
+
+    /// Show a listing from the store: a refresh, or the listing read
+    /// back after a delete.
+    pub(super) fn show(&mut self, fresh: Vec<CaptureEntry>, cx: &mut Context<Self>) {
+        let Some(stale) = self.listing.set(fresh, &mut self.selected) else {
+            return;
+        };
+        // A capture changed under its path: drop its thumbnail so the
+        // prefetch decodes the new one.
+        super::evict_thumbs(&mut self.thumb_cache, |p| !stale.iter().any(|s| s == p), cx);
+        self.entries_dirty = true;
+        self.sel_dirty = true;
+        // Decode the window the grid keeps: a capture re-saved on
+        // screen needs its new thumbnail now, and the keep window only
+        // prefetches when it moves. Before the first render with cards
+        // there is no window yet; decode the top of the list.
+        let keep = self.thumb_keep;
+        self.prefetch_thumbs(if keep.0 < keep.1 { keep } else { (0, 48) }, cx);
+        cx.notify();
     }
 
     /// Poll the store so captures from any process surface here. The
@@ -206,7 +191,7 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(entry) = self.entries.get(index) else {
+        let Some(entry) = self.listing.entries().get(index) else {
             return;
         };
         let mods = ev.modifiers();
@@ -219,9 +204,10 @@ impl Library {
             // The anchor is an index into entries; a refresh that
             // removed cards can leave it out of bounds, and a raw
             // slice range would panic the daemon.
-            if let Some(anchor) = self.anchor.filter(|a| *a < self.entries.len()) {
+            let shown = self.listing.entries();
+            if let Some(anchor) = self.anchor.filter(|a| *a < shown.len()) {
                 let (lo, hi) = (anchor.min(index), anchor.max(index));
-                for entry in &self.entries[lo..=hi] {
+                for entry in &shown[lo..=hi] {
                     if !self.selected.contains(&entry.path) {
                         self.selected.push(entry.path.clone());
                     }
@@ -294,10 +280,8 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let (errors, entries) = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.entries = entries.into_iter().map(Rc::new).collect();
-                this.entries_dirty = true;
-                this.entry_names = this.entries.iter().map(|e| Self::entry_name(e)).collect();
                 this.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
+                this.show(entries, cx);
                 cx.notify();
             });
         })
@@ -338,7 +322,7 @@ impl Library {
         let card_h = THUMB_H + 8.0 + 18.0;
         self.selected.clear();
         self.sel_dirty = true;
-        for (i, e) in self.entries.iter().enumerate() {
+        for (i, e) in self.listing.entries().iter().enumerate() {
             let (r, c) = (i / cols, i % cols);
             let cx0 = GAP + c as f32 * (CARD_W + GAP);
             let cy0 = 56.0 + GAP + r as f32 * (card_h + GAP) - scroll_top;
@@ -347,7 +331,8 @@ impl Library {
             }
         }
         self.anchor = self
-            .entries
+            .listing
+            .entries()
             .iter()
             .position(|e| self.selected.contains(&e.path));
         cx.notify();

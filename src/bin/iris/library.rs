@@ -6,14 +6,13 @@
 //! library.json on a slow timer so captures taken while the panel is
 //! open appear without a restart.
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::*;
-use iris_lib::library::CaptureEntry;
 
 mod card;
 mod entries;
+mod listing;
 mod render;
 #[cfg(test)]
 mod tests;
@@ -92,10 +91,24 @@ pub(super) fn visible_rows(
     (first_row, last_row, top_h, bottom_h)
 }
 
+/// The open cascade: each card rises and fades in over CASCADE_RISE
+/// seconds, CASCADE_STAGGER after the card before it. The stagger stops
+/// growing after CASCADE_CARDS cards, so every card is in place by
+/// CASCADE_END: a card scrolled into view early joins the end of the
+/// wave instead of staying hidden, and none jumps when the wave stops.
+const CASCADE_STAGGER: f32 = 0.025;
+const CASCADE_RISE: f32 = 0.35;
+const CASCADE_CARDS: usize = 24;
+pub(super) const CASCADE_END: f32 = CASCADE_STAGGER * CASCADE_CARDS as f32 + CASCADE_RISE;
+
+/// Card `index`'s cascade progress `at` seconds into the wave: 0 is
+/// hidden and lowered, 1 is in place.
+pub(super) fn cascade(at: f32, index: usize) -> f32 {
+    ((at - index.min(CASCADE_CARDS) as f32 * CASCADE_STAGGER) / CASCADE_RISE).clamp(0.0, 1.0)
+}
+
 pub struct Library {
-    /// Cards share their entry: render closures capture an Rc bump
-    /// instead of cloning the path strings per card per frame.
-    pub(super) entries: Vec<Rc<CaptureEntry>>,
+    listing: listing::Listing,
     pub(super) selected: Vec<PathBuf>,
     /// Membership set for `selected`, rebuilt on the render after a
     /// mutation instead of hashed fresh every frame.
@@ -128,24 +141,17 @@ pub struct Library {
     pub(super) prefetch_in_flight: bool,
     /// The newest keep range a prefetch has not covered yet.
     pub(super) prefetch_want: Option<(usize, usize)>,
-    /// Set when `entries` is reassigned: the next render rebuilds the
+    /// Set when a new listing is shown: the next render rebuilds the
     /// live-path set and prunes `thumb_cache`, instead of rebuilding
     /// the set every frame.
     pub(super) entries_dirty: bool,
-    /// Display strings (truncated file name, dimensions) parallel to
-    /// `entries`: rebuilding them per card per frame is an allocation
-    /// a frame per card for values that only change with the entry.
-    pub(super) entry_names: Vec<(SharedString, SharedString)>,
-    /// Toolbar labels rebuilt only when their value changes: the
-    /// counts format a String per frame otherwise.
-    pub(super) count_label: SharedString,
+    /// The selection count label, rebuilt only when the selection
+    /// changes: formatting it per frame is a String a frame.
     pub(super) sel_label: SharedString,
     /// Empty-state line: the hotkey is fixed for the session.
     pub(super) empty_label: SharedString,
     pub(super) drag_fired: bool,
     pub(super) help: bool,
-    /// First-render clock for the open cascade.
-    pub(super) opened: Instant,
     pub(super) status: Option<String>,
     pub(super) focus: FocusHandle,
     /// The config snapshot: render reads the hotkey every frame, and
@@ -200,15 +206,14 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     // Listing the shots dir here would stall the open on a
                     // slow or network dir: open empty and populate from the
                     // background, the same path the refresh poll takes.
+                    let cfg = iris_lib::config::Config::load();
                     let mut this = Library {
-                        entry_names: Vec::new(),
-                        count_label: SharedString::from("0 captures"),
+                        listing: listing::Listing::default(),
                         sel_label: SharedString::from(""),
                         empty_label: SharedString::from(format!(
                             "No captures yet — press {}",
-                            iris_lib::config::Config::load().capture_hotkey
+                            cfg.capture_hotkey
                         )),
-                        entries: Vec::new(),
                         selected: Vec::new(),
                         refresh_in_flight: false,
                         sel_set: std::collections::HashSet::new(),
@@ -228,10 +233,9 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         entries_dirty: false,
                         drag_fired: false,
                         help: false,
-                        opened: Instant::now(),
                         status: None,
                         focus,
-                        cfg: iris_lib::config::Config::load(),
+                        cfg,
                         band: None,
                         scroll: gpui::ScrollHandle::new(),
                     };

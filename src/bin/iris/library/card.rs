@@ -194,10 +194,7 @@ impl Library {
                                     if let Some(e) = err {
                                         this.status = Some(e);
                                     }
-                                    this.entries = entries.into_iter().map(Rc::new).collect();
-                                    this.entries_dirty = true;
-                                    this.entry_names =
-                                        this.entries.iter().map(|e| Self::entry_name(e)).collect();
+                                    this.show(entries, cx);
                                     cx.notify();
                                 });
                             })
@@ -277,7 +274,7 @@ impl Library {
                 this.drag_fired = true;
                 // The index was captured at mousedown; a refresh that
                 // shrank entries since then must not panic the drag.
-                let Some(entry) = this.entries.get(card) else {
+                let Some(entry) = this.listing.entries().get(card) else {
                     this.drag_start = None;
                     return;
                 };
@@ -321,7 +318,8 @@ impl Library {
                             .text_size(px(theme::TEXT_SMALL))
                             .text_color(theme::FG)
                             .child(
-                                self.entry_names
+                                self.listing
+                                    .names()
                                     .get(index)
                                     .map(|n| n.0.clone())
                                     .unwrap_or_default(),
@@ -333,7 +331,8 @@ impl Library {
                             .text_size(px(theme::TEXT_SMALL))
                             .text_color(theme::FG_FAINT)
                             .child(
-                                self.entry_names
+                                self.listing
+                                    .names()
                                     .get(index)
                                     .map(|n| n.1.clone())
                                     .unwrap_or_default(),

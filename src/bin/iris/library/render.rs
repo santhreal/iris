@@ -4,7 +4,7 @@ use gpui::*;
 
 use crate::theme;
 
-use super::{evict_thumbs, visible_rows, Library, CARD_W, GAP, MIN_SIZE};
+use super::{cascade, evict_thumbs, visible_rows, Library, CARD_W, CASCADE_END, GAP, MIN_SIZE};
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -45,7 +45,7 @@ impl Render for Library {
                 div()
                     .text_size(px(theme::TEXT_SMALL))
                     .text_color(theme::FG_FAINT)
-                    .child(self.count_label.clone())
+                    .child(self.listing.count().clone())
                     .into_any_element(),
             );
             cluster.push(
@@ -114,7 +114,9 @@ impl Render for Library {
                 }),
             );
 
-        if self.entries.is_empty() {
+        // Until the store answers, the grid shows nothing: an empty
+        // state then is a false "no captures" flash on every open.
+        if self.listing.listed().is_some() && self.listing.entries().is_empty() {
             grid = grid.child(
                 div()
                     .size_full()
@@ -127,7 +129,13 @@ impl Render for Library {
             );
         }
 
-        let cascade = self.opened.elapsed().as_secs_f32() < 1.6;
+        // Seconds into the open cascade, counted from the first listing
+        // so a slow store does not spend the cascade on an empty grid.
+        let cascade_at = self
+            .listing
+            .listed()
+            .map(|t| t.elapsed().as_secs_f32())
+            .filter(|s| *s < CASCADE_END);
         // The cache fills from the background prefetch; a card whose
         // thumb has not landed draws without its image until then.
         // A set, not a nested scan: retain() over the cache against a
@@ -137,8 +145,12 @@ impl Render for Library {
         // almost never has stale keys.
         if self.entries_dirty {
             self.entries_dirty = false;
-            let live_paths: std::collections::HashSet<&std::path::Path> =
-                self.entries.iter().map(|e| e.path.as_path()).collect();
+            let live_paths: std::collections::HashSet<&std::path::Path> = self
+                .listing
+                .entries()
+                .iter()
+                .map(|e| e.path.as_path())
+                .collect();
             evict_thumbs(&mut self.thumb_cache, |p| live_paths.contains(p), cx);
         }
         // Advance pointer-coupled springs by the real frame delta;
@@ -150,7 +162,7 @@ impl Render for Library {
             .unwrap_or(1.0 / 60.0);
         self.last_frame = Some(now);
         let mut live = false;
-        let n = self.entries.len();
+        let n = self.listing.entries().len();
         if let Some(h) = self.hovered {
             self.springs.entry(h).or_default();
         }
@@ -173,7 +185,7 @@ impl Render for Library {
         let sel_set = &self.sel_set;
         self.sel_springs.retain(|i, _| *i < n);
         for i in 0..n {
-            let target = if sel_set.contains(&self.entries[i].path) {
+            let target = if sel_set.contains(&self.listing.entries()[i].path) {
                 1.0
             } else {
                 0.0
@@ -223,19 +235,14 @@ impl Render for Library {
         }
         let last_i = ((last_row + 1) * cols).min(n);
         for index in first_row * cols..last_i {
-            let entry = &self.entries[index];
+            let entry = &self.listing.entries()[index];
             let amt = self.springs.get(&index).map(|s| s.value).unwrap_or(0.0);
-            // Open cascade: cards rise and fade in with a 25ms stagger.
-            let et = if cascade {
-                let t = ((self.opened.elapsed().as_secs_f32() - index as f32 * 0.025) / 0.35)
-                    .clamp(0.0, 1.0);
-                if t < 1.0 {
-                    window.request_animation_frame();
-                }
-                t
-            } else {
-                1.0
-            };
+            let et = cascade_at.map_or(1.0, |s| cascade(s, index));
+            // Frames run while a rendered card is still rising, not for
+            // the whole wave: cards past the viewport have no pixels.
+            if et < 1.0 {
+                window.request_animation_frame();
+            }
             grid = grid.child(self.card(index, entry, amt, et, sel_set, cx));
         }
         if bottom_h > 0.0 {
@@ -255,11 +262,11 @@ impl Render for Library {
         if keep != self.thumb_keep {
             self.thumb_keep = keep;
             if self.thumb_cache.len() > keep.1 - keep.0 {
-                let keep_paths: std::collections::HashSet<&std::path::Path> = self.entries
-                    [keep.0..keep.1]
-                    .iter()
-                    .map(|e| e.path.as_path())
-                    .collect();
+                let keep_paths: std::collections::HashSet<&std::path::Path> =
+                    self.listing.entries()[keep.0..keep.1]
+                        .iter()
+                        .map(|e| e.path.as_path())
+                        .collect();
                 evict_thumbs(&mut self.thumb_cache, |p| keep_paths.contains(p), cx);
             }
             self.prefetch_thumbs(keep, cx);
@@ -291,7 +298,12 @@ impl Render for Library {
                         this.delete_selection(cx);
                     }
                     "a" if meta => {
-                        this.selected = this.entries.iter().map(|e| e.path.clone()).collect();
+                        this.selected = this
+                            .listing
+                            .entries()
+                            .iter()
+                            .map(|e| e.path.clone())
+                            .collect();
                         this.sel_dirty = true;
                     }
                     _ => return,

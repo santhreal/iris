@@ -16,7 +16,7 @@ One library window is open at a time. Opening the library while it is open raise
 The window header uses the client-side decorated frame (56 pixels high) containing traffic light window controls, the title **Library**, and action clusters:
 
 - **When no items are selected**:
-  - Capture count indicator (for example, `42 captures`, or empty state message).
+  - Capture count (for example, `42 captures`), shown once `library.json` is read.
   - **Capture**: Starts a region capture overlay via `iris --capture`.
   - **Settings**: Opens the Settings window ([configuration.md#settings-window](configuration.md#settings-window)).
   - **?**: Toggles the keyboard shortcut reference sheet.
@@ -32,6 +32,7 @@ The body contains a responsive multi-column grid of capture cards with 16-pixel 
 
 - **Ordering**: Sorted by creation timestamp in descending order (newest captures first).
 - **Auto-refresh**: Polls `library.json` on a 1.5-second timer. Captures added, modified, or removed by other processes update automatically without restarting the window.
+- **Empty library**: With no captures, the grid shows the capture hotkey in place of cards.
 - **Card layout**: Each card is 216 pixels wide and contains:
   - Top thumbnail container (132 pixels high) displaying the cached thumbnail image.
   - Top-left selection circle checkbox.
