@@ -13,6 +13,9 @@ deviate without updating this file and every consumer.
   workflow's gate fails on a tag that is not `v` plus the Cargo.toml
   version: the updater compares the tag with the version the binary
   reports.
+- Only a tag publishes. Running the release workflow by hand
+  (`gh workflow run release.yml`) is a dry run: it runs the gate,
+  builds and checks every installer, and checks the asset set.
 - Latest-release API: `https://api.github.com/repos/santhreal/iris/releases/latest`
 
 ## Icons (already generated in packaging/icons/)
@@ -28,6 +31,10 @@ deviate without updating this file and every consumer.
 - `iris-{ver}-linux-x86_64.deb`           Debian package
 - `iris-{ver}-linux-x86_64.rpm`           RPM package
 - each asset + `.sha256` sidecar
+
+The release workflow reads this list: its publish job fails when the
+built files differ from it, when a sidecar does not match its asset,
+or when an updater asset (`sys::install::ASSET`) is missing from it.
 
 ## Install layout
 - Windows: per-user, `%LOCALAPPDATA%\Programs\iris\iris.exe`; Start

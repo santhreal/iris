@@ -1,0 +1,233 @@
+name: Package
+
+# Builds every installer from the checked-out commit, installs and
+# checks each one, and uploads it as an artifact. CI runs it on every
+# push; the release workflow publishes the artifacts it uploads, so a
+# release ships the files these checks ran on.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings -Cforce-frame-pointers=yes -Coverflow-checks=on"
+
+jobs:
+  macos:
+    name: Package (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build the universal binary
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/iris \
+            target/aarch64-apple-darwin/release/iris \
+            target/x86_64-apple-darwin/release/iris
+      - name: Assemble iris.app and the DMG
+        run: |
+          packaging/macos/make_app.sh --bin target/universal-apple-darwin/release/iris --out dist
+          packaging/macos/make_dmg.sh --app dist/iris.app --out dist
+      - name: Verify the bundle and the DMG
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          dmg="iris-${version}-macos-universal.dmg"
+          codesign --verify --deep --strict dist/iris.app
+          archs=$(lipo -archs dist/iris.app/Contents/MacOS/iris)
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "archs: $archs"; exit 1; }
+          [ "$(plutil -extract CFBundleShortVersionString raw dist/iris.app/Contents/Info.plist)" = "$version" ]
+          (cd dist && shasum -a 256 -c "$dmg.sha256")
+          hdiutil verify "dist/$dmg"
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/$dmg"
+          [ -L "$mnt/Applications" ]
+          [ "$("$mnt/iris.app/Contents/MacOS/iris" --version)" = "iris $version" ]
+          hdiutil detach "$mnt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iris-macos-dmg
+          path: dist/iris-*-macos-universal.dmg*
+          if-no-files-found: error
+
+  windows:
+    name: Package (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+      # Later steps start with the job's PATH, not the machine PATH an
+      # installer edits: GITHUB_PATH adds the NSIS directory to it.
+      - name: Install NSIS
+        run: |
+          choco install nsis -y --no-progress
+          Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\NSIS"
+      - name: Build iris.exe and the installer
+        shell: bash
+        run: |
+          cargo build --locked --release --bin iris
+          bash packaging/windows/build_installer.sh --binary target/release/iris.exe --out dist
+      - name: Install, upgrade over a running daemon, and uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $setup = "dist\iris-$version-windows-x86_64-setup.exe"
+          $sidecar = (Get-Content "$setup.sha256" -Raw).Split(' ')[0].Trim()
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $sidecar) { throw "sha256 $hash, sidecar $sidecar" }
+          $dir = Join-Path $env:RUNNER_TEMP 'iris'
+          Start-Process -Wait -FilePath $setup -ArgumentList '/S', "/D=$dir"
+          foreach ($f in 'iris.exe', 'iris.ico', 'uninstall.exe') {
+            if (-not (Test-Path "$dir\$f")) { throw "setup did not install $f" }
+          }
+          $exe = Get-Item "$dir\iris.exe"
+          if ($exe.VersionInfo.ProductVersion -ne $version) { throw "ProductVersion $($exe.VersionInfo.ProductVersion)" }
+          # PE optional header Subsystem: 2 is a GUI program, 3 a console one.
+          $pe = [IO.File]::ReadAllBytes($exe.FullName)
+          $subsystem = [BitConverter]::ToUInt16($pe, [BitConverter]::ToInt32($pe, 0x3C) + 0x5C)
+          if ($subsystem -ne 2) { throw "iris.exe subsystem $subsystem, not GUI (2)" }
+          # PowerShell waits for a GUI-subsystem program only when its
+          # output feeds a pipeline (docs/platforms.md, Windows).
+          $printed = & $exe.FullName --version | Write-Output
+          if ($printed -ne "iris $version") { throw "--version printed '$printed'" }
+          $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris'
+          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`" --daemon") { throw "Run value $((Get-ItemProperty $run).iris)" }
+          if ((Get-ItemProperty $uninstall).DisplayVersion -ne $version) { throw 'Uninstall DisplayVersion' }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'iris.lnk'
+          if (-not (Test-Path $lnk)) { throw "setup did not create $lnk" }
+          # Upgrade over a running daemon with the options `iris --update`
+          # passes: the installer asks the daemon to quit, waits while a
+          # second process holds iris.exe open, replaces it, and starts
+          # iris (/RUN). Start-Process -Wait would also wait for that
+          # iris, a descendant of the installer.
+          function Wait-Until([scriptblock]$cond, [string]$what) {
+            $deadline = (Get-Date).AddSeconds(30)
+            while (-not (& $cond)) {
+              if ((Get-Date) -gt $deadline) { throw "timed out waiting for $what" }
+              Start-Sleep -Milliseconds 200
+            }
+          }
+          # The daemon's pipe holds the account's SID (docs/cli.md).
+          $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          $pipe = { [IO.Directory]::GetFiles('\\.\pipe\') -contains "\\.\pipe\iris-$sid" }
+          $irises = { @(Get-CimInstance Win32_Process -Filter "Name='iris.exe'" | Where-Object ExecutablePath -eq "$dir\iris.exe") }
+          $daemon = Start-Process -PassThru -FilePath "$dir\iris.exe"
+          $null = $daemon.Handle
+          Wait-Until $pipe 'the daemon pipe'
+          $held = Join-Path $env:RUNNER_TEMP 'iris-held'
+          $hold = "`$f = [IO.File]::Open('$dir\iris.exe', 'Open', 'Read', 'Read'); New-Item '$held' | Out-Null; Start-Sleep 5; `$f.Close()"
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
+          Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
+          Wait-Until { Test-Path $held } 'the process holding iris.exe'
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $upgrade = Start-Process -PassThru -FilePath $setup -ArgumentList '/S', '/RUN'
+          $null = $upgrade.Handle
+          if (-not $upgrade.WaitForExit(120000)) { throw 'the upgrade ran over 120 s' }
+          $took = $clock.ElapsedMilliseconds
+          if ($upgrade.ExitCode -ne 0) { throw "upgrade exit code $($upgrade.ExitCode) after $took ms" }
+          if ($took -lt 4000) { throw "the upgrade took $took ms: it did not wait for iris.exe" }
+          if (-not $daemon.HasExited) { throw 'the daemon runs after the upgrade' }
+          Wait-Until $pipe 'the pipe of the iris /RUN started'
+          $after = @(& $irises)
+          if ($after.Count -ne 1 -or $after[0].ProcessId -eq $daemon.Id) { throw "iris processes after the upgrade: $($after.ProcessId)" }
+          # The uninstaller runs from a copy in %TEMP% and returns at once.
+          Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S'
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $dir) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+          if (Test-Path $dir) { throw "$dir remains after uninstall" }
+          if (Test-Path $lnk) { throw "$lnk remains after uninstall" }
+          if ((Get-Item $run).Property -contains 'iris') { throw 'Run value remains after uninstall' }
+          if (Test-Path $uninstall) { throw 'Uninstall key remains after uninstall' }
+          if (@(& $irises).Count) { throw 'iris runs after uninstall' }
+          if (& $pipe) { throw 'the daemon pipe remains after uninstall' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iris-windows-setup
+          path: dist/iris-*-windows-x86_64-setup.exe*
+          if-no-files-found: error
+
+  linux:
+    name: Package (Linux)
+    # Pinned: the build host's glibc is the packages' glibc floor
+    # (build_deb.sh reads it from the binary), so it moves only here.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+      - name: Install build + packaging deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake clang \
+            libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
+            libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
+            libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal \
+            rpm desktop-file-utils
+      - name: Build iris, the deb, the rpm, and the AppImage
+        run: |
+          cargo build --locked --release --bin iris
+          bash packaging/linux/build_deb.sh --bin target/release/iris --out dist
+          bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
+          bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
+      # Each package installs in a clean container without the packages
+      # it recommends, so a library it does not depend on is missing
+      # there: the deb on ubuntu:24.04, the rpm on fedora:42. In each,
+      # check_installed.sh starts the daemon on Xvfb with the lavapipe
+      # Vulkan driver, waits for the home window, and quits it. The
+      # AppImage runs without FUSE.
+      - name: Install, run, and remove each package
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          (cd dist && sha256sum -c ./*.sha256)
+          files="/usr/bin/iris /usr/share/applications/dev.iris.app.desktop /etc/xdg/autostart/iris-autostart.desktop"
+          in_container() {
+            docker run --rm -v "$PWD/dist:/pkg:ro" -v "$PWD/packaging/linux:/linux:ro" \
+              -e version="$version" -e files="$files" "$1" bash -euo pipefail -c "$2"
+          }
+          in_container ubuntu:24.04 '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends "/pkg/iris-${version}-linux-x86_64.deb" >/dev/null
+            [ "$(iris --version)" = "iris $version" ]
+            for f in $files; do dpkg -L iris | grep -qx "$f" || { echo "deb lacks $f"; exit 1; }; done
+            apt-get install -y -qq --no-install-recommends xvfb x11-utils mesa-vulkan-drivers >/dev/null
+            bash /linux/check_installed.sh
+            apt-get remove -y -qq iris >/dev/null
+            for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
+          '
+          in_container fedora:42 '
+            dnf install -y -q --setopt=install_weak_deps=False "/pkg/iris-${version}-linux-x86_64.rpm" >/dev/null
+            [ "$(iris --version)" = "iris $version" ]
+            for f in $files; do rpm -ql iris | grep -qx "$f" || { echo "rpm lacks $f"; exit 1; }; done
+            dnf install -y -q --setopt=install_weak_deps=False xorg-x11-server-Xvfb xdpyinfo xwininfo mesa-vulkan-drivers >/dev/null
+            bash /linux/check_installed.sh
+            dnf remove -y -q iris >/dev/null
+            for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
+          '
+          [ "$(./dist/iris-${version}-linux-x86_64.AppImage --appimage-extract-and-run --version)" = "iris $version" ]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iris-linux-packages
+          path: dist/iris-*-linux-x86_64.*
+          if-no-files-found: error
