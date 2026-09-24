@@ -159,8 +159,14 @@ x11rb = { version = "0.13", features = ["xtest"] }
 # device selection layer connects a Wayland daemon to no X server, which
 # started an on-demand XWayland. The Wayland client creates its GPU
 # context before the dispatcher starts its threads, while the process
-# still has one thread. Pinned to a rev so a later fork push cannot move
-# the dependency under the build.
+# still has one thread. An X11 client creates its GPU context on a
+# thread of its own once its X connection is set up: the driver loads
+# while the client loads its fonts, and the X connection Mesa's device
+# selection layer opens and closes cannot leave a fresh X server with no
+# client, which resets it, while the client's own is in setup. The
+# windows of a GPU context share one set of render pipelines, compiled
+# on threads of their own. Pinned to a rev so a later fork push cannot
+# move the dependency under the build.
 #
 # The santhreal blade fork's blade-graphics-0.7.1-iris branch is
 # crates.io blade-graphics 0.7.1 plus ContextDesc::ray_tracing, off by
@@ -176,5 +182,5 @@ x11rb = { version = "0.13", features = ["xtest"] }
 # driver connects to the X server DISPLAY names when the loader loads
 # it, which starts the same XWayland.
 [patch.crates-io]
-gpui = { git = "https://github.com/santhreal/gpui.git", rev = "489b6c84ed", version = "=0.2.2" }
+gpui = { git = "https://github.com/santhreal/gpui.git", rev = "f855e12dc7", version = "=0.2.2" }
 blade-graphics = { git = "https://github.com/santhreal/blade.git", rev = "fe729db003", version = "=0.7.1" }
