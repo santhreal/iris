@@ -53,6 +53,11 @@ interprocess = { version = "2", features = [] }
 # Native window ids for GPUI windows: the X11 id, the Win32 HWND, the
 # AppKit view.
 raw-window-handle = "0.6"
+# blocking 1.7 retires a pool thread only when the pool is over its
+# 500-thread limit, so each pool thread wakes every 500 ms for the life
+# of the process. zbus (the tray, the portals) and async-fs start one in
+# every daemon. 1.6 retires a thread 500 ms after its last task.
+blocking = "~1.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # async-io, not the default tokio: ashpd's tokio feature unifies into
