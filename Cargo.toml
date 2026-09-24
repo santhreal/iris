@@ -176,5 +176,5 @@ x11rb = { version = "0.13", features = ["xtest"] }
 # driver connects to the X server DISPLAY names when the loader loads
 # it, which starts the same XWayland.
 [patch.crates-io]
-gpui = { git = "https://github.com/santhreal/gpui.git", rev = "e19efe4a3f", version = "=0.2.2" }
+gpui = { git = "https://github.com/santhreal/gpui.git", rev = "489b6c84ed", version = "=0.2.2" }
 blade-graphics = { git = "https://github.com/santhreal/blade.git", rev = "fe729db003", version = "=0.7.1" }
