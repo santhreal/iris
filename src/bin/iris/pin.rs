@@ -66,7 +66,9 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
     let scale = (max_w / w).min(max_h / h).min(1.0);
     let (vw, vh) = (w * scale, h * scale);
 
-    cx.open_window(
+    crate::widgets::open_window(
+        cx,
+        "Pin - iris",
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(80.), px(80.)),
@@ -81,10 +83,10 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
             is_minimizable: false,
             display_id: None,
             window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some("dev.iris.pin".to_string()),
             window_min_size: None,
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
+            ..Default::default()
         },
         move |window, cx| {
             crate::sys::window::keep_above(window);

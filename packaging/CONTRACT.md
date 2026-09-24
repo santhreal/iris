@@ -34,7 +34,7 @@ deviate without updating this file and every consumer.
 - macOS: `/Applications/iris.app`; autostart via a LaunchAgent
   `~/Library/LaunchAgents/dev.iris.app.plist` running the binary,
   installed by hand (`docs/install.md`).
-- Linux (deb/rpm): `/usr/bin/iris`; `iris.desktop` in
+- Linux (deb/rpm): `/usr/bin/iris`; `dev.iris.app.desktop` in
   `/usr/share/applications`; icon in
   `/usr/share/icons/hicolor/*/apps/iris.png`; autostart via
   `/etc/xdg/autostart/iris-autostart.desktop` (XDG autostart).

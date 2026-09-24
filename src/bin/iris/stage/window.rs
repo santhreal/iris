@@ -222,30 +222,31 @@ fn open_toast_window(
         iris_lib::config::ToastPosition::TopLeft => (ox + MARGIN, oy + MARGIN, w, h),
     };
     let card = stage.card_screen;
-    let handle = cx
-        .open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    origin,
-                    size: win_size,
-                })),
-                titlebar: None,
-                focus: false,
-                show: true,
-                kind: WindowKind::PopUp,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                display_id: None,
-                window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some("dev.iris.toast".to_string()),
-                window_min_size: None,
-                window_decorations: Some(WindowDecorations::Client),
-                tabbing_identifier: None,
-            },
-            |_, cx| cx.new(|_| stage),
-        )
-        .map_err(|e| format!("open toast window: {e}"))?;
+    let handle = crate::widgets::open_window(
+        cx,
+        "Screenshot - iris",
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin,
+                size: win_size,
+            })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            display_id: None,
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_min_size: None,
+            window_decorations: Some(WindowDecorations::Client),
+            tabbing_identifier: None,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| stage),
+    )
+    .map_err(|e| format!("open toast window: {e}"))?;
 
     if let Some(previous) = TOAST_HANDLE.lock().replace(handle) {
         let _ = previous.update(cx, |stage, _window, cx| {

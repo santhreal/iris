@@ -1,0 +1,6 @@
+# Every iris window opens through widgets::open_window, which sets the
+# app id of the desktop entry and the window's title.
+disallowed-methods = [
+    { path = "gpui::App::open_window", reason = "open windows through widgets::open_window, which sets the app id and the title" },
+    { path = "gpui::AsyncApp::open_window", reason = "open windows through widgets::open_window, which sets the app id and the title" },
+]

@@ -59,7 +59,9 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = Some(cx.focus_handle());
     let win = (680.0f32, 650.0f32);
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (220.0, 140.0));
-    cx.open_window(
+    crate::widgets::open_window(
+        cx,
+        "Settings - iris",
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(origin.0), px(origin.1)),
@@ -74,13 +76,12 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some("dev.iris.settings".to_string()),
             window_min_size: Some(MIN_SIZE),
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
+            ..Default::default()
         },
-        |window, cx| {
-            window.set_window_title("Settings - iris");
+        |_, cx| {
             cx.new(|_| Settings {
                 cfg: Config::load(),
                 editing: None,

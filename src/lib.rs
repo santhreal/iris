@@ -20,3 +20,9 @@ pub mod time;
 pub mod tools;
 
 pub use config::Config;
+
+/// Application id: the X11 class and Wayland app id of every iris window,
+/// the id of the Linux desktop entry `dev.iris.app.desktop`, and the name
+/// of the per-user data and cache directories. iris windows differ by
+/// title: `Library - iris`, `Screenshot - iris`, and so on.
+pub const APP_ID: &str = "dev.iris.app";

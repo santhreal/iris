@@ -250,30 +250,31 @@ fn open(
         hovered: false,
         armed: 0,
     };
-    let handle = cx
-        .open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    origin: point(px(win.0), px(win.1)),
-                    size: size(px(win.2), px(win.3)),
-                })),
-                titlebar: None,
-                focus: false,
-                show: true,
-                kind: WindowKind::PopUp,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                display_id: None,
-                window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some("dev.iris.notice".to_string()),
-                window_min_size: None,
-                window_decorations: Some(WindowDecorations::Client),
-                tabbing_identifier: None,
-            },
-            |_, cx| cx.new(|_| notice),
-        )
-        .map_err(|e| format!("open notice window: {e}"))?;
+    let handle = crate::widgets::open_window(
+        cx,
+        "Notice - iris",
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(win.0), px(win.1)),
+                size: size(px(win.2), px(win.3)),
+            })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            display_id: None,
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_min_size: None,
+            window_decorations: Some(WindowDecorations::Client),
+            tabbing_identifier: None,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| notice),
+    )
+    .map_err(|e| format!("open notice window: {e}"))?;
     let previous = NOTICE.lock().replace(handle);
     if let Some(previous) = previous {
         let _ = previous.update(cx, |n, _, cx| n.leave(REPLACE_EXIT, cx));

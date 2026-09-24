@@ -68,7 +68,7 @@ fi
 
 # Install desktop files
 install -d %{buildroot}%{_datadir}/applications
-install -m 0644 packaging/linux/iris.desktop %{buildroot}%{_datadir}/applications/%{name}.desktop
+install -m 0644 packaging/linux/dev.iris.app.desktop %{buildroot}%{_datadir}/applications/dev.iris.app.desktop
 
 install -d %{buildroot}%{_sysconfdir}/xdg/autostart
 install -m 0644 packaging/linux/iris-autostart.desktop %{buildroot}%{_sysconfdir}/xdg/autostart/%{name}-autostart.desktop
@@ -113,7 +113,7 @@ gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %files
 %{_bindir}/%{name}
-%{_datadir}/applications/%{name}.desktop
+%{_datadir}/applications/dev.iris.app.desktop
 %{_sysconfdir}/xdg/autostart/%{name}-autostart.desktop
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 %{_datadir}/metainfo/dev.iris.app.metainfo.xml

@@ -43,7 +43,9 @@ pub fn show(cx: &mut App) -> Result<(), String> {
     }
     let (uw, uh) = ((ux2 - ux).max(1) as u32, (uy2 - uy).max(1) as u32);
     let s = crate::sys::window::root_scale(cx);
-    cx.open_window(
+    crate::widgets::open_window(
+        cx,
+        "Flash - iris",
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 // Monitors are physical pixels; bounds are logical.
@@ -59,10 +61,10 @@ pub fn show(cx: &mut App) -> Result<(), String> {
             is_minimizable: false,
             display_id: None,
             window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some("dev.iris.flash".to_string()),
             window_min_size: None,
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
+            ..Default::default()
         },
         |window, cx| {
             crate::sys::window::span_after_map(window, ux, uy, uw, uh);

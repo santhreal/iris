@@ -141,11 +141,11 @@ cp "$SCRIPT_DIR/AppRun" "$APPDIR/AppRun"
 chmod 0755 "$APPDIR/AppRun"
 
 # Install desktop file at root and in usr/share/applications
-cp "$SCRIPT_DIR/iris.desktop" "$APPDIR/iris.desktop"
-chmod 0644 "$APPDIR/iris.desktop"
+cp "$SCRIPT_DIR/dev.iris.app.desktop" "$APPDIR/dev.iris.app.desktop"
+chmod 0644 "$APPDIR/dev.iris.app.desktop"
 
-cp "$SCRIPT_DIR/iris.desktop" "$APPDIR/usr/share/applications/iris.desktop"
-chmod 0644 "$APPDIR/usr/share/applications/iris.desktop"
+cp "$SCRIPT_DIR/dev.iris.app.desktop" "$APPDIR/usr/share/applications/dev.iris.app.desktop"
+chmod 0644 "$APPDIR/usr/share/applications/dev.iris.app.desktop"
 
 # Install AppStream metainfo
 if [[ -f "$SCRIPT_DIR/dev.iris.app.metainfo.xml" ]]; then

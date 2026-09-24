@@ -196,7 +196,7 @@ jobs:
           set -euo pipefail
           version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           (cd dist && sha256sum -c ./*.sha256)
-          files="/usr/bin/iris /usr/share/applications/iris.desktop /etc/xdg/autostart/iris-autostart.desktop"
+          files="/usr/bin/iris /usr/share/applications/dev.iris.app.desktop /etc/xdg/autostart/iris-autostart.desktop"
           sudo apt-get install -y "./dist/iris-${version}-linux-x86_64.deb"
           [ "$(iris --version)" = "iris $version" ]
           for f in $files; do dpkg -L iris | grep -qx "$f" || { echo "deb lacks $f"; exit 1; }; done

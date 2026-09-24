@@ -250,3 +250,51 @@ fn rebuild_adopts_a_capture_resized_outside_iris() {
     solid(&entry.thumb, 300, 183, RED);
     assert_eq!(thumbnail(&stored).unwrap().get_pixel(0, 0).0, RED);
 }
+
+static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn count_write() {
+    WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// How many times `op` runs the store write hook.
+fn hooked<T>(op: impl FnOnce() -> T) -> usize {
+    on_write(count_write);
+    let before = WRITES.load(std::sync::atomic::Ordering::SeqCst);
+    op();
+    WRITES.load(std::sync::atomic::Ordering::SeqCst) - before
+}
+
+// WHY: an open library window lists a capture the moment this process
+// stores it, through the hook every store write runs. Closed here: a
+// writer that changes the store without running the hook (the window
+// shows the change only on its next poll), and a read that runs it
+// (each list pass would queue another). Not covered: writes by another
+// process, which the window's poll reads.
+#[test]
+#[serial_test::serial]
+fn every_store_write_runs_the_write_hook_once() {
+    let d = isolated_home();
+    let (a, img) = png(d.path(), "a.png");
+    let (b, _) = png(d.path(), "b.png");
+    let (c, _) = png(d.path(), "c.png");
+    let mut entry = None;
+    assert_eq!(hooked(|| add(&a, &img)), 1, "add");
+    assert_eq!(hooked(|| (add(&b, &img), add(&c, &img))), 2, "adds");
+    assert_eq!(hooked(|| entry = add(&a, &img).ok()), 1, "re-add");
+    let entry = entry.unwrap();
+    // The first list in this directory sweeps it; a later one may take
+    // the unchanged-directory path, which misses a removal made in the
+    // same timestamp tick as the directory's last change.
+    std::fs::remove_file(&c).unwrap();
+    assert_eq!(hooked(list), 1, "prune");
+    assert_eq!(hooked(list), 0, "list");
+    assert_eq!(hooked(|| thumbnail(&entry)), 0, "current thumbnail");
+    solid(&a, 300, 300, GREEN);
+    std::fs::remove_file(&entry.thumb).unwrap();
+    assert_eq!(hooked(|| thumbnail(&entry)), 1, "resized capture");
+    assert_eq!(hooked(|| delete(&a)), 1, "delete");
+    assert_eq!(hooked(|| delete(&a)), 0, "delete of an unstored path");
+    assert_eq!(hooked(|| delete_many(&[b])), 1, "delete_many");
+    assert!(list().is_empty());
+}

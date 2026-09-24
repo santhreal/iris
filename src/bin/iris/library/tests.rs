@@ -4,7 +4,7 @@ use std::prelude::v1::test;
 use iris_lib::library::CaptureEntry;
 
 use super::entries::{fit_name, name_cols};
-use super::listing::Listing;
+use super::listing::{ListPass, Listing};
 use super::{
     cascade, visible_rows, Library, CARD_W, CASCADE_END, GAP, LABEL_GAP, LABEL_PAD, THUMB_H,
 };
@@ -233,4 +233,28 @@ fn the_cascade_runs_in_card_order_and_never_reverses() {
             assert!(cascade(at(step + 1), index) >= cascade(at(step), index));
         }
     }
+}
+
+// WHY: a capture saved in this process shows in an open library window
+// at once. Closed here: a store write that lands while a list pass is in
+// flight and gets no pass after it (the pass in flight may have read the
+// store before the write, so the window shows the stale listing until
+// the next poll), a write that queues more than one pass, a poll that
+// queues one, and overlapping passes. Not covered: the daemon's
+// delivery of the write to the window.
+#[test]
+fn a_write_during_a_list_pass_queues_exactly_one_more() {
+    let mut pass = ListPass::default();
+    assert!(pass.begin(false), "an idle window lists at once");
+    assert!(!pass.begin(false), "passes never overlap");
+    assert!(!pass.begin(true));
+    assert!(!pass.begin(true));
+    assert!(!pass.begin(false));
+    assert!(pass.land(), "a write during the pass queues one more");
+    assert!(pass.begin(false), "the queued pass starts");
+    assert!(!pass.land(), "two writes during a pass queue one pass");
+    assert!(pass.begin(true), "a write to an idle window lists at once");
+    assert!(!pass.begin(false));
+    assert!(!pass.land(), "a poll during a pass queues nothing");
+    assert!(pass.begin(false), "a landed pass leaves the window idle");
 }

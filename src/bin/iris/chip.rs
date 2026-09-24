@@ -113,30 +113,31 @@ pub fn open(
 ) -> Result<u32, String> {
     close(cx);
     let origin = origin(anchor, monitors, crate::sys::window::root_scale(cx));
-    let handle = cx
-        .open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    origin: point(px(origin.0), px(origin.1)),
-                    size: size(px(WIN_W), px(WIN_H)),
-                })),
-                titlebar: None,
-                focus: false,
-                show: true,
-                kind: WindowKind::PopUp,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                display_id: None,
-                window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some("dev.iris.chip".to_string()),
-                window_min_size: None,
-                window_decorations: Some(WindowDecorations::Client),
-                tabbing_identifier: None,
-            },
-            |_, cx| cx.new(|_| Chip::new(mic, Instant::now())),
-        )
-        .map_err(|e| format!("open chip window: {e}"))?;
+    let handle = crate::widgets::open_window(
+        cx,
+        "Recording - iris",
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(origin.0), px(origin.1)),
+                size: size(px(WIN_W), px(WIN_H)),
+            })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            display_id: None,
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_min_size: None,
+            window_decorations: Some(WindowDecorations::Client),
+            tabbing_identifier: None,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| Chip::new(mic, Instant::now())),
+    )
+    .map_err(|e| format!("open chip window: {e}"))?;
 
     let xid = crate::sys::window::prepare_chip(cx, handle.into());
     *CHIP.lock() = Some(handle);

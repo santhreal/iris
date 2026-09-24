@@ -13,7 +13,7 @@
       window capture, screen recording via PipeWire, and an annotation editor.
     </p>
   </description>
-  <launchable type="desktop-id">iris.desktop</launchable>
+  <launchable type="desktop-id">dev.iris.app.desktop</launchable>
   <url type="homepage">https://github.com/santhreal/iris</url>
   <url type="bugtracker">https://github.com/santhreal/iris/issues</url>
   <developer id="dev.iris">

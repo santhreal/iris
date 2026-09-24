@@ -1,4 +1,5 @@
-//! The captures a library window shows, and what is derived from them.
+//! The captures a library window shows, what is derived from them, and
+//! when the store is read again.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -87,5 +88,36 @@ impl Listing {
         self.entries = fresh.into_iter().map(Rc::new).collect();
         self.listed.get_or_insert_with(Instant::now);
         Some(stale)
+    }
+}
+
+/// When a library window reads the store again: one pass at a time, and
+/// a store write during a pass runs one more pass after it, because the
+/// pass in flight may have read the store before the write.
+#[derive(Default)]
+pub(super) struct ListPass {
+    in_flight: bool,
+    again: bool,
+}
+
+impl ListPass {
+    /// Requests a pass; true when one starts now. A poll while a pass is
+    /// in flight is dropped: on a slow store the 1.5s timer would
+    /// otherwise stack overlapping scans. A write while a pass is in
+    /// flight queues one pass after it.
+    pub(super) fn begin(&mut self, after_write: bool) -> bool {
+        if self.in_flight {
+            self.again |= after_write;
+            return false;
+        }
+        self.in_flight = true;
+        true
+    }
+
+    /// Ends the pass in flight; true when a write landed during it and
+    /// another pass is due.
+    pub(super) fn land(&mut self) -> bool {
+        self.in_flight = false;
+        std::mem::take(&mut self.again)
     }
 }

@@ -73,6 +73,17 @@ fn store_lock() -> &'static parking_lot::Mutex<()> {
     &LOCK
 }
 
+/// Runs after every store write in this process. The process that shows
+/// the library sets it, so an open library window reads a write at once
+/// instead of on its next poll.
+static ON_WRITE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Run `hook` after each store write in this process. The first call
+/// sets it for the process lifetime.
+pub fn on_write(hook: fn()) {
+    let _ = ON_WRITE.set(hook);
+}
+
 fn read_store() -> Vec<CaptureEntry> {
     let Ok(path) = store_path() else {
         return Vec::new();
@@ -108,6 +119,9 @@ fn write_store(entries: &[CaptureEntry]) -> Result<(), String> {
         .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
         .unwrap_or((None, 0));
     *store_cache().lock() = (stamp.0, stamp.1, entries.to_vec());
+    if let Some(hook) = ON_WRITE.get() {
+        hook();
+    }
     Ok(())
 }
 

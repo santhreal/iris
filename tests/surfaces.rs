@@ -27,7 +27,10 @@ use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, InputFocus, MapState
 /// How an `iris --help` option relates to windows with one subject.
 #[derive(Clone, Copy)]
 enum Kind {
-    /// Opens the window of this WM_CLASS; a second open focuses it.
+    /// Opens the iris window of this title; a second open focuses it.
+    /// Every iris window shares one WM_CLASS, so the title is what
+    /// tells the surfaces apart. The editor's is its file's name, here
+    /// `single.png`.
     Single(&'static str),
     /// Opens no window that has one subject: a capture, a recording, a
     /// toast card, or a command the client runs itself.
@@ -44,10 +47,10 @@ const OPTIONS: &[(&str, Kind)] = &[
     ("--record-region", Kind::Other),
     ("--record-pause", Kind::Other),
     ("--record-mic", Kind::Other),
-    ("--library", Kind::Single("dev.iris.library")),
-    ("--settings", Kind::Single("dev.iris.settings")),
-    ("--home", Kind::Single("dev.iris.home")),
-    ("--annotate", Kind::Single("dev.iris.editor")),
+    ("--library", Kind::Single("Library - iris")),
+    ("--settings", Kind::Single("Settings - iris")),
+    ("--home", Kind::Single("iris")),
+    ("--annotate", Kind::Single(EDITOR)),
     ("--toast", Kind::Other),
     ("--quit", Kind::Other),
     ("--version", Kind::Other),
@@ -55,6 +58,9 @@ const OPTIONS: &[(&str, Kind)] = &[
     ("--update", Kind::Other),
     ("--help", Kind::Other),
 ];
+
+/// The title of the editor on the test's `single.png`.
+const EDITOR: &str = "single.png - iris";
 
 /// How long a window that should not exist has to map.
 const SETTLE: Duration = Duration::from_millis(800);
@@ -94,7 +100,7 @@ fn a_second_open_focuses_the_window_already_open() {
         .save(&shot)
         .unwrap();
     for &(option, kind) in OPTIONS {
-        let Kind::Single(class) = kind else {
+        let Kind::Single(title) = kind else {
             continue;
         };
         let mut args = vec![OsStr::new(option)];
@@ -103,8 +109,8 @@ fn a_second_open_focuses_the_window_already_open() {
         }
         daemon.forward(&args);
         let first = daemon.until(
-            &format!("{option} to open a {class} window"),
-            || match windows_of(&conn, root, class).as_slice() {
+            &format!("{option} to open a window titled {title:?}"),
+            || match windows_of(&conn, root, title).as_slice() {
                 [window] => Some(*window),
                 _ => None,
             },
@@ -121,41 +127,50 @@ fn a_second_open_focuses_the_window_already_open() {
         );
         std::thread::sleep(SETTLE);
         assert_eq!(
-            windows_of(&conn, root, class),
+            windows_of(&conn, root, title),
             [first],
-            "a second {option} opened another {class} window"
+            "a second {option} opened another window titled {title:?}"
         );
     }
     // The editor's subject is its file: another file opens another
-    // editor.
+    // editor beside the first.
     let other = daemon.dir.path().join("shots").join("other.png");
     std::fs::copy(&shot, &other).unwrap();
-    let editors = windows_of(&conn, root, "dev.iris.editor");
     daemon.forward(&[OsStr::new("--annotate"), other.as_os_str()]);
     daemon.until("--annotate on another file to open a second editor", || {
-        (windows_of(&conn, root, "dev.iris.editor").len() == editors.len() + 1).then_some(())
+        (windows_of(&conn, root, "other.png - iris").len() == 1
+            && windows_of(&conn, root, EDITOR).len() == 1)
+            .then_some(())
     });
 }
 
-/// The mapped top-level windows whose WM_CLASS includes `class`.
-fn windows_of(conn: &impl Connection, root: u32, class: &str) -> Vec<u32> {
+/// The mapped top-level iris windows titled `title`: WM_CLASS instance
+/// and class both `APP_ID`, and WM_NAME `title`.
+fn windows_of(conn: &impl Connection, root: u32, title: &str) -> Vec<u32> {
+    let id = iris_lib::APP_ID.as_bytes();
+    // A window destroyed since the tree was read answers with an error,
+    // and counts as gone.
+    let property = |window, atom: AtomEnum| {
+        conn.get_property(false, window, atom, AtomEnum::STRING, 0, 64)
+            .unwrap()
+            .reply()
+            .map(|p| p.value)
+    };
     let children = conn.query_tree(root).unwrap().reply().unwrap().children;
     children
         .into_iter()
         .filter(|&window| {
-            // A window destroyed since the tree was read answers with an
-            // error, and counts as gone.
             let mapped = conn
                 .get_window_attributes(window)
                 .unwrap()
                 .reply()
                 .is_ok_and(|a| a.map_state == MapState::VIEWABLE);
             mapped
-                && conn
-                    .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
-                    .unwrap()
-                    .reply()
-                    .is_ok_and(|p| p.value.split(|&b| b == 0).any(|s| s == class.as_bytes()))
+                && property(window, AtomEnum::WM_CLASS).is_ok_and(|class| {
+                    let mut parts = class.split(|&b| b == 0);
+                    parts.next() == Some(id) && parts.next() == Some(id)
+                })
+                && property(window, AtomEnum::WM_NAME).is_ok_and(|name| name == title.as_bytes())
         })
         .collect()
 }

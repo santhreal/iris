@@ -111,7 +111,7 @@ sudo apt install ./iris-<ver>-linux-x86_64.deb
 
 Installed files:
 - Binary: `/usr/bin/iris`
-- Desktop entry: `/usr/share/applications/iris.desktop`
+- Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
 - Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
 - Icons: `/usr/share/icons/hicolor/*/apps/iris.png`
@@ -135,7 +135,7 @@ sudo dnf install ./iris-<ver>-linux-x86_64.rpm
 
 Installed files:
 - Binary: `/usr/bin/iris`
-- Desktop entry: `/usr/share/applications/iris.desktop`
+- Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
 - Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
 - Icons: `/usr/share/icons/hicolor/*/apps/iris.png`

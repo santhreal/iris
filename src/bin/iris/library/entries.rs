@@ -118,23 +118,25 @@ impl Library {
         .detach();
     }
 
-    /// One background list + apply: the open path and the refresh
-    /// poll share it so neither stats the store on the UI thread.
-    /// A pass already in flight skips the poll: on a slow store the
-    /// 1.5s timer would otherwise stack overlapping scans.
-    pub(super) fn refresh_now(&mut self, cx: &mut Context<Self>) {
-        if self.refresh_in_flight {
+    /// One background list + apply: the open path, the poll, and a
+    /// store write in this process share it so none stats the store on
+    /// the UI thread. [`ListPass`](super::listing::ListPass) sets which
+    /// requests start a pass.
+    pub(super) fn refresh(&mut self, after_write: bool, cx: &mut Context<Self>) {
+        if !self.list_pass.begin(after_write) {
             return;
         }
-        self.refresh_in_flight = true;
         cx.spawn(async move |this, cx| {
             let fresh = cx
                 .background_executor()
                 .spawn(async move { library::list() })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.refresh_in_flight = false;
+                let again = this.list_pass.land();
                 this.show(fresh, cx);
+                if again {
+                    this.refresh(false, cx);
+                }
             });
         })
         .detach();
@@ -166,7 +168,7 @@ impl Library {
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(REFRESH).await;
             let alive = this.update(cx, |this, cx| {
-                this.refresh_now(cx);
+                this.refresh(false, cx);
             });
             if alive.is_err() {
                 break;

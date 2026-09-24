@@ -67,6 +67,9 @@ pub enum Command {
     /// A recording source returned: the daemon collects the recording
     /// when it ended on its own, not by a stop.
     RecordingEnded,
+    /// The capture store changed in this process: an open library
+    /// window shows the change now instead of on its next poll.
+    LibraryChanged,
     /// A thread with no window of its own failed at `what`: the daemon
     /// shows `err` in a notice.
     Failed {
@@ -89,6 +92,7 @@ impl Command {
             | Command::RecordRegionPick
             | Command::RecordRegion { .. }
             | Command::RecordingEnded => "Recording failed",
+            Command::LibraryChanged => "Library did not refresh",
             Command::RecordPause => "Pause failed",
             Command::RecordMic => "Microphone toggle failed",
             Command::Home => "Home did not open",
@@ -133,6 +137,7 @@ pub fn live_daemon_only(cmds: &[Command]) -> bool {
             | Command::RecordRegionPick
             | Command::RecordRegion { .. }
             | Command::RecordingEnded
+            | Command::LibraryChanged
             | Command::Failed { .. } => false,
         })
 }
@@ -199,6 +204,10 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             recording::collect_ended(cx);
             Ok(())
         }
+        Command::LibraryChanged => {
+            library::store_changed(cx);
+            Ok(())
+        }
         Command::Failed { what, err } => {
             crate::notice::failed(cx, what, err);
             Ok(())
@@ -240,6 +249,13 @@ pub fn start(cx: &mut App) {
     overlay::warmup(cx);
     let (tx, rx) = unbounded::<Command>();
     let _ = COMMAND_TX.set(tx.clone());
+    // A store write runs on whichever thread saved or deleted a capture;
+    // the command pump brings it to the open library window.
+    iris_lib::library::on_write(|| {
+        if let Some(tx) = command_tx() {
+            let _ = tx.unbounded_send(Command::LibraryChanged);
+        }
+    });
 
     match crate::sys::ipc::spawn_listener() {
         // The accept thread pushes each connection's argv here; the

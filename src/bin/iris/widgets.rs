@@ -7,10 +7,12 @@
 mod image;
 mod resize;
 mod window_move;
+mod window_open;
 
 pub use self::image::*;
 pub use self::resize::resize_edges;
 pub use self::window_move::{move_handle, Double};
+pub use self::window_open::open_window;
 
 use gpui::*;
 

@@ -171,8 +171,8 @@ if [[ -z "$GLIBC_MIN" ]]; then
 fi
 
 # Install desktop files
-cp "$SCRIPT_DIR/iris.desktop" "$PKG_DIR/usr/share/applications/iris.desktop"
-chmod 0644 "$PKG_DIR/usr/share/applications/iris.desktop"
+cp "$SCRIPT_DIR/dev.iris.app.desktop" "$PKG_DIR/usr/share/applications/dev.iris.app.desktop"
+chmod 0644 "$PKG_DIR/usr/share/applications/dev.iris.app.desktop"
 
 cp "$SCRIPT_DIR/iris-autostart.desktop" "$PKG_DIR/etc/xdg/autostart/iris-autostart.desktop"
 chmod 0644 "$PKG_DIR/etc/xdg/autostart/iris-autostart.desktop"

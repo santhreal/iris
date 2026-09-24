@@ -140,7 +140,7 @@ if command -v strip >/dev/null 2>&1; then
   strip --strip-unneeded "$SOURCE_DIR/iris" 2>/dev/null || true
 fi
 
-cp "$SCRIPT_DIR/iris.desktop" "$SOURCE_DIR/packaging/linux/iris.desktop"
+cp "$SCRIPT_DIR/dev.iris.app.desktop" "$SOURCE_DIR/packaging/linux/dev.iris.app.desktop"
 cp "$SCRIPT_DIR/iris-autostart.desktop" "$SOURCE_DIR/packaging/linux/iris-autostart.desktop"
 if [[ -f "$SCRIPT_DIR/dev.iris.app.metainfo.xml" ]]; then
   cp "$SCRIPT_DIR/dev.iris.app.metainfo.xml" "$SOURCE_DIR/packaging/linux/dev.iris.app.metainfo.xml"

@@ -160,9 +160,8 @@ pub struct Library {
     /// Rubber-band selection: window-space anchor and current point
     /// while the left button is held on empty grid space.
     pub(super) band: Option<(f32, f32, f32, f32)>,
-    /// A refresh already in flight: the 1.5s poll must not stack
-    /// overlapping list() passes on a slow or network shots dir.
-    pub(super) refresh_in_flight: bool,
+    /// The store read in flight, and whether a write queued another.
+    list_pass: listing::ListPass,
     /// Scroll offset of the card grid, so band math stays in
     /// document space during a band drag.
     pub(super) scroll: gpui::ScrollHandle,
@@ -179,73 +178,73 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = cx.focus_handle();
     let win = (960.0f32, 640.0f32);
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (140.0, 90.0));
-    let handle = cx
-        .open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    origin: point(px(origin.0), px(origin.1)),
-                    size: size(px(win.0), px(win.1)),
-                })),
-                titlebar: None,
-                focus: true,
-                show: true,
-                kind: WindowKind::Normal,
-                is_movable: true,
-                is_resizable: true,
-                is_minimizable: true,
-                display_id: None,
-                window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some("dev.iris.library".to_string()),
-                window_min_size: Some(MIN_SIZE),
-                window_decorations: Some(WindowDecorations::Client),
-                tabbing_identifier: None,
-            },
-            |window, cx| {
-                window.set_window_title("Library - iris");
-                cx.new(|cx| {
-                    // Listing the shots dir here would stall the open on a
-                    // slow or network dir: open empty and populate from the
-                    // background, the same path the refresh poll takes.
-                    let cfg = iris_lib::config::Config::load();
-                    let mut this = Library {
-                        listing: listing::Listing::default(),
-                        sel_label: SharedString::from(""),
-                        empty_label: SharedString::from(format!(
-                            "No captures yet — press {}",
-                            cfg.capture_hotkey
-                        )),
-                        selected: Vec::new(),
-                        refresh_in_flight: false,
-                        sel_set: std::collections::HashSet::new(),
-                        sel_dirty: false,
-                        anchor: None,
-                        hovered: None,
-                        springs: std::collections::HashMap::new(),
-                        sel_springs: std::collections::HashMap::new(),
-                        press_spring: crate::motion::Spring::default(),
-                        pressed: None,
-                        last_frame: None,
-                        drag_start: None,
-                        thumb_keep: (0, 0),
-                        prefetch_in_flight: false,
-                        prefetch_want: None,
-                        thumb_cache: std::collections::HashMap::new(),
-                        entries_dirty: false,
-                        drag_fired: false,
-                        help: false,
-                        status: None,
-                        focus,
-                        cfg,
-                        band: None,
-                        scroll: gpui::ScrollHandle::new(),
-                    };
-                    this.arm_refresh(cx);
-                    this.refresh_now(cx);
-                    this
-                })
-            },
-        )
-        .map_err(|e| format!("open library window: {e}"))?;
+    let handle = crate::widgets::open_window(
+        cx,
+        "Library - iris",
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(origin.0), px(origin.1)),
+                size: size(px(win.0), px(win.1)),
+            })),
+            titlebar: None,
+            focus: true,
+            show: true,
+            kind: WindowKind::Normal,
+            is_movable: true,
+            is_resizable: true,
+            is_minimizable: true,
+            display_id: None,
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_min_size: Some(MIN_SIZE),
+            window_decorations: Some(WindowDecorations::Client),
+            tabbing_identifier: None,
+            ..Default::default()
+        },
+        |_, cx| {
+            cx.new(|cx| {
+                // Listing the shots dir here would stall the open on a
+                // slow or network dir: open empty and populate from the
+                // background, the same path the refresh poll takes.
+                let cfg = iris_lib::config::Config::load();
+                let mut this = Library {
+                    listing: listing::Listing::default(),
+                    sel_label: SharedString::from(""),
+                    empty_label: SharedString::from(format!(
+                        "No captures yet — press {}",
+                        cfg.capture_hotkey
+                    )),
+                    selected: Vec::new(),
+                    list_pass: listing::ListPass::default(),
+                    sel_set: std::collections::HashSet::new(),
+                    sel_dirty: false,
+                    anchor: None,
+                    hovered: None,
+                    springs: std::collections::HashMap::new(),
+                    sel_springs: std::collections::HashMap::new(),
+                    press_spring: crate::motion::Spring::default(),
+                    pressed: None,
+                    last_frame: None,
+                    drag_start: None,
+                    thumb_keep: (0, 0),
+                    prefetch_in_flight: false,
+                    prefetch_want: None,
+                    thumb_cache: std::collections::HashMap::new(),
+                    entries_dirty: false,
+                    drag_fired: false,
+                    help: false,
+                    status: None,
+                    focus,
+                    cfg,
+                    band: None,
+                    scroll: gpui::ScrollHandle::new(),
+                };
+                this.arm_refresh(cx);
+                this.refresh(false, cx);
+                this
+            })
+        },
+    )
+    .map_err(|e| format!("open library window: {e}"))?;
     // The thumbnail images sit in GPUI's app-global asset cache;
     // return them when the window dies, whichever way it closes.
     if let Ok(entity) = handle.entity(cx) {
@@ -257,4 +256,14 @@ pub fn open(cx: &mut App) -> Result<(), String> {
         .detach();
     }
     Ok(())
+}
+
+/// The store changed in this process: the open library window lists it
+/// now instead of on its next poll.
+pub fn store_changed(cx: &mut App) {
+    for window in cx.windows() {
+        if let Some(library) = window.downcast::<Library>() {
+            let _ = library.update(cx, |this, _, cx| this.refresh(true, cx));
+        }
+    }
 }

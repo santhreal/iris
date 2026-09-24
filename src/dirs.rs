@@ -24,7 +24,7 @@ fn home_override() -> Option<PathBuf> {
 }
 
 fn app_dirs() -> Option<directories::ProjectDirs> {
-    directories::ProjectDirs::from("", "", "dev.iris.app")
+    directories::ProjectDirs::from("", "", crate::APP_ID)
 }
 
 /// `config.toml`.

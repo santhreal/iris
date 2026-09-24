@@ -106,7 +106,11 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     }
     let focus = cx.focus_handle();
     let origin = crate::sys::window::centered_origin(cx, WIN.0, WIN.1, (200.0, 120.0));
-    cx.open_window(
+    // Task switchers and taskbars list the window by its title; the
+    // client-drawn frame shows its own.
+    crate::widgets::open_window(
+        cx,
+        "iris",
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(origin.0), px(origin.1)),
@@ -121,15 +125,12 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some("dev.iris.home".to_string()),
             window_min_size: Some(size(px(WIN.0), px(WIN.1))),
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
+            ..Default::default()
         },
-        |window, cx| {
-            // Task switchers and taskbars list the window by this title;
-            // the client-drawn frame shows its own.
-            window.set_window_title("iris");
+        |_, cx| {
             cx.new(|_| Home {
                 focus,
                 opened: None,

@@ -31,7 +31,7 @@ The window header uses the client-side decorated frame (56 pixels high) containi
 The body contains a responsive multi-column grid of capture cards with 16-pixel padding and gaps:
 
 - **Ordering**: Sorted by creation timestamp in descending order (newest captures first).
-- **Auto-refresh**: Polls `library.json` on a 1.5-second timer. Captures added, modified, or removed by other processes update automatically without restarting the window.
+- **Auto-refresh**: A capture that the daemon saves, re-saves from the editor, or deletes shows in the grid at once. Changes that another process makes to `library.json` or to the capture files show on the next poll, which runs every 1.5 seconds.
 - **Empty library**: With no captures, the grid shows the capture hotkey in place of cards.
 - **Card layout**: Each card is 216 pixels wide and contains:
   - Top thumbnail container (132 pixels high) displaying the cached thumbnail image.

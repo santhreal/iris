@@ -108,73 +108,74 @@ fn open_shell_opts(
             size: size(w, h),
         })
     };
-    let handle = cx
-        .open_window(
-            WindowOptions {
-                window_bounds: Some(bounds),
-                titlebar: None,
-                focus: !prewarm,
-                show: true,
-                kind: WindowKind::Normal,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                display_id: None,
-                // Transparent until the frame lands: the live desktop
-                // shows through, dimmed, while the grab runs.
-                window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some("dev.iris.overlay".to_string()),
-                window_min_size: None,
-                window_decorations: Some(WindowDecorations::Client),
-                tabbing_identifier: None,
-            },
-            |window, cx| {
-                crate::sys::window::span_after_map(window, ux, uy, uw, uh);
-                cx.new(|_| {
-                    let cfg = iris_lib::config::Config::load();
-                    let hint = SharedString::from(format!(
-                        "{} capture   {} cancel",
-                        cfg.confirm_keybind, cfg.cancel_keybind
-                    ));
-                    Overlay {
-                        hidden: false,
-                        mode: super::OverlayMode::Capture,
-                        frame_size: None,
-                        origin: (ux, uy),
-                        view: (uw, uh),
-                        monitors,
-                        frame_img: None,
-                        windows,
-                        focus,
-                        dragging: false,
-                        anchor: (0.0, 0.0),
-                        resize: None,
-                        moving: None,
-                        current: None,
-                        hovered: None,
-                        cursor: (0.0, 0.0),
-                        loupe: None,
-                        loupe_at: None,
-                        loupe_scratch: Vec::new(),
-                        finishing: false,
-                        pending_finish: false,
-                        opened: None,
-                        hover_in: None,
-                        hover_out: None,
-                        flight: None,
-                        finalize_failed: false,
-                        landed: None,
-                        cfg,
-                        hint,
-                        coord_at: None,
-                        coord_label: SharedString::default(),
-                        size_at: None,
-                        size_label: SharedString::default(),
-                    }
-                })
-            },
-        )
-        .map_err(|e| format!("open overlay window: {e}"))?;
+    let handle = crate::widgets::open_window(
+        cx,
+        "Capture - iris",
+        WindowOptions {
+            window_bounds: Some(bounds),
+            titlebar: None,
+            focus: !prewarm,
+            show: true,
+            kind: WindowKind::Normal,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            display_id: None,
+            // Transparent until the frame lands: the live desktop
+            // shows through, dimmed, while the grab runs.
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_min_size: None,
+            window_decorations: Some(WindowDecorations::Client),
+            tabbing_identifier: None,
+            ..Default::default()
+        },
+        |window, cx| {
+            crate::sys::window::span_after_map(window, ux, uy, uw, uh);
+            cx.new(|_| {
+                let cfg = iris_lib::config::Config::load();
+                let hint = SharedString::from(format!(
+                    "{} capture   {} cancel",
+                    cfg.confirm_keybind, cfg.cancel_keybind
+                ));
+                Overlay {
+                    hidden: false,
+                    mode: super::OverlayMode::Capture,
+                    frame_size: None,
+                    origin: (ux, uy),
+                    view: (uw, uh),
+                    monitors,
+                    frame_img: None,
+                    windows,
+                    focus,
+                    dragging: false,
+                    anchor: (0.0, 0.0),
+                    resize: None,
+                    moving: None,
+                    current: None,
+                    hovered: None,
+                    cursor: (0.0, 0.0),
+                    loupe: None,
+                    loupe_at: None,
+                    loupe_scratch: Vec::new(),
+                    finishing: false,
+                    pending_finish: false,
+                    opened: None,
+                    hover_in: None,
+                    hover_out: None,
+                    flight: None,
+                    finalize_failed: false,
+                    landed: None,
+                    cfg,
+                    hint,
+                    coord_at: None,
+                    coord_label: SharedString::default(),
+                    size_at: None,
+                    size_label: SharedString::default(),
+                }
+            })
+        },
+    )
+    .map_err(|e| format!("open overlay window: {e}"))?;
     // Pooling needs minimize+restore; elsewhere the window is destroyed
     // on park instead.
     if poolable() {
