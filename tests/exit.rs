@@ -40,11 +40,14 @@
 mod daemon;
 #[path = "exit/recording.rs"]
 mod recording;
+// The other test files use the rest of the helpers.
+#[allow(dead_code)]
+#[path = "support/x11.rs"]
+mod x11;
 
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use daemon::{enabled, runtime_dir, until, xvfb, Daemon, Server};
+use daemon::{enabled, runtime_dir, sway, xvfb, Daemon};
 use recording::Recording;
 
 /// How long the daemon has to exit once its display server is gone.
@@ -95,39 +98,11 @@ fn a_daemon_exits_when_its_wayland_compositor_dies() {
     if !enabled() {
         return;
     }
+    let case = "a_daemon_exits_when_its_wayland_compositor_dies";
     let dir = tempfile::tempdir().unwrap();
-    let run = runtime_dir(dir.path());
-    let config = dir.path().join("sway.conf");
-    std::fs::write(&config, "xwayland disable\n").unwrap();
-    // The headless backend with pixman: no GPU, no input devices, no
-    // output scanned out. sway refuses to start while the NVIDIA module is
-    // loaded unless told otherwise, even headless.
-    let Some(mut sway) = Server::spawn(
-        Command::new("sway")
-            .arg("--unsupported-gpu")
-            .arg("-c")
-            .arg(config)
-            .env_remove("DISPLAY")
-            .env_remove("WAYLAND_DISPLAY")
-            .env("XDG_RUNTIME_DIR", &run)
-            .env("WLR_BACKENDS", "headless")
-            .env("WLR_LIBINPUT_NO_DEVICES", "1")
-            .env("WLR_RENDERER", "pixman")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null()),
-    ) else {
-        eprintln!("a_daemon_exits_when_its_wayland_compositor_dies did not run: no sway on PATH");
+    let Some((mut sway, socket)) = sway(case, &runtime_dir(dir.path())) else {
         return;
     };
-    let socket = until("sway to listen", || {
-        std::fs::read_dir(&run)
-            .ok()?
-            .filter_map(|entry| Some(entry.ok()?.file_name()))
-            .find(|name| {
-                name.to_str()
-                    .is_some_and(|n| n.starts_with("wayland-") && !n.ends_with(".lock"))
-            })
-    });
 
     let mut daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("WAYLAND_DISPLAY", socket).env_remove("DISPLAY");

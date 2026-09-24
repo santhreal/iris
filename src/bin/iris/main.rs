@@ -89,6 +89,10 @@ fn main() {
         }
     }
 
+    // No thread starts before this: on a Wayland session gpui creates the
+    // Vulkan instance with DISPLAY hidden from the drivers only while the
+    // process has one thread, and the NVIDIA driver connects to DISPLAY
+    // when it is loaded, which starts an on-demand XWayland.
     let app = Application::new();
     // Opening iris.app while the daemon runs starts no second process:
     // macOS reports a reopen to the daemon, which then shows home. The

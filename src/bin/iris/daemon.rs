@@ -107,7 +107,7 @@ impl Command {
 }
 
 /// Send `err` from a thread with no window to the daemon's notice.
-/// Before the daemon's command loop starts it is only logged.
+/// Outside the daemon it is only logged.
 pub(crate) fn report_failure(what: &'static str, err: String) {
     iris_lib::ilog!("iris: {what}: {err}");
     if let Some(tx) = command_tx() {
@@ -238,15 +238,21 @@ fn quit(_: &mut App) -> std::future::Ready<()> {
     std::process::exit(0)
 }
 
-/// Start daemon services inside the GPUI app: the single-instance
-/// socket, the tray icon, and the global hotkey grabs. The socket and
-/// command pump are channel-driven; failures degrade to log lines.
+/// Start daemon services inside the GPUI app: the global hotkey grabs,
+/// the single-instance socket, and the tray icon. The socket and command
+/// pump are channel-driven; failures degrade to log lines.
 pub fn start(cx: &mut App) {
     // The daemon outlives every surface: GPUI's Linux and Windows run
     // loops otherwise stop when the last window closes, and a parked
     // stand-in window would keep a renderer and its frame timer live.
     cx.set_quit_on_last_window_closed(false);
     cx.on_app_quit(quit).detach();
+    let (tx, rx) = unbounded::<Command>();
+    let _ = COMMAND_TX.set(tx.clone());
+    // The hotkeys are grabbed before the socket binds, so a caller that
+    // waits for the socket can press one at once. A press during the
+    // overlay warmup waits on the channel and runs once `start` returns.
+    crate::sys::hotkeys::spawn(tx.clone());
     iris_lib::ilog!("iris: daemon start");
     // The socket binds before the overlay warmup's renderer init: a
     // client that spawned this daemon waits for the bind, and a second
@@ -277,11 +283,7 @@ pub fn start(cx: &mut App) {
         }
         Err(e) => iris_lib::ilog!("iris: single-instance socket unavailable: {e}"),
     }
-    // Warm the overlay pool: the first capture reuses a live window
-    // instead of paying GPUI's ~130ms renderer init on the hotkey.
-    overlay::warmup(cx);
-    let (tx, rx) = unbounded::<Command>();
-    let _ = COMMAND_TX.set(tx.clone());
+    crate::sys::tray::spawn(tx);
     // A store write runs on whichever thread saved or deleted a capture;
     // the command pump brings it to the open library window.
     iris_lib::library::on_write(|| {
@@ -289,9 +291,9 @@ pub fn start(cx: &mut App) {
             let _ = tx.unbounded_send(Command::LibraryChanged);
         }
     });
-
-    crate::sys::hotkeys::spawn(tx.clone());
-    crate::sys::tray::spawn(tx.clone());
+    // Warm the overlay pool: the first capture reuses a live window
+    // instead of paying GPUI's ~130ms renderer init on the hotkey.
+    overlay::warmup(cx);
     // Command pump: tray + hotkey threads -> app dispatch. The
     // receiver is a stream, so a press dispatches the instant it
     // arrives instead of up to a poll interval late.

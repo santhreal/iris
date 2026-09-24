@@ -83,6 +83,44 @@ pub fn xvfb(case: &str) -> Option<(Server, String)> {
     Some((xvfb, format!(":{}", number.trim())))
 }
 
+/// A headless sway whose socket is in `run`, and the socket's name for
+/// `WAYLAND_DISPLAY`, or `None`, printed, without sway on PATH. sway runs
+/// with no XWayland.
+pub fn sway(case: &str, run: &Path) -> Option<(Server, std::ffi::OsString)> {
+    let config = run.join("sway.conf");
+    std::fs::write(&config, "xwayland disable\n").unwrap();
+    // The headless backend with pixman: no GPU, no input devices, no
+    // output scanned out. sway refuses to start while the NVIDIA module is
+    // loaded unless told otherwise, even headless.
+    let Some(sway) = Server::spawn(
+        Command::new("sway")
+            .arg("--unsupported-gpu")
+            .arg("-c")
+            .arg(config)
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .env("XDG_RUNTIME_DIR", run)
+            .env("WLR_BACKENDS", "headless")
+            .env("WLR_LIBINPUT_NO_DEVICES", "1")
+            .env("WLR_RENDERER", "pixman")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    ) else {
+        eprintln!("{case} did not run: no sway on PATH");
+        return None;
+    };
+    let socket = until("sway to listen", || {
+        std::fs::read_dir(run)
+            .ok()?
+            .filter_map(|entry| Some(entry.ok()?.file_name()))
+            .find(|name| {
+                name.to_str()
+                    .is_some_and(|n| n.starts_with("wayland-") && !n.ends_with(".lock"))
+            })
+    });
+    Some((sway, socket))
+}
+
 /// `root/run`, private to this user as a session's runtime directory is.
 pub fn runtime_dir(root: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -153,9 +191,11 @@ impl Daemon {
 
     /// Wait for the daemon to bind its socket, for at most 10 s. A daemon
     /// that exits first, or binds nothing in time, fails with its log.
+    /// The socket is polled every millisecond, so a case that acts once
+    /// it returns acts within a millisecond of the bind.
     pub fn bound(&mut self) {
         let socket = self.dir.join("run").join("iris.sock");
-        let bound = poll(|| {
+        let bound = poll_every(Duration::from_millis(1), || {
             if let Some(status) = self.child.try_wait().unwrap() {
                 panic!(
                     "the daemon exited {status} before it bound its socket:\n{}",
@@ -297,7 +337,12 @@ pub fn until<T>(what: &str, f: impl FnMut() -> Option<T>) -> T {
 }
 
 /// `f`'s first value, polled every 20 ms for at most 10 s.
-fn poll<T>(mut f: impl FnMut() -> Option<T>) -> Option<T> {
+fn poll<T>(f: impl FnMut() -> Option<T>) -> Option<T> {
+    poll_every(Duration::from_millis(20), f)
+}
+
+/// `f`'s first value, polled every `interval` for at most 10 s.
+fn poll_every<T>(interval: Duration, mut f: impl FnMut() -> Option<T>) -> Option<T> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(value) = f() {
@@ -306,6 +351,6 @@ fn poll<T>(mut f: impl FnMut() -> Option<T>) -> Option<T> {
         if Instant::now() >= deadline {
             return None;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(interval);
     }
 }

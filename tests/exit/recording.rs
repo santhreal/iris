@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    self, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux, WindowClass,
+    ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux, WindowClass,
 };
-use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 use crate::daemon::{enabled, xvfb, Daemon, Server};
+use crate::x11::click;
 
 /// The recorded window on the 640x480 Xvfb screen: x, y, width, height.
 const WINDOW: (i16, i16, u16, u16) = (40, 40, 480, 360);
@@ -119,25 +119,6 @@ impl Recording {
             mp4.display()
         );
     }
-}
-
-/// Move the pointer to `at` and click the first button, through XTest.
-fn click(x: &RustConnection, root: xproto::Window, at: (i16, i16)) {
-    x.xtest_fake_input(
-        xproto::MOTION_NOTIFY_EVENT,
-        0,
-        x11rb::CURRENT_TIME,
-        root,
-        at.0,
-        at.1,
-        0,
-    )
-    .unwrap();
-    for kind in [xproto::BUTTON_PRESS_EVENT, xproto::BUTTON_RELEASE_EVENT] {
-        x.xtest_fake_input(kind, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)
-            .unwrap();
-    }
-    x.flush().unwrap();
 }
 
 /// The types of an MP4 file's top-level boxes, in order, up to the first

@@ -148,15 +148,27 @@ x11rb = { version = "0.13", features = ["xtest"] }
 # neither size nor origin lays out and draws nothing. A failed X11
 # connection ends the event loop, so the daemon exits when its X server
 # does instead of polling the closed socket at full CPU; an event that
-# fails to parse is skipped. Pinned to a rev so a later fork push cannot
-# move the dependency under the build.
+# fails to parse is skipped. Each client creates its GPU context with the
+# Vulkan surface extension of its own window system alone, so Mesa's
+# device selection layer connects a Wayland daemon to no X server, which
+# started an on-demand XWayland. The Wayland client creates its GPU
+# context before the dispatcher starts its threads, while the process
+# still has one thread. Pinned to a rev so a later fork push cannot move
+# the dependency under the build.
 #
 # The santhreal blade fork's blade-graphics-0.7.1-iris branch is
 # crates.io blade-graphics 0.7.1 plus ContextDesc::ray_tracing, off by
-# default. 0.7.1 enables the ray tracing extensions on every capable
-# adapter; on NVIDIA that maps the ray tracing runtime into the daemon
-# (+160 MB resident) and adds a driver thread, for a renderer that never
-# traces a ray.
+# default, and ContextDesc::window_system. 0.7.1 enables the ray tracing
+# extensions on every capable adapter; on NVIDIA that maps the ray
+# tracing runtime into the daemon (+160 MB resident) and adds a driver
+# thread, for a renderer that never traces a ray. It also enables every
+# surface extension the driver lists; with the XCB one enabled and
+# DISPLAY set, Mesa's device selection layer connects to the X server
+# while it enumerates devices when it selects none through Wayland. A
+# Wayland context created while the process has one thread creates its
+# Vulkan instance with DISPLAY removed from the environment: the NVIDIA
+# driver connects to the X server DISPLAY names when the loader loads
+# it, which starts the same XWayland.
 [patch.crates-io]
-gpui = { git = "https://github.com/santhreal/gpui.git", rev = "8ca3bb3592", version = "=0.2.2" }
-blade-graphics = { git = "https://github.com/santhreal/blade.git", rev = "dcee837cea", version = "=0.7.1" }
+gpui = { git = "https://github.com/santhreal/gpui.git", rev = "e19efe4a3f", version = "=0.2.2" }
+blade-graphics = { git = "https://github.com/santhreal/blade.git", rev = "fe729db003", version = "=0.7.1" }

@@ -2,6 +2,7 @@ use futures::channel::mpsc::UnboundedSender;
 use iris_lib::config::Config;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
+use x11rb::rust_connection::RustConnection;
 
 use crate::daemon::Command;
 
@@ -109,82 +110,92 @@ pub(super) fn request_regrab() {
     }
 }
 
-/// Grab the configured hotkeys on the root window and forward
-/// presses. Runs on its own thread; silently disabled on failure
-/// (Wayland, no DISPLAY).
-pub(super) fn spawn(tx: UnboundedSender<Command>) {
-    std::thread::spawn(move || {
-        // Self-pipe: the read end joins the X fd in poll(), the
-        // write end is published for request_regrab.
-        let mut pipe_fds = [-1i32; 2];
-        if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
-            return;
+/// (keycode, modifier mask, command) per grabbed chord: the mask
+/// matters when two hotkeys share a key, e.g. "R" and "Ctrl+R".
+type Grabs = Vec<(u8, ModMask, Command)>;
+
+/// Replace every key grab `conn` holds on `root` with the configured
+/// hotkeys, each with the four NumLock/CapsLock variants.
+fn grab_all(conn: &RustConnection, root: Window) -> Grabs {
+    let locks = [
+        ModMask::from(0u16),
+        ModMask::M2,
+        ModMask::LOCK,
+        ModMask::M2 | ModMask::LOCK,
+    ];
+    let keymap = Keymap::fetch(conn);
+    let _ = conn.ungrab_key(0u8, root, ModMask::from(0x8000u16));
+    let mut grabbed = Grabs::new();
+    let cfg = Config::load();
+    for (hotkey, cmd) in [
+        (&cfg.capture_hotkey, Command::Capture),
+        (&cfg.record_hotkey, Command::RecordToggle),
+    ] {
+        let Some((mods, keysym)) = parse_hotkey(hotkey) else {
+            iris_lib::ilog!("iris: cannot parse hotkey {hotkey:?}");
+            continue;
+        };
+        let Some(keycode) = keymap.as_ref().and_then(|k| k.keycode_for(keysym)) else {
+            iris_lib::ilog!("iris: no keycode for hotkey keysym {keysym:#x}");
+            continue;
+        };
+        // Issue all four lock-variant grabs before checking any: a
+        // serial check() per grab is a round trip each, four per
+        // hotkey per regrab.
+        let cookies: Vec<_> = locks
+            .iter()
+            .map(|extra| {
+                conn.grab_key(
+                    false,
+                    root,
+                    mods | *extra,
+                    keycode,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
+                )
+            })
+            .collect();
+        let ok = cookies.into_iter().all(|c| {
+            c.map_err(|e| e.to_string())
+                .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
+                .is_ok()
+        });
+        if ok {
+            grabbed.push((keycode, mods, cmd));
+        } else {
+            iris_lib::ilog!("iris: cannot grab hotkey keysym {keysym:#x}");
         }
-        REGRAB_FD.store(pipe_fds[1], std::sync::atomic::Ordering::Release);
-        let Ok((conn, screen_num)) = x11rb::connect(None) else {
-            return;
-        };
-        let root = conn.setup().roots[screen_num].root;
-        let locks = [
-            ModMask::from(0u16),
-            ModMask::M2,
-            ModMask::LOCK,
-            ModMask::M2 | ModMask::LOCK,
-        ];
-        // (keycode, modifier mask, command): the mask matters when
-        // two hotkeys share a key, e.g. "R" and "Ctrl+R".
-        let mut grabbed: Vec<(u8, ModMask, Command)> = Vec::new();
+    }
+    let _ = conn.flush();
+    grabbed
+}
 
-        let grab_all = |conn: &x11rb::rust_connection::RustConnection,
-                        grabbed: &mut Vec<(u8, ModMask, Command)>| {
-            let keymap = Keymap::fetch(conn);
-            let _ = conn.ungrab_key(0u8, root, ModMask::from(0x8000u16));
-            grabbed.clear();
-            let cfg = Config::load();
-            for (hotkey, cmd) in [
-                (&cfg.capture_hotkey, Command::Capture),
-                (&cfg.record_hotkey, Command::RecordToggle),
-            ] {
-                let Some((mods, keysym)) = parse_hotkey(hotkey) else {
-                    iris_lib::ilog!("iris: cannot parse hotkey {hotkey:?}");
-                    continue;
-                };
-                let Some(keycode) = keymap.as_ref().and_then(|k| k.keycode_for(keysym)) else {
-                    iris_lib::ilog!("iris: no keycode for hotkey keysym {keysym:#x}");
-                    continue;
-                };
-                // Issue all four lock-variant grabs before checking
-                // any: a serial check() per grab is a round trip
-                // each, four per hotkey per regrab.
-                let cookies: Vec<_> = locks
-                    .iter()
-                    .map(|extra| {
-                        conn.grab_key(
-                            false,
-                            root,
-                            mods | *extra,
-                            keycode,
-                            GrabMode::ASYNC,
-                            GrabMode::ASYNC,
-                        )
-                    })
-                    .collect();
-                let ok = cookies.into_iter().all(|c| {
-                    c.map_err(|e| e.to_string())
-                        .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
-                        .is_ok()
-                });
-                if !ok {
-                    iris_lib::ilog!("iris: cannot grab hotkey keysym {keysym:#x}");
-                }
-                if ok {
-                    grabbed.push((keycode, mods, cmd));
-                }
-            }
-            let _ = conn.flush();
-        };
-        grab_all(&conn, &mut grabbed);
-
+/// Grab the configured hotkeys on the root window, then forward presses
+/// from a thread of their own. The grabs are in place when this
+/// returns: the daemon binds its socket after it, so a hotkey pressed
+/// once the socket accepts reaches the grab. Off an X11 session this
+/// does nothing: a Wayland session's `DISPLAY` is XWayland, which
+/// delivers keys only while an X11 client has the focus, and there the
+/// compositor binds `iris --capture` instead.
+pub(super) fn spawn(tx: UnboundedSender<Command>) {
+    if !iris_lib::session::x11() {
+        return;
+    }
+    let Ok((conn, screen_num)) = x11rb::connect(None) else {
+        iris_lib::ilog!("iris: hotkeys: cannot connect to the X server");
+        return;
+    };
+    // Self-pipe: the read end joins the X fd in poll(), the write end
+    // is published for request_regrab.
+    let mut pipe_fds = [-1i32; 2];
+    if unsafe { libc::pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        iris_lib::ilog!("iris: hotkeys: {}", std::io::Error::last_os_error());
+        return;
+    }
+    let root = conn.setup().roots[screen_num].root;
+    let mut grabbed = grab_all(&conn, root);
+    REGRAB_FD.store(pipe_fds[1], std::sync::atomic::Ordering::Release);
+    std::thread::spawn(move || {
         // Event-driven, not polled: poll() the connection's fd and
         // the regrab pipe, so a grabbed keypress or a settings save
         // wakes the thread the instant it lands. No timeout: the
@@ -248,7 +259,7 @@ pub(super) fn spawn(tx: UnboundedSender<Command>) {
                         buf.len(),
                     );
                 }
-                grab_all(&conn, &mut grabbed);
+                grabbed = grab_all(&conn, root);
             }
         }
     });

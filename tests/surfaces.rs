@@ -22,7 +22,14 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, InputFocus, MapState};
+use x11rb::protocol::xproto::{ConnectionExt as _, InputFocus};
+
+// Other test files use the rest of the helpers.
+#[allow(dead_code)]
+#[path = "support/x11.rs"]
+mod x11;
+
+use x11::{focus, windows_of};
 
 /// How an `iris --help` option relates to windows with one subject.
 #[derive(Clone, Copy)]
@@ -142,41 +149,6 @@ fn a_second_open_focuses_the_window_already_open() {
             && windows_of(&conn, root, EDITOR).len() == 1)
             .then_some(())
     });
-}
-
-/// The mapped top-level iris windows titled `title`: WM_CLASS instance
-/// and class both `APP_ID`, and WM_NAME `title`.
-fn windows_of(conn: &impl Connection, root: u32, title: &str) -> Vec<u32> {
-    let id = iris_lib::APP_ID.as_bytes();
-    // A window destroyed since the tree was read answers with an error,
-    // and counts as gone.
-    let property = |window, atom: AtomEnum| {
-        conn.get_property(false, window, atom, AtomEnum::STRING, 0, 64)
-            .unwrap()
-            .reply()
-            .map(|p| p.value)
-    };
-    let children = conn.query_tree(root).unwrap().reply().unwrap().children;
-    children
-        .into_iter()
-        .filter(|&window| {
-            let mapped = conn
-                .get_window_attributes(window)
-                .unwrap()
-                .reply()
-                .is_ok_and(|a| a.map_state == MapState::VIEWABLE);
-            mapped
-                && property(window, AtomEnum::WM_CLASS).is_ok_and(|class| {
-                    let mut parts = class.split(|&b| b == 0);
-                    parts.next() == Some(id) && parts.next() == Some(id)
-                })
-                && property(window, AtomEnum::WM_NAME).is_ok_and(|name| name == title.as_bytes())
-        })
-        .collect()
-}
-
-fn focus(conn: &impl Connection) -> u32 {
-    conn.get_input_focus().unwrap().reply().unwrap().focus
 }
 
 /// A daemon on the test display with every iris location, its socket,

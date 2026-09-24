@@ -26,8 +26,10 @@ mod macos;
 use macos as imp;
 
 /// Spawn the hotkey listener. `tx` receives the command bound to each
-/// chord. On platforms without an implementation yet this is a no-op:
-/// the daemon still answers CLI forwards and the tray.
+/// chord. The chords are registered when this returns, so a press
+/// right after it reaches `tx`. On platforms without an implementation
+/// yet this is a no-op: the daemon still answers CLI forwards and the
+/// tray.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub fn spawn(tx: UnboundedSender<Command>) {
     imp::spawn(tx);

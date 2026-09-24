@@ -99,8 +99,11 @@ pub(super) fn request_regrab() {
 
 /// Register the configured hotkeys and forward presses. Runs on its own
 /// thread with a message queue; a registration failure degrades to a
-/// log line, never a crash.
+/// log line, never a crash. The registrations are in place when this
+/// returns: the daemon binds its pipe after it, so a hotkey pressed
+/// once the pipe accepts reaches the thread.
 pub(super) fn spawn(tx: UnboundedSender<Command>) {
+    let (registered_tx, registered_rx) = std::sync::mpsc::sync_channel::<()>(1);
     std::thread::spawn(move || {
         // Force the thread's message queue into existence before
         // publishing the tid: PostThreadMessageW fails on a thread
@@ -154,6 +157,7 @@ pub(super) fn spawn(tx: UnboundedSender<Command>) {
             }
         };
         register_all(&mut registered, &mut next_id);
+        let _ = registered_tx.send(());
 
         loop {
             let r = unsafe { GetMessageW(&mut msg, core::ptr::null_mut(), 0, 0) };
@@ -179,4 +183,7 @@ pub(super) fn spawn(tx: UnboundedSender<Command>) {
         }
         HOTKEY_TID.store(0, std::sync::atomic::Ordering::Release);
     });
+    // A thread that ends before it registers drops the sender, which
+    // ends the wait too.
+    let _ = registered_rx.recv();
 }
