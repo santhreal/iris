@@ -61,6 +61,11 @@ fn rig(fps: u32, stopped: bool) -> Rig {
         control: control_rx,
         bell: bell.clone(),
     };
+    // Production runs the one-time ffmpeg probes as the source pick
+    // opens (`codec::warm`), before the loop starts. Run inline by the
+    // first segment instead, a probe slowed by a loaded host stalls
+    // every rig at once and fails the wake bounds below.
+    crate::record::codec::run_probes(spec.format, spec.encoder);
     let (x, input) = UnixStream::pair().unwrap();
     input.set_nonblocking(true).unwrap();
     let events = Arc::new(AtomicUsize::new(0));

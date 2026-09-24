@@ -196,18 +196,23 @@ pub fn vfr_args() -> [&'static str; 2] {
     }
 }
 
-/// Run the one-time ffmpeg probes a recording in `format` needs on a
-/// background thread, so its first segment starts without waiting on
-/// them. Called as a recording's source pick opens.
+/// Run the one-time ffmpeg probes a recording in `format` with
+/// `encoder` needs. Each probe runs once per process; a later call
+/// returns as soon as the first one's result is in.
+pub fn run_probes(format: RecordingFormat, encoder: RecordingEncoder) {
+    if format == RecordingFormat::Mp4 && encoder == RecordingEncoder::Auto {
+        nvenc_available();
+    }
+    vfr_args();
+}
+
+/// [`run_probes`] on a background thread, so a recording's first
+/// segment starts without waiting on them. Called as a recording's
+/// source pick opens.
 pub fn warm(format: RecordingFormat, encoder: RecordingEncoder) {
     let _ = std::thread::Builder::new()
         .name("iris-rec-probe".into())
-        .spawn(move || {
-            if format == RecordingFormat::Mp4 && encoder == RecordingEncoder::Auto {
-                nvenc_available();
-            }
-            vfr_args();
-        });
+        .spawn(move || run_probes(format, encoder));
 }
 
 /// Whether h264_nvenc works on this machine. `-encoders` lists what the
