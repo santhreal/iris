@@ -1,32 +1,70 @@
-//! Unix: the daemon's socket file.
+//! Unix: the daemon's socket file and its claim.
 //!
 //! The socket's directory is its access control. A connect needs search
 //! permission on the directory that holds the socket, and the directory
 //! holding `iris.sock` admits only this user, on Linux and macOS alike.
 //! The socket file's own mode is not used: setting it takes an fchmod on
 //! the socket before bind, which macOS rejects with EINVAL.
+//!
+//! The claim is an exclusive flock on `iris.lock` beside the socket. The
+//! kernel drops a flock with the last descriptor of its open file, so it
+//! ends with the daemon however the daemon ends, while a killed daemon
+//! leaves its socket file behind.
 
+use std::fs::{File, TryLockError};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions, Name, ToFsName};
 
-/// `iris.sock` in the socket directory of `$XDG_RUNTIME_DIR`, or of the
-/// temp dir when that is unset.
+/// The daemon's claim: the lock file, locked.
+pub(super) type Claim = File;
+
+/// `iris.sock` in the socket directory.
 pub(super) fn socket_name() -> Result<Name<'static>, String> {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|v| !v.is_empty())
-        .map_or_else(std::env::temp_dir, PathBuf::from);
-    let path = socket_dir(&base)?.join("iris.sock");
+    let path = dir()?.join("iris.sock");
     path.clone()
         .into_os_string()
         .to_fs_name::<GenericFilePath>()
         .map_err(|e| format!("iris: socket path {}: {e}", path.display()))
 }
 
+/// `iris.lock` in the socket directory.
+pub(super) fn claim_name() -> Result<PathBuf, String> {
+    Ok(dir()?.join("iris.lock"))
+}
+
+/// Lock the file at `path`, made if missing, with an exclusive flock.
+/// `None` while another open of the file holds the lock, in this process
+/// or another.
+pub(super) fn claim(path: &Path) -> Result<Option<Claim>, String> {
+    let file = File::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| format!("iris: open {}: {e}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(e)) => Err(format!("iris: lock {}: {e}", path.display())),
+    }
+}
+
+/// The socket directory of `$XDG_RUNTIME_DIR`, or of the temp dir when
+/// that is unset.
+fn dir() -> Result<PathBuf, String> {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|v| !v.is_empty())
+        .map_or_else(std::env::temp_dir, PathBuf::from);
+    socket_dir(&base)
+}
+
 /// Bind the socket. `reclaim_name` and `try_overwrite` let a fresh
-/// daemon take over the socket file a SIGKILLed predecessor left behind.
+/// daemon take over the socket file a SIGKILLed predecessor left behind:
+/// only the claim's holder binds, so no live daemon listens on the file.
 pub(super) fn bind(name: Name<'static>) -> Result<LocalSocketListener, String> {
     ListenerOptions::new()
         .name(name)
@@ -91,6 +129,15 @@ pub(super) fn scratch_name() -> (Name<'static>, tempfile::TempDir) {
         .to_fs_name::<GenericFilePath>()
         .unwrap();
     (name, dir)
+}
+
+/// A claim name no daemon uses, in a fresh private directory that lives
+/// as long as the returned guard.
+#[cfg(test)]
+pub(super) fn scratch_claim_name() -> (PathBuf, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = socket_dir(dir.path()).unwrap().join("iris.lock");
+    (path, dir)
 }
 
 // WHY: the class closed here is "a socket another user can reach". The

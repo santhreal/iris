@@ -33,7 +33,7 @@ fn alone(opt: &Opt) -> Vec<String> {
     match opt.takes {
         Takes::Secs(_) => args.push("3".into()),
         Takes::File(_) => args.push(manifest().to_str().unwrap().into()),
-        Takes::Local(_) | Takes::Nothing(_) => {}
+        Takes::Local(_) | Takes::Daemon | Takes::Nothing(_) => {}
     }
     args
 }
@@ -69,6 +69,14 @@ fn every_option_sends_its_command() {
         if let Takes::Local(local) = opt.takes {
             assert_eq!(p.local, [local], "{args:?}");
             assert!(p.cmds.is_empty() && p.forward.is_empty(), "{args:?}");
+            continue;
+        }
+        if let Takes::Daemon = opt.takes {
+            assert!(p.daemon, "{args:?}");
+            assert!(
+                p.cmds.is_empty() && p.forward.is_empty() && p.local.is_empty(),
+                "{args:?}"
+            );
             continue;
         }
         let want = expected(opt.flag)
@@ -111,11 +119,68 @@ fn one_client_option_runs_by_precedence() {
     assert_eq!(parse(&argv(&["--capture"])).first_local(), None);
 }
 
+/// `--daemon` makes the process the daemon and runs nothing else: with
+/// any other option the line is an error, and main runs none of it.
+#[test]
+fn the_daemon_option_takes_no_other_option() {
+    assert!(!parse(&argv(&["--capture"])).daemon);
+    let alone = parse(&argv(&["--daemon"]));
+    assert!(
+        alone.daemon && alone.errors.is_empty(),
+        "{:?}",
+        alone.errors
+    );
+    for other in [
+        &["--capture"][..],
+        &["--delay", "3"],
+        &["--version"],
+        &["-h"],
+    ] {
+        for line in [
+            [&["--daemon"][..], other].concat(),
+            [other, &["--daemon"]].concat(),
+        ] {
+            let p = parse(&argv(&line));
+            assert_eq!(p.errors, ["--daemon takes no other option"], "{line:?}");
+        }
+    }
+}
+
+/// A daemon prints nothing: on Windows one attached to the console of
+/// the terminal that started it would print there and end when that
+/// terminal closes. A bare line and a lone `--daemon` run a daemon;
+/// every option alone, an unknown option, and a `--daemon` line in
+/// error print.
+#[test]
+fn only_a_daemon_line_prints_nothing() {
+    for line in [&[][..], &["-psn_0_1"]] {
+        assert!(!parse(&argv(line)).prints(), "{line:?}");
+    }
+    for opt in OPTS {
+        let line = alone(opt);
+        let daemon = matches!(opt.takes, Takes::Daemon);
+        assert_eq!(parse(&line).prints(), !daemon, "{line:?}");
+    }
+    for line in [
+        &["--bogus"][..],
+        &["--daemon", "--bogus"],
+        &["--daemon", "--capture"],
+        &["--daemon", "-h"],
+    ] {
+        assert!(parse(&argv(line)).prints(), "{line:?}");
+    }
+}
+
 /// The daemon runs what the client forwards, so the forwarded argv must
-/// parse to the commands the client parsed, in order.
+/// parse to the commands the client parsed, in order. `--daemon` takes
+/// no other option and is never forwarded.
 #[test]
 fn forwarded_argv_parses_to_the_same_commands() {
-    let mut args: Vec<String> = OPTS.iter().flat_map(alone).collect();
+    let mut args: Vec<String> = OPTS
+        .iter()
+        .filter(|opt| !matches!(opt.takes, Takes::Daemon))
+        .flat_map(alone)
+        .collect();
     args.insert(0, "--version".into());
     let client = parse(&args);
     assert!(client.errors.is_empty(), "{:?}", client.errors);

@@ -20,6 +20,7 @@
 | `--annotate` | `<file>` | Open [annotation editor](editor.md#annotation-editor) for the image at `<file>`, or raise and focus the editor already open on that file. |
 | `--toast` | `<file>` | Display [toast notification](toast.md#toast-notifications) for the image at `<file>`. |
 | `--quit` | None | Terminate running daemon process after saving the active recording and any stopped recording still being joined. Requires running daemon. |
+| `--daemon` | None | Run the daemon in this process. When another process runs the daemon or is starting it, exit with status 0. Takes no other option. |
 | `--version` | None | Print version string to standard output and exit. |
 | `--check-update` | None | Query GitHub releases API for newer version and print status. |
 | `--update` | None | Download and apply latest release asset for current platform, then restart daemon. |
@@ -27,13 +28,19 @@
 
 A relative `<file>` resolves against the working directory of the `iris` command, not the daemon's. The file must exist.
 
-An unknown option, a positional argument, an option without its value, a `--delay` value that is not a whole number, or a `<file>` that is not an existing file prints one line per error to standard error, then `iris: run 'iris --help' for the options`, and exits with status 2. Nothing is sent to a running daemon and no daemon starts. `--help` prints the option list even when other arguments are invalid.
+An unknown option, a positional argument, an option without its value, a `--delay` value that is not a whole number, a `<file>` that is not an existing file, or `--daemon` with another option prints one line per error to standard error, then `iris: run 'iris --help' for the options`, and exits with status 2. Nothing is sent to a running daemon and no daemon starts. `--help` prints the option list even when other arguments are invalid.
 
 A running daemon ignores an option it does not recognize in a forwarded command line, such as one sent by a newer `iris` binary, and runs the rest.
 
 ## Process Model and Interprocess Communication
 
 The process model differentiates between client commands, daemon processes, and live-daemon-only commands.
+
+### Single Instance
+
+One process per user runs the daemon: the process that holds the daemon claim. On Linux and macOS the claim is an exclusive `flock` on `iris.lock` in the directory of `iris.sock`. On Windows it is the named pipe `\\.\pipe\iris-<SID>.lock`. A process takes the claim before it connects to the display, and the operating system releases it when the process exits, however it exits. Only the holder of the claim binds the IPC socket. A daemon that was killed leaves `iris.sock` in place, and the next daemon replaces it.
+
+Of several `iris` processes started while no daemon runs, one takes the claim and becomes the daemon. Each other process sends its options once that daemon binds the socket, as with a running daemon, and an `iris --daemon` among them exits with status 0.
 
 ### Interprocess Communication Transport
 
@@ -48,11 +55,13 @@ On Linux the daemon exits when its X server or Wayland compositor exits, as at t
 ### Invocations Without Running Daemon
 
 1. Bare invocation (`iris` without arguments):
-   The process runs in the foreground as the daemon. It connects to the display, loads its fonts, registers the global hotkeys (none on Wayland), binds the single-instance IPC socket, and starts the system tray icon, in that order, before it opens any window. A hotkey pressed once the socket accepts connections reaches the daemon. A command, hotkey, or tray menu item that arrives during startup runs once startup completes. It does not open the home window.
+   The process takes the daemon claim and runs in the foreground as the daemon. It connects to the display, loads its fonts, registers the global hotkeys (none on Wayland), binds the single-instance IPC socket, and starts the system tray icon, in that order, before it opens any window. A hotkey pressed once the socket accepts connections reaches the daemon. A command, hotkey, or tray menu item that arrives during startup runs once startup completes. It does not open the home window. When another process holds the claim, the process waits up to 8 seconds for that daemon to bind the socket, transmits `--home`, and exits with status 0.
 2. Live-daemon-only commands (`--quit`, `--record-pause`, `--record-mic`):
    The client attempts to connect to the socket and does not spawn a daemon. When no daemon answers, `--quit` exits with status 0; `--record-pause` and `--record-mic` print `iris: no iris daemon is running` to standard error and exit with status 1.
 3. Other flagged commands (`--capture`, `--library`, `--settings`, etc.):
-   The client starts a detached daemon process. On Linux and macOS the daemon's standard streams are `/dev/null` and it runs in a process group of its own. On Windows the daemon has no console and inherits no handle from the client. A caller that reads the client's output to its end returns when the client exits. The client polls the IPC socket for up to 8 seconds. Once the socket accepts connections, the client transmits the options, each `<file>` as an absolute path, separated by newlines and exits with status 0. If the daemon process fails to start, the client runs the daemon and executes the commands in the foreground. If the spawned daemon does not bind the socket within 8 seconds, the client prints `iris: the daemon did not start within 8s; see <log file>` to standard error and exits with status 1.
+   The client starts a detached `iris --daemon` process. On Linux and macOS the daemon's standard streams are `/dev/null` and it runs in a process group of its own. On Windows the daemon has no console and inherits no handle from the client. A caller that reads the client's output to its end returns when the client exits. The client polls the IPC socket for up to 8 seconds. Once the socket accepts connections, the client transmits the options, each `<file>` as an absolute path, separated by newlines and exits with status 0. If the daemon process fails to start, the client takes the daemon claim, then runs the daemon and executes the commands in the foreground; when another process holds the claim, the client transmits the options once that daemon binds the socket. If the daemon does not bind the socket within 8 seconds, the client prints `iris: the daemon did not start within 8s; see <log file>` to standard error and exits with status 1.
+4. `iris --daemon`:
+   The process takes the daemon claim and runs in the foreground as the daemon, as a bare invocation does. On Windows it does not attach to the console of the terminal that started it. When another process holds the claim, it exits with status 0. The login autostart entries run `iris --daemon` ([Installation](install.md)).
 
 ### Invocations With Running Daemon
 
@@ -60,6 +69,8 @@ On Linux the daemon exits when its X server or Wayland compositor exits, as at t
    The client connects to the socket, transmits `--home` to display the home window, and exits with status 0.
 2. Flagged invocations:
    The client connects to the socket, transmits the options, each `<file>` as an absolute path, separated by newlines, and exits with status 0. The daemon receives the options and dispatches the corresponding tasks.
+3. `iris --daemon`:
+   The process finds the daemon claim held, transmits nothing, and exits with status 0.
 
 ### Local Client Commands
 

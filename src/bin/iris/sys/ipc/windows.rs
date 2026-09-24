@@ -1,4 +1,4 @@
-//! Windows: the daemon's named pipe, one per account.
+//! Windows: the daemon's named pipe, one per account, and its claim.
 //!
 //! Every account on the machine shares one pipe namespace, so the
 //! pipe's name holds the account's SID. The pipe's security descriptor
@@ -6,6 +6,10 @@
 //! client reads the owner of the pipe it opened and writes nothing to a
 //! pipe another account owns, such as one that account created under
 //! the name before the daemon started.
+//!
+//! The claim is a second pipe of the account, created as its first
+//! instance and never connected to. A pipe exists while a handle to it
+//! is open, so the claim ends with the daemon however the daemon ends.
 
 use std::io;
 use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle};
@@ -26,6 +30,9 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+/// The daemon's claim: the claim pipe's only instance.
+pub(super) type Claim = LocalSocketListener;
+
 /// The account's pipe, `\\.\pipe\iris-<SID>`.
 pub(super) fn socket_name() -> Result<Name<'static>, String> {
     format!(r"\\.\pipe\iris-{}", account()?)
@@ -33,19 +40,42 @@ pub(super) fn socket_name() -> Result<Name<'static>, String> {
         .map_err(|e| format!("iris: pipe name: {e}"))
 }
 
+/// The account's claim pipe, `\\.\pipe\iris-<SID>.lock`.
+pub(super) fn claim_name() -> Result<Name<'static>, String> {
+    format!(r"\\.\pipe\iris-{}.lock", account()?)
+        .to_fs_name::<GenericFilePath>()
+        .map_err(|e| format!("iris: pipe name: {e}"))
+}
+
+/// Create the pipe `name`. `None` when it exists: another process holds
+/// the claim.
+pub(super) fn claim(name: &Name<'static>) -> Result<Option<Claim>, String> {
+    match create(name.clone()) {
+        Ok(pipe) => Ok(Some(pipe)),
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Ok(None),
+        Err(e) => Err(format!("iris: create the claim pipe: {e}")),
+    }
+}
+
 /// Bind the pipe with the account as its owner and the only account
 /// with access to it.
 pub(super) fn bind(name: Name<'static>) -> Result<LocalSocketListener, String> {
-    let sid = account()?;
+    create(name).map_err(|e| format!("bind local socket: {e}"))
+}
+
+/// Create the pipe `name` as its first instance, with the account as
+/// its owner and the only account with access to it. A pipe that exists
+/// fails with `PermissionDenied`.
+fn create(name: Name<'static>) -> io::Result<LocalSocketListener> {
+    let sid = account().map_err(io::Error::other)?;
     let descriptor = U16CString::from_str(format!("O:{sid}D:P(A;;GA;;;{sid})"))
         .map_err(io::Error::other)
         .and_then(|sddl| SecurityDescriptor::deserialize(&sddl))
-        .map_err(|e| format!("bind local socket: security descriptor: {e}"))?;
+        .map_err(|e| io::Error::other(format!("security descriptor: {e}")))?;
     ListenerOptions::new()
         .name(name)
         .security_descriptor(descriptor)
         .create_sync()
-        .map_err(|e| format!("bind local socket: {e}"))
 }
 
 /// Connect to the account's daemon. A pipe another account owns fails
@@ -165,6 +195,12 @@ pub(super) fn scratch_name() -> (Name<'static>, ()) {
         NEXT.fetch_add(1, Ordering::Relaxed)
     );
     (name.to_fs_name::<GenericFilePath>().unwrap(), ())
+}
+
+/// A claim pipe name no daemon uses.
+#[cfg(test)]
+pub(super) fn scratch_claim_name() -> (Name<'static>, ()) {
+    scratch_name()
 }
 
 // WHY: the class closed here is "a command line written to a pipe this

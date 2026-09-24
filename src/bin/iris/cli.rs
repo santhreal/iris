@@ -25,6 +25,8 @@ pub enum Local {
 #[derive(Clone, Copy)]
 enum Takes {
     Local(Local),
+    /// Makes this process the daemon; see `Parsed::daemon`.
+    Daemon,
     Nothing(fn() -> Command),
     /// Whole seconds.
     Secs(fn(u64) -> Command),
@@ -41,6 +43,9 @@ struct Opt {
 
 /// Accepted for `--help`.
 const HELP_SHORT: &str = "-h";
+
+/// Runs the daemon in this process.
+const DAEMON: &str = "--daemon";
 
 const OPTS: &[Opt] = &[
     Opt {
@@ -114,6 +119,11 @@ const OPTS: &[Opt] = &[
         help: "stop the daemon, saving the active recording first",
     },
     Opt {
+        flag: DAEMON,
+        takes: Takes::Daemon,
+        help: "run the daemon in this process; exit if one already runs",
+    },
+    Opt {
         flag: "--version",
         takes: Takes::Local(Local::Version),
         help: "print the version",
@@ -145,6 +155,10 @@ pub struct Parsed {
     pub forward: Vec<String>,
     /// The client-only options, in argument order.
     pub local: Vec<Local>,
+    /// `--daemon`: this process becomes the daemon, or exits when
+    /// another process holds the daemon claim. The line holds no other
+    /// option.
+    pub daemon: bool,
     /// One message per argument that is not an option or lacks a valid
     /// value; the other arguments still parse.
     pub errors: Vec<String>,
@@ -154,6 +168,16 @@ impl Parsed {
     /// The client-only option that runs, by `Local` precedence.
     pub fn first_local(&self) -> Option<Local> {
         self.local.iter().min().copied()
+    }
+
+    /// Whether the process prints to the caller's terminal. A bare line
+    /// and a lone `--daemon` run a daemon, or leave it to the daemon
+    /// that runs, and print nothing: on Windows a daemon attached to the
+    /// console of the terminal that started it prints there and ends
+    /// when that terminal closes. Every other line prints its output and
+    /// errors.
+    pub fn prints(&self) -> bool {
+        !(self.cmds.is_empty() && self.local.is_empty() && self.errors.is_empty())
     }
 }
 
@@ -181,6 +205,10 @@ pub fn parse(args: &[String]) -> Parsed {
                 out.local.push(local);
                 continue;
             }
+            Takes::Daemon => {
+                out.daemon = true;
+                continue;
+            }
             Takes::Nothing(cmd) => Ok((cmd(), None)),
             Takes::Secs(cmd) => match rest.next() {
                 None => Err(format!("{flag} needs a number of seconds")),
@@ -204,6 +232,9 @@ pub fn parse(args: &[String]) -> Parsed {
             }
             Err(e) => out.errors.push(e),
         }
+    }
+    if out.daemon && !(out.local.is_empty() && out.forward.is_empty()) {
+        out.errors.push(format!("{DAEMON} takes no other option"));
     }
     out
 }

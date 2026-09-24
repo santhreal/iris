@@ -32,18 +32,23 @@ deviate without updating this file and every consumer.
 ## Install layout
 - Windows: per-user, `%LOCALAPPDATA%\Programs\iris\iris.exe`; Start
   Menu shortcut; autostart via `HKCU\...\Run` value `iris` =
-  `iris.exe` (daemon mode). Uninstaller removes files, shortcuts, the
+  `"...\iris.exe" --daemon`. Uninstaller removes files, shortcuts, the
   Run value.
 - macOS: `/Applications/iris.app`; autostart via a LaunchAgent
-  `~/Library/LaunchAgents/dev.iris.app.plist` running the binary,
-  installed by hand (`docs/install.md`).
+  `~/Library/LaunchAgents/dev.iris.app.plist` running
+  `iris --daemon`, installed by hand (`docs/install.md`).
 - Linux (deb/rpm): `/usr/bin/iris`; `dev.iris.app.desktop` in
   `/usr/share/applications`; icon in
   `/usr/share/icons/hicolor/*/apps/iris.png`; autostart via
-  `/etc/xdg/autostart/iris-autostart.desktop` (XDG autostart).
+  `/etc/xdg/autostart/iris-autostart.desktop` (XDG autostart,
+  `Exec=iris --daemon`).
 
 ## Runtime model
-- `iris` with no args = the app/daemon (tray + hotkeys + IPC listener).
+- `iris` with no args = the app/daemon (tray + hotkeys + IPC listener),
+  or the home window of the daemon that runs.
+- `iris --daemon` = the daemon; exits when a daemon runs or starts. The
+  autostart entries run it, so a login with a daemon already running
+  opens no window.
 - `iris --home`, `--capture`, `--record-window`, `--settings`,
   `--library`, `--quit`, `--version`, `--check-update`, `--update`.
 - The installer registers autostart so the daemon runs at login; the

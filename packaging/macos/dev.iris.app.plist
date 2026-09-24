@@ -20,6 +20,7 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Applications/iris.app/Contents/MacOS/iris</string>
+		<string>--daemon</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

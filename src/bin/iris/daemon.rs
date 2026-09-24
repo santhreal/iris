@@ -240,8 +240,9 @@ fn quit(_: &mut App) -> std::future::Ready<()> {
 
 /// Start daemon services inside the GPUI app: the global hotkey grabs,
 /// the single-instance socket, and the tray icon. The socket and command
-/// pump are channel-driven; failures degrade to log lines.
-pub fn start(cx: &mut App) {
+/// pump are channel-driven; failures degrade to log lines. `claimed`
+/// proves this process is the one daemon, so the socket is its to bind.
+pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
     // The daemon outlives every surface: GPUI's Linux and Windows run
     // loops otherwise stop when the last window closes, and a parked
     // stand-in window would keep a renderer and its frame timer live.
@@ -254,12 +255,10 @@ pub fn start(cx: &mut App) {
     // overlay warmup waits on the channel and runs once `start` returns.
     crate::sys::hotkeys::spawn(tx.clone());
     iris_lib::ilog!("iris: daemon start");
-    // The socket binds before the overlay warmup's renderer init: a
-    // client that spawned this daemon waits for the bind, and a second
-    // `iris` started meanwhile forwards here instead of starting another
-    // daemon. A command that lands during the warmup runs once `start`
-    // returns.
-    match crate::sys::ipc::spawn_listener() {
+    // The socket binds before the overlay warmup's renderer init: every
+    // client that finds this daemon starting waits for the bind. A
+    // command that lands during the warmup runs once `start` returns.
+    match crate::sys::ipc::spawn_listener(claimed) {
         // The accept thread pushes each connection's argv here; the
         // pump parses and dispatches it. Channel-driven, so a forwarded
         // command lands the instant it connects on every platform.

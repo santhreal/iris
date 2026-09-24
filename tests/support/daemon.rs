@@ -163,9 +163,44 @@ pub fn runtime_dir(root: &Path) -> PathBuf {
     run
 }
 
+/// `iris` with every iris location, its socket, and its captures under
+/// `dir`, which it prepares: the capture folders, a config that names
+/// them, and a private runtime directory. Its session bus address leads
+/// nowhere, so the tray of a daemon it starts never registers on a
+/// desktop's panel.
+pub fn iris(dir: &Path) -> Command {
+    for sub in ["config", "shots", "vids"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    let run = runtime_dir(dir);
+    let quoted = |p: &Path| toml::Value::from(p.to_str().unwrap()).to_string();
+    let config = dir.join("config").join("config.toml");
+    let text = format!(
+        "screenshots_dir = {}\nrecordings_dir = {}\n",
+        quoted(&dir.join("shots")),
+        quoted(&dir.join("vids")),
+    );
+    // A daemon of `dir` may read the config while a case starts another
+    // process: a write would truncate it under that read.
+    if std::fs::read_to_string(&config).ok().as_deref() != Some(text.as_str()) {
+        std::fs::write(&config, text).unwrap();
+    }
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_iris"));
+    cmd.env_remove("IRIS_SLOWMO")
+        .env("IRIS_HOME", dir)
+        .env("XDG_RUNTIME_DIR", &run)
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={}", dir.join("no-bus").display()),
+        );
+    if Path::new(LAVAPIPE).exists() {
+        cmd.env("VK_ICD_FILENAMES", LAVAPIPE);
+    }
+    cmd
+}
+
 /// A daemon with every iris location, its socket, and its captures under
-/// one directory. Its session bus address leads nowhere, so its tray
-/// never registers on a desktop's panel. Killed on drop.
+/// one directory (see [`iris`]). Killed on drop.
 pub struct Daemon {
     child: Child,
     dir: PathBuf,
@@ -183,32 +218,8 @@ impl Daemon {
     /// Start the daemon with `session` setting its display variables, and
     /// return without waiting for its socket; see [`Daemon::bound`].
     pub fn spawn(dir: &Path, session: impl FnOnce(&mut Command)) -> Daemon {
-        for sub in ["config", "shots", "vids"] {
-            std::fs::create_dir_all(dir.join(sub)).unwrap();
-        }
-        let run = runtime_dir(dir);
-        let quoted = |p: &Path| toml::Value::from(p.to_str().unwrap()).to_string();
-        std::fs::write(
-            dir.join("config").join("config.toml"),
-            format!(
-                "screenshots_dir = {}\nrecordings_dir = {}\n",
-                quoted(&dir.join("shots")),
-                quoted(&dir.join("vids")),
-            ),
-        )
-        .unwrap();
+        let mut cmd = iris(dir);
         let out = std::fs::File::create(dir.join("daemon.log")).unwrap();
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_iris"));
-        cmd.env_remove("IRIS_SLOWMO")
-            .env("IRIS_HOME", dir)
-            .env("XDG_RUNTIME_DIR", &run)
-            .env(
-                "DBUS_SESSION_BUS_ADDRESS",
-                format!("unix:path={}", dir.join("no-bus").display()),
-            );
-        if Path::new(LAVAPIPE).exists() {
-            cmd.env("VK_ICD_FILENAMES", LAVAPIPE);
-        }
         session(&mut cmd);
         let child = cmd
             .stdin(Stdio::null())

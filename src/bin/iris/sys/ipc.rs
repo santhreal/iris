@@ -1,11 +1,13 @@
 //! Single-instance IPC over a local socket.
 //!
-//! The first process to bind the well-known name becomes the daemon;
-//! every later invocation forwards its argv and exits. `interprocess`
-//! maps the name to a Unix domain socket on Unix and a named pipe on
-//! Windows. The per-OS module names, binds, and connects to the socket
-//! and is its access control; this file is the protocol, the same on
-//! every OS.
+//! One process per socket is the daemon: the one that holds the daemon
+//! claim, which it takes before it connects to the display and holds
+//! until it exits. Only the claim's holder binds the socket's
+//! well-known name; every other invocation forwards its argv to it and
+//! exits. `interprocess` maps the name to a Unix domain socket on Unix
+//! and a named pipe on Windows. The per-OS module makes the claim,
+//! names, binds, and connects to the socket, and is its access control;
+//! this file is the protocol, the same on every OS.
 //!
 //! A blocking accept thread hands each connection to a reader thread of
 //! its own, which pushes the connection's argv onto a channel. A client
@@ -32,7 +34,8 @@ use windows as imp;
 #[cfg(test)]
 mod tests;
 
-/// How long a client waits for a daemon it spawned to bind the socket.
+/// How long a client waits for a daemon that is starting to bind the
+/// socket.
 const READY_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// What one connection may cost the daemon.
@@ -57,17 +60,37 @@ const LIMITS: Limits = Limits {
     drip: Duration::from_secs(5),
 };
 
-/// Deliver `args` to the daemon. `Ok(true)`: delivered, the caller
-/// exits. `Ok(false)`: no daemon runs and the caller becomes it in the
-/// foreground. A bare invocation (no flags) surfaces the home window in
-/// a running daemon.
+/// Proof that this process holds the daemon claim (see `claim`): the
+/// socket binds only with it.
+pub struct Claimed(());
+
+/// Take the daemon claim, held until this process exits, however it
+/// exits: the OS drops it with the process. Of any number of processes
+/// that start at once, one takes it, and only that one binds the
+/// socket, so the socket file a bind replaces on Unix is a dead
+/// daemon's. `Ok(None)`: another process holds the claim, a daemon that
+/// runs or one that is starting.
+pub fn claim() -> Result<Option<Claimed>, String> {
+    let Some(held) = imp::claim(&imp::claim_name()?)? else {
+        return Ok(None);
+    };
+    std::mem::forget(held);
+    Ok(Some(Claimed(())))
+}
+
+/// Deliver `args` to the daemon, or make this process the daemon.
+/// `Ok(None)`: delivered, the caller exits. `Ok(Some(_))`: no daemon
+/// runs and this process holds the claim: it becomes the daemon in the
+/// foreground and runs `args` itself. A bare invocation (no flags)
+/// surfaces the home window in a running daemon.
 ///
 /// When no daemon answers, a flagged invocation still must not hold the
-/// caller's shell: spawn a detached daemon, wait for its socket, and
-/// forward. A spawned daemon that never binds is an error, not a cue to
-/// start a second daemon in the foreground: the first may still bind
-/// and take the socket over.
-pub fn forward_if_running(args: &[String]) -> Result<bool, String> {
+/// caller's shell: it starts a detached `iris --daemon`, waits for the
+/// socket, and forwards. A spawned daemon that never binds is an error,
+/// not a cue to start a second daemon in the foreground: the first may
+/// still bind. A process that finds the claim held, by a daemon that is
+/// starting, forwards to that daemon once it binds.
+pub fn forward_if_running(args: &[String]) -> Result<Option<Claimed>, String> {
     let name = imp::socket_name()?;
     let effective: &[String] = if args.is_empty() {
         &["--home".to_string()]
@@ -78,7 +101,7 @@ pub fn forward_if_running(args: &[String]) -> Result<bool, String> {
         Ok(mut stream) => {
             return stream
                 .write_all(effective.join("\n").as_bytes())
-                .map(|()| true)
+                .map(|()| None)
                 .map_err(|e| format!("iris: send to the running daemon: {e}"));
         }
         // The name is bound and this account may not use it, so no
@@ -88,11 +111,15 @@ pub fn forward_if_running(args: &[String]) -> Result<bool, String> {
         }
         Err(_) => {}
     }
+    // A bare `iris` becomes the daemon itself, as does a flagged one
+    // that could not start a detached daemon.
     if args.is_empty() || !spawn_daemon() {
-        return Ok(false);
+        if let Some(claimed) = claim()? {
+            return Ok(Some(claimed));
+        }
     }
-    if forward_when_ready(&name, args) {
-        return Ok(true);
+    if forward_when_ready(&name, effective) {
+        return Ok(None);
     }
     Err(format!(
         "iris: the daemon did not start within {}s; see {}",
@@ -143,12 +170,12 @@ fn quit(name: Name<'_>, within: Duration) -> bool {
     }
 }
 
-/// Start this executable as a detached daemon (see `sys::detach`),
-/// which survives this process's exit and holds none of its streams.
-/// The child runs `main` with no args, fails its own forward probe, and
-/// becomes the daemon.
+/// Start this executable as a detached `iris --daemon` (see
+/// `sys::detach`), which survives this process's exit and holds none of
+/// its streams. It takes the claim and becomes the daemon, or exits when
+/// another process holds the claim.
 fn spawn_daemon() -> bool {
-    match std::env::current_exe().and_then(|exe| crate::sys::detach::spawn(&exe, &[])) {
+    match std::env::current_exe().and_then(|exe| crate::sys::detach::spawn(&exe, &["--daemon"])) {
         Ok(()) => true,
         Err(e) => {
             iris_lib::ilog!("iris: start the daemon: {e}");
@@ -157,9 +184,10 @@ fn spawn_daemon() -> bool {
     }
 }
 
-/// Forward `args` once the freshly spawned daemon's socket accepts. The
-/// child binds early in `start`, but not synchronously, so poll the
-/// connect for a few seconds rather than assume readiness.
+/// Forward `args` once the daemon that is starting binds the socket. It
+/// binds only after it has connected to the display and grabbed its
+/// hotkeys, so poll the connect for a few seconds rather than assume
+/// readiness.
 fn forward_when_ready(name: &Name<'_>, args: &[String]) -> bool {
     let payload = args.join("\n");
     let deadline = Instant::now() + READY_TIMEOUT;
@@ -175,8 +203,9 @@ fn forward_when_ready(name: &Name<'_>, args: &[String]) -> bool {
 /// Bind the daemon's socket and spawn the accept thread. Each
 /// connection's argv (newline-separated) is pushed onto the returned
 /// receiver as a `Vec<String>`. The daemon drains it on the command
-/// pump.
-pub fn spawn_listener() -> Result<UnboundedReceiver<Vec<String>>, String> {
+/// pump. The bind takes the claim: only its holder may replace the
+/// socket file.
+pub fn spawn_listener(_: Claimed) -> Result<UnboundedReceiver<Vec<String>>, String> {
     listen(imp::socket_name()?, LIMITS)
 }
 

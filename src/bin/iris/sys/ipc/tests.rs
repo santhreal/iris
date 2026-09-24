@@ -1,18 +1,22 @@
 //! WHY: the classes closed here are "a daemon no client can reach",
 //! "a client that stalls the daemon or runs part of a command line",
-//! and "a quit that ends its wait while the daemon still runs". The
-//! first: a listener that fails to bind on one platform, as every
-//! macOS bind did while the socket's mode was set with an fchmod macOS
-//! rejects, or a command line that arrives split or altered. The
-//! second: a client that connects and sends nothing, which held the
-//! accept thread and every later command line behind it, and a command
-//! line cut short at a limit, whose first part ran. The third: `--update`
-//! sent `--quit` and replaced the binary 5 s later whether or not the
-//! daemon had exited, and a daemon saving a recording runs longer. Each
-//! test tightens only the limit it reaches, on a name no daemon uses,
-//! wherever `cargo test` runs. Not covered: the daemon's own start,
-//! which needs a display, a second daemon racing the first for the
-//! name, and the update's own 60 s wait.
+//! "a quit that ends its wait while the daemon still runs", and "two
+//! daemons". The first: a listener that fails to bind on one platform,
+//! as every macOS bind did while the socket's mode was set with an
+//! fchmod macOS rejects, or a command line that arrives split or
+//! altered. The second: a client that connects and sends nothing, which
+//! held the accept thread and every later command line behind it, and a
+//! command line cut short at a limit, whose first part ran. The third:
+//! `--update` sent `--quit` and replaced the binary 5 s later whether or
+//! not the daemon had exited, and a daemon saving a recording runs
+//! longer. The fourth: processes that started at once each found no
+//! daemon and became one, and on Unix each bind replaced the socket file
+//! of the one before, so every daemon ran on. A claim must go to one
+//! taker at a time, to one of many that take it at once, and to the
+//! next once dropped. Each test tightens only the limit it reaches, on a
+//! name no daemon uses, wherever `cargo test` runs. Not covered: the
+//! daemon's own start, which needs a display (tests/instance.rs), a
+//! claim that ends with its process, and the update's own 60 s wait.
 
 use std::prelude::v1::test;
 
@@ -251,4 +255,47 @@ fn a_quit_gives_up_on_a_daemon_that_still_answers() {
         next_within(&mut rx, Duration::from_secs(5)),
         argv(&["--quit"])
     );
+}
+
+#[test]
+fn a_held_claim_refuses_every_other_until_it_is_dropped() {
+    let (name, _dir) = imp::scratch_claim_name();
+    let held = imp::claim(&name)
+        .unwrap()
+        .expect("a free claim was refused");
+    for _ in 0..3 {
+        let again = imp::claim(&name).unwrap();
+        assert!(
+            again.is_none(),
+            "a second claim was granted beside a held one"
+        );
+    }
+    drop(held);
+    let next = imp::claim(&name).unwrap();
+    assert!(next.is_some(), "a dropped claim still refused the next");
+}
+
+#[test]
+fn of_claims_made_at_once_one_is_granted() {
+    const TAKERS: usize = 8;
+    for round in 0..20 {
+        let (name, _dir) = imp::scratch_claim_name();
+        let start = Arc::new(std::sync::Barrier::new(TAKERS));
+        let takers: Vec<_> = (0..TAKERS)
+            .map(|_| {
+                let (name, start) = (name.clone(), start.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    imp::claim(&name).unwrap()
+                })
+            })
+            .collect();
+        // Every claim stays held until all are counted.
+        let claims: Vec<_> = takers.into_iter().map(|t| t.join().unwrap()).collect();
+        let granted = claims.iter().filter(|c| c.is_some()).count();
+        assert_eq!(
+            granted, 1,
+            "round {round}: {granted} of {TAKERS} claims made at once were granted"
+        );
+    }
 }

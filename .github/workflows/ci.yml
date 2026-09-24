@@ -143,7 +143,7 @@ jobs:
           if ($printed -ne "iris $version") { throw "--version printed '$printed'" }
           $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
           $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris'
-          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`"") { throw "Run value $((Get-ItemProperty $run).iris)" }
+          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`" --daemon") { throw "Run value $((Get-ItemProperty $run).iris)" }
           if ((Get-ItemProperty $uninstall).DisplayVersion -ne $version) { throw 'Uninstall DisplayVersion' }
           $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'iris.lnk'
           if (-not (Test-Path $lnk)) { throw "setup did not create $lnk" }

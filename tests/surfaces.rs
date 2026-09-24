@@ -60,6 +60,7 @@ const OPTIONS: &[(&str, Kind)] = &[
     ("--annotate", Kind::Single(EDITOR)),
     ("--toast", Kind::Other),
     ("--quit", Kind::Other),
+    ("--daemon", Kind::Other),
     ("--version", Kind::Other),
     ("--check-update", Kind::Other),
     ("--update", Kind::Other),

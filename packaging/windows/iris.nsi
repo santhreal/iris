@@ -12,13 +12,15 @@
 ;   - Install Directory:   %LOCALAPPDATA%\Programs\iris
 ;   - Start Menu Shortcut: iris.lnk -> iris.exe --home
 ;   - Autostart:           HKCU\Software\Microsoft\Windows\CurrentVersion\Run
-;                          Value 'iris' -> "$INSTDIR\iris.exe" (daemon mode)
+;                          Value 'iris' -> "$INSTDIR\iris.exe" --daemon
 ;   - Uninstaller:         $INSTDIR\uninstall.exe
 ;                          Removes files, shortcuts, autostart Run entry, and
 ;                          Add/Remove Programs registration.
 ;
 ; Runtime Model:
-;   - iris (no args) = background daemon (tray + global hotkeys + IPC listener).
+;   - iris (no args) = background daemon (tray + global hotkeys + IPC listener),
+;                      or the home window of the daemon that runs.
+;   - iris --daemon  = background daemon; exits when a daemon runs.
 ;   - iris --home    = opens/surfaces the home window in the daemon.
 ;   - iris --quit    = asks the running daemon to shut down gracefully.
 ;
@@ -192,7 +194,8 @@ Function .onInit
 FunctionEnd
 
 ; With /RUN, start $INSTDIR\iris.exe: the new one after a successful
-; installation, the one found in place after a failed one.
+; installation, the one found in place after a failed one. It starts with
+; no option: an iris.exe found in place may predate --daemon.
 Function StartIfRequested
     ${GetParameters} $R0
     ClearErrors
@@ -228,9 +231,10 @@ Section "Install" SecInstall
     SetOutPath "$INSTDIR"
     CreateShortcut "$SMPROGRAMS\iris.lnk" "$INSTDIR\iris.exe" "--home" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
 
-    ; 5. Register HKCU\...\Run autostart: runs daemon at login (no arguments)
+    ; 5. Register HKCU\...\Run autostart: runs the daemon at login, and
+    ;    nothing when a daemon already runs
     DetailPrint "Registering login autostart..."
-    WriteRegStr HKCU "${RUN_KEY}" "iris" '"$INSTDIR\iris.exe"'
+    WriteRegStr HKCU "${RUN_KEY}" "iris" '"$INSTDIR\iris.exe" --daemon'
 
     ; 6. Store app metadata in registry for update checks and location lookup
     WriteRegStr HKCU "${APP_KEY}" "InstallDir" "$INSTDIR"

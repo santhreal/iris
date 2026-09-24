@@ -41,7 +41,7 @@ When iris is installed and running, the installer sends it `--quit` and waits up
 The installer runs per-user without administrative privileges:
 - Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `iris.ico`, `uninstall.exe`).
 - Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe --home`.
-- Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe"`.
+- Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --daemon`.
 - Registers uninstallation metadata under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris`.
 
 To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
@@ -83,6 +83,7 @@ cat << 'EOF' > ~/Library/LaunchAgents/dev.iris.app.plist
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Applications/iris.app/Contents/MacOS/iris</string>
+		<string>--daemon</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -120,7 +121,7 @@ sudo apt install ./iris-<ver>-linux-x86_64.deb
 Installed files:
 - Binary: `/usr/bin/iris`
 - Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
-- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`
+- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --daemon`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
 - Icons: `/usr/share/icons/hicolor/*/apps/iris.png`
 - Copyright documentation: `/usr/share/doc/iris/copyright`
@@ -144,7 +145,7 @@ sudo dnf install ./iris-<ver>-linux-x86_64.rpm
 Installed files:
 - Binary: `/usr/bin/iris`
 - Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
-- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`
+- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --daemon`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
 - Icons: `/usr/share/icons/hicolor/*/apps/iris.png`
 

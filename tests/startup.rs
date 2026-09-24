@@ -5,19 +5,20 @@
 //! WHY: the classes closed here are "the socket waits on the display",
 //! "an input source starts after the warmup", and "a Wayland daemon uses
 //! XWayland". A client that finds no daemon starts one, forwards its
-//! command once the socket accepts, and fails after 8 s; a second `iris`
-//! that finds no socket starts a daemon of its own. The daemon bound its
-//! socket after the overlay warmup, whose renderer init on lavapipe took
-//! 0.2 s with a warm shader cache and seconds with a cold one. It grabbed
-//! its hotkeys after the warmup too, so a hotkey pressed during it
-//! reached no client and was lost. On a Wayland session it grabbed the
-//! hotkeys on XWayland, which delivers a key only while an X11 window has
-//! the focus. Its Vulkan instance also enabled the XCB surface extension,
-//! with which Mesa's device selection layer connects to `DISPLAY` while it
-//! enumerates devices whenever it finds no device through Wayland, and
-//! the NVIDIA driver connects to `DISPLAY` whenever the loader loads it.
-//! Any of these connections starts an on-demand XWayland, about 100 MB
-//! resident, and the ones before the bind held it until XWayland answered.
+//! command once the socket accepts, and fails after 8 s; every other
+//! client that finds no socket meanwhile waits for the same bind. The
+//! daemon bound its socket after the overlay warmup, whose renderer init
+//! on lavapipe took 0.2 s with a warm shader cache and seconds with a
+//! cold one. It grabbed its hotkeys after the warmup too, so a hotkey
+//! pressed during it reached no client and was lost. On a Wayland
+//! session it grabbed the hotkeys on XWayland, which delivers a key only
+//! while an X11 window has the focus. Its Vulkan instance also enabled
+//! the XCB surface extension, with which Mesa's device selection layer
+//! connects to `DISPLAY` while it enumerates devices whenever it finds no
+//! device through Wayland, and the NVIDIA driver connects to `DISPLAY`
+//! whenever the loader loads it. Any of these connections starts an
+//! on-demand XWayland, about 100 MB resident, and the ones before the
+//! bind held it until XWayland answered.
 //!
 //! The first case grabs the daemon's X server once the daemon prints its
 //! start line. From then on every request the daemon sends the server

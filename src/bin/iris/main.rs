@@ -1,10 +1,10 @@
 //! iris on GPUI: native UI shell.
 //!
 //! This binary drives the backend modules in `iris_lib` and renders
-//! every surface natively. The first process becomes the daemon (tray,
-//! hotkeys, single-instance socket); later invocations forward their
-//! flags to it and exit. A flagged invocation with no daemon running
-//! spawns a detached one first, except `--quit`, `--record-pause` and
+//! every surface natively. One process is the daemon (tray, hotkeys,
+//! single-instance socket); other invocations forward their flags to it
+//! and exit. A flagged invocation with no daemon running starts a
+//! detached `iris --daemon` first, except `--quit`, `--record-pause` and
 //! `--record-mic`, which only reach a daemon that is already up.
 //!
 //! `cli::OPTS` defines every option; `iris --help` prints them.
@@ -40,15 +40,14 @@ use gpui::*;
 fn main() {
     sys::alloc::tune();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // A bare `iris` starts the daemon, or raises a running one's home
-    // window, and prints nothing; a flagged command prints its output
-    // and errors.
-    if !args.is_empty() {
+    let parsed = cli::parse(&args);
+    // A bare `iris` and `iris --daemon` print nothing; any other command
+    // line prints its output and errors.
+    if parsed.prints() {
         sys::console::attach();
     }
     iris_lib::log::init();
 
-    let parsed = cli::parse(&args);
     let local = parsed.first_local();
     // A mistyped command line runs nothing: no daemon starts and a
     // running one receives nothing. `--help` still prints.
@@ -64,30 +63,44 @@ fn main() {
         return;
     }
 
-    // Quit, pause, and the mic toggle act on a running daemon. With none
-    // up there is nothing to act on, and spawning one to deliver them
-    // would start a daemon only to stop it: an installer's pre-upgrade
-    // `iris --quit` would then hold the binary open while it copies.
-    // A quit with nothing running already holds; pause and mic fail.
-    let cmds = parsed.cmds;
-    if daemon::live_daemon_only(&cmds) {
-        if !sys::ipc::send_to_daemon(&parsed.forward)
-            && !cmds.iter().all(|c| matches!(c, daemon::Command::Quit))
-        {
-            eprintln!("iris: no iris daemon is running");
-            std::process::exit(1);
+    let claimed = if parsed.daemon {
+        sys::ipc::claim()
+    } else {
+        // Quit, pause, and the mic toggle act on a running daemon. With
+        // none up there is nothing to act on, and spawning one to deliver
+        // them would start a daemon only to stop it: an installer's
+        // pre-upgrade `iris --quit` would then hold the binary open while
+        // it copies. A quit with nothing running already holds; pause and
+        // mic fail.
+        if daemon::live_daemon_only(&parsed.cmds) {
+            if !sys::ipc::send_to_daemon(&parsed.forward)
+                && !parsed
+                    .cmds
+                    .iter()
+                    .all(|c| matches!(c, daemon::Command::Quit))
+            {
+                eprintln!("iris: no iris daemon is running");
+                std::process::exit(1);
+            }
+            return;
         }
-        return;
-    }
-
-    match sys::ipc::forward_if_running(&parsed.forward) {
-        Ok(true) => return,
-        Ok(false) => {}
+        sys::ipc::forward_if_running(&parsed.forward)
+    };
+    let claimed = match claimed {
+        Ok(Some(claimed)) => claimed,
+        // Delivered, or `--daemon` found a daemon that runs or starts.
+        Ok(None) => {
+            if parsed.daemon {
+                iris_lib::ilog!("iris: another iris daemon runs or is starting; this one exits");
+            }
+            return;
+        }
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
         }
-    }
+    };
+    let cmds = parsed.cmds;
 
     // No thread starts before this: on a Wayland session gpui creates the
     // Vulkan instance with DISPLAY hidden from the drivers only while the
@@ -100,7 +113,7 @@ fn main() {
     app.on_reopen(|cx| daemon::run(cx, &daemon::Command::Home));
     app.run(move |cx: &mut App| {
         theme::load_fonts(cx);
-        daemon::start(cx);
+        daemon::start(cx, claimed);
         for cmd in &cmds {
             daemon::run(cx, cmd);
         }
