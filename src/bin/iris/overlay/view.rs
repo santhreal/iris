@@ -1,9 +1,20 @@
+use std::time::Instant;
+
 use gpui::*;
 
-use super::{loupe::LOUPE_PX, shell::reveal, Overlay, HANDLE_PX, HOVER_FADE};
+use super::{loupe::LOUPE_PX, shell::reveal, Overlay, DIM, DIM_FADE, HANDLE_PX, HOVER_FADE};
 use crate::theme;
 
 impl Overlay {
+    /// The dim over the frozen frame as it fades in from the overlay's
+    /// first render, and whether it is still fading.
+    pub(super) fn entrance_dim(&mut self) -> (f32, bool) {
+        let opened = *self.opened.get_or_insert_with(Instant::now);
+        let dim_t = (opened.elapsed().as_secs_f32() / crate::motion::tempo(DIM_FADE).as_secs_f32())
+            .min(1.0);
+        (DIM * crate::motion::ease_out(dim_t), dim_t < 1.0)
+    }
+
     /// The 8 resize handles of a committed selection, in logical px:
     /// 4 corners (NW, NE, SW, SE) then 4 edges (N, S, W, E). Each is a
     /// HANDLE_PX square centered on the point it drags.

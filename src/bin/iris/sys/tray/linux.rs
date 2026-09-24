@@ -64,16 +64,28 @@ impl ksni::Tray for IrisTray {
             item("Quit", Command::Quit),
         ]
     }
+
+    fn watcher_online(&self) {
+        iris_lib::ilog!("iris: tray registered");
+    }
+
+    // Keep the service up: the tray registers the moment a watcher
+    // (re)appears, e.g. a panel that starts after a login autostart.
+    fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
+        iris_lib::ilog!("iris: tray waiting for a StatusNotifierWatcher: {reason:?}");
+        true
+    }
 }
 
 /// Spawn the StatusNotifierItem on its own thread and keep it
-/// registered for the process lifetime. A missing watcher (no
-/// system tray host) degrades to a log line, never a crash.
+/// registered for the process lifetime. A watcher that is absent at
+/// startup does not fail the spawn: the item registers when one
+/// appears. Only a session bus failure degrades to a log line.
 pub(super) fn spawn(tx: futures::channel::mpsc::UnboundedSender<Command>) {
     std::thread::spawn(move || {
         use ksni::blocking::TrayMethods;
         let tray = IrisTray { tx };
-        match tray.spawn() {
+        match tray.assume_sni_available(true).spawn() {
             Err(e) => iris_lib::ilog!("iris: tray unavailable: {e}"),
             Ok(handle) => {
                 let _keep = handle;

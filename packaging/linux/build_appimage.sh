@@ -118,7 +118,7 @@ fi
 echo "Using iris binary: $IRIS_BIN"
 echo "Packaging iris AppImage version: $VERSION ($ARCH)"
 
-# Workspace staging directory (never /tmp per AGENTS.md)
+# Staging directory inside the repository (.build-staging is gitignored).
 STAGING_BASE="$REPO_ROOT/.build-staging"
 mkdir -p "$STAGING_BASE"
 APPDIR="$(mktemp -d "$STAGING_BASE/appimage_appdir.XXXXXX")"
@@ -211,12 +211,13 @@ fi
 
 # Try downloading appimagetool if not found
 if [[ -z "$APPIMAGETOOL" ]]; then
-  DOWNLOAD_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+  # appimagetool runs on the build host, so fetch the host's build of it.
+  DOWNLOAD_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(uname -m).AppImage"
   CACHED_TOOL="$STAGING_BASE/appimagetool"
   echo "appimagetool not found locally; attempting to download from AppImage GitHub..."
   DOWNLOAD_OK=false
   if command -v curl >/dev/null 2>&1; then
-    if curl -sSL --connect-timeout 10 -o "$CACHED_TOOL" "$DOWNLOAD_URL" 2>/dev/null; then
+    if curl -fsSL --connect-timeout 10 -o "$CACHED_TOOL" "$DOWNLOAD_URL" 2>/dev/null; then
       chmod +x "$CACHED_TOOL"
       DOWNLOAD_OK=true
     fi
@@ -238,30 +239,16 @@ fi
 CONTRACT_APPIMAGE="iris-${VERSION}-linux-${ARCH}.AppImage"
 CONTRACT_APPIMAGE_PATH="$OUT_DIR/$CONTRACT_APPIMAGE"
 
-if [[ -n "$APPIMAGETOOL" ]]; then
-  echo "Building AppImage using appimagetool ($APPIMAGETOOL)..."
-  # Export NO_APPSTREAM=1 to prevent failure on unreleased/private repo URLs or offline builds
-  # Use --appimage-extract-and-run to work without requiring FUSE
-  NO_APPSTREAM=1 ARCH="$ARCH" "$APPIMAGETOOL" --appimage-extract-and-run "$APPDIR" "$CONTRACT_APPIMAGE_PATH"
-else
-  echo "Notice: appimagetool could not be downloaded (offline/airgapped environment)."
-  # Produce a portable, ready-to-run AppDir archive
-  PORTABLE_TAR="iris-${VERSION}-linux-${ARCH}.AppDir.tar.gz"
-  PORTABLE_TAR_PATH="$OUT_DIR/$PORTABLE_TAR"
-  echo "Packaging standalone portable AppDir: $PORTABLE_TAR_PATH"
-  tar -czf "$PORTABLE_TAR_PATH" -C "$APPDIR" .
-
-  # If mksquashfs is available, also produce squashfs image
-  if command -v mksquashfs >/dev/null 2>&1; then
-    SQUASH_PATH="$OUT_DIR/iris-${VERSION}-linux-${ARCH}.squashfs"
-    mksquashfs "$APPDIR" "$SQUASH_PATH" -root-owned -noappend -quiet
-    echo "Created squashfs bundle: $SQUASH_PATH"
-  fi
-
-  echo "To build the final standalone .AppImage binary, provide appimagetool via:"
-  echo "  ./packaging/linux/build_appimage.sh --appimagetool /path/to/appimagetool"
-  exit 0
+if [[ -z "$APPIMAGETOOL" ]]; then
+  echo "Error: appimagetool is not installed and the download failed." >&2
+  echo "Install it, or pass its path: $0 --appimagetool /path/to/appimagetool" >&2
+  exit 1
 fi
+
+echo "Building AppImage using appimagetool ($APPIMAGETOOL)..."
+# NO_APPSTREAM=1: skip the AppStream validation that needs network access.
+# --appimage-extract-and-run: run appimagetool without FUSE.
+NO_APPSTREAM=1 ARCH="$ARCH" "$APPIMAGETOOL" --appimage-extract-and-run "$APPDIR" "$CONTRACT_APPIMAGE_PATH"
 
 # Generate SHA256 checksum sidecar
 if [[ "$GEN_SHA" == true && -f "$CONTRACT_APPIMAGE_PATH" ]]; then

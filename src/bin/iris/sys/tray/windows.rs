@@ -80,7 +80,7 @@ fn build_icon() -> HICON {
 
 /// Show the tray menu at the cursor and let `TrackPopupMenu` deliver
 /// the pick back here as `WM_COMMAND`. `SetForegroundWindow` first so
-/// the menu dismisses when the user clicks away.
+/// the menu dismisses on a click elsewhere.
 unsafe fn show_menu(hwnd: HWND) {
     let mut pt: POINT = core::mem::zeroed();
     if GetCursorPos(&mut pt) == 0 {

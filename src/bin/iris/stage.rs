@@ -1,15 +1,16 @@
-//! Toast stage: the macOS floating screenshot thumbnail.
+//! Toast stage: the floating screenshot thumbnail.
 //!
-//! The particulars this matches: raw capture pixels only, aspect-true,
-//! no chrome of any kind (no border stroke, no inner highlight, no
-//! buttons, no labels, no hover or pressed state). ~200px long edge,
-//! 9px corners, one soft deep shadow. It slides in from beyond the
-//! right edge in ~450ms with a hard deceleration and stops dead: no
-//! overshoot, no fade, no scale. It sits visually inert for ~5s;
-//! hovering only suspends the clock; then accelerates back off the
-//! right edge, fading in the last third. A rightward flick dismisses
-//! it 1:1 under the pointer; any other drag is a file drag through
-//! XDnD. Click morphs into Markup. A new capture replaces it.
+//! Raw capture pixels, aspect-true, at most 200x140 logical px and
+//! scaled to the display's device pixels, 12px corners,
+//! one soft deep shadow. It slides in from beyond the screen edge in
+//! 380ms with a hard deceleration and stops dead, sits for the
+//! configured duration (hovering suspends the clock), then accelerates
+//! back off the edge, fading in the last third. A flick toward the edge
+//! dismisses it 1:1 under the pointer; any other drag is a file
+//! drag-out. A click runs the configured click action; the default,
+//! Markup, morphs the card into the editor. The optional action bar
+//! and the right-click menu act on the capture, and an action's result
+//! replaces the bar with a status line. A new capture replaces it.
 
 use std::{
     path::PathBuf,
@@ -25,19 +26,21 @@ use gpui::*;
 use crate::{motion, theme};
 
 mod actions;
+mod thumb;
 mod window;
 
 #[cfg(test)]
 mod tests;
 
-pub(super) use actions::card_shadow;
-pub(super) use actions::prepare_thumb;
-pub use window::{card_rest_rect, show_toast, show_toast_landed};
+use theme::card_shadow;
+pub(super) use thumb::{prepare_thumb, Thumb};
+use window::publish_rest;
+pub use window::{card_rest_rect, live_card_rect, show_toast, show_toast_landed};
 
 pub(super) const MAX_W: f32 = 200.0;
 pub(super) const MAX_H: f32 = 140.0;
 pub(super) const MARGIN: f32 = 12.0;
-pub(super) const BLEED: f32 = 44.0;
+pub(super) const BLEED: f32 = theme::CARD_BLEED;
 pub(super) const RADIUS: f32 = 12.0;
 pub(super) const ENTER: Duration = motion::ENTER;
 pub(super) const EXIT: Duration = Duration::from_millis(300);
@@ -61,11 +64,23 @@ pub(super) const SWIPE_STALE: Duration = Duration::from_millis(120);
 pub(super) const SWIPE_TRAVEL: f32 = 100.0;
 pub(super) const SWIPE_VELOCITY: f32 = 400.0;
 
+/// The card's logical size for a capture of `img_w`x`img_h` pixels:
+/// aspect-true within MAX_W x MAX_H, never enlarged, whole pixels. The
+/// flight's landing rect and the toast's card both come from here, so
+/// the handoff between them does not move by a pixel.
+pub(super) fn card_size(img_w: f32, img_h: f32) -> (f32, f32) {
+    let fit = (MAX_W / img_w).min(MAX_H / img_h).min(1.0);
+    (
+        (img_w * fit).round().max(1.0),
+        (img_h * fit).round().max(1.0),
+    )
+}
+
 pub struct ToastStage {
     pub(super) path: PathBuf,
-    pub(super) thumb: Arc<RenderImage>,
-    pub(super) thumb_rgba: Arc<Vec<u8>>,
-    pub(super) dims: (f32, f32),
+    pub(super) thumb: Thumb,
+    /// A re-scale of `thumb` is in flight: render does not queue another.
+    pub(super) rescaling: bool,
     pub(super) card_screen: (f32, f32, f32, f32),
     pub(super) opened: Option<Instant>,
     pub(super) hover_paused: bool,
@@ -104,6 +119,14 @@ pub struct ToastStage {
     /// several times a frame, and Config::load() hits the disk each
     /// call.
     pub(super) cfg: iris_lib::config::Config,
+    /// The result of the last toast action (copy, OCR, delete, pin),
+    /// drawn over the card's lower edge in place of the action bar.
+    pub(super) status: Option<SharedString>,
+    /// OCR in flight: the dismiss timer re-arms instead of closing, so
+    /// the result has a card to land on.
+    pub(super) busy: bool,
+    /// The action bar's visibility: a landed toast opens without it.
+    pub(super) bar: Bar,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,6 +134,16 @@ pub(super) enum Gesture {
     Undecided,
     Swipe,
     FileDrag,
+}
+
+/// The action bar's visibility. A landed toast opens with the bar
+/// hidden, so its first frame matches the flight card it replaces, and
+/// fades the bar in once the overlay is gone.
+#[derive(Clone, Copy)]
+pub(super) enum Bar {
+    Shown,
+    Hidden,
+    FadingIn(Instant),
 }
 
 /// A rightward dismiss swipe in progress: 1:1 travel under the
@@ -124,7 +157,13 @@ pub(super) struct Swipe {
 
 impl Render for ToastStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (w, h) = self.dims;
+        let (w, h) = self.thumb.dims;
+        // The pixels were sized for the scale the toast was expected to
+        // open at; a window that renders at another one re-sizes them.
+        let scale = window.scale_factor();
+        if (scale - self.thumb.scale).abs() > 1e-3 && !self.rescaling {
+            self.rescale_thumb(scale, cx);
+        }
         let cfg = &self.cfg;
         let is_left = matches!(
             cfg.toast_position,
@@ -144,6 +183,16 @@ impl Render for ToastStage {
         let mut opacity = 1.0f32;
         let shadow_vis = ease;
         let mut animating = enter_t < 1.0;
+        let bar = match self.bar {
+            Bar::Shown => 1.0,
+            Bar::Hidden => 0.0,
+            Bar::FadingIn(from) => {
+                let t = (from.elapsed().as_secs_f32() / motion::tempo(motion::FADE).as_secs_f32())
+                    .min(1.0);
+                animating |= t < 1.0;
+                motion::ease_out(t)
+            }
+        };
 
         // Dismiss swipe: the card tracks the pointer toward the screen edge.
         if let Some(s) = &self.swipe {
@@ -173,8 +222,7 @@ impl Render for ToastStage {
                 opacity = 1.0 - t;
             }
             if t >= 1.0 {
-                let thumb = self.thumb.clone();
-                cx.defer(move |cx| crate::widgets::release_render(&thumb, cx));
+                crate::widgets::release_render(&self.thumb.render, cx);
                 window.remove_window();
             } else {
                 animating = true;
@@ -192,8 +240,7 @@ impl Render for ToastStage {
                 .morph_ready_at
                 .is_some_and(|at| at.elapsed() > PRESENT_GRACE);
             if grace_done || since.elapsed() > MORPH_WAIT {
-                let thumb = self.thumb.clone();
-                cx.defer(move |cx| crate::widgets::release_render(&thumb, cx));
+                crate::widgets::release_render(&self.thumb.render, cx);
                 window.remove_window();
             } else {
                 window.request_animation_frame();
@@ -202,8 +249,10 @@ impl Render for ToastStage {
         if animating {
             window.request_animation_frame();
         }
+        let resting = self.closing_at.is_none() && self.pending_morph.is_none();
+        publish_rest(window.window_handle(), resting.then_some(self.card_screen));
 
-        let thumb = self.thumb.clone();
+        let thumb = self.thumb.render.clone();
         let menu_el = self.render_menu(opacity, window, cx);
 
         div()
@@ -292,11 +341,11 @@ impl Render for ToastStage {
                 } else if stage.cfg.toast_drag_enabled {
                     stage.gesture = Gesture::FileDrag;
                     let icon = iris_lib::dragcopy::DragIcon {
-                        width: stage.dims.0 as u32,
-                        height: stage.dims.1 as u32,
+                        width: stage.thumb.px.0,
+                        height: stage.thumb.px.1,
                         // The stage already holds the pixels behind
                         // an Arc: a refcount, not a multi-MB clone.
-                        rgba: stage.thumb_rgba.clone(),
+                        rgba: stage.thumb.rgba.clone(),
                     };
                     if let Err(e) = crate::sys::window::start_file_drag(
                         window,
@@ -304,6 +353,7 @@ impl Render for ToastStage {
                         Some(icon),
                     ) {
                         iris_lib::ilog!("drag: {e}");
+                        stage.show_status(format!("Drag failed: {e}"), cx);
                     }
                 }
                 cx.notify();
@@ -339,8 +389,12 @@ impl Render for ToastStage {
                     ),
                 );
 
-                if let Some(actions) = self.render_action_bar(cx) {
-                    card = card.child(actions);
+                if let Some(status) = &self.status {
+                    card = card.child(actions::status_band(status.clone()));
+                } else if bar > 0.0 {
+                    if let Some(actions) = self.render_action_bar(cx) {
+                        card = card.child(actions.opacity(bar));
+                    }
                 }
 
                 card.on_hover(cx.listener(|stage, hovering, _window, cx| {
@@ -362,8 +416,8 @@ impl Render for ToastStage {
                     MouseButton::Right,
                     cx.listener(|stage, ev: &MouseDownEvent, _, cx| {
                         let menu_h = 6.0 * crate::widgets::MENU_ROW_H + 10.0;
-                        let win_w = stage.dims.0 + BLEED + MARGIN;
-                        let win_h = stage.dims.1 + BLEED + MARGIN;
+                        let win_w = stage.thumb.dims.0 + BLEED + MARGIN;
+                        let win_h = stage.thumb.dims.1 + BLEED + MARGIN;
                         let mx: f32 = ev.position.x.into();
                         let my: f32 = ev.position.y.into();
                         stage.menu_at = Some((

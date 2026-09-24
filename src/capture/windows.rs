@@ -152,21 +152,21 @@ pub fn grab_screen_bgra() -> Result<(u32, u32, Vec<u8>), String> {
         return Err("no virtual screen (is a desktop session attached?)".to_string());
     }
     let (w, h) = (w as u32, h as u32);
-    let bgra = grab_bgra(WinRect {
-        x,
-        y,
-        width: w,
-        height: h,
-    })?;
+    let bgra = grab(
+        WinRect {
+            x,
+            y,
+            width: w,
+            height: h,
+        },
+        crate::pixel::opaque,
+    )?;
     Ok((w, h, bgra))
 }
 
 /// Pixels of `rect` (desktop coordinates) as RGBA.
 pub fn grab_rect(rect: WinRect) -> Result<Frame, String> {
-    let mut rgba = grab_bgra(rect)?;
-    for px in rgba.chunks_exact_mut(4) {
-        px.swap(0, 2);
-    }
+    let rgba = grab(rect, crate::pixel::swap_rb_opaque)?;
     Ok(Frame {
         width: rect.width,
         height: rect.height,
@@ -174,9 +174,11 @@ pub fn grab_rect(rect: WinRect) -> Result<Frame, String> {
     })
 }
 
-/// Pixels of `rect` (desktop coordinates) as BGRA with opaque alpha.
-/// CAPTUREBLT includes layered windows (tooltips, translucent UI).
-fn grab_bgra(rect: WinRect) -> Result<Vec<u8>, String> {
+/// Pixels of `rect` (desktop coordinates), each GDI BGRX pixel through
+/// `px` in the one pass that copies it out of the DIB. `BI_RGB` leaves
+/// the fourth byte undefined (often 0), so `px` sets alpha. CAPTUREBLT
+/// includes layered windows (tooltips, translucent UI).
+fn grab(rect: WinRect, px: impl Fn([u8; 4]) -> [u8; 4]) -> Result<Vec<u8>, String> {
     use windows_sys::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
         SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, SRCCOPY,
@@ -228,12 +230,8 @@ fn grab_bgra(rect: WinRect) -> Result<Vec<u8>, String> {
             SelectObject(mem, old);
             if ok {
                 let len = w as usize * h as usize * 4;
-                let mut bgra = std::slice::from_raw_parts(bits as *const u8, len).to_vec();
-                // BI_RGB leaves the fourth byte undefined (often 0).
-                for px in bgra.chunks_exact_mut(4) {
-                    px[3] = 255;
-                }
-                Ok(bgra)
+                let pixels = std::slice::from_raw_parts(bits as *const u8, len);
+                Ok(crate::pixel::map_to_vec(pixels, px))
             } else {
                 Err("BitBlt from the screen failed".to_string())
             }
@@ -269,9 +267,10 @@ mod tests {
         let f = capture_full_frame().unwrap();
         assert_eq!((f.width as i32, f.height as i32), (x1 - x0, y1 - y0));
         assert_eq!(f.rgba.len(), (f.width * f.height * 4) as usize);
-        assert!(f.rgba.chunks_exact(4).all(|p| p[3] == 255));
+        let pixels = f.rgba.as_chunks::<4>().0;
+        assert!(pixels.iter().all(|p| p[3] == 255));
         assert!(
-            f.rgba.chunks_exact(4).any(|p| p[0] | p[1] | p[2] != 0),
+            pixels.iter().any(|p| p[0] | p[1] | p[2] != 0),
             "all-black frame"
         );
 

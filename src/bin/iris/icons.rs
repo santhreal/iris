@@ -51,6 +51,7 @@ pub enum Icon {
     Counter,
     Record,
     Play,
+    Alert,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.

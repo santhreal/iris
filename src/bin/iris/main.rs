@@ -1,31 +1,22 @@
 //! iris on GPUI: native UI shell.
 //!
-//! Layout: this
-//! binary shares the backend modules with the Tauri build through
-//! iris_lib and reimplements every surface natively. The first
-//! process becomes the daemon (tray, hotkeys, single-instance socket);
-//! later invocations forward their flags to it and exit.
+//! This binary drives the backend modules in `iris_lib` and renders
+//! every surface natively. The first process becomes the daemon (tray,
+//! hotkeys, single-instance socket); later invocations forward their
+//! flags to it and exit. A flagged invocation with no daemon running
+//! spawns a detached one first, except `--quit`, `--record-pause` and
+//! `--record-mic`, which only reach a daemon that is already up.
 //!
-//! CLI:
-//!   --capture            region capture: frozen-frame overlay, then toast
-//!   --capture-fullscreen full-screen grab with no overlay, then toast
-//!   --capture-window     capture the focused window, then toast
-//!   --delay <secs>       full-screen capture after a countdown
-//!   --record-window      toggle a window-picked recording
-//!   --record-region      pick a screen region and record it
-//!   --record-pause       pause/resume the active recording
-//!   --record-mic         toggle the mic on the active recording
-//!   --library            open the library panel
-//!   --settings           open the settings window
-//!   --home               open the home surface
-//!   --annotate <file>    edit an existing capture
-//!   --toast <file.png>   debug: show the toast stage for an existing file
-//!   --quit               ask the daemon to exit
-//!   --version            print the version and exit
-//!   --check-update       report whether a newer release exists
-//!   --update             download and apply the latest release
+//! `cli::OPTS` defines every option; `iris --help` prints them.
+
+// Windows starts a GUI program with no console window: none opens for
+// the daemon at login or for a Start Menu or hotkey launch. A command
+// line in a terminal prints through sys::console. Other targets ignore
+// the attribute.
+#![windows_subsystem = "windows"]
 
 mod chip;
+mod cli;
 mod daemon;
 mod editor;
 mod flash;
@@ -33,6 +24,7 @@ mod home;
 mod icons;
 mod library;
 mod motion;
+mod notice;
 mod overlay;
 mod pin;
 mod pipeline;
@@ -46,56 +38,101 @@ mod widgets;
 use gpui::*;
 
 fn main() {
-    iris_lib::log::init();
-    // Skip argv[0]; daemon::parse_args handles the flags.
+    sys::alloc::tune();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // A bare `iris` starts the daemon, or raises a running one's home
+    // window, and prints nothing; a flagged command prints its output
+    // and errors.
+    if !args.is_empty() {
+        sys::console::attach();
+    }
+    iris_lib::log::init();
 
-    // Informational and self-update flags run in this process, not the
-    // daemon: they print to the caller's stdout and `--update` replaces
-    // the binary, so forwarding them to a running daemon would both
-    // hide the output and let the daemon overwrite its own exe.
-    if args.iter().any(|a| a == "--version") {
-        println!("iris {}", env!("CARGO_PKG_VERSION"));
-        return;
-    }
-    if args.iter().any(|a| a == "--check-update") {
-        match update::check() {
-            Ok(Some(info)) => println!("iris: update available: {}", info.version),
-            Ok(None) => println!("iris: up to date ({})", env!("CARGO_PKG_VERSION")),
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
-            }
+    let parsed = cli::parse(&args);
+    let local = parsed.first_local();
+    // A mistyped command line runs nothing: no daemon starts and a
+    // running one receives nothing. `--help` still prints.
+    if !parsed.errors.is_empty() && local != Some(cli::Local::Help) {
+        for e in &parsed.errors {
+            eprintln!("iris: {e}");
         }
+        eprintln!("iris: run 'iris --help' for the options");
+        std::process::exit(2);
+    }
+    if let Some(local) = local {
+        run_local(local);
         return;
     }
-    if args.iter().any(|a| a == "--update") {
-        let result = match update::check() {
-            Ok(Some(info)) => update::apply(&info),
-            Ok(None) => {
-                println!("iris: up to date ({})", env!("CARGO_PKG_VERSION"));
-                Ok(())
-            }
-            Err(e) => Err(e),
-        };
-        if let Err(e) = result {
-            eprintln!("{e}");
+
+    // Quit, pause, and the mic toggle act on a running daemon. With none
+    // up there is nothing to act on, and spawning one to deliver them
+    // would start a daemon only to stop it: an installer's pre-upgrade
+    // `iris --quit` would then hold the binary open while it copies.
+    // A quit with nothing running already holds; pause and mic fail.
+    let cmds = parsed.cmds;
+    if daemon::live_daemon_only(&cmds) {
+        if !sys::ipc::send_to_daemon(&parsed.forward)
+            && !cmds.iter().all(|c| matches!(c, daemon::Command::Quit))
+        {
+            eprintln!("iris: no iris daemon is running");
             std::process::exit(1);
         }
         return;
     }
 
-    if sys::ipc::forward_if_running(&args) {
-        return;
+    match sys::ipc::forward_if_running(&parsed.forward) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
     }
 
-    Application::new().run(move |cx: &mut App| {
+    let app = Application::new();
+    // Opening iris.app while the daemon runs starts no second process:
+    // macOS reports a reopen to the daemon, which then shows home. The
+    // other platforms never report one.
+    app.on_reopen(|cx| daemon::run(cx, &daemon::Command::Home));
+    app.run(move |cx: &mut App| {
         theme::load_fonts(cx);
         daemon::start(cx);
-        for cmd in daemon::parse_args(&args) {
-            if let Err(e) = daemon::dispatch(cx, &cmd) {
-                iris_lib::ilog!("iris: {e}");
-            }
+        for cmd in &cmds {
+            daemon::run(cx, cmd);
         }
     });
+}
+
+/// Run an option the client handles in this process. They print to the
+/// caller's terminal, and `--update` replaces the binary, so none is
+/// forwarded: a running daemon would hide the output and could
+/// overwrite its own executable.
+fn run_local(local: cli::Local) {
+    let version = env!("CARGO_PKG_VERSION");
+    let result = match local {
+        cli::Local::Help => {
+            print!("{}", cli::usage());
+            Ok(())
+        }
+        cli::Local::Version => {
+            println!("iris {version}");
+            Ok(())
+        }
+        cli::Local::CheckUpdate => update::check().map(|found| match found {
+            Some(info) => println!("iris: update available: {}", info.version),
+            None => println!("iris: up to date ({version})"),
+        }),
+        cli::Local::Update => match update::check() {
+            Ok(Some(info)) => update::apply(&info),
+            Ok(None) => {
+                println!("iris: up to date ({version})");
+                Ok(())
+            }
+            Err(e) => Err(e),
+        },
+    };
+    if let Err(e) = result {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
 }

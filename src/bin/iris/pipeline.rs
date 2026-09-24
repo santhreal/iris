@@ -70,25 +70,11 @@ pub fn with_clipboard(f: impl FnOnce(&mut arboard::Clipboard)) -> Result<(), Str
     Ok(())
 }
 
-/// Camera shutter at the grab moment: the freedesktop sound through
-/// the first available player. Best effort; silence is not an error.
+/// Camera shutter at the grab moment, when the config asks for one.
 pub fn play_shutter_sound() {
-    if !Config::load().sound_on_capture {
-        return;
+    if Config::load().sound_on_capture {
+        crate::sys::sound::shutter();
     }
-    std::thread::spawn(|| {
-        let path = "/usr/share/sounds/freedesktop/stereo/camera-shutter.oga";
-        let attempts: [(&str, &[&str]); 3] = [
-            ("pw-play", &[path]),
-            ("paplay", &[path]),
-            ("canberra-gtk-play", &["-i", "camera-shutter"]),
-        ];
-        for (bin, args) in attempts {
-            if std::process::Command::new(bin).args(args).spawn().is_ok() {
-                return;
-            }
-        }
-    });
 }
 
 /// Save a frame under the config's screenshot template: placeholders
@@ -163,6 +149,33 @@ impl Region {
 /// so the UI thread pays one memcpy-class pass instead of two
 /// swizzles whose net was identity.
 pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result<Vec<u8>, String> {
+    crop_rows(bgra, width, height, region, |src, dst| {
+        dst.copy_from_slice(src)
+    })
+}
+
+/// The crop with R and B swapped: the RGBA pixels `finalize_bgra`
+/// saves, written in the same single banded pass as the copy.
+fn crop_bgra_to_rgba(
+    bgra: &[u8],
+    width: u32,
+    height: u32,
+    region: Region,
+) -> Result<Vec<u8>, String> {
+    crop_rows(bgra, width, height, region, |src, dst| {
+        iris_lib::pixel::map_into(src, dst, iris_lib::pixel::swap_rb)
+    })
+}
+
+/// `region`'s rows out of a `width`-wide frame of 4-byte pixels, each
+/// row through `row(src, dst)`, banded across threads.
+fn crop_rows(
+    frame: &[u8],
+    width: u32,
+    height: u32,
+    region: Region,
+    row: impl Fn(&[u8], &mut [u8]) + Sync + Send,
+) -> Result<Vec<u8>, String> {
     check_region(width, height, region)?;
     // Uninit capacity, not a zeroed image: the banded fill writes
     // every byte, and a 33MB memset before a 33MB fill is a wasted
@@ -172,13 +185,12 @@ pub fn crop_bgra(bgra: &[u8], width: u32, height: u32, region: Region) -> Result
     unsafe {
         buf.set_len(buf.capacity())
     };
-    let raw: &mut [u8] = &mut buf;
     let row_len = region.width as usize * 4;
-    iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
+    iris_lib::par::par_bands_mut(&mut buf, row_len, |dst, start| {
         let row0 = (start / row_len) as u32;
         for (r, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
             let src = ((region.y + row0 + r as u32) * width + region.x) as usize * 4;
-            dst_row.copy_from_slice(&bgra[src..src + row_len]);
+            row(&frame[src..src + row_len], dst_row);
         }
     });
     Ok(buf)
@@ -206,29 +218,8 @@ pub fn finalize_bgra(
     height: u32,
     region: Region,
 ) -> Result<(PathBuf, library::CaptureEntry), String> {
-    check_region(width, height, region)?;
-    let mut buf: Vec<u8> = Vec::with_capacity(region.width as usize * region.height as usize * 4);
-    #[allow(clippy::uninit_vec)] // the banded fill writes every byte
-    unsafe {
-        buf.set_len(buf.capacity())
-    };
-    let raw: &mut [u8] = &mut buf;
-    let row_len = region.width as usize * 4;
-    iris_lib::par::par_bands_mut(raw, row_len, |dst, start| {
-        let row0 = (start / row_len) as u32;
-        for (r, dst_row) in dst.chunks_exact_mut(row_len).enumerate() {
-            let src = ((region.y + row0 + r as u32) * width + region.x) as usize * 4;
-            for (d, s) in dst_row
-                .chunks_exact_mut(4)
-                .zip(bgra[src..src + row_len].chunks_exact(4))
-            {
-                let v = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
-                let rgb = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-                d.copy_from_slice(&rgb.to_le_bytes());
-            }
-        }
-    });
-    let img = image::RgbaImage::from_raw(region.width, region.height, buf)
+    let rgba = crop_bgra_to_rgba(bgra, width, height, region)?;
+    let img = image::RgbaImage::from_raw(region.width, region.height, rgba)
         .ok_or_else(|| "crop buffer size mismatch".to_string())?;
     finalize(img)
 }
@@ -266,9 +257,9 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
     .map_err(|e| format!("encode screenshot: {e}"))?;
     std::fs::write(&path, png.into_inner()).map_err(|e| format!("save screenshot: {e}"))?;
     iris_lib::ilog!("iris: capture: png written in {:?}", t_png.elapsed());
-    // The file is the product; a clipboard failure degrades to a
-    // log line, never a lost capture. copy_to_clipboard gates whether
-    // the capture lands on the clipboard at all. The clipboard set
+    // The file is the product; a clipboard failure costs the copy, never
+    // the capture, and a notice reports it. copy_to_clipboard gates
+    // whether the capture lands on the clipboard at all. The clipboard set
     // re-encodes the pixels to PNG at arboard's default compression,
     // which is slower than the file encode above: it runs on its own
     // thread so the toast does not wait on a second encode.
@@ -279,7 +270,7 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
             .name("iris-clipboard".into())
             .spawn(move || {
                 if let Err(e) = copy_image(&img) {
-                    iris_lib::ilog!("iris: clipboard: {e}");
+                    crate::daemon::report_failure("Copy failed", e);
                 }
             })
             .map_err(|e| format!("spawn clipboard thread: {e}"))?;
@@ -341,7 +332,7 @@ pub fn copy_ocr_text(path: &Path) -> Result<String, String> {
 // WHY: the class closed here is "captures land in the wrong place or
 // clobber each other": a template that stops substituting, a suffix
 // collision that overwrites, or a region that crops out of bounds all
-// lose the user's shot. Not covered: the X11/Wayland grab itself.
+// lose the shot. Not covered: the X11/Wayland grab itself.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,9 +436,10 @@ mod tests {
     }
 
     #[test]
-    fn finalize_bgra_swizzles_to_rgba() {
-        // The background path crops AND swizzles: BGRA in, RGBA into
-        // the saved image. Exercise the crop+swizzle half directly.
+    fn crop_bgra_to_rgba_swaps_every_cropped_pixel() {
+        // The background finalize crops AND swizzles: BGRA in, RGBA
+        // into the saved image. Every pixel of the crop, so a row or
+        // pixel offset slip shows, not only the first.
         let mut bgra = vec![0u8; 4 * 4 * 4];
         for (i, b) in bgra.iter_mut().enumerate() {
             *b = i as u8;
@@ -458,11 +450,13 @@ mod tests {
             width: 2,
             height: 2,
         };
-        // Reproduce finalize_bgra's inner pass on the same input.
-        let mut buf = crop_bgra(&bgra, 4, 4, region).unwrap();
-        crate::widgets::swizzle_rgba_bgra(&mut buf);
-        // Frame pixel (1,1) BGRA = [20,21,22,23] -> RGBA [22,21,20,23].
-        assert_eq!(&buf[..4], &[22, 21, 20, 23]);
+        let rgba = crop_bgra_to_rgba(&bgra, 4, 4, region).unwrap();
+        // Frame pixels (1,1) (2,1) (1,2) (2,2) start at bytes 20, 24,
+        // 36, 40; each BGRA [b,g,r,a] lands as RGBA [r,g,b,a].
+        assert_eq!(
+            rgba,
+            [22, 21, 20, 23, 26, 25, 24, 27, 38, 37, 36, 39, 42, 41, 40, 43]
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! The screen is grabbed once before this window opens; everything the
 //! user sees and selects comes out of that frozen frame. Hover snaps to
-//! top-level windows (X11 only), dragging commits a region, the loupe
+//! top-level windows (X11, Windows, macOS), dragging commits a region, the loupe
 //! tracks the drag edge for pixel-precise crops. Right-click and Esc
 //! cancel; Enter, double-click or a plain click on a window finishes.
 
@@ -15,8 +15,10 @@ use std::{
 use gpui::*;
 use iris_lib::capture::WinRect;
 
-use crate::{pipeline::Region, stage, theme};
+use crate::{pipeline::Region, theme};
+use flight::Flight;
 
+mod flight;
 mod input;
 mod loupe;
 mod shell;
@@ -29,6 +31,8 @@ pub use shell::{layout, open_shell, slice_frame_bgra, warmup};
 pub(super) const MIN_SIZE: f32 = 3.0;
 /// The dim layer fades in when the overlay appears.
 pub(super) const DIM_FADE: Duration = Duration::from_millis(180);
+/// The dim's opacity over the frozen frame once faded in.
+pub(super) const DIM: f32 = 0.32;
 /// Window-snap reveal fades both ways, like macOS's highlight.
 pub(super) const HOVER_FADE: Duration = Duration::from_millis(90);
 /// Edge of a selection resize handle, in logical px.
@@ -102,9 +106,10 @@ pub struct Overlay {
     /// cancels the session (a failed save loses the capture, never
     /// the daemon).
     finalize_failed: bool,
-    /// The background finalize's result, parked here when it lands so
-    /// the flight's last frame can hand it to the toast.
-    landed: Option<(PathBuf, PathBuf, u32, u32)>,
+    /// The background finalize's result (the capture's path and the
+    /// toast's scaled pixels), parked here when it lands so the flight
+    /// hands it to the toast.
+    landed: Option<(PathBuf, Result<crate::stage::Thumb, String>)>,
     /// The config snapshot for this session: render and the key handler
     /// read it every frame, and Config::load() hits the disk each call.
     cfg: iris_lib::config::Config,
@@ -121,21 +126,32 @@ pub struct Overlay {
 }
 
 /// The pooled overlay window: created on the first capture, parked
-/// off-screen (never destroyed) afterwards. GPUI window init is the
-/// largest single chunk of keypress-to-overlay latency (~130ms), and
-/// a parked window skips all of it. The string is the window's class.
-pub static POOL: parking_lot::Mutex<Option<(WindowHandle<Overlay>, String)>> =
-    parking_lot::Mutex::new(None);
+/// (minimized, never destroyed) afterwards. GPUI window init is the
+/// largest single chunk of keypress-to-overlay latency (~130ms), and a
+/// parked window skips all of it.
+pub static POOL: parking_lot::Mutex<Option<WindowHandle<Overlay>>> = parking_lot::Mutex::new(None);
 
-#[derive(Clone)]
-struct Flight {
-    img: Arc<RenderImage>,
-    from: (f32, f32, f32, f32),
-    to: (f32, f32, f32, f32),
-    started: Instant,
-    /// The committing window's screen rect: the toast lands on this
-    /// monitor, not wherever the primary display happens to be.
-    screen: (f32, f32, f32, f32),
+/// The rect a drag from `anchor` to `cursor` selects, clamped to a
+/// window of `size`. `square` (Shift held) locks it to a square that
+/// grows away from the anchor in the drag's direction.
+/// Mouse move and mouse up share it, so the committed rect is the one
+/// the drag showed.
+fn drag_region(anchor: (f32, f32), cursor: (f32, f32), size: (f32, f32), square: bool) -> Region {
+    let region = Region::from_corners(anchor, cursor, size.0 as u32, size.1 as u32);
+    if !square {
+        return region;
+    }
+    let right = cursor.0 >= anchor.0;
+    let down = cursor.1 >= anchor.1;
+    let side = (region.width.max(region.height) as f32)
+        .min(if right { size.0 - anchor.0 } else { anchor.0 })
+        .min(if down { size.1 - anchor.1 } else { anchor.1 });
+    Region {
+        x: if right { anchor.0 } else { anchor.0 - side }.max(0.0) as u32,
+        y: if down { anchor.1 } else { anchor.1 - side }.max(0.0) as u32,
+        width: side as u32,
+        height: side as u32,
+    }
 }
 
 impl Render for Overlay {
@@ -153,11 +169,8 @@ impl Render for Overlay {
 
         // Entrance: the dim fades in over the frozen frame. The frame
         // itself is the desktop's own pixels, so only the dim moves.
-        let opened = *self.opened.get_or_insert_with(Instant::now);
-        let dim_t = (opened.elapsed().as_secs_f32() / crate::motion::tempo(DIM_FADE).as_secs_f32())
-            .min(1.0);
-        let dim = 0.32 * crate::motion::ease_out(dim_t);
-        if dim_t < 1.0 {
+        let (dim, fading) = self.entrance_dim();
+        if fading {
             window.request_animation_frame();
         }
 
@@ -283,49 +296,13 @@ impl Render for Overlay {
                         this.hover_out = Some((old, Instant::now()));
                     }
                     this.hover_in = None;
-                    let mut region = Region::from_corners(
+                    let size = window.bounds().size;
+                    let region = drag_region(
                         this.anchor,
                         (mx, my),
-                        window.bounds().size.width.into(),
-                        window.bounds().size.height.into(),
+                        (f32::from(size.width), f32::from(size.height)),
+                        ev.modifiers.shift,
                     );
-                    // Shift locks the drag to a square, like macOS.
-                    if ev.modifiers.shift {
-                        let side = region.width.max(region.height);
-                        // Grow away from the anchor in the drag's
-                        // direction, clamped to the window.
-                        let size = window.bounds().size;
-                        let (wmax, hmax) = (f32::from(size.width), f32::from(size.height));
-                        let right = mx >= this.anchor.0;
-                        let down = my >= this.anchor.1;
-                        let side = (side as f32)
-                            .min(if right {
-                                wmax - this.anchor.0
-                            } else {
-                                this.anchor.0
-                            })
-                            .min(if down {
-                                hmax - this.anchor.1
-                            } else {
-                                this.anchor.1
-                            });
-                        region = Region {
-                            x: if right {
-                                this.anchor.0
-                            } else {
-                                this.anchor.0 - side
-                            }
-                            .max(0.0) as u32,
-                            y: if down {
-                                this.anchor.1
-                            } else {
-                                this.anchor.1 - side
-                            }
-                            .max(0.0) as u32,
-                            width: side as u32,
-                            height: side as u32,
-                        };
-                    }
                     this.current = Some((
                         region.x as f32,
                         region.y as f32,
@@ -400,73 +377,5 @@ impl Render for Overlay {
         root = self.render_loupe_widget(root, window);
 
         root.into_any_element()
-    }
-}
-
-impl Overlay {
-    /// The capture flight: the committed region springs from the
-    /// selection rect to the toast's corner rect while the dim lifts,
-    /// then the toast appears underneath and the overlay closes.
-    fn render_flight(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        const FLIGHT: Duration = Duration::from_millis(500);
-        let f = self.flight.clone().expect("flight checked");
-        let t = (f.started.elapsed().as_secs_f32() / crate::motion::tempo(FLIGHT).as_secs_f32())
-            .min(1.0);
-        if t >= 1.0 && self.landed.is_some() {
-            self.flight = None;
-            // The flight image's atlas tile must go before the park:
-            // release_assets only looks at live fields, and the window
-            // now outlives the session.
-            crate::widgets::release_render(&f.img, cx);
-            // Window ops from inside a render are dropped by GPUI's
-            // effect queue; defer the toast to after this frame.
-            let (path, thumb, w, h) = self.landed.take().expect("landed checked");
-            let screen = f.screen;
-            cx.defer(move |cx| {
-                // A toast that cannot open loses the notification,
-                // not the daemon: the capture is already on disk.
-                if let Err(e) = stage::show_toast_landed(cx, &path, &thumb, w, h, Some(screen)) {
-                    iris_lib::ilog!("iris: toast: {e}");
-                }
-            });
-            self.park(window, cx);
-        } else {
-            // Still flying, or parked at rest until the background
-            // finalize lands: a slow disk must not strand the card.
-            window.request_animation_frame();
-        }
-        let e = crate::motion::spring(t);
-        let (fx, fy, fw, fh) = f.from;
-        let (tx, ty, tw, th) = f.to;
-        let (x, y, w, h) = (
-            fx + (tx - fx) * e,
-            fy + (ty - fy) * e,
-            fw + (tw - fw) * e,
-            fh + (th - fh) * e,
-        );
-        div()
-            .size_full()
-            // The undimmed frozen frame: the desktop as it was.
-            .children(self.frame_img.clone().map(|i| {
-                img(ImageSource::Render(i))
-                    .size_full()
-                    .object_fit(ObjectFit::Fill)
-            }))
-            .child(
-                div()
-                    .absolute()
-                    .left(px(x))
-                    .top(px(y))
-                    .w(px(w.max(1.0)))
-                    .h(px(h.max(1.0)))
-                    .rounded(px(12.))
-                    .overflow_hidden()
-                    .shadow(theme::shadow_float())
-                    .child(
-                        img(ImageSource::Render(f.img.clone()))
-                            .size_full()
-                            .object_fit(ObjectFit::Fill),
-                    ),
-            )
     }
 }

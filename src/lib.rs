@@ -12,8 +12,11 @@ pub mod log;
 pub mod objc;
 pub mod ocr;
 pub mod par;
+pub mod pixel;
 pub mod record;
+pub mod session;
 pub mod thumb;
 pub mod time;
+pub mod tools;
 
 pub use config::Config;

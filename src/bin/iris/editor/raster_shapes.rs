@@ -16,13 +16,11 @@ pub(crate) fn blend_span(row: &mut [u8], x0: i64, x1: i64, src: image::Rgba<u8>)
     let span = &mut row[(x0 as usize * 4)..=(x1 as usize * 4) + 3];
     let a = src.0[3] as f32 / 255.0;
     if a >= 1.0 {
-        for px in span.chunks_exact_mut(4) {
-            px.copy_from_slice(&src.0);
-        }
+        span.as_chunks_mut::<4>().0.fill(src.0);
         return;
     }
     let inv = 1.0 - a;
-    for px in span.chunks_exact_mut(4) {
+    for px in span.as_chunks_mut::<4>().0 {
         px[0] = (src.0[0] as f32 * a + px[0] as f32 * inv) as u8;
         px[1] = (src.0[1] as f32 * a + px[1] as f32 * inv) as u8;
         px[2] = (src.0[2] as f32 * a + px[2] as f32 * inv) as u8;

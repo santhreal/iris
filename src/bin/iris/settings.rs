@@ -12,6 +12,7 @@ use iris_lib::config::{Config, ToastClickAction, ToastPosition};
 use crate::theme;
 
 mod fields;
+use fields::Choice;
 #[cfg(test)]
 mod tests;
 
@@ -43,9 +44,10 @@ pub struct Settings {
     pub(super) open_dropdown: Option<DropdownField>,
     pub(super) status: Option<String>,
     pub(super) focus: Option<FocusHandle>,
-    /// This window's unique WM_CLASS, for the title-bar drag.
-    pub(super) class: SharedString,
 }
+
+/// The settings window's minimum logical size, where its resize stops.
+const MIN_SIZE: Size<Pixels> = size(px(640.), px(600.));
 
 /// Open the settings window. A second call focuses a new window; the
 /// daemon milestone owns single-instance behavior for all windows.
@@ -53,7 +55,6 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = Some(cx.focus_handle());
     let win = (680.0f32, 650.0f32);
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (220.0, 140.0));
-    let win_id = crate::sys::window::unique_id("dev.iris.settings");
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -69,12 +70,13 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some(win_id.clone()),
-            window_min_size: Some(size(px(640.), px(600.))),
+            app_id: Some("dev.iris.settings".to_string()),
+            window_min_size: Some(MIN_SIZE),
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
         },
-        |_, cx| {
+        |window, cx| {
+            window.set_window_title("Settings - iris");
             cx.new(|_| Settings {
                 cfg: Config::load(),
                 editing: None,
@@ -82,12 +84,10 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 open_dropdown: None,
                 status: None,
                 focus,
-                class: SharedString::from(win_id.clone()),
             })
         },
     )
     .map_err(|e| format!("open settings window: {e}"))?;
-    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
     Ok(())
 }
 
@@ -188,7 +188,7 @@ impl Render for Settings {
             5000 => "5s".to_string(),
             8000 => "8s".to_string(),
             10000 => "10s".to_string(),
-            ms if ms % 1000 == 0 => format!("{}s", ms / 1000),
+            ms if ms.is_multiple_of(1000) => format!("{}s", ms / 1000),
             ms => format!("{}ms", ms),
         };
         let toast_duration_selected = match self.cfg.toast_duration_ms {
@@ -223,9 +223,7 @@ impl Render for Settings {
                     "drop-toast-click",
                     "Click action",
                     DropdownField::ToastClickAction,
-                    toast_click_current,
-                    toast_click_options,
-                    toast_click_selected,
+                    Choice::new(toast_click_current, toast_click_options, toast_click_selected),
                     cx,
                     |this, idx, _, _| {
                         this.cfg.toast_click_action = match idx {
@@ -263,9 +261,11 @@ impl Render for Settings {
                     "drop-toast-duration",
                     "Duration",
                     DropdownField::ToastDuration,
-                    toast_duration_current,
-                    toast_duration_options,
-                    toast_duration_selected,
+                    Choice::new(
+                        toast_duration_current,
+                        toast_duration_options,
+                        toast_duration_selected,
+                    ),
                     cx,
                     |this, idx, _, _| {
                         this.cfg.toast_duration_ms = match idx {
@@ -283,9 +283,7 @@ impl Render for Settings {
                     "drop-toast-pos",
                     "Position",
                     DropdownField::ToastPosition,
-                    toast_pos_current,
-                    toast_pos_options,
-                    toast_pos_selected,
+                    Choice::new(toast_pos_current, toast_pos_options, toast_pos_selected),
                     cx,
                     |this, idx, _, _| {
                         this.cfg.toast_position = match idx {
@@ -333,9 +331,7 @@ impl Render for Settings {
                     "drop-rec-fmt",
                     "Format",
                     DropdownField::RecordingFormat,
-                    rec_fmt_current,
-                    rec_fmt_options,
-                    rec_fmt_selected,
+                    Choice::new(rec_fmt_current, rec_fmt_options, rec_fmt_selected),
                     cx,
                     |this, idx, _, _| {
                         this.cfg.recording_format = match idx {
@@ -350,9 +346,7 @@ impl Render for Settings {
                     "drop-rec-enc",
                     "MP4 encoder",
                     DropdownField::RecordingEncoder,
-                    rec_enc_current,
-                    rec_enc_options,
-                    rec_enc_selected,
+                    Choice::new(rec_enc_current, rec_enc_options, rec_enc_selected),
                     cx,
                     |this, idx, _, _| {
                         this.cfg.recording_encoder = match idx {
@@ -436,7 +430,7 @@ impl Render for Settings {
             )
             .child(crate::widgets::window_frame(
                 "Settings",
-                self.class.clone(),
+                true,
                 vec![save],
                 content,
             ));
@@ -444,6 +438,6 @@ impl Render for Settings {
         if let Some(status) = &self.status {
             root = root.child(crate::widgets::status_pill(status, 10.0));
         }
-        root
+        root.children(crate::widgets::resize_edges(window, MIN_SIZE))
     }
 }

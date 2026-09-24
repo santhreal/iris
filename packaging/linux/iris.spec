@@ -8,7 +8,7 @@ URL:            https://github.com/santhreal/iris
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc
-BuildRequires:  rust >= 1.80
+BuildRequires:  rust >= 1.90
 BuildRequires:  cargo
 BuildRequires:  pipewire-devel >= 0.3.0
 BuildRequires:  libxkbcommon-devel
@@ -18,13 +18,18 @@ BuildRequires:  wayland-devel
 BuildRequires:  libX11-devel
 BuildRequires:  libxcb-devel
 
+# The binary links pipewire, xcb, and xkbcommon; it loads Vulkan (the
+# renderer), Wayland, fontconfig, and EGL/GLES (Wayland recording) at
+# run time, which no automatic dependency scan sees.
 Requires:       pipewire-libs >= 0.3.0
 Requires:       libxkbcommon
 Requires:       libxkbcommon-x11
-Requires:       fontconfig
-Requires:       wayland-client
-Requires:       libX11
 Requires:       libxcb
+Requires:       fontconfig
+Requires:       libwayland-client
+Requires:       vulkan-loader
+Requires:       libglvnd-egl
+Requires:       libglvnd-gles
 Recommends:     wl-clipboard
 Recommends:     xclip
 

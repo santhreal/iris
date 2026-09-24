@@ -42,11 +42,11 @@ impl IconWindow {
         let lsb = conn.setup().image_byte_order == ImageOrder::LSB_FIRST;
         // ZPixmap at depth 24 is 4 bytes per pixel; LSBFirst wants B,G,R.
         let mut pixels = Vec::with_capacity((w * h * 4) as usize);
-        for px in data.chunks_exact(4) {
+        for &[r, g, b, _] in data.as_chunks::<4>().0 {
             if lsb {
-                pixels.extend_from_slice(&[px[2], px[1], px[0], 0xff]);
+                pixels.extend_from_slice(&[b, g, r, 0xff]);
             } else {
-                pixels.extend_from_slice(&[0xff, px[0], px[1], px[2]]);
+                pixels.extend_from_slice(&[0xff, r, g, b]);
             }
         }
         let pixmap: Pixmap = conn.generate_id().ok()?;

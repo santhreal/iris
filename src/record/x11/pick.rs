@@ -1,11 +1,12 @@
-use std::os::unix::io::AsRawFd;
-use std::sync::mpsc::Receiver;
+use std::os::fd::AsFd;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt as XprotoExt, EventMask, GrabMode, GrabStatus};
 use x11rb::protocol::Event;
 use x11rb::CURRENT_TIME;
 
+use crate::record::wake::Wake;
 use crate::record::CANCELLED_PREFIX;
 
 use super::mark::{connect, escape_keycodes, make_crosshair};
@@ -13,10 +14,10 @@ use super::PickedWindow;
 
 /// Click-to-pick: grab pointer and keyboard, wait for a click (target) or
 /// Escape (cancel). Returns the top-level window under the click. The
-/// stop channel is polled between events: a stop during the pick must
-/// end the wait, or the recording thread never joins and the daemon
-/// wedges on the next command.
-pub fn pick_window(stop: &Receiver<()>) -> Result<PickedWindow, String> {
+/// wait ends on X input or a ring of `wake`: a stop during the pick must
+/// end it, or the recording thread never joins and the daemon wedges on
+/// the next command.
+pub(super) fn pick_window(stop: &Receiver<()>, wake: &Wake) -> Result<PickedWindow, String> {
     let (conn, screen_num) = connect()?;
     let root = conn.setup().roots[screen_num].root;
     let cursor = make_crosshair(&conn)?;
@@ -44,29 +45,20 @@ pub fn pick_window(stop: &Receiver<()>) -> Result<PickedWindow, String> {
         .map_err(|e| e.to_string())?
         .reply();
 
-    let x_fd = conn.stream().as_raw_fd();
     let picked = loop {
-        match stop.try_recv() {
-            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                break Err(format!("{CANCELLED_PREFIX} pick stopped"));
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        // Drained before the stop is read: a stop after the read rings
+        // again, and the next wait ends at once.
+        wake.drain();
+        if !matches!(stop.try_recv(), Err(TryRecvError::Empty)) {
+            break Err(format!("{CANCELLED_PREFIX} pick stopped"));
         }
-        // Sleep on the connection fd: an X event wakes the poll
-        // instantly, and the 50ms timeout re-checks the stop channel.
-        // A bare sleep would burn a wake every 10ms for nothing.
-        let mut pfd = libc::pollfd {
-            fd: x_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        unsafe {
-            libc::poll(&mut pfd, 1, 50);
-        }
+        // Every queued event goes before the wait: an event already
+        // read into the connection's buffer does not wake the poll.
         let Some(event) = conn
             .poll_for_event()
             .map_err(|e| format!("poll_for_event: {e}"))?
         else {
+            wake.wait(Some(conn.stream().as_fd()), None);
             continue;
         };
         match event {

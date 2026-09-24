@@ -30,7 +30,8 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-      - name: Install Linux build deps (gpui + pipewire + X11)
+      # ffmpeg: the recorder tests encode, join, and ffprobe real files.
+      - name: Install Linux build deps (gpui + pipewire + X11) and ffmpeg
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -40,7 +41,7 @@ jobs:
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
             libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
             libpipewire-0.3-dev libspa-0.2-dev \
-            xdg-desktop-portal
+            xdg-desktop-portal ffmpeg
       # Clippy lints report but do not fail the job: --cap-lints warn
       # overrides the job-wide RUSTFLAGS=-Dwarnings for this step only.
       # rustc warnings stay denied in the test and build steps below.
@@ -50,6 +51,169 @@ jobs:
         run: cargo test --locked
       - name: Build release
         run: cargo build --locked --release
+
+  package-macos:
+    name: Package (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build the universal binary
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/iris \
+            target/aarch64-apple-darwin/release/iris \
+            target/x86_64-apple-darwin/release/iris
+      - name: Assemble iris.app and the DMG
+        run: |
+          packaging/macos/make_app.sh --bin target/universal-apple-darwin/release/iris --out dist
+          packaging/macos/make_dmg.sh --app dist/iris.app --out dist
+      - name: Verify the bundle and the DMG
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          dmg="iris-${version}-macos-universal.dmg"
+          codesign --verify --deep --strict dist/iris.app
+          archs=$(lipo -archs dist/iris.app/Contents/MacOS/iris)
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "archs: $archs"; exit 1; }
+          [ "$(plutil -extract CFBundleShortVersionString raw dist/iris.app/Contents/Info.plist)" = "$version" ]
+          (cd dist && shasum -a 256 -c "$dmg.sha256")
+          hdiutil verify "dist/$dmg"
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/$dmg"
+          [ -L "$mnt/Applications" ]
+          [ "$("$mnt/iris.app/Contents/MacOS/iris" --version)" = "iris $version" ]
+          hdiutil detach "$mnt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iris-macos-dmg
+          path: dist/iris-*-macos-universal.dmg*
+          if-no-files-found: error
+
+  package-windows:
+    name: Package (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+      # Later steps start with the job's PATH, not the machine PATH an
+      # installer edits: GITHUB_PATH adds the NSIS directory to it.
+      - name: Install NSIS
+        run: |
+          choco install nsis -y --no-progress
+          Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\NSIS"
+      - name: Build iris.exe and the installer
+        shell: bash
+        run: |
+          cargo build --locked --release --bin iris
+          bash packaging/windows/build_installer.sh --binary target/release/iris.exe --out dist
+      - name: Install, run, and uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $setup = "dist\iris-$version-windows-x86_64-setup.exe"
+          $sidecar = (Get-Content "$setup.sha256" -Raw).Split(' ')[0].Trim()
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $sidecar) { throw "sha256 $hash, sidecar $sidecar" }
+          $dir = Join-Path $env:RUNNER_TEMP 'iris'
+          Start-Process -Wait -FilePath $setup -ArgumentList '/S', "/D=$dir"
+          foreach ($f in 'iris.exe', 'iris.ico', 'uninstall.exe') {
+            if (-not (Test-Path "$dir\$f")) { throw "setup did not install $f" }
+          }
+          $exe = Get-Item "$dir\iris.exe"
+          if ($exe.VersionInfo.ProductVersion -ne $version) { throw "ProductVersion $($exe.VersionInfo.ProductVersion)" }
+          # PE optional header Subsystem: 2 is a GUI program, 3 a console one.
+          $pe = [IO.File]::ReadAllBytes($exe.FullName)
+          $subsystem = [BitConverter]::ToUInt16($pe, [BitConverter]::ToInt32($pe, 0x3C) + 0x5C)
+          if ($subsystem -ne 2) { throw "iris.exe subsystem $subsystem, not GUI (2)" }
+          $printed = & $exe.FullName --version
+          if ($printed -ne "iris $version") { throw "--version printed '$printed'" }
+          $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris'
+          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`"") { throw "Run value $((Get-ItemProperty $run).iris)" }
+          if ((Get-ItemProperty $uninstall).DisplayVersion -ne $version) { throw 'Uninstall DisplayVersion' }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'iris.lnk'
+          if (-not (Test-Path $lnk)) { throw "setup did not create $lnk" }
+          # The uninstaller runs from a copy in %TEMP% and returns at once.
+          Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S'
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $dir) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+          if (Test-Path $dir) { throw "$dir remains after uninstall" }
+          if (Test-Path $lnk) { throw "$lnk remains after uninstall" }
+          if ((Get-Item $run).Property -contains 'iris') { throw 'Run value remains after uninstall' }
+          if (Test-Path $uninstall) { throw 'Uninstall key remains after uninstall' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iris-windows-setup
+          path: dist/iris-*-windows-x86_64-setup.exe*
+          if-no-files-found: error
+
+  package-linux:
+    name: Package (Linux)
+    # The release job's runner: the build host's glibc is the packages'
+    # glibc floor (build_deb.sh reads it from the binary).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+      - name: Install build + packaging deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake clang \
+            libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
+            libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
+            libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal \
+            rpm desktop-file-utils
+      - name: Build iris, the deb, the rpm, and the AppImage
+        run: |
+          cargo build --locked --release --bin iris
+          bash packaging/linux/build_deb.sh --bin target/release/iris --out dist
+          bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
+          bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
+      # The deb installs on this runner; the rpm installs on a clean
+      # Fedora container; the AppImage runs without FUSE.
+      - name: Install, run, and remove each package
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          (cd dist && sha256sum -c ./*.sha256)
+          files="/usr/bin/iris /usr/share/applications/iris.desktop /etc/xdg/autostart/iris-autostart.desktop"
+          sudo apt-get install -y "./dist/iris-${version}-linux-x86_64.deb"
+          [ "$(iris --version)" = "iris $version" ]
+          for f in $files; do dpkg -L iris | grep -qx "$f" || { echo "deb lacks $f"; exit 1; }; done
+          sudo apt-get remove -y iris
+          for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
+          docker run --rm -v "$PWD/dist:/pkg:ro" -e version="$version" -e files="$files" fedora:42 bash -c '
+            set -euo pipefail
+            dnf install -y -q "/pkg/iris-${version}-linux-x86_64.rpm" >/dev/null
+            [ "$(iris --version)" = "iris $version" ]
+            for f in $files; do rpm -ql iris | grep -qx "$f" || { echo "rpm lacks $f"; exit 1; }; done
+            dnf remove -y -q iris >/dev/null
+            for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
+          '
+          [ "$(./dist/iris-${version}-linux-x86_64.AppImage --appimage-extract-and-run --version)" = "iris $version" ]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iris-linux-packages
+          path: dist/iris-*-linux-x86_64.*
+          if-no-files-found: error
 
   fmt:
     name: Format

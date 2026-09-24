@@ -1,446 +1,281 @@
-use std::io::Write;
+//! One segment of a recording: timestamped raw frames in, a Matroska
+//! file out, through a piped ffmpeg child.
+//!
+//! Frames reach ffmpeg framed by `mkv`, each stamped with its capture
+//! time, and the encode keeps those times: an unchanged source writes
+//! no frames. The mic is a PulseAudio input whose wallclock timestamps
+//! are shifted onto the same timeline, so audio and video line up by
+//! capture time, not by when each input happened to open.
+//!
+//! The capture thread never blocks on ffmpeg's stdin: frames go through
+//! `queue` to a writer thread, and every written buffer returns for
+//! reuse.
+
+mod queue;
+
+use std::io;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::process::{Child, ChildStdin, Stdio};
+use std::sync::mpsc::{channel, sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// The raw pixel format frames arrive in, declared to ffmpeg through
-/// -pix_fmt so the capture path never swizzles: a BGRX grab is fed as
-/// `bgra` and memcpy'd, not converted per pixel. Alpha is dropped by
-/// the yuv420p/rgb24 conversion downstream, so no stamping either.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PixFmt {
-    /// 4 bytes/pixel, B,G,R,X in memory (X11 BGRX, PipeWire BGRx).
-    Bgra,
-    /// 4 bytes/pixel, R,G,B,A in memory (GL readPixels, PipeWire RGBx).
-    Rgba,
-    /// 3 bytes/pixel, B,G,R in memory (packed 24bpp X11 ZPixmap).
-    Bgr24,
-    /// 3 bytes/pixel, R,G,B in memory.
-    Rgb24,
-}
+use super::child::{drain, wait_until, written, Closing};
+use super::codec::{audio_args, fit_filter, vfr_args, VideoCodec};
+use super::join::Segment;
+use super::mkv::{self, PixFmt};
+use crate::config::RecordingFormat;
+use crate::tools::Tool;
+use queue::{hang_up, offer, write_stream, Queued, Slot, Stamped};
 
-impl PixFmt {
-    pub fn bytes_per_pixel(self) -> usize {
-        match self {
-            Self::Bgra | Self::Rgba => 4,
-            Self::Bgr24 | Self::Rgb24 => 3,
-        }
-    }
-    fn ffmpeg_name(self) -> &'static str {
-        match self {
-            Self::Bgra => "bgra",
-            Self::Rgba => "rgba",
-            Self::Bgr24 => "bgr24",
-            Self::Rgb24 => "rgb24",
-        }
-    }
-}
-
-/// Runtime parameters for one encode.
-pub struct EncoderConfig {
-    pub output: PathBuf,
+/// What one segment encodes.
+pub struct SegmentSpec {
+    pub path: PathBuf,
+    /// Size and layout of every frame the segment receives.
     pub width: u32,
     pub height: u32,
+    pub pix: PixFmt,
+    /// The recording's canvas: every segment encodes at this size.
+    pub canvas: (u32, u32),
+    /// Nominal rate: the last frame's duration and the reported rate.
     pub fps: u32,
+    pub codec: VideoCodec,
+    pub format: RecordingFormat,
+    /// Record the default PulseAudio source.
     pub mic: bool,
-    pub format: crate::config::RecordingFormat,
-    pub encoder: crate::config::RecordingEncoder,
-    /// Native format of the frames passed to write_frame.
-    pub pix_fmt: PixFmt,
+    /// Time zero: the capture time of the segment's first frame.
+    pub epoch: Instant,
 }
 
-/// Raw RGBA frames in, H.264/AAC mp4 out, via a piped ffmpeg child.
-///
-/// ffmpeg is resolved from PATH at start; absence or a failed encode is a
-/// hard error, never a silent drop. yuv420p requires even dimensions, so a
-/// no-op-on-even scale filter is always applied.
-///
-/// The capture thread never blocks on ffmpeg's stdin: frames go through a
-/// bounded queue to a writer thread, and each consumed buffer returns for
-/// reuse. A queue deeper than `QUEUE_DEPTH` means ffmpeg is behind and
-/// backpressure applies, exactly as a blocking write would.
+/// Queued frames stay under this many bytes: ten 1080p frames, two 4K
+/// frames. More queue means ffmpeg is behind, and frames then drop
+/// instead of growing memory.
+const QUEUE_BYTES: usize = 96 << 20;
+
+/// How long a closing segment may take to drain its queue and let
+/// ffmpeg flush. A wedged ffmpeg is killed at the limit.
+const FLUSH_LIMIT: Duration = Duration::from_secs(10);
+
 pub struct Encoder {
     child: Option<Child>,
-    output: PathBuf,
+    path: PathBuf,
+    audio: bool,
+    epoch: Instant,
     frame_bytes: usize,
-    /// Full frames and repeat markers bound for ffmpeg's stdin.
-    tx: Option<SyncSender<FrameMsg>>,
-    /// Emptied buffers back from the writer thread.
+    /// Timestamp of the newest frame accepted, queued or in the slot.
+    last_ms: Option<u64>,
+    slot: Slot,
+    tx: Option<SyncSender<Stamped>>,
     recycle: Receiver<Vec<u8>>,
-    /// Buffers freed by dropped frames, kept for the next take_buf.
-    /// Without this a backpressured drop frees an 8MB frame and the
-    /// next take_buf re-allocates it.
     spares: Vec<Vec<u8>>,
-    writer: Option<JoinHandle<Result<(), String>>>,
-    /// Frames dropped because the queue was full; logged at finish.
+    writer: Option<Writer>,
+    /// The writer's last frame, sent when it exits.
+    held: Option<Receiver<Vec<u8>>>,
+    stderr: Option<JoinHandle<String>>,
     dropped: u64,
 }
 
-/// Frames in flight between the capture thread and the writer. At 60fps
-/// this is ~1/6s of slack; deeper means ffmpeg cannot keep up and the
-/// capture thread should wait rather than grow memory.
-const QUEUE_DEPTH: usize = 10;
-
-/// One unit of writer work: a fresh frame buffer, or an instruction
-/// to resend the buffer the writer already holds (an unchanged frame
-/// costs no grab and no copy upstream).
-enum FrameMsg {
-    Buf(Vec<u8>),
-    Repeat,
+/// The writer thread, and a channel that disconnects as it ends.
+struct Writer {
+    thread: JoinHandle<io::Result<()>>,
+    exited: Receiver<()>,
 }
 
 impl Encoder {
-    pub fn start(cfg: &EncoderConfig) -> Result<Self, String> {
-        if cfg.width == 0 || cfg.height == 0 || cfg.fps == 0 {
-            return Err(format!(
-                "invalid encoder geometry {}x{} @ {} fps",
-                cfg.width, cfg.height, cfg.fps
-            ));
+    pub fn start(spec: &SegmentSpec) -> Result<Self, String> {
+        let (w, h) = (spec.width, spec.height);
+        if w == 0 || h == 0 {
+            return Err(format!("invalid segment geometry {w}x{h}"));
         }
-        if let Some(parent) = cfg.output.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create recordings dir {}: {e}", parent.display()))?;
+        if let Some(dir) = spec.path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("create recordings dir {}: {e}", dir.display()))?;
         }
-
-        use crate::config::{RecordingEncoder, RecordingFormat};
-        let size = format!("{}x{}", cfg.width, cfg.height);
-        let fps = cfg.fps.to_string();
-        // GIF carries no audio; webm does, through opus.
-        let mic = cfg.mic && cfg.format != RecordingFormat::Gif;
-        let mut args: Vec<String> = vec![
-            "-hide_banner".into(),
-            "-loglevel".into(),
-            "error".into(),
-            "-y".into(),
-            "-f".into(),
-            "rawvideo".into(),
-            "-pix_fmt".into(),
-            cfg.pix_fmt.ffmpeg_name().into(),
-            "-s".into(),
-            size,
-            "-r".into(),
-            fps,
-            "-i".into(),
-            "pipe:0".into(),
-        ];
-        if mic {
-            args.extend(["-f".into(), "pulse".into(), "-i".into(), "default".into()]);
-        }
-        match cfg.format {
-            RecordingFormat::Mp4 => {
-                // NVENC refuses frames below its minimum dimension
-                // (~145x49); a tiny window falls back to x264.
-                let use_nvenc = match cfg.encoder {
-                    RecordingEncoder::Nvenc => true,
-                    RecordingEncoder::Libx264 => false,
-                    RecordingEncoder::Auto => nvenc_available(),
-                } && cfg.width >= 145
-                    && cfg.height >= 49;
-                if use_nvenc {
-                    args.extend([
-                        "-c:v".into(),
-                        "h264_nvenc".into(),
-                        "-preset".into(),
-                        "p4".into(),
-                        "-cq".into(),
-                        "23".into(),
-                        "-pix_fmt".into(),
-                        "yuv420p".into(),
-                    ]);
-                } else {
-                    args.extend([
-                        "-c:v".into(),
-                        "libx264".into(),
-                        "-preset".into(),
-                        "veryfast".into(),
-                        "-crf".into(),
-                        "23".into(),
-                        "-pix_fmt".into(),
-                        "yuv420p".into(),
-                    ]);
-                }
-                args.extend(["-vf".into(), "scale=trunc(iw/2)*2:trunc(ih/2)*2".into()]);
-            }
-            RecordingFormat::Gif => {
-                // Per-frame palettes keep memory bounded on long
-                // recordings; a single global palette would buffer
-                // every frame before writing. GIF fps is capped: the
-                // format's cost scales with frame count.
-                let gif_fps = cfg.fps.min(20).to_string();
-                args.extend([
-                    "-vf".into(),
-                    // format=rgb24 first: BGRX sources carry a garbage
-                    // alpha byte that palettegen would read as
-                    // transparency.
-                    format!(
-                        "format=rgb24,fps={gif_fps},scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=single[p];[s1][p]paletteuse=new=1"
-                    ),
-                    "-f".into(),
-                    "gif".into(),
-                ]);
-            }
-            RecordingFormat::Webm => {
-                args.extend([
-                    "-c:v".into(),
-                    "libvpx-vp9".into(),
-                    "-deadline".into(),
-                    "realtime".into(),
-                    "-cpu-used".into(),
-                    "5".into(),
-                    "-crf".into(),
-                    "32".into(),
-                    "-b:v".into(),
-                    "0".into(),
-                    "-pix_fmt".into(),
-                    "yuv420p".into(),
-                    "-vf".into(),
-                    "scale=trunc(iw/2)*2:trunc(ih/2)*2".into(),
-                ]);
-            }
-        }
-        if mic {
-            let codec = if cfg.format == RecordingFormat::Webm {
-                "libopus"
-            } else {
-                "aac"
-            };
-            args.extend(["-c:a".into(), codec.into(), "-shortest".into()]);
-        }
-        let output = cfg.output.to_string_lossy().into_owned();
-        args.push(output.clone());
-
-        crate::ilog!("iris: record: spawning ffmpeg -> {output}");
-        let mut child = Command::new("ffmpeg")
+        let audio = spec.mic.then(|| audio_args(spec.format)).flatten();
+        let args = ffmpeg_args(spec, audio.as_ref().map(|a| a.as_slice()));
+        crate::ilog!("iris: record: segment {}", spec.path.display());
+        let mut child = Tool::Ffmpeg
+            .command()
             .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("spawn ffmpeg (is it on PATH?): {e}"))?;
-
-        // A 1080p frame is 8.3MB through a 64KB pipe: ~130 write
-        // syscalls per frame. Grow the pipe so each frame is a handful
-        // of writes; failure is not fatal, the default still works.
-        if let Some(stdin) = child.stdin.as_mut() {
-            use std::os::unix::io::AsRawFd;
-            let fd = stdin.as_raw_fd();
-            unsafe {
-                libc::fcntl(fd, libc::F_SETPIPE_SZ, 4 * 1024 * 1024);
-            }
-        }
-
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "ffmpeg stdin not piped".to_string())?;
-        let (tx, rx) = sync_channel::<FrameMsg>(QUEUE_DEPTH);
-        let (rtx, recycle) = std::sync::mpsc::channel::<Vec<u8>>();
-        // The buffer must hold a whole frame or the 4MB pipe is never
-        // used: an 8KB BufWriter still emits ~1000 writes per 8MB
-        // frame. Cap at the pipe size so a huge frame degrades to a
-        // few writes, not thousands.
-        let buf_cap = (cfg.width as usize * cfg.height as usize * cfg.pix_fmt.bytes_per_pixel())
-            .min(4 * 1024 * 1024);
-        let writer = match std::thread::Builder::new()
-            .name("iris-enc-writer".into())
-            .spawn(move || {
-                let mut stdin = std::io::BufWriter::with_capacity(buf_cap, stdin);
-                // The last written buffer stays here so a Repeat can
-                // resend it: an unchanged frame then costs no grab and
-                // no copy anywhere upstream.
-                let mut last: Option<Vec<u8>> = None;
-                for msg in rx.iter() {
-                    match msg {
-                        FrameMsg::Buf(frame) => {
-                            if let Err(e) = stdin.write_all(&frame) {
-                                return Err(format!("write frame to ffmpeg: {e}"));
-                            }
-                            if let Some(old) = last.replace(frame) {
-                                let mut buf = old;
-                                buf.clear();
-                                let _ = rtx.send(buf);
-                            }
-                        }
-                        FrameMsg::Repeat => {
-                            let Some(frame) = &last else {
-                                continue;
-                            };
-                            if let Err(e) = stdin.write_all(frame) {
-                                return Err(format!("write frame to ffmpeg: {e}"));
-                            }
-                        }
-                    }
-                }
-                stdin
-                    .flush()
-                    .map_err(|e| format!("flush ffmpeg stdin: {e}"))
-            }) {
-            Ok(w) => w,
-            Err(e) => {
-                // No writer means ffmpeg would block on stdin forever:
-                // kill it instead of orphaning a headless encoder.
+            .map_err(|e| Tool::Ffmpeg.spawn_error(&e))?;
+        let frame_bytes = w as usize * h as usize * spec.pix.bytes_per_pixel();
+        let (stdin, stderr) = match (child.stdin.take(), child.stderr.take()) {
+            (Some(i), Some(e)) => (i, e),
+            _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("spawn encoder writer: {e}"));
+                return Err("ffmpeg stdio not piped".to_string());
             }
         };
-
+        grow_pipe(&stdin, frame_bytes);
+        let depth = (QUEUE_BYTES / frame_bytes).clamp(2, 10);
+        let (tx, rx) = sync_channel::<Stamped>(depth);
+        let (recycle_tx, recycle) = channel::<Vec<u8>>();
+        let (held_tx, held) = channel::<Vec<u8>>();
+        let header = mkv::header(w, h, spec.pix, spec.fps);
+        let slot = Slot::default();
+        let queued = Queued {
+            rx,
+            slot: slot.clone(),
+        };
+        let (exit_tx, exited) = channel::<()>();
+        let spawned = std::thread::Builder::new()
+            .name("iris-rec-writer".into())
+            .spawn(move || {
+                // Dropped as the thread ends, however it ends.
+                let _exit = exit_tx;
+                let mut last: Option<Vec<u8>> = None;
+                let result = write_stream(stdin, &header, queued, &recycle_tx, &mut last);
+                if let Some(frame) = last {
+                    let _ = held_tx.send(frame);
+                }
+                result
+            })
+            .and_then(|thread| drain(stderr).map(|err| (Writer { thread, exited }, err)));
+        let (writer, stderr) = match spawned {
+            Ok(pair) => pair,
+            Err(e) => {
+                // No writer: ffmpeg would wait on stdin forever.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("spawn segment writer: {e}"));
+            }
+        };
         Ok(Self {
             child: Some(child),
-            output: cfg.output.clone(),
-            frame_bytes: cfg.width as usize * cfg.height as usize * cfg.pix_fmt.bytes_per_pixel(),
+            path: spec.path.clone(),
+            audio: audio.is_some(),
+            epoch: spec.epoch,
+            frame_bytes,
+            last_ms: None,
+            slot,
             tx: Some(tx),
             recycle,
             spares: Vec::new(),
             writer: Some(writer),
+            held: Some(held),
+            stderr: Some(stderr),
             dropped: 0,
         })
     }
 
-    /// An emptied frame buffer for the caller to fill and hand back
-    /// through write_frame. Capacity is exactly one frame.
+    /// An empty buffer to capture the next frame into.
     pub fn take_buf(&mut self) -> Vec<u8> {
-        if let Some(buf) = self.spares.pop() {
-            return buf;
-        }
         self.recycle
             .try_recv()
-            .unwrap_or_else(|_| Vec::with_capacity(self.frame_bytes))
+            .ok()
+            .or_else(|| self.spares.pop())
+            .unwrap_or_else(|| Vec::with_capacity(self.frame_bytes))
     }
 
-    /// Queue one tightly packed RGBA frame for the writer thread. The
-    /// buffer moves into the queue and returns through take_buf once
-    /// written, so no frame bytes are ever copied. A full queue drops
-    /// the frame rather than stalling the capture thread: a blocked
-    /// grab loop slips the absolute frame schedule and the video plays
-    /// fast-forwarded, while a dropped frame keeps real-time pacing.
-    pub fn write_frame(&mut self, buf: Vec<u8>) -> Result<(), String> {
-        if buf.len() != self.frame_bytes {
+    /// Return a buffer that was taken and not written.
+    pub fn give_back(&mut self, mut buf: Vec<u8>) {
+        if self.spares.len() < 2 {
+            buf.clear();
+            self.spares.push(buf);
+        }
+    }
+
+    /// Queue one frame captured at `at`. While the queue is full it
+    /// waits in the slot, where a newer frame replaces it.
+    pub fn write(&mut self, frame: Vec<u8>, at: Instant) -> Result<(), String> {
+        if frame.len() != self.frame_bytes {
             return Err(format!(
-                "frame size mismatch: got {} bytes, expected {}",
-                buf.len(),
+                "frame of {} bytes, segment expects {}",
+                frame.len(),
                 self.frame_bytes
             ));
         }
-        self.send(FrameMsg::Buf(buf))
-    }
-
-    /// Resend the frame the writer last wrote: the source did not
-    /// change, so the grab and the frame copy are both skipped. Same
-    /// drop-on-full backpressure as write_frame.
-    pub fn repeat_frame(&mut self) -> Result<(), String> {
-        self.send(FrameMsg::Repeat)
-    }
-
-    /// Shared send path: writer-liveness check, then try_send with
-    /// drop-on-full backpressure.
-    fn send(&mut self, msg: FrameMsg) -> Result<(), String> {
-        // A dead writer means ffmpeg's stdin is gone; surface its error
-        // rather than queueing into the void.
-        if let Some(w) = &self.writer {
-            if w.is_finished() {
-                let w = self.writer.take().unwrap();
-                return Err(match w.join() {
-                    Ok(Err(e)) => e,
-                    // The writer only returns Ok after the sender
-                    // drops, which cannot happen while self.tx lives;
-                    // report it anyway rather than panic on unwrap_err.
-                    Ok(Ok(())) => "encoder writer exited early".to_string(),
-                    Err(_) => "encoder writer panicked".to_string(),
-                });
-            }
-        }
-        let tx = self
-            .tx
-            .as_ref()
-            .ok_or_else(|| "encoder already finished".to_string())?;
-        match tx.try_send(msg) {
-            Ok(()) => Ok(()),
-            Err(std::sync::mpsc::TrySendError::Full(msg)) => {
-                // The frame is dropped; keep its buffer for the next
-                // take_buf rather than freeing a frame-sized alloc.
-                if let FrameMsg::Buf(mut buf) = msg {
-                    if self.spares.len() < 2 {
-                        buf.clear();
-                        self.spares.push(buf);
-                    }
-                }
+        let ts = self.stamp(at);
+        self.last_ms = Some(ts);
+        let Some(tx) = &self.tx else {
+            return Err("segment already finished".to_string());
+        };
+        match offer(tx, &self.slot, (frame, ts)) {
+            Ok(None) => Ok(()),
+            Ok(Some(displaced)) => {
                 self.dropped += 1;
-                if self.dropped == 1 || self.dropped % 120 == 0 {
+                if self.dropped == 1 || self.dropped.is_multiple_of(120) {
                     crate::ilog!(
                         "iris: record: encoder behind, {} frame(s) dropped",
                         self.dropped
                     );
                 }
+                self.give_back(displaced);
                 Ok(())
             }
-            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                Err("encoder writer gone".to_string())
-            }
+            Err(_) => Err(self.failure()),
         }
     }
 
-    /// Close the frame queue, wait for the writer and ffmpeg to flush,
-    /// and verify the output file exists and is non-empty. The ffmpeg
-    /// wait is bounded: a wedged encoder is killed rather than hanging
-    /// the recording stop path (and with it, the daemon).
-    pub fn finish(mut self) -> Result<PathBuf, String> {
+    /// Milliseconds from the epoch to `at`, kept strictly increasing:
+    /// two frames in one millisecond would share a timestamp.
+    fn stamp(&self, at: Instant) -> u64 {
+        let ms = at.saturating_duration_since(self.epoch).as_millis() as u64;
+        match self.last_ms {
+            Some(last) if ms <= last => last + 1,
+            _ => ms,
+        }
+    }
+
+    /// End the segment at `at`. The writer writes the frame waiting in
+    /// the slot and a tail frame at `at`, then ffmpeg flushes, all on
+    /// the returned finisher. The receiver delivers the segment's last
+    /// frame once its writer exits.
+    pub fn finish(mut self, at: Instant) -> (Closing, Receiver<Vec<u8>>) {
+        // The picture lasted until `at`: repeat it there, unless `at`
+        // is no later than the newest frame.
+        let tail = self.last_ms.and_then(|last| {
+            let ms = at.saturating_duration_since(self.epoch).as_millis() as u64;
+            (ms > last).then_some(ms)
+        });
+        if let Some(tx) = self.tx.take() {
+            hang_up(tx, &self.slot, tail);
+        }
+        let (child, writer) = (self.child.take(), self.writer.take());
+        let stderr = self.stderr.take();
+        let held = self.held.take().expect("held receiver taken once");
+        let (path, audio, dropped) = (self.path.clone(), self.audio, self.dropped);
+        let closing = Closing::spawn(move || {
+            let deadline = Instant::now() + FLUSH_LIMIT;
+            close(child, writer, stderr, path, audio, dropped, deadline)
+        });
+        // Without a finisher the queue still closes: the writer drains,
+        // ffmpeg reads EOF and exits on its own.
+        (closing, held)
+    }
+
+    /// The error of a writer that stopped early: ffmpeg's own message
+    /// when it exited, the pipe error otherwise.
+    fn failure(&mut self) -> String {
         drop(self.tx.take());
-        if let Some(w) = self.writer.take() {
-            match w.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => return Err(e),
-                Err(_) => return Err("encoder writer panicked".to_string()),
-            }
-        }
-        let mut child = self
+        let wrote = self.writer.take().map(|w| w.thread.join());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let status = self
             .child
+            .as_mut()
+            .and_then(|c| wait_until(c, deadline).ok());
+        let text = self
+            .stderr
             .take()
-            .ok_or_else(|| "encoder already finished".to_string())?;
-        drop(child.stdin.take());
-        // Poll try_wait: wait_with_output blocks forever on a wedged
-        // child, and a recording stop must always come back.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(s)) => break s,
-                Ok(None) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err("ffmpeg did not exit within 10s of stdin close; killed".into());
-                }
-                Err(e) => return Err(format!("wait on ffmpeg: {e}")),
+            .and_then(|e| e.join().ok())
+            .unwrap_or_default();
+        match (status, wrote) {
+            (Some(s), _) if !s.success() && !text.is_empty() => {
+                format!("ffmpeg exited {s}: {text}")
             }
-        };
-        let mut stderr = String::new();
-        if let Some(mut err) = child.stderr.take() {
-            use std::io::Read;
-            let _ = err.read_to_string(&mut stderr);
+            (_, Some(Ok(Err(e)))) => format!("write frame to ffmpeg: {e}"),
+            _ => "ffmpeg stopped reading frames".to_string(),
         }
-        if !status.success() {
-            return Err(format!("ffmpeg exited with {}: {}", status, stderr.trim()));
-        }
-        let meta = std::fs::metadata(&self.output)
-            .map_err(|e| format!("output {} missing after encode: {e}", self.output.display()))?;
-        crate::ilog!(
-            "iris: record: encoder finished, {} bytes, {} dropped",
-            meta.len(),
-            self.dropped
-        );
-        if meta.len() == 0 {
-            return Err(format!("output {} is empty", self.output.display()));
-        }
-        Ok(self.output.clone())
     }
 }
 
-/// Best-effort cleanup if the session dies without finish(): kill the
-/// child BEFORE joining the writer — a writer blocked on a full pipe
-/// only unblocks once ffmpeg is dead, so joining first deadlocks.
+/// A dropped encoder kills its ffmpeg before joining the writer: a
+/// writer blocked on a full pipe only returns once ffmpeg is gone.
 impl Drop for Encoder {
     fn drop(&mut self) {
         drop(self.tx.take());
@@ -449,38 +284,98 @@ impl Drop for Encoder {
             let _ = c.wait();
         }
         if let Some(w) = self.writer.take() {
-            let _ = w.join();
+            let _ = w.thread.join();
         }
     }
 }
 
-/// Whether h264_nvenc actually works on this machine. `-encoders` only
-/// says the binary was built with it; a missing GPU or driver makes the
-/// first real encode fail. Probe by encoding one black frame, once per
-/// process, and cache the verdict.
-fn nvenc_available() -> bool {
-    use std::sync::LazyLock;
-    static HAS: LazyLock<bool> = LazyLock::new(|| {
-        Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=black:s=256x256:d=0.1:r=1",
-                "-frames:v",
-                "1",
-                "-c:v",
-                "h264_nvenc",
-                "-f",
-                "null",
-                "-",
-            ])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    });
-    *HAS
+/// The ffmpeg arguments of one segment.
+fn ffmpeg_args(spec: &SegmentSpec, audio: Option<&[&str]>) -> Vec<String> {
+    let mut a: Vec<String> = Vec::with_capacity(48);
+    let mut push = |args: &[&str]| a.extend(args.iter().map(|s| s.to_string()));
+    push(&["-hide_banner", "-loglevel", "error", "-y", "-copyts"]);
+    // The header states every stream parameter: nothing to probe.
+    push(&["-probesize", "32", "-analyzeduration", "0"]);
+    push(&["-f", "matroska", "-i", "pipe:0"]);
+    if audio.is_some() {
+        // Pulse stamps packets with wallclock microseconds; the offset
+        // moves them onto the video's timeline, where the epoch is 0.
+        let now = (SystemTime::now(), Instant::now());
+        let wall = now.0 - now.1.saturating_duration_since(spec.epoch);
+        let epoch = wall.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let offset = format!("-{}.{:06}", epoch.as_secs(), epoch.subsec_micros());
+        push(&["-thread_queue_size", "512", "-itsoffset", &offset]);
+        push(&["-f", "pulse", "-name", "iris", "-i", "default"]);
+    }
+    push(&["-map", "0:v"]);
+    if audio.is_some() {
+        push(&["-map", "1:a"]);
+    }
+    if let Some(f) = fit_filter(spec.width, spec.height, spec.canvas) {
+        push(&["-vf", &f]);
+    }
+    push(spec.codec.args());
+    // Millisecond encoder clock: the default, 1/fps, would round
+    // capture times onto a fixed grid and merge nearby frames.
+    push(&["-enc_time_base:v", "1:1000"]);
+    push(&vfr_args());
+    if let Some(audio) = audio {
+        push(audio);
+        // Pulse never ends; the segment ends with its last frame.
+        push(&["-shortest"]);
+    }
+    push(&["-f", "matroska"]);
+    a.push(spec.path.to_string_lossy().into_owned());
+    a
+}
+
+/// Grow the pipe toward one frame: a 64KB pipe splits a 1080p frame
+/// into ~130 writes. Unprivileged pipes stop at
+/// /proc/sys/fs/pipe-max-size (1MB by default), so a refused size
+/// falls back to 1MB; failing that the default pipe still works.
+fn grow_pipe(stdin: &ChildStdin, frame_bytes: usize) {
+    use std::os::fd::AsRawFd;
+    let fd = stdin.as_raw_fd();
+    for size in [frame_bytes.clamp(1 << 20, 16 << 20), 1 << 20] {
+        // SAFETY: fd is the open write end of the child's stdin pipe.
+        if unsafe { libc::fcntl(fd, libc::F_SETPIPE_SZ, size as libc::c_int) } > 0 {
+            return;
+        }
+    }
+}
+
+/// The finisher: the writer drains its queue and closes stdin, ffmpeg
+/// flushes and exits, and the segment file must hold something. An
+/// ffmpeg that stops reading is killed at `deadline`, which also frees
+/// a writer blocked on the full pipe.
+fn close(
+    child: Option<Child>,
+    writer: Option<Writer>,
+    stderr: Option<JoinHandle<String>>,
+    path: PathBuf,
+    audio: bool,
+    dropped: u64,
+    deadline: Instant,
+) -> Result<Segment, String> {
+    let mut child = child.ok_or("segment has no ffmpeg")?;
+    if let Some(w) = &writer {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if matches!(w.exited.recv_timeout(left), Err(RecvTimeoutError::Timeout)) {
+            let _ = child.kill();
+        }
+    }
+    let wrote = writer.map(|w| w.thread.join());
+    let status = wait_until(&mut child, deadline);
+    let text = stderr.and_then(|e| e.join().ok()).unwrap_or_default();
+    let status = status?;
+    if !status.success() {
+        return Err(format!("ffmpeg exited {status}: {text}"));
+    }
+    match wrote {
+        Some(Ok(Ok(()))) => {}
+        Some(Ok(Err(e))) => return Err(format!("write frame to ffmpeg: {e}")),
+        _ => return Err("segment writer panicked".to_string()),
+    }
+    crate::ilog!("iris: record: segment done, {dropped} frame(s) dropped");
+    written(Segment { path, audio })
 }

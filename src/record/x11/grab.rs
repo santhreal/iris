@@ -1,13 +1,12 @@
-use x11rb::connection::{Connection, RequestConnection};
+use x11rb::connection::Connection;
 use x11rb::protocol::composite::ConnectionExt as CompositeExt;
-use x11rb::protocol::damage::{self, ConnectionExt as DamageExt, ReportLevel};
 use x11rb::protocol::shm::ConnectionExt as ShmExt;
 use x11rb::protocol::xproto::{
     ConnectionExt as XprotoExt, ImageFormat, ImageOrder, Pixmap, Window,
 };
 use x11rb::rust_connection::RustConnection;
 
-use crate::record::encoder::PixFmt;
+use crate::record::mkv::PixFmt;
 
 use super::{FrameGeom, Rect};
 
@@ -55,8 +54,8 @@ pub(super) fn resolve_pix_fmt(
     // word, so memory is B,G,R,X (the common TrueColor case); red in
     // the low byte is R,G,B,X.
     let fmt = match (bpp, visual.red_mask) {
-        (32, 0x00FF_0000) => PixFmt::Bgra,
-        (32, 0x0000_00FF) => PixFmt::Rgba,
+        (32, 0x00FF_0000) => PixFmt::Bgrx,
+        (32, 0x0000_00FF) => PixFmt::Rgbx,
         (24, 0x00FF_0000) => PixFmt::Bgr24,
         (24, 0x0000_00FF) => PixFmt::Rgb24,
         (b, m) => {
@@ -285,86 +284,6 @@ pub(super) fn grab_pixmap(
         ));
     }
     copy_frame_bytes(&image.data, need, out)
-}
-
-/// XDamage subscription for the recording source. RAW_RECTANGLES
-/// delivers one Notify per damaged region with its area, so the dirty
-/// flag is exact: set by an event intersecting the record rect,
-/// cleared after the grab. `None` when the extension is absent, which
-/// degrades to grabbing every frame.
-pub(super) struct DamageWatch {
-    id: damage::Damage,
-    /// Damage outside this rect does not dirty the frame; None means
-    /// the whole drawable counts (window recording).
-    rect: Option<Rect>,
-    dirty: bool,
-}
-
-impl DamageWatch {
-    /// Subscribe to `drawable`. Returns None when the extension or the
-    /// create request fails: the caller then grabs every frame.
-    pub(super) fn arm(
-        conn: &RustConnection,
-        drawable: x11rb::protocol::xproto::Drawable,
-        rect: Option<Rect>,
-    ) -> Option<Self> {
-        conn.extension_information(damage::X11_EXTENSION_NAME)
-            .ok()??;
-        DamageExt::damage_query_version(conn, 1, 1)
-            .ok()?
-            .reply()
-            .ok()?;
-        let id = conn.generate_id().ok()?;
-        DamageExt::damage_create(conn, id, drawable, ReportLevel::RAW_RECTANGLES)
-            .ok()?
-            .check()
-            .ok()?;
-        // First frame always grabs.
-        Some(Self {
-            id,
-            rect,
-            dirty: true,
-        })
-    }
-
-    /// Fold one DamageNotify into the dirty flag. Called from the
-    /// same drain that tracks ConfigureNotify, so events are consumed
-    /// exactly once.
-    pub(super) fn note(&mut self, ev: &damage::NotifyEvent) {
-        if ev.damage != self.id {
-            return;
-        }
-        if let Some(r) = self.rect {
-            let a = &ev.area;
-            let (ax, ay) = (i32::from(a.x), i32::from(a.y));
-            let (aw, ah) = (i32::from(a.width), i32::from(a.height));
-            let (rx, ry) = (i32::from(r.x), i32::from(r.y));
-            let (rw, rh) = (i32::from(r.w), i32::from(r.h));
-            let hit = ax < rx + rw && ax + aw > rx && ay < ry + rh && ay + ah > ry;
-            if !hit {
-                return;
-            }
-        }
-        self.dirty = true;
-    }
-
-    /// True when the source changed since the last call. The subtract
-    /// keeps the server-side region from growing without bound; it is
-    /// hygiene, not correctness, since RAW_RECTANGLES events do not
-    /// depend on the accumulated region.
-    pub(super) fn take_dirty(&mut self, conn: &RustConnection) -> bool {
-        if !self.dirty {
-            return false;
-        }
-        self.dirty = false;
-        let _ = DamageExt::damage_subtract(conn, self.id, x11rb::NONE, x11rb::NONE);
-        let _ = conn.flush();
-        true
-    }
-
-    pub(super) fn release(&self, conn: &RustConnection) {
-        let _ = DamageExt::damage_destroy(conn, self.id);
-    }
 }
 
 /// Grab a rect of the root window through SHM (or the socket when SHM

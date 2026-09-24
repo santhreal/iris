@@ -1,17 +1,11 @@
+use std::path::PathBuf;
 use std::prelude::v1::test;
 
-use super::{visible_rows, GAP, THUMB_H};
+use iris_lib::library::CaptureEntry;
 
-#[test]
-fn containing_folder_path_resolution() {
-    let path = std::path::Path::new("/tmp/iris/captures/screenshot_01.png");
-    let parent = path.parent().unwrap_or(path);
-    assert_eq!(parent, std::path::Path::new("/tmp/iris/captures"));
-
-    let root_file = std::path::Path::new("/file.png");
-    let parent = root_file.parent().unwrap_or(root_file);
-    assert_eq!(parent, std::path::Path::new("/"));
-}
+use super::entries::{fit_name, name_cols};
+use super::{visible_rows, Library, CARD_W, GAP, LABEL_GAP, LABEL_PAD, THUMB_H};
+use crate::theme::SMALL_ADVANCE;
 
 // The virtualized grid must place every rendered card at the same
 // document offset an un-virtualized wrap would, and preserve the
@@ -59,4 +53,83 @@ fn visible_rows_preserves_card_offsets_and_scroll_height() {
 
     // Empty library: no rows, no spacers.
     assert_eq!(visible_rows(0, cols, 0.0, 500.0), (0, 0, 0.0, 0.0));
+}
+
+// WHY: a card's label is fitted to its row before layout, because GPUI
+// clips nowrap text rather than ending it in an ellipsis. Two classes
+// are closed here. "The label overruns its row": the name and the
+// dimensions together pass the card edge or run into each other.
+// "The label hides what tells two captures apart": a shortened name
+// drops the tail that holds the seconds and the collision suffix, so
+// two cards read the same. Not covered: glyphs outside JetBrains Mono
+// (a CJK fallback face is wider than 0.6 em), which the row clips.
+
+fn entry(file: &str, width: u32, height: u32) -> CaptureEntry {
+    CaptureEntry {
+        path: PathBuf::from("shots").join(file),
+        thumb: PathBuf::new(),
+        width,
+        height,
+        created_ms: 0,
+    }
+}
+
+#[test]
+fn every_label_fits_its_row() {
+    let sides = [1, 12, 123, 1234, 12345, u32::MAX];
+    let names = [
+        "a",
+        "2026-09-23_10-51-52",
+        "2026-09-23_10-51-52-2",
+        "Screenshot 2026-09-23 at 10-51-52 of the release notes",
+        "äöüßäöüßäöüßäöüßäöüßäöüßäöüßäöüß",
+    ];
+    for w in sides {
+        for h in sides {
+            for name in names {
+                let (label, dims) = Library::entry_name(&entry(&format!("{name}.png"), w, h));
+                let cols = label.chars().count() + dims.chars().count();
+                let width = cols as f32 * SMALL_ADVANCE + LABEL_GAP + 2.0 * LABEL_PAD;
+                assert!(
+                    width <= CARD_W,
+                    "{label:?} beside {dims:?} is {width}px on a {CARD_W}px card"
+                );
+                // Shortened only when the whole stem does not fit.
+                if name.chars().count() <= name_cols(&dims) {
+                    assert_eq!(label, name, "beside {dims:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_default_name_shows_whole_and_its_suffix_survives_shortening() {
+    for (w, h) in [(1280, 720), (3840, 2160), (7680, 4320)] {
+        // {date}_{time}, the default template, drops only the extension.
+        let (label, _) = Library::entry_name(&entry("2026-09-23_10-51-52.png", w, h));
+        assert_eq!(label, "2026-09-23_10-51-52");
+        let (label, _) = Library::entry_name(&entry("2026-09-23_10-51-52-2.png", w, h));
+        assert!(label.ends_with("-51-52-2"), "{label:?} beside {w}x{h}");
+    }
+}
+
+#[test]
+fn a_shortened_name_keeps_its_head_and_tail() {
+    assert_eq!(fit_name("abcdefghij", 10), "abcdefghij");
+    assert_eq!(fit_name("abcdefghij", 9), "abcd\u{2026}ghij");
+    assert_eq!(fit_name("abcdefghij", 6), "abc\u{2026}ij");
+    assert_eq!(fit_name("abcdefghij", 5), "ab\u{2026}ij");
+    assert_eq!(fit_name("abcdefghij", 1), "\u{2026}");
+    // Characters, not bytes: a cut inside a multi-byte one panics.
+    assert_eq!(fit_name("äöüßäöüß", 5), "äö\u{2026}üß");
+    assert_eq!(fit_name("截图截图截图", 4), "截图\u{2026}图");
+}
+
+#[test]
+fn names_that_differ_only_at_the_end_stay_apart() {
+    let (a, b) = ("2026-09-23_10-51-52-2", "2026-09-23_10-51-52-3");
+    for cols in 3..=a.len() + 2 {
+        assert_ne!(fit_name(a, cols), fit_name(b, cols), "{cols} columns");
+    }
 }

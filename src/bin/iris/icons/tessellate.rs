@@ -119,17 +119,26 @@ fn icon_geometry(kind: Icon, mut path: &mut impl TriSink, s: f32) {
             }
         }
         Icon::Gear => {
-            // Ring with eight spokes.
-            push_ring(&mut path, p(9.0, 9.0), 3.4 * s, 3.4 * s, w);
+            // Eight square teeth on a thick ring. Detached thin spokes
+            // read as a sun, not as settings.
             let c = p(9.0, 9.0);
+            push_ring(&mut path, c, 4.1 * s, 4.1 * s, 2.2 * s);
             for i in 0..8 {
                 let a = i as f32 / 8.0 * std::f32::consts::TAU;
-                let (r0, r1) = (4.8 * s, 6.6 * s);
-                push_segment(
+                let (ux, uy) = (a.cos(), a.sin());
+                // Radius r along the tooth's axis, h across it.
+                let at = |r: f32, h: f32| {
+                    point(
+                        c.x + px((ux * r - uy * h) * s),
+                        c.y + px((uy * r + ux * h) * s),
+                    )
+                };
+                push_quad(
                     &mut path,
-                    point(c.x + px(r0 * a.cos()), c.y + px(r0 * a.sin())),
-                    point(c.x + px(r1 * a.cos()), c.y + px(r1 * a.sin())),
-                    1.5 * s,
+                    at(4.8, 1.2),
+                    at(7.2, 0.9),
+                    at(7.2, -0.9),
+                    at(4.8, -1.2),
                 );
             }
         }
@@ -293,6 +302,12 @@ fn icon_geometry(kind: Icon, mut path: &mut impl TriSink, s: f32) {
         Icon::Play => {
             // Right-pointing triangle.
             push_filled_triangle(&mut path, p(6.0, 4.0), p(6.0, 14.0), p(14.5, 9.0));
+        }
+        Icon::Alert => {
+            // Ring with an exclamation mark: stem over a dot.
+            push_ring(&mut path, p(9.0, 9.0), 6.6 * s, 6.6 * s, w);
+            push_segment(&mut path, p(9.0, 5.2), p(9.0, 10.0), 1.8 * s);
+            push_disc(&mut path, p(9.0, 12.9), 1.15 * s);
         }
     }
 }

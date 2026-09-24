@@ -45,7 +45,7 @@ pub fn apply_file(file: &Path) -> Result<(), String> {
         .args(["detach", mount])
         .status();
     match copy {
-        Ok(s) if s.success() => super::relaunch(),
+        Ok(s) if s.success() => super::relaunch(&dst.join("Contents/MacOS/iris")),
         Ok(s) => Err(format!("update: copy app exited {s}")),
         Err(e) => Err(format!("update: copy app: {e}")),
     }

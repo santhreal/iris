@@ -29,7 +29,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-      - name: Install Linux build deps
+      # ffmpeg: the recorder tests encode, join, and ffprobe real files.
+      - name: Install Linux build deps and ffmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -37,7 +38,7 @@ jobs:
             libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
             libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
-            libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal
+            libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal ffmpeg
       - name: Test
         run: cargo test --locked
 
@@ -52,8 +53,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
+      # Later steps start with the job's PATH, not the machine PATH an
+      # installer edits: GITHUB_PATH adds the NSIS directory to it.
       - name: Install NSIS
-        run: choco install nsis -y
+        run: |
+          choco install nsis -y --no-progress
+          Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\NSIS"
       - name: Build iris
         run: cargo build --release --locked --bin iris
       - name: Build installer
@@ -105,7 +110,9 @@ jobs:
   linux:
     name: Linux packages
     needs: ci
-    runs-on: ubuntu-latest
+    # Pinned: the build host's glibc is the packages' glibc floor
+    # (build_deb.sh reads it from the binary), so it moves only here.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -113,6 +120,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
+      # build_appimage.sh fetches appimagetool and runs it with
+      # --appimage-extract-and-run, so the runner needs no FUSE.
       - name: Install build + packaging deps
         run: |
           sudo apt-get update
@@ -122,15 +131,9 @@ jobs:
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
             libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
             libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal \
-            rpm fuse libfuse2 desktop-file-utils
+            rpm desktop-file-utils
       - name: Build iris
         run: cargo build --release --locked --bin iris
-      - name: Fetch appimagetool
-        run: |
-          curl -sSL -o appimagetool \
-            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
-          sudo mv appimagetool /usr/local/bin/
       - name: Build deb + rpm + AppImage
         run: |
           version="${GITHUB_REF#refs/tags/v}"

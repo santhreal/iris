@@ -9,13 +9,20 @@
 //! no-op.
 //!
 //! `ipc` is fully cross-platform (interprocess local sockets map to
-//! Unix domain sockets on Unix and named pipes on Windows). `hotkeys`,
-//! `install`, `record`, `tray`, and `window` have a per-OS implementation each.
+//! Unix domain sockets on Unix and named pipes on Windows). `alloc`
+//! sets the glibc allocator policy and `console` attaches a Windows
+//! command line to its terminal; both are empty elsewhere. `hotkeys`,
+//! `install`, `record`, `reveal`, `sound`, `tray`, and `window` have a
+//! per-OS implementation each.
 
+pub mod alloc;
+pub mod console;
 pub mod ipc;
 
 pub mod hotkeys;
 pub mod install;
 pub mod record;
+pub mod reveal;
+pub mod sound;
 pub mod tray;
 pub mod window;

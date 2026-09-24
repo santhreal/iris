@@ -253,7 +253,7 @@ fn legacy_dirty(
     Editor::restore_region(base, composite, r);
     let first = actions
         .iter()
-        .position(|a| Editor::footprint(a).map_or(true, |f| Editor::intersects(f, region)));
+        .position(|a| Editor::footprint(a).is_none_or(|f| Editor::intersects(f, region)));
     if let Some(first) = first {
         Editor::replay_actions(composite, actions, first);
     }

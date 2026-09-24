@@ -4,10 +4,6 @@ use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
 
 use super::super::WinRect;
 
-/// Active monitor rectangles in root (frame) pixels, primary first.
-/// The overlay opens one window per monitor, each showing its slice
-/// of the frozen frame at native scale. Falls back to the whole
-/// root when the WM reports no monitors.
 /// A process-shared X connection for read-only queries (monitors,
 /// window list). The handshake is ~10ms; a daemon that opens one per
 /// capture, toast, and editor pays it on every surface. The connection
@@ -34,6 +30,8 @@ fn atom_cached(conn: &impl Connection, name: &'static [u8]) -> Option<u32> {
     Some(atom)
 }
 
+/// Active monitor rectangles in root (frame) pixels, primary first.
+/// Falls back to the whole root when randr reports no monitors.
 pub fn monitors() -> Result<Vec<WinRect>, String> {
     let (conn, screen_num) = shared_conn()?;
     let screen = &conn.setup().roots[screen_num];

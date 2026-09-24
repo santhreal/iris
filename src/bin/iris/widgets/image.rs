@@ -12,37 +12,26 @@ use gpui::App;
 /// cheaper than the old path (BMP encode + decode round trip).
 ///
 /// `rgba` is a tightly packed RGBA8 buffer; GPUI's atlas wants BGRA.
-/// RGBA->BGRA in place, one u32 per pixel: the rotate form vectorizes;
-/// a byte-wise swap does not.
-#[inline]
-pub(crate) fn swizzle_rgba_bgra(chunk: &mut [u8]) {
-    for px in chunk.chunks_exact_mut(4) {
-        let v = u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
-        let bgr = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-        px.copy_from_slice(&bgr.to_le_bytes());
-    }
-}
-
 pub fn render_image_from_rgba(
     width: u32,
     height: u32,
     rgba: &[u8],
 ) -> std::sync::Arc<gpui::RenderImage> {
-    // Uninit capacity, not a zeroed vec: the fused copy+swizzle writes
-    // every byte, and a multi-MB memset before a multi-MB fill is a
-    // wasted pass. On failure the buffer drops without being read.
+    // Uninit capacity, not a zeroed vec: the conversion writes every
+    // byte, and a multi-MB memset before a multi-MB fill is a wasted
+    // pass. On failure the buffer drops without being read.
     let mut data: Vec<u8> = Vec::with_capacity(rgba.len());
     #[allow(clippy::uninit_vec)]
     unsafe {
         data.set_len(rgba.len())
     };
-    // Fused copy+swizzle, banded across threads once the buffer is
-    // large enough to pay for the spawn (the 152px loupe, rebuilt
-    // every mousemove, stays inline).
+    // One read and one write per pixel, banded across threads once the
+    // buffer is large enough to pay for the spawn (the 152px loupe,
+    // rebuilt every mousemove, stays inline).
     let row = width as usize * 4;
     iris_lib::par::par_bands_mut(&mut data, row, |dst, start| {
-        dst.copy_from_slice(&rgba[start..start + dst.len()]);
-        swizzle_rgba_bgra(dst);
+        let src = &rgba[start..start + dst.len()];
+        iris_lib::pixel::map_into(src, dst, iris_lib::pixel::swap_rb);
     });
     let buf = ::image::RgbaImage::from_raw(width, height, data).expect("rgba buffer size");
     std::sync::Arc::new(gpui::RenderImage::new([::image::Frame::new(buf)]))
@@ -60,25 +49,35 @@ pub fn render_image_from_bgra_owned(
     std::sync::Arc::new(gpui::RenderImage::new([::image::Frame::new(buf)]))
 }
 
-/// Same construction from encoded PNG bytes (thumbs, editor base).
+/// Same construction from encoded PNG bytes (the pin's base).
 pub fn render_image_from_png(bytes: &[u8]) -> Option<std::sync::Arc<gpui::RenderImage>> {
-    let mut data = ::image::load_from_memory_with_format(bytes, ::image::ImageFormat::Png)
+    let data = ::image::load_from_memory_with_format(bytes, ::image::ImageFormat::Png)
         .ok()?
         .into_rgba8();
-    // Same banding as the rgba path: a 4K editor base is a 33MB
-    // swizzle, too big for one thread.
-    let row = data.width() as usize * 4;
-    iris_lib::par::par_bands_mut(data.as_mut(), row, |band, _| {
-        swizzle_rgba_bgra(band);
-    });
-    Some(std::sync::Arc::new(gpui::RenderImage::new([
-        ::image::Frame::new(data),
-    ])))
+    Some(render_image_from_rgba_owned(data))
 }
 
-/// Free a `RenderImage`'s sprite-atlas tile across every window.
-/// Release between frames (event handlers) or via `cx.defer` from
-/// render; dropping mid-paint blanks the frame.
+/// Same construction from decoded RGBA pixels the caller hands over:
+/// the swizzle runs in place, so no second buffer.
+pub fn render_image_from_rgba_owned(
+    mut data: ::image::RgbaImage,
+) -> std::sync::Arc<gpui::RenderImage> {
+    // Same banding as the rgba path: a 4K base is a 33MB swizzle, too
+    // big for one thread.
+    let row = data.width() as usize * 4;
+    iris_lib::par::par_bands_mut(data.as_mut(), row, |band, _| {
+        iris_lib::pixel::swap_rb_in_place(band)
+    });
+    std::sync::Arc::new(gpui::RenderImage::new([::image::Frame::new(data)]))
+}
+
+/// Free a `RenderImage`'s sprite-atlas tile in every window. The drop
+/// runs at the end of the current effect cycle: inside a window update
+/// GPUI has that window checked out of `App::windows`, so an immediate
+/// `drop_image(_, None)` skips the one window the image was painted in,
+/// and a pooled window (the overlay) keeps the tile forever. Deferred,
+/// it also never lands mid-paint, where a drop blanks the frame.
 pub fn release_render(image: &std::sync::Arc<gpui::RenderImage>, cx: &mut App) {
-    cx.drop_image(image.clone(), None);
+    let image = image.clone();
+    cx.defer(move |cx| cx.drop_image(image, None));
 }

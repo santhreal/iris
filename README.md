@@ -1,170 +1,51 @@
 # iris
 
-Screenshot and screen-recording utility. Press a key, click a window or
-drag a region, done: the capture is on disk and on the clipboard before
-you look away.
+iris is a screenshot and screen-recording tool for Linux (X11 and Wayland), Windows, and macOS. A background daemon holds the global hotkeys and the tray icon. A capture freezes the screen for region selection, saves a PNG, copies it to the clipboard, and shows a thumbnail toast that opens the annotation editor.
 
-## What it does
+![Capture Overlay](docs/images/overlay.png)
 
-- **Capture** (`Print` or `iris --capture`): freezes the screen, dims it,
-  and lets you click a window (hover shows a dashed snap outline) or drag
-  a region. A live loupe shows 8x zoom with pixel coordinates and hex
-  color. The PNG saves to your screenshots folder and copies to the
-  clipboard immediately. A corner toast offers annotate / open / delete;
-  the annotation editor is opt-in, never in the way.
-- **Record window** (`Ctrl+Shift+R` or `iris --record-window`): crosshair
-  window pick on X11, portal source pick on Wayland. While recording, a
-  click-through red border wraps the target window and a floating chip
-  shows the elapsed time and mic state. Stop with the same hotkey, the
-  tray, or `iris --record-window` again. Output is H.264/AAC mp4 via
-  ffmpeg. On Windows and macOS the same toggle records the main display.
-- **Record region** (`iris --record-region`): drag a screen region and
-  record just that area.
-- **Pin to screen**: pin a capture as an always-on-top reference image;
-  drag to move, double-click or Esc to close.
-- **Annotate**: the editor has pen, line, arrow, rect, ellipse, text,
-  highlight, blur, crop, and a numbered-counter tool; undo/redo, fill
-  toggle, zoom and pan. Press `?` in the editor for the shortcut sheet.
-- **OCR**: the toast's context menu can copy recognized text from a
-  capture.
-- **Library**: the main window lists captures with thumbnails; copy,
-  annotate, reveal, or delete from there.
-- **CLI flags forward to the running instance**, so compositor keybinds
-  (Hyprland, i3, sxhkd) drive the same iris process.
+## Features
+
+- [Screen Capture](docs/capture.md): Frozen-frame region selection, window snap, 8x loupe magnifier, pixel color sampler, full-screen, and delayed capture.
+- [Toast Notifications](docs/toast.md): Post-capture thumbnail card with file drag-out, action bar, and pinned reference windows.
+- [Annotation Editor](docs/editor.md): Vector markup tools including pen, arrows, shapes, text, blur, counter badges, and crop.
+- [Screen Recording](docs/recording.md): Window and region video recording via ffmpeg, with floating indicator chip and MP4, GIF, and WebM export.
+- [Capture Library](docs/library.md): Thumbnail grid with batch selection, file drag-out, quick copy, and folder reveal.
+- [CLI Dispatch](docs/cli.md): Arguments forward to the running daemon over local IPC for window manager and compositor keybindings.
+- [Configuration](docs/configuration.md): Plain TOML settings file and graphical configuration editor.
+- [Cross-Platform](docs/platforms.md): Native backend integration for X11, Wayland portals, Windows GDI, and macOS CoreGraphics.
 
 ## Install
 
-Download an installer from the
-[releases](https://github.com/santhreal/iris/releases) page. Each asset
-has a `.sha256` checksum beside it.
+Download installers and binaries from [Releases](https://github.com/santhreal/iris/releases). See the [Installation Guide](docs/install.md) for full instructions and checksums.
 
-### Windows
+- **Windows**: Run `iris-<ver>-windows-x86_64-setup.exe` (per-user installation, autostart registered).
+- **macOS**: Drag `iris.app` from `iris-<ver>-macos-universal.dmg` to Applications (status-bar menu item).
+- **Linux**: Install `iris-<ver>-linux-x86_64.deb` on Debian/Ubuntu, `iris-<ver>-linux-x86_64.rpm` on Fedora/RHEL, or run `iris-<ver>-linux-x86_64.AppImage`.
+- **Source**: `cargo build --release --bin iris`. Build dependencies per platform are in the [Installation Guide](docs/install.md#build-requirements-and-compilation).
 
-Run `iris-<ver>-windows-x86_64-setup.exe`. The installer is per-user
-(no admin), puts `iris.exe` in `%LOCALAPPDATA%\Programs\iris`, adds a
-Start Menu shortcut, and registers iris to start at login. Uninstall
-from Add/Remove Programs.
+Recording requires `ffmpeg`.
 
-### macOS
+![Annotation Editor](docs/images/editor.png)
 
-Open `iris-<ver>-macos-universal.dmg` and drag `iris.app` to
-Applications. iris is a menu-bar app (`LSUIElement`), so it does not
-appear in the Dock; control it from the status item. To start it at
-login, install the LaunchAgent:
+## Quick Start
 
-```sh
-mkdir -p ~/Library/LaunchAgents
-cp /Applications/iris.app/Contents/Resources/dev.iris.app.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/dev.iris.app.plist
-```
+1. Start iris:
+   ```sh
+   iris
+   ```
+   The daemon runs in the background with a tray icon. The application menu entry on Linux and the Start menu shortcut on Windows run `iris --home`, which opens the home window. On macOS, opening iris.app while the daemon runs with no iris window open shows the home window.
+2. Press `Print` (`F13` on macOS) or run `iris --capture` to open the region capture overlay.
+3. Click a window to capture it, or drag a rectangle and press `Enter`.
+4. Click the preview toast to open the annotation editor.
+5. Press `Ctrl+Shift+R` or run `iris --record-window` to toggle window recording.
 
-### Linux
+![Home Window](docs/images/home.png)
 
-Debian/Ubuntu: `sudo apt install ./iris-<ver>-linux-x86_64.deb`.
-Fedora/RHEL: `sudo dnf install ./iris-<ver>-linux-x86_64.rpm`.
-Anywhere else: make `iris-<ver>-linux-x86_64.AppImage` executable and
-run it. The deb/rpm install a `.desktop` launcher and an XDG autostart
-entry; the AppImage is self-contained.
+## Documentation
 
-### From source
+The manual starts at [docs/SUMMARY.md](docs/SUMMARY.md).
 
-Requires Rust and ffmpeg on `PATH`.
+## License
 
-```sh
-cargo build --release
-```
-
-The binary is `iris`. Run it once to start the daemon (tray, global
-hotkeys); later invocations forward flags to the running instance.
-
-For development: `cargo run`.
-
-## Updates
-
-`iris --check-update` reports whether a newer release exists.
-`iris --update` downloads the platform asset and applies it: the NSIS
-installer on Windows, a `.app` swap on macOS, an in-place AppImage
-replace on Linux. A deb/rpm install updates through the package
-manager instead. The Settings window has a Check-for-updates button
-that reports through the status pill.
-
-## Configuration
-
-`config.toml` is created on first run at:
-
-| Platform | Path                                                        |
-|----------|-------------------------------------------------------------|
-| Linux    | `~/.config/iris/config.toml`                                |
-| Windows  | `%APPDATA%\iris\iris\config\config.toml`                    |
-| macOS    | `~/Library/Application Support/dev.iris.iris/config.toml`   |
-
-On Linux an existing `~/.config/glint/config.toml` is migrated
-automatically. Set `IRIS_HOME` to keep config, library data, cache,
-and the log under one directory (`config/`, `data/`, `cache/`,
-`state/`) on any platform.
-
-```toml
-screenshots_dir = "~/Pictures/iris"
-recordings_dir = "~/Videos/iris"
-screenshot_template = "{date}_{time}"
-record_mic_default = false
-recording_fps = 30
-recording_format = "mp4"        # mp4 | gif | webm
-recording_encoder = "auto"      # auto | libx264 | nvenc
-show_toast_after_capture = true
-```
-
-A leading `~` expands to your home directory. The Settings window
-(`iris --settings`) edits every field.
-
-## CLI
-
-Every flag forwards to the running daemon, so compositor keybinds drive
-one process.
-
-| Flag | Action |
-| --- | --- |
-| `iris --capture` | region capture overlay, then toast |
-| `iris --capture-fullscreen` | full-screen grab, no overlay |
-| `iris --capture-window` | capture the focused window |
-| `iris --delay <secs>` | full-screen capture after a countdown |
-| `iris --record-window` | toggle a window-picked recording |
-| `iris --record-region` | pick a screen region and record it |
-| `iris --record-pause` | pause/resume the active recording |
-| `iris --record-mic` | toggle the mic on the active recording |
-| `iris --library` | open the library |
-| `iris --settings` | open the settings window |
-| `iris --annotate <file>` | edit an existing capture |
-| `iris --quit` | stop the daemon |
-| `iris --version` | print the version and exit |
-| `iris --check-update` | report whether a newer release exists |
-| `iris --update` | download and apply the latest release |
-
-## Keys
-
-| Key | Action |
-| --- | --- |
-| `Print` | capture overlay |
-| `Ctrl+Shift+R` | start/stop recording |
-| `Esc` | cancel overlay or window pick |
-| `Enter` | confirm selection / save annotation |
-
-## Platform support
-
-| Platform | Capture | Recording |
-| --- | --- | --- |
-| Linux/X11 | full support, window hover-snap | per-window, border + chip |
-| Linux/Wayland | xdg-desktop-portal | portal ScreenCast + PipeWire |
-| Windows | GDI (`BitBlt`) | ffmpeg gdigrab: display or region, chip |
-| macOS | CoreGraphics | ffmpeg avfoundation: display or region, chip |
-
-Wayland recording asks the portal for a window source; the compositor's
-own picker appears. On Windows and macOS the recording chip is excluded
-from screen capture, and `--record-pause` splits the recording into
-segments that are joined when it stops. The mic setting is fixed for the
-length of a Windows or macOS recording. ffmpeg must be on `PATH`.
-
-Single-instance IPC, global hotkeys, and the tray run on all three
-platforms: a local socket on Linux, a named pipe on Windows, and a
-local socket on macOS; X11 key grabs, `RegisterHotKey`, and Carbon
-hotkeys; StatusNotifierItem, `Shell_NotifyIcon`, and `NSStatusItem`.
+iris is licensed under either the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE).

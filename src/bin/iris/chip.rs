@@ -1,17 +1,19 @@
 //! Recording chip: the frosted badge pinned above the recorded area.
 //!
-//! A small transparent popup with the pulsing record dot, a tabular
-//! elapsed timer, and the mic badge. On X11 the border thread in
-//! record::x11 moves it by XID (x11rb configure_window), so it follows
-//! the target window without going through the app event loop, and the
-//! chip's input shape is emptied, so clicks pass straight through. On
-//! Windows and macOS it opens above the recorded region and is excluded
-//! from screen capture, so it never appears in the recording.
+//! A small transparent popup with the record dot, a tabular elapsed
+//! timer, the pause button, and the mic button when the format records
+//! audio. It draws a frame when its clock reaches the next second and
+//! when the recording's state changes: a recording pays for one chip
+//! frame a second, and a paused one for none. On X11 the border thread
+//! in record::x11 moves it by XID (x11rb configure_window), so it
+//! follows the target window without going through the app event
+//! loop. On Windows and macOS it opens above the recorded region and is
+//! excluded from screen capture, so it never appears in the recording.
 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::*;
+use iris_lib::capture::WinRect;
 
 use crate::theme;
 
@@ -20,65 +22,103 @@ const CHIP_H: f32 = 36.0;
 /// Transparent margin around the pill so its shadow is not clipped
 /// by the window bounds.
 const CHIP_BLEED: f32 = 16.0;
+/// The chip window: the pill plus its bleed on every side.
+const WIN_W: f32 = CHIP_W + 2.0 * CHIP_BLEED;
+const WIN_H: f32 = CHIP_H + 2.0 * CHIP_BLEED;
 
-/// The open chip window, so `close` can remove it without downcasting.
-static CHIP_HANDLE: parking_lot::Mutex<Option<AnyWindowHandle>> = parking_lot::Mutex::new(None);
+/// The open chip window, for the state setters and `close`.
+static CHIP: parking_lot::Mutex<Option<WindowHandle<Chip>>> = parking_lot::Mutex::new(None);
 
-/// Live recording state the daemon flips; the chip re-renders every
-/// frame so these read through without a notify round-trip.
-static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static MIC_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Wall time spent paused, subtracted from the elapsed timer so a
-/// pause does not inflate the recording's clock.
-static PAUSED_MS: AtomicU32 = AtomicU32::new(0);
-static PAUSE_STARTED: parking_lot::Mutex<Option<Instant>> = parking_lot::Mutex::new(None);
-
-pub fn paused() -> bool {
-    PAUSED.load(Ordering::Relaxed)
+/// Show the recording's pause state on the open chip: its clock stops
+/// while paused, since the file has no frames for that span.
+pub fn set_paused(cx: &mut App, paused: bool) {
+    update(cx, |chip| chip.set_paused(paused, Instant::now()));
 }
-pub fn set_paused(v: bool) {
-    let was = PAUSED.swap(v, Ordering::Relaxed);
-    let mut started = PAUSE_STARTED.lock();
-    match (was, v) {
-        (false, true) => *started = Some(Instant::now()),
-        (true, false) => {
-            if let Some(t) = started.take() {
-                PAUSED_MS.fetch_add(t.elapsed().as_millis() as u32, Ordering::Relaxed);
-            }
-        }
-        _ => {}
-    }
+
+/// Show the mic track's state on the open chip.
+pub fn set_mic(cx: &mut App, on: bool) {
+    update(cx, |chip| chip.mic = chip.mic.map(|_| on));
 }
-pub fn set_mic(v: bool) {
-    MIC_ON.store(v, Ordering::Relaxed);
+
+/// Apply `change` to the open chip and draw it.
+fn update(cx: &mut App, change: impl FnOnce(&mut Chip)) {
+    // Copied out: the update runs with the lock released.
+    let Some(handle) = *CHIP.lock() else { return };
+    let _ = handle.update(cx, |chip, _, cx| {
+        change(chip);
+        cx.notify();
+    });
 }
 
 pub struct Chip {
-    started: Instant,
-    /// The 30Hz repaint timer is armed on first render.
-    timer_started: bool,
-    /// The last rendered timer text and its second: formatting
-    /// "MM:SS" per repaint allocates a String 30x a second for a
-    /// value that changes once a second.
-    timer_at: u64,
-    timer_text: SharedString,
+    /// When the elapsed clock read zero, moved later by each pause.
+    start: Instant,
+    /// When the running pause began; None while recording.
+    paused_at: Option<Instant>,
+    /// The mic track's state, or None for a format without audio.
+    mic: Option<bool>,
+    /// The second `text` shows, and its "MM:SS": formatted once a
+    /// second, not on every frame.
+    shown: u64,
+    text: SharedString,
+    /// The frame at the clock's next second; None while paused.
+    tick: Option<Task<()>>,
 }
 
-/// Open the chip. `anchor` is the recorded rect in root pixels (`None`:
-/// the main display); X11 ignores it, the chip follower places the
-/// chip there. Returns the X11 window id on X11, 0 elsewhere.
+impl Chip {
+    fn new(mic: Option<bool>, now: Instant) -> Self {
+        Self {
+            start: now,
+            paused_at: None,
+            mic,
+            shown: 0,
+            text: SharedString::new_static("00:00"),
+            tick: None,
+        }
+    }
+
+    /// Recording time at `now`: wall time since the start, less every
+    /// pause.
+    fn elapsed(&self, now: Instant) -> Duration {
+        self.paused_at
+            .unwrap_or(now)
+            .saturating_duration_since(self.start)
+    }
+
+    fn set_paused(&mut self, paused: bool, now: Instant) {
+        match (self.paused_at, paused) {
+            (None, true) => {
+                self.paused_at = Some(now);
+                self.tick = None;
+            }
+            (Some(at), false) => {
+                self.start += now.saturating_duration_since(at);
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Open the chip, replacing one already open. `mic` is the mic track's
+/// state, or `None` for a format without audio. `anchor` is the recorded
+/// rect in root pixels (`None`: the primary monitor) and `monitors` the
+/// root-space monitors, primary first. Returns the chip's X11 window id
+/// on X11, 0 elsewhere.
 pub fn open(
     cx: &mut App,
-    mic: bool,
-    anchor: Option<iris_lib::capture::WinRect>,
+    mic: Option<bool>,
+    anchor: Option<WinRect>,
+    monitors: &[WinRect],
 ) -> Result<u32, String> {
-    let origin = anchor_origin(cx, anchor);
+    close(cx);
+    let origin = origin(anchor, monitors, crate::sys::window::root_scale(cx));
     let handle = cx
         .open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: point(px(origin.0), px(origin.1)),
-                    size: size(px(CHIP_W + 2.0 * CHIP_BLEED), px(CHIP_H + 2.0 * CHIP_BLEED)),
+                    size: size(px(WIN_W), px(WIN_H)),
                 })),
                 titlebar: None,
                 focus: false,
@@ -89,109 +129,107 @@ pub fn open(
                 is_minimizable: false,
                 display_id: None,
                 window_background: WindowBackgroundAppearance::Transparent,
-                // Distinct WM_CLASS so the XID can be looked up on the
-                // root tree (GPUI's X11 HasWindowHandle is unimplemented).
                 app_id: Some("dev.iris.chip".to_string()),
                 window_min_size: None,
                 window_decorations: Some(WindowDecorations::Client),
                 tabbing_identifier: None,
             },
-            |_, cx| {
-                cx.new(|_| Chip {
-                    started: Instant::now(),
-                    timer_started: false,
-                    timer_at: u64::MAX,
-                    timer_text: SharedString::from("00:00"),
-                })
-            },
+            |_, cx| cx.new(|_| Chip::new(mic, Instant::now())),
         )
         .map_err(|e| format!("open chip window: {e}"))?;
 
     let xid = crate::sys::window::prepare_chip(cx, handle.into());
-    MIC_ON.store(mic, Ordering::Relaxed);
-    PAUSED.store(false, Ordering::Relaxed);
-    PAUSED_MS.store(0, Ordering::Relaxed);
-    *PAUSE_STARTED.lock() = None;
-    *CHIP_HANDLE.lock() = Some(handle.into());
+    *CHIP.lock() = Some(handle);
     Ok(xid)
 }
 
-/// Logical window origin that sets the pill above the top-right corner
-/// of `anchor` (root pixels), kept on the display: inside the rect when
-/// there is no room above it. `None` anchors to the main display.
-fn anchor_origin(cx: &App, anchor: Option<iris_lib::capture::WinRect>) -> (f32, f32) {
-    let s = iris_lib::capture::root_scale();
-    let (x, y, w) = match anchor {
-        Some(r) => (r.x as f32 / s, r.y as f32 / s, r.width as f32 / s),
-        None => match crate::sys::window::primary_monitor_rect(cx) {
-            Some((mx, my, mw, _)) => (mx, my + CHIP_H + 24.0, mw - 24.0),
-            None => (0.0, 0.0, 0.0),
-        },
+/// Logical origin of the chip window for a recording of `rect` (root
+/// pixels; `None`: the primary monitor). The pill sits above the rect's
+/// top-right corner, below the rect when its monitor has no room above,
+/// and inside the rect's top edge when neither side fits: it stays on
+/// the rect's monitor and out of the rect whenever the monitor allows.
+/// `monitors` are root pixels, primary first; with none, the rect
+/// bounds the chip. `scale` is root pixels per logical pixel.
+pub(crate) fn origin(rect: Option<WinRect>, monitors: &[WinRect], scale: f32) -> (f32, f32) {
+    let logical = |r: &WinRect| {
+        let f = |v: f32| v / scale;
+        (
+            f(r.x as f32),
+            f(r.y as f32),
+            f(r.width as f32),
+            f(r.height as f32),
+        )
     };
-    let win_w = CHIP_W + 2.0 * CHIP_BLEED;
-    let win_h = CHIP_H + 2.0 * CHIP_BLEED;
-    let top = crate::sys::window::primary_monitor_rect(cx).map_or(0.0, |m| m.1);
-    ((x + w - win_w).max(x), (y - win_h).max(top))
+    let rect = rect
+        .or_else(|| monitors.first().copied())
+        .unwrap_or(WinRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        });
+    let (x, y, w, h) = logical(&rect);
+    let (mx, my, mw, mh) = logical(rect.host(monitors).unwrap_or(&rect));
+    // Right-aligned to the rect, never left of it, then kept on the
+    // monitor: min before max, so a monitor narrower than the chip
+    // pins it to the monitor's left edge.
+    let left = (x + w - WIN_W).max(x).min(mx + mw - WIN_W).max(mx);
+    let top = if y - WIN_H >= my {
+        y - WIN_H
+    } else if y + h + WIN_H <= my + mh {
+        y + h
+    } else {
+        y.min(my + mh - WIN_H).max(my)
+    };
+    (left, top)
 }
 
 /// Close the chip window, if open.
 pub fn close(cx: &mut App) {
-    if let Some(handle) = CHIP_HANDLE.lock().take() {
+    if let Some(handle) = CHIP.lock().take() {
         let _ = handle.update(cx, |_, window, _| window.remove_window());
     }
 }
 
+/// The pill's shadow. GPUI paints a shadow over the pill grown by three
+/// blur radii and moved by its offset; all of it stays inside
+/// CHIP_BLEED, or the window edge cuts it into a visible rectangle over
+/// a light background. The bleed cannot grow instead: `origin` puts the
+/// window against the recorded rect, so a wider bleed floats the pill
+/// further from it.
+fn pill_shadow() -> Vec<gpui::BoxShadow> {
+    theme::shadow_tight()
+}
+
 impl Render for Chip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let paused = paused();
-        // Repaint on a 30Hz timer, not vsync: the pulse is a 1.6s
-        // sine, so 30fps reads as smoothly as 60 while halving the
-        // compositor wakes a recording pays for the whole session.
-        // Paused skips the notify, so a still pill costs no wakes.
-        if !self.timer_started {
-            self.timer_started = true;
-            cx.spawn(async move |this, cx| loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(33))
-                    .await;
-                let alive = this.update(cx, |_, cx| {
-                    if !crate::chip::paused() {
-                        cx.notify();
-                    }
+        let elapsed = self.elapsed(Instant::now());
+        let secs = elapsed.as_secs();
+        if self.shown != secs {
+            self.shown = secs;
+            self.text = SharedString::from(format!("{:02}:{:02}", secs / 60, secs % 60));
+        }
+        // The next frame is the clock's next second; a paused clock
+        // stands still and draws only when its state changes.
+        let paused = self.paused_at.is_some();
+        if !paused && self.tick.is_none() {
+            let wait = Duration::from_secs(secs + 1).saturating_sub(elapsed);
+            self.tick = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(wait).await;
+                let _ = this.update(cx, |chip, cx| {
+                    chip.tick = None;
+                    cx.notify();
                 });
-                if alive.is_err() {
-                    break;
-                }
-            })
-            .detach();
+            }));
         }
-        let mic_on = MIC_ON.load(Ordering::Relaxed);
-        // Subtract wall time spent paused: the file has no frames for
-        // that span, so the clock must not count it.
-        let paused_ms = PAUSED_MS.load(Ordering::Relaxed) as u64
-            + PAUSE_STARTED
-                .lock()
-                .map(|t| t.elapsed().as_millis() as u64)
-                .unwrap_or(0);
-        let t = self
-            .started
-            .elapsed()
-            .as_millis()
-            .saturating_sub(paused_ms as u128) as f32
-            / 1000.0;
-        let pulse = if paused {
-            0.35
-        } else {
-            0.55 + 0.45 * (t * std::f32::consts::TAU / 1.6).sin().abs()
-        };
-        let secs = t as u64;
-        if self.timer_at != secs {
-            self.timer_at = secs;
-            self.timer_text = SharedString::from(format!("{:02}:{:02}", secs / 60, secs % 60));
-        }
-        let timer = self.timer_text.clone();
+        let mic = self.mic;
+        let timer = self.text.clone();
 
-        div()
+        // The pill inside a window-filling root: taffy places the root
+        // element at the window origin whatever its insets, so a bare
+        // absolute pill sat in the top-left corner with no bleed on
+        // those two sides and its shadow cut off there.
+        let pill = div()
             .absolute()
             .left(px(CHIP_BLEED))
             .top(px(CHIP_BLEED))
@@ -200,7 +238,7 @@ impl Render for Chip {
             .rounded_full()
             .font_family(theme::FONT)
             .bg(theme::alpha(theme::BG_ELEV, 0.92))
-            .shadow(theme::shadow_float())
+            .shadow(pill_shadow())
             .flex()
             .items_center()
             .justify_center()
@@ -215,7 +253,7 @@ impl Render for Chip {
                     } else {
                         theme::DANGER
                     })
-                    .opacity(pulse),
+                    .opacity(if paused { 0.35 } else { 1.0 }),
             )
             .child(
                 div()
@@ -229,7 +267,7 @@ impl Render for Chip {
                     .id("chip-pause")
                     .cursor_pointer()
                     .on_click(cx.listener(|_, _, _, cx| {
-                        let _ = crate::daemon::dispatch(cx, &crate::daemon::Command::RecordPause);
+                        crate::daemon::run(cx, &crate::daemon::Command::RecordPause);
                     }))
                     .child(crate::icons::icon(
                         if paused {
@@ -241,22 +279,28 @@ impl Render for Chip {
                         14.0,
                     )),
             )
-            .child(
+            .children(mic.map(|on| {
                 div()
                     .id("chip-mic")
                     .cursor_pointer()
                     .on_click(cx.listener(|_, _, _, cx| {
-                        let _ = crate::daemon::dispatch(cx, &crate::daemon::Command::RecordMic);
+                        crate::daemon::run(cx, &crate::daemon::Command::RecordMic);
                     }))
                     .child(crate::icons::icon(
-                        if mic_on {
+                        if on {
                             crate::icons::Icon::Mic
                         } else {
                             crate::icons::Icon::MicOff
                         },
                         theme::FG_DIM,
                         14.0,
-                    )),
-            )
+                    ))
+            }));
+        div().size_full().child(pill)
     }
 }
+
+#[cfg(test)]
+mod clock_tests;
+#[cfg(test)]
+mod tests;

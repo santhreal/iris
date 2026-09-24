@@ -31,7 +31,7 @@ pub struct UpdateInfo {
     pub version: semver::Version,
     /// Direct download URL for this platform's asset.
     pub asset_url: String,
-    /// The asset filename, used for the temp download.
+    /// The asset filename, used as the download's file name.
     pub asset_name: String,
 }
 
@@ -113,17 +113,32 @@ pub fn check() -> Result<Option<UpdateInfo>, String> {
     }))
 }
 
-/// Download `info.asset_url` to a temp file and return its path.
+/// Download `info.asset_url` into this user's cache and return its
+/// path. The cache is private to the user: a download in a shared temp
+/// directory could be swapped by another local user between the write
+/// and the install.
 fn download(info: &UpdateInfo) -> Result<PathBuf, String> {
+    // The name comes from the release JSON; a separator in it would
+    // move the write out of the update directory.
+    let name = std::path::Path::new(&info.asset_name);
+    if name.file_name() != Some(name.as_os_str()) {
+        return Err(format!("update: bad asset name {:?}", info.asset_name));
+    }
+    let dir = iris_lib::dirs::cache_dir()
+        .ok_or_else(|| "update: no cache directory for this user".to_string())?
+        .join("update");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("update: create {}: {e}", dir.display()))?;
+    let path = dir.join(name);
+    // create_new never writes through a file or link already there.
+    let _ = std::fs::remove_file(&path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| format!("update: create {}: {e}", path.display()))?;
     let resp =
         http_get(&info.asset_url).map_err(|e| format!("update: GET {}: {e}", info.asset_url))?;
-    let mut reader = resp.into_reader();
-    let dir = std::env::temp_dir().join("iris-update");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("update: temp dir: {e}"))?;
-    let path = dir.join(&info.asset_name);
-    let mut file = std::fs::File::create(&path)
-        .map_err(|e| format!("update: create {}: {e}", path.display()))?;
-    std::io::copy(&mut reader, &mut file)
+    std::io::copy(&mut resp.into_reader(), &mut file)
         .map_err(|e| format!("update: download {}: {e}", info.asset_name))?;
     Ok(path)
 }
@@ -134,12 +149,14 @@ fn download(info: &UpdateInfo) -> Result<PathBuf, String> {
 /// the binary and exiting this process. It returns `Err` when the swap
 /// could not be staged, leaving the running install untouched.
 ///
-/// Order matters: download first (a network failure must not kill a
-/// working install), then stop the daemon, then swap. The daemon holds
-/// the IPC socket and, on Windows, locks its own exe; on Linux a running
+/// Order matters: check that this install can replace itself, then
+/// download (a refusal or a network failure must not stop a working
+/// daemon), then stop the daemon, then swap. The daemon holds the IPC
+/// socket and, on Windows, locks its own exe; on Linux a running
 /// AppImage cannot be overwritten (ETXTBSY). Stopping it before the swap
 /// clears all three.
 pub fn apply(info: &UpdateInfo) -> Result<(), String> {
+    crate::sys::install::ready()?;
     let file = download(info)?;
     stop_daemon();
     crate::sys::install::apply_file(&file)
@@ -151,4 +168,56 @@ pub fn apply(info: &UpdateInfo) -> Result<(), String> {
 fn stop_daemon() {
     crate::sys::ipc::send_to_daemon(&["--quit".to_string()]);
     crate::sys::ipc::wait_for_daemon_exit(5000);
+}
+
+// WHY: the classes closed here are "a release asset name steers the
+// download's write outside the per-user update directory" and "an
+// install that cannot replace itself stops the daemon before it says
+// so": `iris --update` on a deb or rpm install downloaded the AppImage,
+// quit the daemon, and only then failed. Not covered: the network
+// fetch and the per-OS install that follow.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asset_names_that_leave_the_update_dir_are_rejected() {
+        for name in [
+            "../iris.AppImage",
+            "a/b.dmg",
+            "/abs/setup.exe",
+            "..",
+            ".",
+            "",
+        ] {
+            let info = UpdateInfo {
+                version: semver::Version::new(9, 9, 9),
+                asset_url: "https://invalid.example/asset".to_string(),
+                asset_name: name.to_string(),
+            };
+            let err = download(&info).expect_err(name);
+            assert!(err.starts_with("update: bad asset name"), "{name:?}: {err}");
+        }
+    }
+
+    /// A deb or rpm install refuses before anything runs: no download,
+    /// and the daemon keeps running. The asset name here would fail the
+    /// download with a different error. An install that replaces itself
+    /// has nothing to refuse.
+    #[test]
+    fn a_refused_install_fails_before_the_download() {
+        let Err(refusal) = crate::sys::install::ready() else {
+            return;
+        };
+        assert_eq!(
+            refusal,
+            "update: not an AppImage install; update via apt/dnf"
+        );
+        let info = UpdateInfo {
+            version: semver::Version::new(9, 9, 9),
+            asset_url: "https://invalid.example/asset".to_string(),
+            asset_name: "../escape".to_string(),
+        };
+        assert_eq!(apply(&info).expect_err("refused"), refusal);
+    }
 }

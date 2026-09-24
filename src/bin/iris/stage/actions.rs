@@ -1,4 +1,4 @@
-//! Toast stage actions, thumbnail preparation, and UI action helpers.
+//! Toast stage actions and UI action helpers.
 
 use std::{
     path::Path,
@@ -9,62 +9,14 @@ use std::{
 use super::*;
 use crate::{motion, pipeline};
 
-/// Decode and pre-scale the thumbnail to its exact display size with a
-/// high-quality filter: no resampling happens per frame afterwards.
-pub(crate) fn prepare_thumb(
-    path: &Path,
-) -> Result<(Arc<RenderImage>, Arc<Vec<u8>>, (f32, f32)), String> {
-    // Reuse the decoded pixels finalize stashed: a fresh capture's toast
-    // skips the ~100ms 4K PNG re-decode entirely. peek (not take) leaves
-    // the slot for the editor's annotate path, which reads it later. The
-    // borrow feeds thumbnail() directly, so no 33MB clone either.
-    let stashed = crate::pipeline::peek_decoded(path);
-    let owned;
-    let img: &image::RgbaImage = if let Some(arc) = &stashed {
-        arc
-    } else {
-        owned = image::open(path)
-            .map_err(|e| format!("cannot open {}: {e}", path.display()))?
-            .to_rgba8();
-        &owned
-    };
-    let (iw, ih) = (img.width() as f32, img.height() as f32);
-    let scale = (MAX_W / iw).min(MAX_H / ih).min(1.0);
-    let (w, h) = ((iw * scale).round().max(1.0), (ih * scale).round().max(1.0));
-    // thumbnail_rgba is the banded replica of image's box-average
-    // thumbnail: on a 4K capture the single-threaded scan reads 33MB
-    // serially to produce a ~216px card.
-    let rgba = if scale < 1.0 {
-        iris_lib::thumb::thumbnail_rgba(img, w as u32, h as u32)
-    } else {
-        img.clone()
-    };
-    // thumbnail() can land a pixel off the computed (w, h) on a
-    // rounding boundary; report the real dims so the card layout
-    // matches the pixels.
-    let (w, h) = (rgba.width() as f32, rgba.height() as f32);
-    // RenderImage directly from the resized pixels: no PNG
-    // re-encode, and the atlas tile stays freeable on dismiss. The
-    // copy is inherent: the RenderImage wants BGRA while thumb_rgba
-    // keeps RGBA for the drag icon's own swizzle.
-    let render = crate::widgets::render_image_from_rgba(rgba.width(), rgba.height(), rgba.as_raw());
-    Ok((render, Arc::new(rgba.into_raw()), (w, h)))
-}
-
 impl ToastStage {
-    /// Build the stage from an already-decoded thumbnail. The decode
-    /// itself runs on the background executor in show_toast_kind.
-    pub(super) fn from_parts(
-        path: &Path,
-        thumb: Arc<RenderImage>,
-        thumb_rgba: Arc<Vec<u8>>,
-        dims: (f32, f32),
-    ) -> Self {
+    /// Build the stage from an already-scaled thumbnail. The scaling
+    /// itself runs on the background executor.
+    pub(super) fn from_parts(path: &Path, thumb: Thumb) -> Self {
         Self {
             path: path.to_path_buf(),
             thumb,
-            thumb_rgba,
-            dims,
+            rescaling: false,
             card_screen: (0.0, 0.0, 0.0, 0.0),
             opened: None,
             hover_paused: false,
@@ -83,6 +35,17 @@ impl ToastStage {
             morph_ready_at: None,
             closing_dur: EXIT,
             cfg: iris_lib::config::Config::load(),
+            status: None,
+            busy: false,
+            bar: Bar::Shown,
+        }
+    }
+
+    /// Fade in the action bar a landed toast opened without.
+    pub(super) fn reveal_bar(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.bar, Bar::Hidden) {
+            self.bar = Bar::FadingIn(Instant::now());
+            cx.notify();
         }
     }
 
@@ -101,7 +64,7 @@ impl ToastStage {
                 if stage.dismiss_gen != gen || stage.pinned {
                     return;
                 }
-                if stage.hover_paused || stage.menu_at.is_some() {
+                if stage.hover_paused || stage.menu_at.is_some() || stage.busy {
                     stage.arm_dismiss(cx);
                 } else {
                     stage.begin_close(cx);
@@ -151,8 +114,9 @@ impl ToastStage {
             }
             Err(e) => {
                 iris_lib::ilog!("annotate: {e}");
-                crate::widgets::release_render(&self.thumb, cx);
+                crate::widgets::release_render(&self.thumb.render, cx);
                 window.remove_window();
+                crate::notice::failed(cx, "Editor did not open", &e);
             }
         }
     }
@@ -178,28 +142,67 @@ impl ToastStage {
         cx.notify();
     }
 
+    /// Show `text` over the card and give it a full dismiss duration
+    /// from now, so a result that lands late is still read.
+    pub(super) fn show_status(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.status = Some(text.into());
+        self.arm_dismiss(cx);
+        cx.notify();
+    }
+
+    /// Run `job` off the UI thread and show its message, or its error,
+    /// on the card.
+    fn report(
+        &mut self,
+        job: impl FnOnce() -> Result<String, String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let task = cx.background_executor().spawn(async move { job() });
+        cx.spawn(async move |this, cx| {
+            let msg = task.await.unwrap_or_else(|e| e);
+            this.update(cx, |stage, cx| {
+                stage.busy = false;
+                stage.show_status(msg, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub(super) fn copy_image(&mut self, cx: &mut Context<Self>) {
         // PNG decode of a large capture is too slow for the UI thread.
         let path = self.path.clone();
-        cx.background_executor()
-            .spawn(async move {
-                if let Err(e) = crate::pipeline::copy_image_file(&path) {
-                    iris_lib::ilog!("copy: {e}");
-                }
-            })
-            .detach();
+        self.report(
+            move || crate::pipeline::copy_image_file(&path).map(|()| "Copied image".into()),
+            cx,
+        );
     }
 
     pub(super) fn copy_file(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = iris_lib::dragcopy::copy_file_path(&self.path) {
-            iris_lib::ilog!("copy file: {e}");
-        }
-        cx.notify();
+        let path = self.path.clone();
+        self.report(
+            move || crate::pipeline::copy_file(&path).map(|()| "Copied file".into()),
+            cx,
+        );
     }
 
-    pub(super) fn open_folder(&mut self, cx: &mut Context<Self>) {
-        reveal_in_folder(&self.path);
-        cx.notify();
+    /// OCR the capture to the clipboard. tesseract takes hundreds of
+    /// ms on a large capture; the card holds until it finishes.
+    pub(super) fn copy_text(&mut self, cx: &mut Context<Self>) {
+        self.busy = true;
+        self.show_status("Reading text…", cx);
+        let path = self.path.clone();
+        self.report(
+            move || {
+                pipeline::copy_ocr_text(&path)
+                    .map(|text| format!("Copied {} characters", text.chars().count()))
+            },
+            cx,
+        );
+    }
+
+    pub(super) fn open_folder(&self) {
+        crate::sys::reveal::reveal(&self.path);
     }
 
     pub(super) fn delete_capture(&mut self, cx: &mut Context<Self>) {
@@ -213,7 +216,7 @@ impl ToastStage {
             let result = task.await;
             let _ = this.update(cx, |stage, cx| match result {
                 Ok(()) => stage.begin_close(cx),
-                Err(e) => iris_lib::ilog!("delete: {e}"),
+                Err(e) => stage.show_status(format!("Delete failed: {e}"), cx),
             });
         })
         .detach();
@@ -229,15 +232,15 @@ impl ToastStage {
                 self.copy_image(cx);
             }
             iris_lib::config::ToastClickAction::OpenFolder => {
-                self.open_folder(cx);
+                self.open_folder();
             }
             iris_lib::config::ToastClickAction::None => {}
         }
     }
 
-    /// Right-click context menu, macOS style: Markup, Copy, Delete,
-    /// Close. Fades in over 120ms rising 3px; shares the exit
-    /// opacity so it never outlives the card it belongs to.
+    /// Right-click context menu, macOS style: Markup, Copy, Copy text,
+    /// Pin, Delete, Close. Fades in over 120ms rising 3px; shares the
+    /// exit opacity so it never outlives the card it belongs to.
     pub(super) fn render_menu(
         &mut self,
         opacity: f32,
@@ -276,16 +279,7 @@ impl ToastStage {
                 |stage, _, _window, cx| {
                     cx.stop_propagation();
                     stage.menu_at = None;
-                    let path = stage.path.clone();
-                    // tesseract is a subprocess; never the UI thread.
-                    cx.background_executor()
-                        .spawn(async move {
-                            if let Err(e) = pipeline::copy_ocr_text(&path) {
-                                iris_lib::ilog!("iris: ocr: {e}");
-                            }
-                        })
-                        .detach();
-                    stage.begin_close(cx);
+                    stage.copy_text(cx);
                 },
             )),
         );
@@ -294,9 +288,7 @@ impl ToastStage {
                 |stage, _, _window, cx| {
                     cx.stop_propagation();
                     stage.menu_at = None;
-                    if let Err(e) = crate::pin::open(cx, &stage.path) {
-                        iris_lib::ilog!("pin: {e}");
-                    }
+                    crate::pin::open(cx, &stage.path);
                     stage.begin_close(cx);
                 },
             )),
@@ -376,7 +368,7 @@ impl ToastStage {
                 )
                 .on_click(cx.listener(|stage, _, _, cx| {
                     cx.stop_propagation();
-                    stage.open_folder(cx);
+                    stage.open_folder();
                 })),
             )
             .child(
@@ -403,49 +395,19 @@ impl ToastStage {
     }
 }
 
-pub(super) fn reveal_in_folder(path: &Path) {
-    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let uri = format!(
-        "file://{}",
-        iris_lib::dragcopy::uri_encode_path(&abs.to_string_lossy())
-    );
-    let parent = abs.parent().unwrap_or(path).to_path_buf();
-    std::thread::spawn(move || {
-        let dbus_status = std::process::Command::new("dbus-send")
-            .args([
-                "--session",
-                "--dest=org.freedesktop.FileManager1",
-                "--type=method_call",
-                "/org/freedesktop/FileManager1",
-                "org.freedesktop.FileManager1.ShowItems",
-                &format!("array:string:{uri}"),
-                "string:",
-            ])
-            .status();
-        if dbus_status.map(|s| s.success()).unwrap_or(false) {
-            return;
-        }
-        let _ = std::process::Command::new("xdg-open").arg(&parent).spawn();
-    });
-}
-
-/// One soft, deep shadow: the only thing separating the thumbnail
-/// from the desktop. No contact layer, no hairline. During the
-/// entrance the shadow fades in with the card's visible fraction, so
-/// the blur never arrives ahead of the pixels casting it.
-pub(crate) fn card_shadow(visibility: f32) -> Vec<BoxShadow> {
-    vec![
-        BoxShadow {
-            color: hsla(0.0, 0.0, 0.0, 0.36 * visibility),
-            offset: point(px(0.), px(12.)),
-            blur_radius: px(32.),
-            spread_radius: px(0.),
-        },
-        BoxShadow {
-            color: hsla(0.0, 0.0, 0.0, 0.20 * visibility),
-            offset: point(px(0.), px(2.)),
-            blur_radius: px(6.),
-            spread_radius: px(0.),
-        },
-    ]
+/// The last action's result over the card's lower edge. The card is
+/// the toast's only surface, so a failure shows here, not only in the
+/// log. Text wraps to the card width; the card clips the overflow.
+pub(super) fn status_band(text: SharedString) -> Div {
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .px(px(8.))
+        .py(px(6.))
+        .bg(theme::alpha(theme::BG, 0.86))
+        .text_size(px(theme::TEXT_SMALL))
+        .text_color(theme::FG)
+        .child(text)
 }

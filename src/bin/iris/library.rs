@@ -5,7 +5,7 @@
 //! starts a region capture or opens settings. The grid re-reads
 //! library.json on a slow timer so captures taken while the panel is
 //! open appear without a restart.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -21,11 +21,31 @@ mod tests;
 pub(super) const CARD_W: f32 = 216.0;
 pub(super) const THUMB_H: f32 = 132.0;
 pub(super) const GAP: f32 = 16.0;
+/// The label row under a card's thumbnail: its inset on each side and
+/// the space between the name and the dimensions.
+pub(super) const LABEL_PAD: f32 = 2.0;
+pub(super) const LABEL_GAP: f32 = 6.0;
 pub(super) const REFRESH: Duration = Duration::from_millis(1500);
 /// Rows of thumbnail slack kept decoded beyond the rendered range:
 /// scroll-back inside the window hits warm tiles, outside it pays a
-/// re-decode. 8 rows at 4 cols is ~64 tiles, ~13MB of atlas.
+/// re-decode. 8 rows at 4 cols is ~64 tiles of 432x264, ~29MB of atlas.
 pub(super) const THUMB_KEEP_ROWS: usize = 8;
+
+/// Decoded thumbnails, keyed by capture path.
+pub(super) type ThumbCache = std::collections::HashMap<PathBuf, std::sync::Arc<RenderImage>>;
+
+/// Drop the thumbnails `keep` rejects from `cache` and free their
+/// sprite-atlas tiles: the last `Arc<RenderImage>` dropping leaves its
+/// tile allocated in every window that painted it.
+pub(super) fn evict_thumbs(cache: &mut ThumbCache, keep: impl Fn(&Path) -> bool, cx: &mut App) {
+    cache.retain(|p, img| {
+        let kept = keep(p.as_path());
+        if !kept {
+            crate::widgets::release_render(img, cx);
+        }
+        kept
+    });
+}
 
 /// The card rows that intersect the scroll viewport, plus the heights
 /// of the full-width spacer rows that stand in for the rows above and
@@ -97,7 +117,7 @@ pub struct Library {
     /// every decoded thumb is unbounded GPU atlas memory, so render
     /// evicts tiles outside the window and prefetch re-decodes them
     /// on scroll-back.
-    pub(super) thumb_cache: std::collections::HashMap<PathBuf, std::sync::Arc<RenderImage>>,
+    pub(super) thumb_cache: ThumbCache,
     /// The index range the cache currently keeps: rendered rows plus
     /// THUMB_KEEP_ROWS of slack either side. Recomputed per render;
     /// eviction and prefetch only run when it moves.
@@ -128,28 +148,28 @@ pub struct Library {
     pub(super) opened: Instant,
     pub(super) status: Option<String>,
     pub(super) focus: FocusHandle,
-    /// This window's unique WM_CLASS, for the title-bar drag.
-    pub(super) class: SharedString,
     /// The config snapshot: render reads the hotkey every frame, and
     /// Config::load() hits the disk each call.
     pub(super) cfg: iris_lib::config::Config,
     /// Rubber-band selection: window-space anchor and current point
     /// while the left button is held on empty grid space.
     pub(super) band: Option<(f32, f32, f32, f32)>,
-    /// Scroll offset of the card grid, so band math stays in
-    /// document space while the user drags.
     /// A refresh already in flight: the 1.5s poll must not stack
     /// overlapping list() passes on a slow or network shots dir.
     pub(super) refresh_in_flight: bool,
+    /// Scroll offset of the card grid, so band math stays in
+    /// document space during a band drag.
     pub(super) scroll: gpui::ScrollHandle,
 }
+
+/// The library window's minimum logical size, where its resize stops.
+pub(super) const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
 
 /// Open the library window.
 pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = cx.focus_handle();
     let win = (960.0f32, 640.0f32);
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (140.0, 90.0));
-    let win_id = crate::sys::window::unique_id("dev.iris.library");
     let handle = cx
         .open_window(
             WindowOptions {
@@ -166,16 +186,17 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 is_minimizable: true,
                 display_id: None,
                 window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some(win_id.clone()),
-                window_min_size: Some(size(px(640.), px(480.))),
+                app_id: Some("dev.iris.library".to_string()),
+                window_min_size: Some(MIN_SIZE),
                 window_decorations: Some(WindowDecorations::Client),
                 tabbing_identifier: None,
             },
-            |_, cx| {
+            |window, cx| {
+                window.set_window_title("Library - iris");
                 cx.new(|cx| {
-                    // slow or network shots dir that stalls the open.
-                    // Open empty and populate from the background, the
-                    // same path the refresh poll takes.
+                    // Listing the shots dir here would stall the open on a
+                    // slow or network dir: open empty and populate from the
+                    // background, the same path the refresh poll takes.
                     let mut this = Library {
                         entry_names: Vec::new(),
                         count_label: SharedString::from("0 captures"),
@@ -207,7 +228,6 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                         opened: Instant::now(),
                         status: None,
                         focus,
-                        class: SharedString::from(win_id.clone()),
                         cfg: iris_lib::config::Config::load(),
                         band: None,
                         scroll: gpui::ScrollHandle::new(),
@@ -229,6 +249,5 @@ pub fn open(cx: &mut App) -> Result<(), String> {
         })
         .detach();
     }
-    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
     Ok(())
 }

@@ -65,7 +65,7 @@ pub(super) fn start_file_drag_at_cursor(
     icon: Option<DragIcon>,
 ) -> Result<(), String> {
     let paths = validate_drag_paths(paths)?;
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_none() {
+    if !crate::session::x11() {
         return Err("file drag needs an X11 session".to_string());
     }
     let uri_list = build_uri_list(&paths);
@@ -144,7 +144,7 @@ pub(super) fn copy_abs_paths(abs: &[PathBuf]) -> Result<(), String> {
 /// Acquire CLIPBOARD with a text/uri-list payload and serve it from a
 /// background thread until another owner takes over or 5 minutes pass.
 fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), String> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_none() {
+    if !crate::session::x11() {
         return Err("file copy needs an X11 session".to_string());
     }
     let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;

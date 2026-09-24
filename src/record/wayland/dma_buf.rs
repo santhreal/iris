@@ -36,11 +36,13 @@ const GL_COLOR_ATTACHMENT0: u32 = 0x8CE0;
 const GL_FRAMEBUFFER_COMPLETE: u32 = 0x8CD5;
 const GL_RGBA: u32 = 0x1908;
 const GL_UNSIGNED_BYTE: u32 = 0x1401;
+const GL_NO_ERROR: u32 = 0;
 
 impl GlContext {
-    /// Read one DMA-buf frame into `scratch`. Returns Ok(false) when
-    /// the PBO pipeline primed but produced no pixels yet (the first
-    /// frame only): the caller skips the encode for that call.
+    /// Read one DMA-buf frame into `out` as packed R,G,B,A rows. The
+    /// read is synchronous: the pixels are this buffer's, and the GPU
+    /// is done with the buffer before PipeWire hands it back to the
+    /// compositor.
     pub fn read_dma_buf(
         &mut self,
         width: u32,
@@ -48,20 +50,18 @@ impl GlContext {
         format: VideoFormat,
         modifier: u64,
         planes: &[PlaneInfo],
-        scratch: &mut Vec<u8>,
-    ) -> Result<bool, String> {
+        out: &mut Vec<u8>,
+    ) -> Result<(), String> {
         if planes.is_empty() {
             return Err("empty DMA-buf planes".to_string());
         }
-        // GL calls run on PipeWire's RT thread; the context was
-        // released at setup so it can be bound here.
+        // The context was released at setup; bind it on this thread.
         self.egl
             .make_current(self.display, self.surface, self.surface, Some(self.context))
             .map_err(|e| format!("eglMakeCurrent on stream thread: {e}"))?;
         let fourcc = drm_fourcc_for_format(format)?;
-        // Stack array, not a Vec: this runs per frame on PipeWire's
-        // RT thread, and a heap alloc per frame is a needless syscall
-        // in the capture path. Max: 6 header + 4 planes * 8 + NONE.
+        // Stack array, not a Vec: this runs per frame. Max: 6 header +
+        // 4 planes * 8 + NONE.
         let mut attribs = [0 as egl::Int; 40];
         let mut n = 0usize;
         let mut push = |v: egl::Int| {
@@ -153,95 +153,17 @@ impl GlContext {
                 self.texture,
                 0,
             );
-
             let status = (self.check_framebuffer_status)(GL_FRAMEBUFFER);
             if status != GL_FRAMEBUFFER_COMPLETE {
                 (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
                 return Err(format!("glCheckFramebufferStatus returned {status:#x}"));
             }
-
-            (self.viewport)(0, 0, width as i32, height as i32);
-            let total_bytes = (width as usize) * (height as usize) * 4;
-            scratch.resize(total_bytes, 0);
-
-            // Double-buffered PBO readback when ES3 procs resolved:
-            // readPixels targets a pixel pack buffer (returns
-            // immediately), and the PREVIOUS frame's PBO is mapped and
-            // copied out. The GPU's transfer overlaps the next frame's
-            // capture instead of stalling the RT thread. Without PBOs
-            // the readPixels is synchronous into scratch.
-            const GL_PIXEL_PACK_BUFFER: u32 = 0x88EB;
-            const GL_STREAM_READ: u32 = 0x88E1;
-            const GL_MAP_READ_BIT: u32 = 0x0001;
-            let use_pbo = self
-                .gen_buffers
-                .zip(self.bind_buffer)
-                .zip(self.buffer_data)
-                .zip(self.map_buffer_range)
-                .zip(self.unmap_buffer)
-                .is_some()
-                && self.pbos[0] != 0;
-            if use_pbo {
-                let bind_buffer = self.bind_buffer.unwrap();
-                let buffer_data = self.buffer_data.unwrap();
-                let map_buffer_range = self.map_buffer_range.unwrap();
-                let unmap_buffer = self.unmap_buffer.unwrap();
-                if self.pbo_bytes != total_bytes {
-                    for pbo in self.pbos {
-                        (bind_buffer)(GL_PIXEL_PACK_BUFFER, pbo);
-                        (buffer_data)(
-                            GL_PIXEL_PACK_BUFFER,
-                            total_bytes as isize,
-                            std::ptr::null(),
-                            GL_STREAM_READ,
-                        );
-                    }
-                    self.pbo_bytes = total_bytes;
-                    self.pbo_pending = None;
-                }
-                let cur = self.pbo_pending.map(|i| 1 - i).unwrap_or(0);
-                (bind_buffer)(GL_PIXEL_PACK_BUFFER, self.pbos[cur]);
-                (self.read_pixels)(
-                    0,
-                    0,
-                    width as i32,
-                    height as i32,
-                    GL_RGBA,
-                    GL_UNSIGNED_BYTE,
-                    std::ptr::null_mut(),
-                );
-                // produced = whether a PREVIOUS readback exists to map:
-                // the first call primes the pipeline and yields nothing.
-                let produced = self.pbo_pending.is_some();
-                if let Some(prev) = self.pbo_pending {
-                    (bind_buffer)(GL_PIXEL_PACK_BUFFER, self.pbos[prev]);
-                    let ptr = (map_buffer_range)(
-                        GL_PIXEL_PACK_BUFFER,
-                        0,
-                        total_bytes as isize,
-                        GL_MAP_READ_BIT,
-                    );
-                    if ptr.is_null() {
-                        (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
-                        (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
-                        return Err("glMapBufferRange failed".to_string());
-                    }
-                    // Banded memcpy: ffmpeg is fed rgba and drops
-                    // alpha in its own conversion, so no stamping
-                    // pass; a serial copy of a 33MB frame is a
-                    // visible slice of the frame budget.
-                    let src = std::slice::from_raw_parts(ptr as *const u8, total_bytes);
-                    crate::par::par_bands_mut(scratch.as_mut_slice(), 4096, |dst, start| {
-                        dst.copy_from_slice(&src[start..start + dst.len()]);
-                    });
-                    (unmap_buffer)(GL_PIXEL_PACK_BUFFER);
-                }
-                (bind_buffer)(GL_PIXEL_PACK_BUFFER, 0);
-                self.pbo_pending = Some(cur);
-                (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
-                return Ok(produced);
-            }
-            // Sync readPixels path.
+            // Rows of width*4 bytes meet the default pack alignment of
+            // 4, so the read fills exactly `len` bytes of the spare
+            // capacity: no zero fill first.
+            let len = width as usize * height as usize * 4;
+            out.clear();
+            out.reserve(len);
             (self.read_pixels)(
                 0,
                 0,
@@ -249,18 +171,21 @@ impl GlContext {
                 height as i32,
                 GL_RGBA,
                 GL_UNSIGNED_BYTE,
-                scratch.as_mut_ptr() as *mut std::ffi::c_void,
+                out.as_mut_ptr().cast(),
             );
-
+            let err = (self.get_error)();
             (self.bind_framebuffer)(GL_FRAMEBUFFER, 0);
-            Ok(true)
+            if err != GL_NO_ERROR {
+                return Err(format!("glReadPixels failed: GL error {err:#x}"));
+            }
+            // SAFETY: the read succeeded, so all `len` bytes are written.
+            out.set_len(len);
+            Ok(())
         })();
 
         unsafe {
             (self.destroy_image)(self.display.as_ptr(), image);
         }
-
-        let produced = result?;
-        Ok(produced)
+        result
     }
 }

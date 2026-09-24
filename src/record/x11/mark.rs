@@ -1,5 +1,5 @@
-use std::os::unix::io::AsRawFd;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::os::fd::AsFd;
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -15,11 +15,18 @@ use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
 use super::{ChipFollow, Rect};
+use crate::record::wake::Wake;
+use crate::record::Doorbell;
 
 const XC_CROSSHAIR: u16 = 34;
 const KEYSYM_ESCAPE: u32 = 0xff1b;
 const BORDER_COLOR: u32 = 0x00f7768e;
 const BORDER_THICKNESS: i16 = 3;
+
+/// Rect re-checks after the border first shows, `SETTLE_STEP` apart:
+/// the WM's map-time re-framing lands without a notify to trust.
+const SETTLE_PASSES: u32 = 10;
+const SETTLE_STEP: Duration = Duration::from_millis(200);
 
 pub(super) fn connect() -> Result<(RustConnection, usize), String> {
     x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))
@@ -104,6 +111,9 @@ pub(super) fn escape_keycodes(conn: &RustConnection) -> Result<Vec<u8>, String> 
 /// border; the chip window is closed separately via hide_chip().
 pub struct RecordingMark {
     stop: Sender<()>,
+    /// Rung after the stop: the follow thread sleeps until X input or
+    /// a ring. The static thread installs no ring.
+    bell: Doorbell,
     join: Option<JoinHandle<()>>,
 }
 
@@ -112,9 +122,12 @@ impl RecordingMark {
     /// (moves, resizes) until dropped or the window closes.
     pub fn show(chip: Arc<dyn ChipFollow>, target: Window) -> Result<Self, String> {
         let (tx, rx) = channel::<()>();
-        let join = thread::spawn(move || border_thread(chip, target, rx));
+        let bell = Doorbell::default();
+        let wake = Wake::install(&bell)?;
+        let join = thread::spawn(move || border_thread(chip, target, rx, wake));
         Ok(Self {
             stop: tx,
+            bell,
             join: Some(join),
         })
     }
@@ -122,23 +135,21 @@ impl RecordingMark {
     /// Draw the border around a fixed rect once; no follow thread, so
     /// the mark lives until dropped. The chip is placed once at the
     /// rect's top-right corner.
-    pub fn show_static(
-        chip: Arc<dyn ChipFollow>,
-        root: Window,
-        rect: Rect,
-    ) -> Result<Self, String> {
+    pub fn show_static(chip: Arc<dyn ChipFollow>, root: Window, rect: Rect) -> Self {
         let (tx, rx) = channel::<()>();
         let join = thread::spawn(move || static_border_thread(chip, root, rect, rx));
-        Ok(Self {
+        Self {
             stop: tx,
+            bell: Doorbell::default(),
             join: Some(join),
-        })
+        }
     }
 }
 
 impl Drop for RecordingMark {
     fn drop(&mut self) {
         let _ = self.stop.send(());
+        self.bell.ring();
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
@@ -198,7 +209,7 @@ fn destroy_strips(conn: &RustConnection, strips: &[Window]) {
 }
 
 /// Static variant: strips around a fixed rect, chip placed once, then
-/// the thread only waits for stop.
+/// the thread sleeps until the mark drops.
 fn static_border_thread(chip: Arc<dyn ChipFollow>, root: Window, rect: Rect, stop: Receiver<()>) {
     let Ok((conn, _)) = connect() else {
         return;
@@ -208,17 +219,12 @@ fn static_border_thread(chip: Arc<dyn ChipFollow>, root: Window, rect: Rect, sto
     };
     place_strips(&conn, &strips, rect);
     chip.place(rect);
-    loop {
-        // recv_timeout wakes the instant stop fires; a bare sleep
-        // would leave the strips up for up to 200ms past it.
-        if stop.recv_timeout(Duration::from_millis(200)).is_ok() {
-            break;
-        }
-    }
+    // A send or the sender's drop ends the wait.
+    let _ = stop.recv();
     destroy_strips(&conn, &strips);
 }
 
-fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: Receiver<()>) {
+fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: Receiver<()>, wake: Wake) {
     let Ok((conn, screen_num)) = connect() else {
         return;
     };
@@ -229,44 +235,35 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: Receiver<()>) 
     };
 
     // Follow the target by event, not by polling: StructureNotify on
-    // the target delivers ConfigureNotify on every move/resize, so the
-    // 200ms get_geometry+translate round trips become a poll on the
-    // connection's fd that wakes only when the window actually moves.
+    // the target delivers ConfigureNotify on every move/resize, and the
+    // thread sleeps on the connection until one arrives.
     let _ = conn.change_window_attributes(
         target,
         &x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
             .event_mask(EventMask::STRUCTURE_NOTIFY),
     );
     let _ = conn.flush();
-    let x_fd = conn.stream().as_raw_fd();
 
     let mut last: Option<Rect> = None;
     let mut settle = 0u32;
+    // The first pass queries the rect with no event.
+    let mut woke = true;
     loop {
-        if stop.try_recv().is_ok() {
+        // Drained before the stop is read: a stop after the read rings
+        // again, and the next wait ends at once.
+        wake.drain();
+        if !matches!(stop.try_recv(), Err(TryRecvError::Empty)) {
             break;
         }
-        let mut gone = false;
-        let mut woke = false;
-        while let Ok(Some(event)) = conn.poll_for_event() {
-            woke = true;
-            if let Event::DestroyNotify(ev) = event {
-                if ev.window == target {
-                    gone = true;
-                }
-            }
-        }
-        if gone {
+        let Some(events) = drain_events(&conn, target) else {
             break;
-        }
+        };
+        woke |= events;
         // The rect query is two round trips. It is needed on the first
-        // pass (no rect yet), on every event wake (a ConfigureNotify
-        // means the window moved), and through the ~2s settle window
-        // (the WM's map-time re-framing lands without a notify we can
-        // trust). After that a timeout wake means nothing moved, so
-        // the query is pure waste for the recording's life.
-        let need_rect = last.is_none() || woke || settle < 10;
-        if need_rect {
+        // pass, after every event (a ConfigureNotify means the window
+        // moved), and on each settle pass. After that a window that
+        // stays put costs no query and no wakeup.
+        if woke || settle < SETTLE_PASSES {
             match root_rect(&conn, root, target) {
                 Ok(rect) => {
                     let moved = last != Some(rect);
@@ -274,11 +271,11 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: Receiver<()>) 
                         place_strips(&conn, &strips, rect);
                         last = Some(rect);
                     }
-                    // Re-assert the chip for the first ~2s: the WM can
-                    // re-place it on map-time re-framing after the
-                    // initial rect report. After that, only a real
+                    // Re-assert the chip through the settle passes: the
+                    // WM can re-place it on map-time re-framing after
+                    // the initial rect report. After that, only a real
                     // move re-places.
-                    if moved || settle < 10 {
+                    if moved || settle < SETTLE_PASSES {
                         chip.place(rect);
                     }
                 }
@@ -286,20 +283,32 @@ fn border_thread(chip: Arc<dyn ChipFollow>, target: Window, stop: Receiver<()>) 
             }
             settle += 1;
         }
-        // Sleep until the next X event or the 200ms re-check: a
-        // ConfigureNotify wakes the poll instantly, so a moved window
-        // re-borders in the same frame instead of up to 200ms late.
-        let mut pfd = libc::pollfd {
-            fd: x_fd,
-            events: libc::POLLIN,
-            revents: 0,
+        // The query's round trips can read events into the connection's
+        // buffer, where they would not wake the poll.
+        let Some(events) = drain_events(&conn, target) else {
+            break;
         };
-        unsafe {
-            libc::poll(&mut pfd, 1, 200);
+        woke = events;
+        if !woke {
+            let settling = (settle < SETTLE_PASSES).then_some(SETTLE_STEP);
+            wake.wait(Some(conn.stream().as_fd()), settling);
         }
     }
 
     destroy_strips(&conn, &strips);
+}
+
+/// Read every queued event: whether any arrived, or None once the
+/// target is destroyed.
+fn drain_events(conn: &RustConnection, target: Window) -> Option<bool> {
+    let mut any = false;
+    while let Ok(Some(event)) = conn.poll_for_event() {
+        any = true;
+        if matches!(event, Event::DestroyNotify(ev) if ev.window == target) {
+            return None;
+        }
+    }
+    Some(any)
 }
 
 fn place_strips(conn: &RustConnection, strips: &[Window; 4], r: Rect) {

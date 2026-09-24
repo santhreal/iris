@@ -7,7 +7,7 @@ use iris_lib::library::{self, CaptureEntry};
 
 use crate::{pipeline, theme};
 
-use super::{Library, CARD_W, THUMB_H};
+use super::{Library, CARD_W, LABEL_GAP, LABEL_PAD, THUMB_H};
 
 impl Library {
     pub(super) fn card(
@@ -173,7 +173,7 @@ impl Library {
                         )
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.stop_propagation();
-                            Self::open_containing_folder(&folder_path.path);
+                            crate::sys::reveal::reveal(&folder_path.path);
                         })),
                     )
                     .child(
@@ -216,7 +216,11 @@ impl Library {
             .flex_col()
             .gap(px(8.))
             .opacity(enter)
-            .mt(px(
+            // Offsets the drawn card only: as a margin, the rise and the
+            // press sink would resize the card's row and move every row
+            // below it.
+            .relative()
+            .top(px(
                 (1.0 - crate::motion::ease_out_cubic(enter)) * 10.0 + 1.0 * squish
             ))
             .cursor_pointer()
@@ -234,7 +238,7 @@ impl Library {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |_, _, _, _| {
-                    Self::open_containing_folder(&card_path.path);
+                    crate::sys::reveal::reveal(&card_path.path);
                 }),
             )
             .on_mouse_down(
@@ -287,17 +291,10 @@ impl Library {
                 // PNG decode on the drag-start path.
                 let icon = this.thumb_cache.get(&entry.path).and_then(|img| {
                     let size = img.size(0);
-                    // Fused copy+swizzle into the Arc the drag owns:
-                    // the cache's BGRA bytes become the icon's RGBA in
-                    // one pass.
+                    // One pass from the cache's BGRA bytes to the icon's
+                    // RGBA, into the Arc the drag owns.
                     let src = img.as_bytes(0)?;
-                    let mut rgba = Vec::with_capacity(src.len());
-                    #[allow(clippy::uninit_vec)] // copy_from_slice fills it next
-                    unsafe {
-                        rgba.set_len(src.len())
-                    };
-                    rgba.copy_from_slice(src);
-                    crate::widgets::swizzle_rgba_bgra(&mut rgba);
+                    let rgba = iris_lib::pixel::map_to_vec(src, iris_lib::pixel::swap_rb);
                     Some(iris_lib::dragcopy::DragIcon {
                         width: size.width.0 as u32,
                         height: size.height.0 as u32,
@@ -313,8 +310,8 @@ impl Library {
                 div()
                     .flex()
                     .justify_between()
-                    .gap(px(6.))
-                    .px(px(2.))
+                    .gap(px(LABEL_GAP))
+                    .px(px(LABEL_PAD))
                     .child(
                         div()
                             .flex_1()

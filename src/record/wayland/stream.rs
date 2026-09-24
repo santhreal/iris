@@ -1,18 +1,29 @@
-use std::cell::RefCell;
-use std::path::PathBuf;
-use std::rc::Rc;
+//! The PipeWire side of a Wayland recording: format negotiation, each
+//! buffer read into packed rows for the recorder, and the controls read
+//! on each ring. The stream callbacks and the ring run on the main
+//! loop's thread, one at a time.
 
-use pipewire::spa::buffer::DataType;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
+use std::time::Instant;
+
+use pipewire::main_loop::WeakMainLoop;
+use pipewire::spa::buffer::{ChunkFlags, Data, DataType};
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
 use pipewire::spa::param::video::{VideoFormat, VideoInfoRaw};
 use pipewire::spa::param::ParamType;
 use pipewire::spa::pod;
-use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, SpaTypes};
-use pipewire::stream::StreamRef;
+use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, SpaTypes};
+use pipewire::stream::{StreamRef, StreamState};
 
 use super::gl::{GlContext, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR};
-use crate::record::encoder::{Encoder, EncoderConfig, PixFmt};
-use crate::record::{ext_of, unique_recording_path};
+use crate::record::mkv::PixFmt;
+use crate::record::recorder::{Recorder, Shape};
+use crate::record::wake::Wake;
+use crate::record::RecControl;
 
 const fn fourcc_code(a: u8, b: u8, c: u8, d: u8) -> u32 {
     (a as u32) | ((b as u32) << 8) | ((c as u32) << 16) | ((d as u32) << 24)
@@ -35,270 +46,274 @@ pub(crate) struct PlaneInfo {
     pub(crate) stride: u32,
 }
 
+/// The video format the compositor negotiated.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Negotiated {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) format: VideoFormat,
+    pub(crate) modifier: u64,
+}
+
+/// State the stream callbacks and the control timer share.
 pub(crate) struct Shared {
-    pub(crate) encoder: Option<Encoder>,
-    /// The (size, pixel format) the live encoder was opened with; a
-    /// renegotiated stream splits the file rather than dying on a
-    /// frame-size mismatch or swapping channels mid-stream.
-    pub(crate) enc_fmt: (u32, u32, PixFmt),
-    /// The path of the segment currently being written: splits rename
-    /// the output, and the caller reports the last one.
-    pub(crate) output: PathBuf,
+    /// Taken at teardown to finish the recording.
+    pub(crate) recorder: Option<Recorder>,
     pub(crate) error: Option<String>,
-    pub(crate) quit: Option<pipewire::main_loop::WeakMainLoop>,
-    /// Set once the encoder is taken for finish(): on_process can fire
-    /// once more as the loop drains, and must not respawn ffmpeg.
-    pub(crate) done: bool,
+    pub(crate) quit: WeakMainLoop,
 }
 
-pub(crate) struct StreamData {
-    pub(crate) fps: u32,
-    pub(crate) mic: bool,
-    pub(crate) rec_format: crate::config::RecordingFormat,
-    pub(crate) rec_encoder: crate::config::RecordingEncoder,
-    pub(crate) format: Option<(u32, u32, VideoFormat, u64)>,
-    pub(crate) shared: Rc<RefCell<Shared>>,
-    pub(crate) unsupported_reported: bool,
-    /// First-buffer type logged once so a run records which capture
-    /// path it exercised (MemFd copy vs DMA-buf EGL import).
-    pub(crate) buffer_logged: bool,
-    pub(crate) frames: u64,
-    pub(crate) gl_context: Option<GlContext>,
-    pub(crate) scratch: Vec<u8>,
-    /// Plane descriptors for the DMA-buf import, rebuilt per frame
-    /// into a reused Vec: an allocation per frame on the RT thread
-    /// is a needless syscall in the capture path.
-    pub(crate) planes: Vec<PlaneInfo>,
-}
-
-impl StreamData {
-    pub(crate) fn quit(&self) {
-        let mainloop = self.shared.borrow().quit.as_ref().and_then(|w| w.upgrade());
-        if let Some(mainloop) = mainloop {
+impl Shared {
+    /// Return from the main loop; teardown then finishes the recording,
+    /// failed with `error` when one is given. The first error stays.
+    pub(crate) fn end(&mut self, error: Option<String>) {
+        if self.error.is_none() {
+            self.error = error;
+        }
+        if let Some(mainloop) = self.quit.upgrade() {
             mainloop.quit();
         }
     }
+}
 
-    pub(crate) fn fail(&mut self, error: String) {
-        self.shared.borrow_mut().error = Some(error);
-        self.quit();
+pub(crate) struct StreamData {
+    pub(crate) format: Option<Negotiated>,
+    pub(crate) shared: Rc<RefCell<Shared>>,
+    pub(crate) reader: Reader,
+    pub(crate) frames: u64,
+}
+
+/// Reads PipeWire buffers into packed rows: a DMA-buf through the EGL
+/// import when a context exists, a CPU-mapped buffer by copy.
+pub(crate) struct Reader {
+    gl: Option<GlContext>,
+    /// Plane descriptors of the DMA-buf import, refilled per frame.
+    planes: Vec<PlaneInfo>,
+    /// The first buffer's type is logged, so a run records which path
+    /// it exercised.
+    logged: bool,
+}
+
+impl Reader {
+    pub(crate) fn new(gl: Option<GlContext>) -> Self {
+        Self {
+            gl,
+            planes: Vec::with_capacity(4),
+            logged: false,
+        }
+    }
+
+    /// Read the frame in `datas` into `out`; the layout of the result,
+    /// or `None` when the buffer holds no picture: the compositor
+    /// queued it without drawing into it.
+    fn read(
+        &mut self,
+        datas: &mut [Data],
+        f: Negotiated,
+        out: &mut Vec<u8>,
+    ) -> Result<Option<PixFmt>, String> {
+        let kind = datas
+            .first()
+            .map(Data::type_)
+            .ok_or("PipeWire buffer without data")?;
+        if !self.logged {
+            self.logged = true;
+            crate::ilog!("iris: record: first buffer type {kind:?}");
+        }
+        if datas
+            .iter()
+            .any(|d| d.chunk().flags().contains(ChunkFlags::CORRUPTED))
+        {
+            return Ok(None);
+        }
+        match (kind, &mut self.gl) {
+            (DataType::DmaBuf, Some(gl)) => {
+                self.planes.clear();
+                self.planes.extend(datas.iter().map(|d| {
+                    let (raw, chunk) = (d.as_raw(), d.chunk());
+                    PlaneInfo {
+                        fd: raw.fd as i32,
+                        offset: chunk.offset() + raw.mapoffset,
+                        stride: chunk.stride() as u32,
+                    }
+                }));
+                gl.read_dma_buf(f.width, f.height, f.format, f.modifier, &self.planes, out)
+                    .map_err(|e| format!("DMA-buf EGL import failed: {e}"))?;
+                // glReadPixels with GL_RGBA: R,G,B,A in memory.
+                Ok(Some(PixFmt::Rgbx))
+            }
+            (DataType::MemPtr | DataType::MemFd | DataType::DmaBuf, _) => {
+                let d = &mut datas[0];
+                let (offset, size, stride) = {
+                    let c = d.chunk();
+                    (c.offset() as usize, c.size() as usize, c.stride())
+                };
+                // An empty memory chunk is a buffer queued without a
+                // picture. A DMA-buf chunk may leave its size unset,
+                // and then the mapping bounds the frame.
+                if size == 0 && kind != DataType::DmaBuf {
+                    return Ok(None);
+                }
+                let stride =
+                    usize::try_from(stride).map_err(|_| format!("negative row stride {stride}"))?;
+                let Some(buf) = d.data() else {
+                    return Err(if kind == DataType::DmaBuf {
+                        format!(
+                            "compositor offers only DMA-buf buffers (modifier {:#x}); \
+                             EGL is unavailable and the buffer is not CPU-mappable",
+                            f.modifier
+                        )
+                    } else {
+                        "the compositor's buffer is not CPU-mappable".to_string()
+                    });
+                };
+                let end = match size {
+                    0 => buf.len(),
+                    size => offset.saturating_add(size).min(buf.len()),
+                };
+                let src = &buf[offset.min(end)..end];
+                copy_frame(src, stride, f.width, f.height, f.format, out).map(Some)
+            }
+            (other, _) => Err(format!(
+                "compositor offers only {other:?} buffers; iris's Wayland path needs \
+                 MemPtr, MemFd, or DMA-buf"
+            )),
+        }
     }
 }
 
 pub(crate) fn on_process(stream: &StreamRef, data: &mut StreamData) {
+    // The newest queued buffer: older ones go back unread, so a slow
+    // read never falls further behind the window.
     let Some(mut buffer) = stream.dequeue_buffer() else {
         return;
     };
-    let datas = buffer.datas_mut();
-    let Some(first) = datas.first_mut() else {
+    while let Some(newer) = stream.dequeue_buffer() {
+        buffer = newer;
+    }
+    let at = Instant::now();
+    // An empty size (a compositor may send one while the window is
+    // hidden) has no pixels to record: the last frame stays on screen.
+    let Some(format) = data.format.filter(|f| f.width > 0 && f.height > 0) else {
         return;
     };
-
-    // The frame's pixel format, decided by which path produced it:
-    // GL readPixels is always rgba; a CPU-mappable buffer keeps the
-    // negotiated format.
-    if !data.buffer_logged {
-        data.buffer_logged = true;
-        crate::ilog!("iris: record: first buffer type {:?}", first.type_());
+    // try_borrow_mut: a RefCell panic aborts inside this non-unwinding
+    // callback, and dropping a frame on an unexpected nested borrow
+    // costs nothing.
+    let Ok(mut guard) = data.shared.try_borrow_mut() else {
+        return;
+    };
+    let shared = &mut *guard;
+    let Some(rec) = shared.recorder.as_mut() else {
+        return;
+    };
+    // Paused or failed: the buffer goes back unread.
+    if rec.paused() || shared.error.is_some() {
+        return;
     }
-    let mut pix_fmt = PixFmt::Rgba;
-    match first.type_() {
-        DataType::MemPtr | DataType::MemFd => {
-            let Some((width, height, format, _modifier)) = data.format else {
-                return;
+    let mut out = rec.take_buf();
+    let result = match data.reader.read(buffer.datas_mut(), format, &mut out) {
+        Ok(Some(pix)) => {
+            let shape = Shape {
+                width: format.width,
+                height: format.height,
+                pix,
             };
-            let (offset, stride, size) = {
-                let chunk = first.chunk();
-                (
-                    chunk.offset() as usize,
-                    chunk.stride() as usize,
-                    chunk.size() as usize,
-                )
-            };
-            let Some(buf) = first.data() else {
-                return;
-            };
-            let end = offset.saturating_add(size).min(buf.len());
-            let src = &buf[offset.min(end)..end];
-
-            match copy_frame(src, stride, width, height, format, &mut data.scratch) {
-                Ok(f) => pix_fmt = f,
-                Err(e) => {
-                    data.fail(e);
-                    return;
-                }
-            }
+            rec.frame(out, shape, at)
         }
-        DataType::DmaBuf => {
-            let Some((width, height, format, modifier)) = data.format else {
-                return;
-            };
-            if let Some(gl) = &mut data.gl_context {
-                data.planes.clear();
-                for d in datas.iter() {
-                    let raw = d.as_raw();
-                    let chunk = d.chunk();
-                    data.planes.push(PlaneInfo {
-                        fd: raw.fd as i32,
-                        offset: chunk.offset() + raw.mapoffset,
-                        stride: chunk.stride() as u32,
-                    });
-                }
-                match gl.read_dma_buf(
-                    width,
-                    height,
-                    format,
-                    modifier,
-                    &data.planes,
-                    &mut data.scratch,
-                ) {
-                    Ok(true) => {}
-                    // The PBO pipeline primed but produced no pixels
-                    // this call; skip the encode for it.
-                    Ok(false) => return,
-                    Err(e) => {
-                        data.fail(format!("DMA-buf EGL import failed: {e}"));
-                        return;
-                    }
-                }
-            } else {
-                let (offset, stride, size) = {
-                    let chunk = first.chunk();
-                    (
-                        chunk.offset() as usize,
-                        chunk.stride() as usize,
-                        chunk.size() as usize,
-                    )
-                };
-                if let Some(buf) = first.data() {
-                    let end = offset.saturating_add(size).min(buf.len());
-                    let src = &buf[offset.min(end)..end];
-
-                    match copy_frame(src, stride, width, height, format, &mut data.scratch) {
-                        Ok(f) => pix_fmt = f,
-                        Err(e) => {
-                            data.fail(e);
-                            return;
-                        }
-                    }
-                } else {
-                    if !data.unsupported_reported {
-                        data.unsupported_reported = true;
-                        data.fail(format!(
-                            "compositor offers only DMA-buf buffers (modifier {modifier:#x}); EGL is unavailable and buffer is not CPU-mappable"
-                        ));
-                    }
-                    return;
-                }
-            }
-        }
-        other => {
-            if !data.unsupported_reported {
-                data.unsupported_reported = true;
-                data.fail(format!(
-                    "compositor offers only {other:?} buffers; iris's Wayland path needs MemPtr, MemFd, or DMA-buf"
-                ));
-            }
+        Ok(None) => {
+            rec.give_back(out);
             return;
         }
-    }
-
-    let Some((width, height, _format, _modifier)) = data.format else {
-        return;
+        Err(e) => {
+            rec.give_back(out);
+            Err(e)
+        }
     };
-
-    // try_borrow_mut: teardown disconnects the stream first, but a
-    // frame already queued on the data thread can still arrive while
-    // the main thread holds the borrow. Dropping it beats aborting
-    // the process on a RefCell panic in a non-unwinding callback.
-    let Ok(mut shared) = data.shared.try_borrow_mut() else {
-        return;
-    };
-    if shared.done {
-        return;
-    }
-    if shared.encoder.is_none() {
-        match Encoder::start(&EncoderConfig {
-            output: shared.output.clone(),
-            width,
-            height,
-            fps: data.fps,
-            mic: data.mic,
-            format: data.rec_format,
-            encoder: data.rec_encoder,
-            pix_fmt,
-        }) {
-            Ok(encoder) => {
-                shared.enc_fmt = (width, height, pix_fmt);
-                shared.encoder = Some(encoder);
-            }
-            Err(e) => {
-                drop(shared);
-                data.fail(e);
-                return;
+    match result {
+        Ok(()) => {
+            data.frames += 1;
+            if data.frames == 1 {
+                crate::ilog!("iris: record: first frame written");
             }
         }
-    } else if shared.enc_fmt != (width, height, pix_fmt) {
-        // The compositor renegotiated (window resized): finish this
-        // segment and open the next at the new size, the same split
-        // the X11 loop performs on a resize.
-        let old = shared.encoder.take().unwrap();
-        drop(shared);
-        if let Err(e) = old.finish() {
-            data.fail(format!("encoder split on resize: {e}"));
-            return;
-        }
-        let next = {
-            let mut shared = data.shared.borrow_mut();
-            let dir = shared
-                .output
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."));
-            shared.output = unique_recording_path(&dir, ext_of(&shared.output));
-            shared.output.clone()
-        };
-        match Encoder::start(&EncoderConfig {
-            output: next,
-            width,
-            height,
-            fps: data.fps,
-            mic: data.mic,
-            format: data.rec_format,
-            encoder: data.rec_encoder,
-            pix_fmt,
-        }) {
-            Ok(encoder) => {
-                let mut shared = data.shared.borrow_mut();
-                shared.enc_fmt = (width, height, pix_fmt);
-                shared.encoder = Some(encoder);
-            }
-            Err(e) => {
-                data.fail(e);
-                return;
-            }
-        }
-        return;
-    }
-    let frame = std::mem::replace(
-        &mut data.scratch,
-        shared.encoder.as_mut().unwrap().take_buf(),
-    );
-    let write_result = shared.encoder.as_mut().unwrap().write_frame(frame);
-    drop(shared);
-    data.frames += 1;
-    if data.frames == 1 {
-        crate::ilog!("iris: record: first frame written");
-    }
-    if let Err(e) = write_result {
-        data.fail(e);
+        Err(e) => shared.end(Some(e)),
     }
 }
 
-/// Copy one PipeWire frame into `out` (resized to w*h*4), returning
-/// the pixel format the encoder must declare. `out` is reused across
-/// frames so recording does not allocate a multi-MB buffer per frame.
-/// No swizzle: ffmpeg accepts the native layout through -pix_fmt.
+pub(crate) fn on_state_changed(
+    _stream: &StreamRef,
+    data: &mut StreamData,
+    _old: StreamState,
+    new: StreamState,
+) {
+    crate::ilog!("iris: record: stream {new:?}");
+    let end = match new {
+        StreamState::Error(e) => Some(format!("PipeWire stream failed: {e}")),
+        // The connection to PipeWire is gone: no frame follows.
+        StreamState::Unconnected => None,
+        StreamState::Connecting | StreamState::Paused | StreamState::Streaming => return,
+    };
+    if let Ok(mut shared) = data.shared.try_borrow_mut() {
+        shared.end(end);
+    }
+}
+
+/// What steers a recording from outside the stream.
+pub(crate) struct Controls {
+    pub(crate) stop: Receiver<()>,
+    pub(crate) control: Receiver<RecControl>,
+    /// Set when the compositor closed the portal session.
+    pub(crate) closed: Arc<AtomicBool>,
+}
+
+/// Read the controls after a ring: the stop signal, chip controls, and
+/// a session the compositor closed.
+pub(crate) fn on_ring(shared: &RefCell<Shared>, ctl: &Controls, wake: &Wake) {
+    // Undrained while the state is borrowed: the loop's level-triggered
+    // watch runs this again on its next pass.
+    let Ok(mut guard) = shared.try_borrow_mut() else {
+        return;
+    };
+    // Drained before the channels are read: a send after the read
+    // rings again.
+    wake.drain();
+    let shared = &mut *guard;
+    let running = match shared.recorder.as_mut() {
+        Some(rec) => apply_controls(rec, ctl),
+        None => Ok(false),
+    };
+    match running {
+        Ok(true) => {}
+        Ok(false) => shared.end(None),
+        Err(e) => shared.end(Some(e)),
+    }
+}
+
+/// Apply what arrived since the last ring; false once the recording
+/// stops.
+fn apply_controls(rec: &mut Recorder, ctl: &Controls) -> Result<bool, String> {
+    // A stop is a send OR a disconnect: a dropped ActiveRecording must
+    // still end the stream, not record forever detached. A closed
+    // session delivers no frame again.
+    if !matches!(ctl.stop.try_recv(), Err(TryRecvError::Empty))
+        || ctl.closed.load(Ordering::Acquire)
+    {
+        return Ok(false);
+    }
+    loop {
+        match ctl.control.try_recv() {
+            Ok(c) => rec.apply(c, Instant::now())?,
+            Err(TryRecvError::Empty) => return Ok(true),
+            Err(TryRecvError::Disconnected) => return Ok(false),
+        }
+    }
+}
+
+/// Copy one frame of `stride`-byte rows into `out` as packed rows,
+/// returning its layout. `out` is reused across frames, so recording
+/// allocates no frame-sized buffer per frame. No swizzle: the segment
+/// header declares the layout, and ffmpeg converts once.
 pub(crate) fn copy_frame(
     src: &[u8],
     stride: usize,
@@ -307,42 +322,45 @@ pub(crate) fn copy_frame(
     format: VideoFormat,
     out: &mut Vec<u8>,
 ) -> Result<PixFmt, String> {
-    let (w, h) = (width as usize, height as usize);
-    let stride = if stride == 0 { w * 4 } else { stride };
-    if src.len() < stride * h {
-        return Err(format!(
-            "short frame buffer: {} bytes for {w}x{h} at stride {stride}",
-            src.len()
-        ));
-    }
-    let pix_fmt = match format {
-        VideoFormat::BGRx | VideoFormat::BGRA => PixFmt::Bgra,
-        VideoFormat::RGBx | VideoFormat::RGBA => PixFmt::Rgba,
+    let pix = match format {
+        VideoFormat::BGRx | VideoFormat::BGRA => PixFmt::Bgrx,
+        VideoFormat::RGBx | VideoFormat::RGBA => PixFmt::Rgbx,
         other => {
             return Err(format!(
                 "unsupported negotiated pixel format {other:?}; expected BGRx/BGRA/RGBx/RGBA"
             ))
         }
     };
+    let (row, h) = (width as usize * 4, height as usize);
+    if row == 0 || h == 0 {
+        return Err(format!("empty frame {width}x{height}"));
+    }
+    let stride = if stride == 0 { row } else { stride };
+    let need = stride * (h - 1) + row;
+    if stride < row || src.len() < need {
+        return Err(format!(
+            "short frame buffer: {} bytes for {width}x{height} at stride {stride}",
+            src.len()
+        ));
+    }
+    let len = row * h;
     out.clear();
-    out.reserve(w * h * 4);
-    // Uninit capacity, not a zeroed vec: the banded row copy writes
-    // every byte, and a resize's memset before the copy is a wasted
-    // pass per frame.
-    #[allow(clippy::uninit_vec)]
-    unsafe {
-        out.set_len(w * h * 4)
-    };
-    // Strided rows into a packed buffer, banded across threads once
-    // the frame is large enough to pay for the spawn.
-    crate::par::par_bands_mut(out, w * 4, |o_chunk, start| {
-        let row0 = start / (w * 4);
-        for (r, row_out) in o_chunk.chunks_exact_mut(w * 4).enumerate() {
-            let row_in = &src[(row0 + r) * stride..(row0 + r) * stride + w * 4];
-            row_out.copy_from_slice(row_in);
+    out.reserve(len);
+    // Rows go into the spare capacity, banded across threads once the
+    // frame is large enough to pay for the spawn: no zero fill first.
+    crate::par::par_bands_mut(&mut out.spare_capacity_mut()[..len], row, |band, start| {
+        let first = start / row;
+        for (r, dst) in band.chunks_exact_mut(row).enumerate() {
+            let at = (first + r) * stride;
+            let line = &src[at..at + row];
+            // SAFETY: `dst` and `line` are both `row` bytes and do not
+            // overlap: one is `out`'s spare capacity, the other `src`.
+            unsafe { std::ptr::copy_nonoverlapping(line.as_ptr(), dst.as_mut_ptr().cast(), row) };
         }
     });
-    Ok(pix_fmt)
+    // SAFETY: the bands cover all `len` bytes, and each was written.
+    unsafe { out.set_len(len) };
+    Ok(pix)
 }
 
 pub(crate) fn on_param_changed(
@@ -360,24 +378,45 @@ pub(crate) fn on_param_changed(
         return;
     }
     let size = info.size();
-    let format = info.format();
-    let modifier = info.modifier();
-    data.format = Some((size.width, size.height, format, modifier));
+    let max = info.max_framerate();
+    data.format = Some(Negotiated {
+        width: size.width,
+        height: size.height,
+        format: info.format(),
+        modifier: info.modifier(),
+    });
     crate::ilog!(
-        "iris: record: negotiated format {}x{} {:?} modifier {:#x}",
+        "iris: record: negotiated format {}x{} {:?} modifier {:#x}, at most {}/{} fps",
         size.width,
         size.height,
-        format,
-        modifier
+        info.format(),
+        info.modifier(),
+        max.num,
+        max.denom
     );
 }
 
-pub(crate) fn build_param_pods() -> Result<Vec<Vec<u8>>, String> {
-    let obj_raw = pod::object!(
-        SpaTypes::ObjectParamFormat,
-        ParamType::EnumFormat,
-        pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
-        pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
+/// The stream's format offers: packed 32-bit RGB in CPU memory, the
+/// same as DMA-buf, and the buffer types iris reads. Both formats ask
+/// for at most `fps` frames a second, so a compositor that honors
+/// maxFramerate sends no frame the recording would not keep.
+pub(crate) fn build_param_pods(fps: u32) -> Result<Vec<Vec<u8>>, String> {
+    let max = Fraction {
+        num: fps.max(1),
+        denom: 1,
+    };
+    let max_rate = || {
+        pod::property!(
+            FormatProperties::VideoMaxFramerate,
+            Choice,
+            Range,
+            Fraction,
+            max,
+            Fraction { num: 1, denom: 1 },
+            max
+        )
+    };
+    let formats = || {
         pod::property!(
             FormatProperties::VideoFormat,
             Choice,
@@ -388,7 +427,15 @@ pub(crate) fn build_param_pods() -> Result<Vec<Vec<u8>>, String> {
             VideoFormat::BGRA,
             VideoFormat::RGBx,
             VideoFormat::RGBA
-        ),
+        )
+    };
+    let obj_raw = pod::object!(
+        SpaTypes::ObjectParamFormat,
+        ParamType::EnumFormat,
+        pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
+        pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
+        formats(),
+        max_rate(),
     );
 
     let obj_dma = pod::object!(
@@ -396,24 +443,15 @@ pub(crate) fn build_param_pods() -> Result<Vec<Vec<u8>>, String> {
         ParamType::EnumFormat,
         pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
         pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
-        pod::property!(
-            FormatProperties::VideoFormat,
-            Choice,
-            Enum,
-            Id,
-            VideoFormat::BGRx,
-            VideoFormat::BGRx,
-            VideoFormat::BGRA,
-            VideoFormat::RGBx,
-            VideoFormat::RGBA
-        ),
+        formats(),
+        max_rate(),
         pod::Property::new(
             FormatProperties::VideoModifier.as_raw(),
             pod::Value::Choice(pod::ChoiceValue::Long(Choice(
                 ChoiceFlags::empty(),
                 ChoiceEnum::Enum {
                     default: DRM_FORMAT_MOD_INVALID as i64,
-                    alternatives: vec![DRM_FORMAT_MOD_INVALID as i64, DRM_FORMAT_MOD_LINEAR as i64,],
+                    alternatives: vec![DRM_FORMAT_MOD_INVALID as i64, DRM_FORMAT_MOD_LINEAR as i64],
                 },
             ))),
         )

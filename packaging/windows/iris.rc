@@ -1,13 +1,15 @@
 // Windows resources for iris.exe: the app icon and version metadata.
-// embed-resource compiles this into the binary at build time.
+// embed-resource compiles this into the binary at build time; build.rs
+// defines IRIS_VERSION ("0.1.0") and IRIS_VERSION_QUAD (0,1,0,0) from
+// Cargo.toml.
 
 #include <windows.h>
 
 IDI_ICON1 ICON "..\\icons\\iris.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,1,0,0
-PRODUCTVERSION  0,1,0,0
+FILEVERSION     IRIS_VERSION_QUAD
+PRODUCTVERSION  IRIS_VERSION_QUAD
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS__WINDOWS32
@@ -20,11 +22,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Santh"
             VALUE "FileDescription",  "iris - screenshot and screen recording"
-            VALUE "FileVersion",      "0.1.0"
+            VALUE "FileVersion",      IRIS_VERSION
             VALUE "InternalName",     "iris"
             VALUE "OriginalFilename", "iris.exe"
             VALUE "ProductName",      "iris"
-            VALUE "ProductVersion",   "0.1.0"
+            VALUE "ProductVersion",   IRIS_VERSION
         END
     END
     BLOCK "VarFileInfo"

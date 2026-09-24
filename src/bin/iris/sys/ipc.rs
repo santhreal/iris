@@ -15,6 +15,9 @@ use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions, N
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
+/// How long a client waits for a daemon it spawned to bind the socket.
+const READY_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// The well-known socket name. A filesystem path on Unix (the runtime
 /// dir holds `iris.sock`, mode 0600), a `\\.\pipe\` name on Windows —
 /// `GenericFilePath` maps each to the platform's local socket.
@@ -37,15 +40,17 @@ fn socket_name() -> Name<'static> {
         .expect("iris is a valid named pipe name")
 }
 
-/// If a daemon is already running, forward these args and exit the
-/// process. Returns true when the caller must exit. A bare invocation
-/// (no flags) surfaces the home window in the running daemon.
+/// Deliver `args` to the daemon. `Ok(true)`: delivered, the caller
+/// exits. `Ok(false)`: no daemon runs and the caller becomes it in the
+/// foreground. A bare invocation (no flags) surfaces the home window in
+/// a running daemon.
 ///
 /// When no daemon answers, a flagged invocation still must not hold the
-/// caller's shell: spawn a detached daemon, wait for its socket, forward,
-/// and exit. Only a bare `iris` (no args) becomes the daemon in the
-/// foreground.
-pub fn forward_if_running(args: &[String]) -> bool {
+/// caller's shell: spawn a detached daemon, wait for its socket, and
+/// forward. A spawned daemon that never binds is an error, not a cue to
+/// start a second daemon in the foreground: the first may still bind
+/// and take the socket over.
+pub fn forward_if_running(args: &[String]) -> Result<bool, String> {
     if let Ok(mut stream) = LocalSocketStream::connect(socket_name()) {
         let effective: &[String] = if args.is_empty() {
             &["--home".to_string()]
@@ -53,12 +58,22 @@ pub fn forward_if_running(args: &[String]) -> bool {
             args
         };
         let payload = effective.join("\n");
-        return stream.write_all(payload.as_bytes()).is_ok();
+        return stream
+            .write_all(payload.as_bytes())
+            .map(|()| true)
+            .map_err(|e| format!("iris: send to the running daemon: {e}"));
     }
-    if args.is_empty() {
-        return false;
+    if args.is_empty() || !spawn_detached_daemon() {
+        return Ok(false);
     }
-    spawn_detached_daemon() && forward_when_ready(args)
+    if forward_when_ready(args) {
+        return Ok(true);
+    }
+    Err(format!(
+        "iris: the daemon did not start within {}s; see {}",
+        READY_TIMEOUT.as_secs(),
+        iris_lib::dirs::log_file().display()
+    ))
 }
 
 /// Send `args` to a running daemon without spawning one. Returns true
@@ -120,7 +135,7 @@ fn spawn_detached_daemon() -> bool {
 /// connect for a few seconds rather than assume readiness.
 fn forward_when_ready(args: &[String]) -> bool {
     let payload = args.join("\n");
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + READY_TIMEOUT;
     while Instant::now() < deadline {
         if let Ok(mut stream) = LocalSocketStream::connect(socket_name()) {
             return stream.write_all(payload.as_bytes()).is_ok();

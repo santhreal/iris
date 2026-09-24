@@ -27,30 +27,15 @@ pub(crate) struct GlContext {
     pub(crate) framebuffer_texture_2d: unsafe extern "C" fn(u32, u32, u32, u32, i32),
     pub(crate) check_framebuffer_status: unsafe extern "C" fn(u32) -> u32,
     pub(crate) delete_framebuffers: unsafe extern "C" fn(i32, *const u32),
-    pub(crate) viewport: unsafe extern "C" fn(i32, i32, i32, i32),
     pub(crate) read_pixels:
         unsafe extern "C" fn(i32, i32, i32, i32, u32, u32, *mut std::ffi::c_void),
+    pub(crate) get_error: unsafe extern "C" fn() -> u32,
     /// Texture + FBO reused across frames: creating and destroying the
     /// pair per frame is driver work the 60fps schedule cannot spare.
     /// The texture is re-pointed at each frame's EGLImage; the FBO
     /// stays attached to the texture.
     pub(crate) texture: u32,
     pub(crate) fbo: u32,
-    /// Double-buffered pixel pack buffers: readPixels writes into one
-    /// while the previous frame's is mapped out, so the RT thread never
-    /// blocks on the GPU finishing a readback. Empty on ES2.
-    pub(crate) pbos: [u32; 2],
-    /// Which PBO the last readPixels targeted; the next call maps it.
-    pub(crate) pbo_pending: Option<usize>,
-    /// PBO size the buffers were allocated for; a resize reallocates.
-    pub(crate) pbo_bytes: usize,
-    pub(crate) gen_buffers: Option<unsafe extern "C" fn(i32, *mut u32)>,
-    pub(crate) bind_buffer: Option<unsafe extern "C" fn(u32, u32)>,
-    pub(crate) buffer_data: Option<unsafe extern "C" fn(u32, isize, *const std::ffi::c_void, u32)>,
-    pub(crate) map_buffer_range:
-        Option<unsafe extern "C" fn(u32, isize, isize, u32) -> *mut std::ffi::c_void>,
-    pub(crate) unmap_buffer: Option<unsafe extern "C" fn(u32) -> u8>,
-    pub(crate) delete_buffers: Option<unsafe extern "C" fn(i32, *const u32)>,
 }
 
 fn load_proc<T: Copy>(
@@ -135,14 +120,12 @@ impl GlContext {
         let _ = egl_inst.choose_config(display, &config_attribs, &mut configs);
         let config = configs.first().copied();
 
-        // ES3 first: GL_PIXEL_PACK_BUFFER (async readback) needs it.
-        // ES2 stays the fallback; the PBO path is skipped there.
-        let ctx_attribs3 = [egl::CONTEXT_CLIENT_VERSION, 3, egl::NONE];
-        let ctx_attribs2 = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
+        // ES2 covers everything the readback uses: EGLImage textures,
+        // a framebuffer, and glReadPixels.
+        let ctx_attribs = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
         let context = match config {
             Some(cfg) => egl_inst
-                .create_context(display, cfg, None, &ctx_attribs3)
-                .or_else(|_| egl_inst.create_context(display, cfg, None, &ctx_attribs2))
+                .create_context(display, cfg, None, &ctx_attribs)
                 .map_err(|e| format!("eglCreateContext: {e}"))?,
             None => {
                 let raw_ctx = unsafe {
@@ -160,7 +143,7 @@ impl GlContext {
                             display.as_ptr(),
                             std::ptr::null_mut(),
                             std::ptr::null_mut(),
-                            ctx_attribs3.as_ptr(),
+                            ctx_attribs.as_ptr(),
                         )
                     } else {
                         std::ptr::null_mut()
@@ -224,52 +207,21 @@ impl GlContext {
         let delete_framebuffers =
             load_proc(&egl_inst, gles_lib.as_ref(), "glDeleteFramebuffers")
                 .or_else(|_| load_proc(&egl_inst, gles_lib.as_ref(), "glDeleteFramebuffersOES"))?;
-        let viewport = load_proc(&egl_inst, gles_lib.as_ref(), "glViewport")?;
         let read_pixels = load_proc(&egl_inst, gles_lib.as_ref(), "glReadPixels")?;
+        let get_error = load_proc(&egl_inst, gles_lib.as_ref(), "glGetError")?;
 
-        // PBO procs are ES3 / GL 2.1+: optional, the readback falls
-        // back to a synchronous glReadPixels without them.
-        let gen_buffers: Option<unsafe extern "C" fn(i32, *mut u32)> =
-            load_proc(&egl_inst, gles_lib.as_ref(), "glGenBuffers").ok();
-        let bind_buffer: Option<unsafe extern "C" fn(u32, u32)> =
-            load_proc(&egl_inst, gles_lib.as_ref(), "glBindBuffer").ok();
-        let buffer_data: Option<unsafe extern "C" fn(u32, isize, *const std::ffi::c_void, u32)> =
-            load_proc(&egl_inst, gles_lib.as_ref(), "glBufferData").ok();
-        let map_buffer_range: Option<
-            unsafe extern "C" fn(u32, isize, isize, u32) -> *mut std::ffi::c_void,
-        > = load_proc(&egl_inst, gles_lib.as_ref(), "glMapBufferRange").ok();
-        let unmap_buffer: Option<unsafe extern "C" fn(u32) -> u8> =
-            load_proc(&egl_inst, gles_lib.as_ref(), "glUnmapBuffer").ok();
-        let delete_buffers: Option<unsafe extern "C" fn(i32, *const u32)> =
-            load_proc(&egl_inst, gles_lib.as_ref(), "glDeleteBuffers").ok();
-        let has_pbo = gen_buffers.is_some()
-            && bind_buffer.is_some()
-            && buffer_data.is_some()
-            && map_buffer_range.is_some()
-            && unmap_buffer.is_some()
-            && delete_buffers.is_some();
-
-        // Allocate the reusable texture + FBO + PBOs while the context
-        // is still current on this thread; read_dma_buf rebinds it on
-        // the stream thread per call.
-        let (texture, fbo, pbos) = unsafe {
+        // Allocate the reusable texture + FBO while the context is
+        // current.
+        let (texture, fbo) = unsafe {
             let mut t = 0u32;
             (gen_textures)(1, &mut t);
             let mut f = 0u32;
             (gen_framebuffers)(1, &mut f);
-            let mut p = [0u32; 2];
-            if has_pbo {
-                if let Some(gen) = gen_buffers {
-                    (gen)(2, p.as_mut_ptr());
-                }
-            }
-            (t, f, p)
+            (t, f)
         };
 
-        // The context is used from PipeWire's RT thread, not this one:
-        // release it here so read_dma_buf can bind it there. An EGL
-        // context current on the wrong thread makes every GL call a
-        // silent no-op.
+        // read_dma_buf binds the context for each frame, so no binding
+        // made in between on this thread breaks the readback.
         let _ = egl_inst.make_current(display, None, None, None);
 
         Ok(Self {
@@ -287,19 +239,10 @@ impl GlContext {
             framebuffer_texture_2d,
             check_framebuffer_status,
             delete_framebuffers,
-            viewport,
             read_pixels,
+            get_error,
             texture,
             fbo,
-            pbos,
-            pbo_pending: None,
-            pbo_bytes: 0,
-            gen_buffers,
-            bind_buffer,
-            buffer_data,
-            map_buffer_range,
-            unmap_buffer,
-            delete_buffers,
         })
     }
 }
@@ -312,11 +255,6 @@ impl Drop for GlContext {
             .egl
             .make_current(self.display, self.surface, self.surface, Some(self.context));
         unsafe {
-            if let Some(del) = self.delete_buffers {
-                if self.pbos[0] != 0 {
-                    (del)(2, self.pbos.as_ptr());
-                }
-            }
             if self.fbo != 0 {
                 (self.delete_framebuffers)(1, &self.fbo);
             }

@@ -1,8 +1,9 @@
 //! Canvas editor: markup on a capture before it leaves the machine.
 //!
-//! Layout mirrors the Tauri editor one for one: topbar (file info,
-//! Discard, Copy text, Copy variants, Done), left sidebar (eight tools,
-//! undo, clear, eleven swatches), stage with the fit-scaled image.
+//! Layout: topbar (file name, undo, redo, clear; Discard, Copy text,
+//! the Copy menu, Rotate, Flip, Flip V, Done, help), left sidebar
+//! (eleven tools, three stroke widths, the fill toggle, eleven
+//! swatches), stage with the fit-scaled image.
 //! Actions live in image pixels; the stage scales them to view. Vector
 //! shapes render as tessellated GPU paths, blur as pre-pixelated patch
 //! images, text as shaped text elements. Saving rasterizes everything
@@ -26,6 +27,7 @@ use iris_lib::history::Edit;
 mod action;
 #[cfg(test)]
 mod dirty_tests;
+mod keys;
 mod ops;
 mod paint;
 mod raster;
@@ -39,6 +41,13 @@ mod tests;
 pub(crate) use action::Action;
 pub(crate) use action::*;
 pub(crate) use raster::*;
+
+/// A Select-tool move drag: the action index, the last pointer in image
+/// px, and the action and its bbox as they were when the drag started.
+pub(crate) type MoveDrag = (usize, (f32, f32), Action, (f32, f32, f32, f32));
+
+/// A crop-rect move drag: the pointer and the rect at drag start.
+pub(crate) type CropMove = ((f32, f32), (f32, f32, f32, f32));
 
 pub struct Editor {
     pub(crate) path: PathBuf,
@@ -93,11 +102,11 @@ pub struct Editor {
     /// as (action index, last pointer in image px, action as it was
     /// when the drag started, for the undo entry).
     pub(crate) selected: Option<usize>,
-    pub(crate) move_drag: Option<(usize, (f32, f32), Action, (f32, f32, f32, f32))>,
+    pub(crate) move_drag: Option<MoveDrag>,
     /// Crop tool: the pending rect in image px, plus its drag states.
     pub(crate) crop_rect: Option<(f32, f32, f32, f32)>,
     pub(crate) crop_anchor: Option<(f32, f32)>,
-    pub(crate) crop_move: Option<((f32, f32), (f32, f32, f32, f32))>,
+    pub(crate) crop_move: Option<CropMove>,
     pub(crate) copy_menu: bool,
     pub(crate) help: bool,
     pub(crate) status: Option<String>,
@@ -136,6 +145,9 @@ pub struct Editor {
     pub(crate) fill: bool,
 }
 
+/// The editor window's minimum logical size, where its resize stops.
+const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
+
 /// Editor window default placement; morph rects arrive in screen
 /// coordinates and the window grows to contain them.
 const MORPH: Duration = Duration::from_millis(380);
@@ -157,7 +169,7 @@ fn resolve_window_placement(
     if let Some((fx, fy, fw, fh)) = from {
         // Monitors are physical pixels; `from` and window bounds are
         // logical.
-        let s = iris_lib::capture::root_scale();
+        let s = crate::sys::window::root_scale(cx);
         let mons = iris_lib::capture::monitors().unwrap_or_default();
         let host = mons.iter().copied().find(|m| {
             let (mx, my) = (m.x as f32 / s, m.y as f32 / s);
@@ -225,7 +237,10 @@ pub fn open(
     let focus = cx.focus_handle();
     let (origin, win) = resolve_window_placement(cx, from);
 
-    let win_id = crate::sys::window::unique_id("dev.iris.editor");
+    let filename = path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "capture.png".to_string());
     let morph = from.map(|(x, y, w, h)| (x - origin.0, y - origin.1, w, h));
     let handle = cx
         .open_window(
@@ -243,66 +258,56 @@ pub fn open(
                 is_minimizable: true,
                 display_id: None,
                 window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some(win_id.clone()),
-                window_min_size: Some(size(px(640.), px(480.))),
+                app_id: Some("dev.iris.editor".to_string()),
+                window_min_size: Some(MIN_SIZE),
                 window_decorations: Some(WindowDecorations::Client),
                 tabbing_identifier: None,
             },
-            |_, cx| {
-                cx.new(|_| {
-                    let filename = path
-                        .file_name()
-                        .map(|f| f.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "capture.png".to_string());
-                    Editor {
-                        title: SharedString::from(format!("{filename} · {bw}×{bh}")),
-                        filename,
-                        path: path.to_path_buf(),
-                        base: Arc::new(base),
-                        base_dims: (bw, bh),
-                        base_img,
-                        composite: Arc::new(image::RgbaImage::new(1, 1)),
-                        actions: Rc::new(std::cell::RefCell::new(Vec::new())),
-                        undos: Vec::new(),
-                        redos: Vec::new(),
-                        current: None,
-                        tool: Tool::Pen,
-                        stroke: 1,
-                        color: COLORS[5],
-                        text_entry: None,
-                        caret_started: Instant::now(),
-                        caret_timer: false,
-                        selected: None,
-                        move_drag: None,
-                        crop_rect: None,
-                        crop_anchor: None,
-                        crop_move: None,
-                        copy_menu: false,
-                        help: false,
-                        status: None,
-                        focus,
-                        morph,
-                        morph_started: None,
-                        morph_sync,
-                        morph_frames: 0,
-                        closing: None,
-                        base_ready: false,
-                        copy_menu_opened: None,
-                        zoom: 1.0,
-                        pan: (0.0, 0.0),
-                        pan_drag: None,
-                        space_pan: false,
-                        fill: false,
-                    }
+            |window, cx| {
+                window.set_window_title(&format!("{filename} - iris"));
+                cx.new(|_| Editor {
+                    title: SharedString::from(format!("{filename} · {bw}×{bh}")),
+                    filename,
+                    path: path.to_path_buf(),
+                    base: Arc::new(base),
+                    base_dims: (bw, bh),
+                    base_img,
+                    composite: Arc::new(image::RgbaImage::new(1, 1)),
+                    actions: Rc::new(std::cell::RefCell::new(Vec::new())),
+                    undos: Vec::new(),
+                    redos: Vec::new(),
+                    current: None,
+                    tool: Tool::Pen,
+                    stroke: 1,
+                    color: COLORS[5],
+                    text_entry: None,
+                    caret_started: Instant::now(),
+                    caret_timer: false,
+                    selected: None,
+                    move_drag: None,
+                    crop_rect: None,
+                    crop_anchor: None,
+                    crop_move: None,
+                    copy_menu: false,
+                    help: false,
+                    status: None,
+                    focus,
+                    morph,
+                    morph_started: None,
+                    morph_sync,
+                    morph_frames: 0,
+                    closing: None,
+                    base_ready: false,
+                    copy_menu_opened: None,
+                    zoom: 1.0,
+                    pan: (0.0, 0.0),
+                    pan_drag: None,
+                    space_pan: false,
+                    fill: false,
                 })
             },
         )
         .map_err(|e| format!("open editor window: {e}"))?;
-    // Same after-map fixup every other Normal window gets: without it
-    // an X11 WM draws its own frame ("Unnamed Window") around the
-    // client-side chrome and places the window itself.
-    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
-
     let decode_path = path.to_path_buf();
     handle
         .update(cx, |_, _, cx| {
@@ -415,16 +420,18 @@ impl Render for Editor {
             let t = (started.elapsed().as_secs_f32() / motion::tempo(OUTRO).as_secs_f32()).min(1.0);
             outro = 1.0 - t;
             if t >= 1.0 {
-                let img = self.base_img.clone();
-                cx.defer(move |cx| crate::widgets::release_render(&img, cx));
+                crate::widgets::release_render(&self.base_img, cx);
                 window.remove_window();
             } else {
                 window.request_animation_frame();
             }
         }
         let title = self.title.clone();
+        let stage = self.render_stage(stage_rect, morph_radius, chrome, scale, window, cx);
 
-        let mut root = div()
+        // Paint order is stacking order: the zoomed or panned image
+        // runs under the floating chrome, never over it.
+        let root = div()
             .id("editor")
             .size_full()
             .font_family(theme::FONT)
@@ -438,12 +445,11 @@ impl Render for Editor {
                 this.handle_key_up(ev, cx);
             }))
             .child(self.render_backdrop(chrome, cx))
+            .child(stage)
             .child(self.render_topbar(topbar, title, window, cx))
             .child(self.render_sidebar(sidebar, cx));
 
-        let stage = self.render_stage(stage_rect, morph_radius, chrome, scale, window, cx);
-        root = root.child(stage);
-
         self.render_menus_and_overlays(root, topbar, window, cx)
+            .children(crate::widgets::resize_edges(window, MIN_SIZE))
     }
 }

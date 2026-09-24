@@ -4,31 +4,50 @@ use std::rc::Rc;
 use gpui::*;
 use iris_lib::library::{self, CaptureEntry};
 
-use crate::{editor, pipeline};
+use crate::{editor, pipeline, theme};
 
-use super::{Library, CARD_W, GAP, REFRESH, THUMB_H};
+use super::{Library, CARD_W, GAP, LABEL_GAP, LABEL_PAD, REFRESH, THUMB_H};
+
+/// Name columns that fit beside `dims` on a card's label row. The font
+/// is monospace, so a width is a column count.
+pub(super) fn name_cols(dims: &str) -> usize {
+    let row = (CARD_W - 2.0 * LABEL_PAD - LABEL_GAP) / theme::SMALL_ADVANCE;
+    (row.floor() as usize)
+        .saturating_sub(dims.chars().count())
+        .max(1)
+}
+
+/// `name` in at most `cols` characters. A longer name keeps its head and
+/// tail around one ellipsis, as file managers shorten names, so the end
+/// of a timestamp and a collision suffix (`-2`) stay readable.
+pub(super) fn fit_name(name: &str, cols: usize) -> String {
+    let n = name.chars().count();
+    if n <= cols {
+        return name.to_owned();
+    }
+    let keep = cols.saturating_sub(1);
+    let head = keep.div_ceil(2);
+    let mut out: String = name.chars().take(head).collect();
+    out.push('\u{2026}');
+    out.extend(name.chars().skip(n - (keep - head)));
+    out
+}
 
 impl Library {
-    /// The card's display strings: the file name truncated to ~19
-    /// chars (GPUI's text_ellipsis only fires on wrapped text; nowrap
-    /// clips, so the truncation happens here) and the dimensions.
-    /// Computed once per entry, not per frame.
+    /// The card's display strings: the file stem fitted beside the
+    /// dimensions, and the dimensions. Every entry is a PNG, so the
+    /// extension is dropped. GPUI's text_ellipsis only fires on wrapped
+    /// text (nowrap clips), so the fitting happens here, once per entry
+    /// rather than per frame.
     pub(super) fn entry_name(e: &CaptureEntry) -> (SharedString, SharedString) {
-        let name = e
+        let dims = format!("{}×{}", e.width, e.height);
+        let stem = e
             .path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
+            .file_stem()
+            .map(|n| n.to_string_lossy())
             .unwrap_or_default();
-        let name = if name.chars().count() > 19 {
-            let cut: String = name.chars().take(18).collect();
-            SharedString::from(format!("{cut}\u{2026}"))
-        } else {
-            SharedString::from(name)
-        };
-        (
-            name,
-            SharedString::from(format!("{}×{}", e.width, e.height)),
-        )
+        let name = fit_name(&stem, name_cols(&dims));
+        (SharedString::from(name), SharedString::from(dims))
     }
 
     /// Read thumbnails off the main thread and fill the cache in one
@@ -49,32 +68,33 @@ impl Library {
                 .update(cx, |this, _| this.prefetch_want.take())
                 .unwrap_or(None)
             {
-                let missing: Vec<(std::path::PathBuf, std::path::PathBuf)> =
-                    match this.update(cx, |this, _| {
-                        let (lo, hi) = (
-                            range.0.min(this.entries.len()),
-                            range.1.min(this.entries.len()),
-                        );
-                        this.entries[lo..hi]
-                            .iter()
-                            .filter(|e| !this.thumb_cache.contains_key(&e.path))
-                            .map(|e| (e.path.clone(), e.thumb.clone()))
-                            .collect()
-                    }) {
-                        Ok(m) => m,
-                        Err(_) => break,
-                    };
+                let missing: Vec<CaptureEntry> = match this.update(cx, |this, _| {
+                    let (lo, hi) = (
+                        range.0.min(this.entries.len()),
+                        range.1.min(this.entries.len()),
+                    );
+                    this.entries[lo..hi]
+                        .iter()
+                        .filter(|e| !this.thumb_cache.contains_key(&e.path))
+                        // Owned copies: the Rc is not Send, and each
+                        // entry moves into a background task.
+                        .map(|e| CaptureEntry::clone(e))
+                        .collect()
+                }) {
+                    Ok(m) => m,
+                    Err(_) => break,
+                };
                 // One background task per thumb: the executor is a
-                // pool, so the window's PNG decodes run across cores
-                // instead of serially on one task.
+                // pool, so the window's PNG decodes (and any rebuild of
+                // a stale thumbnail) run across cores instead of
+                // serially on one task.
                 let tasks: Vec<_> = missing
                     .into_iter()
-                    .map(|(p, t)| {
+                    .map(|e| {
                         cx.background_executor().spawn(async move {
-                            std::fs::read(&t)
-                                .ok()
-                                .and_then(|b| crate::widgets::render_image_from_png(&b))
-                                .map(|img| (p, img))
+                            library::thumbnail(&e).ok().map(|img| {
+                                (e.path, crate::widgets::render_image_from_rgba_owned(img))
+                            })
                         })
                     })
                     .collect();
@@ -137,7 +157,7 @@ impl Library {
                         })
                         .map(|e| e.path.as_path())
                         .collect();
-                    this.thumb_cache.retain(|p, _| !stale.contains(p.as_path()));
+                    super::evict_thumbs(&mut this.thumb_cache, |p| !stale.contains(p), cx);
                     this.entries = fresh.into_iter().map(Rc::new).collect();
                     this.entries_dirty = true;
                     this.entry_names = this.entries.iter().map(|e| Self::entry_name(e)).collect();
@@ -236,14 +256,6 @@ impl Library {
             CARD_W,
             THUMB_H,
         )
-    }
-
-    /// Open the containing directory of a capture with xdg-open.
-    pub(super) fn open_containing_folder(path: &std::path::Path) {
-        let parent = path.parent().unwrap_or(path).to_path_buf();
-        std::thread::spawn(move || {
-            let _ = std::process::Command::new("xdg-open").arg(&parent).spawn();
-        });
     }
 
     pub(super) fn copy_selection(&mut self, cx: &mut Context<Self>) {

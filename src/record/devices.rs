@@ -1,28 +1,7 @@
-//! Pure ffmpeg helpers for desktop recording on Windows and macOS:
-//! device selection from ffmpeg's own listing (`-list_devices true`
-//! prints to stderr), so recording names a device that exists instead
-//! of guessing; even frame sizes; and the concat list that joins
-//! paused segments. Pure, so testable on any host.
-
-use std::path::Path;
-
-/// `n` rounded down to even, at least 2: yuv420p encoders reject odd
-/// frame dimensions.
-pub fn even(n: u32) -> u32 {
-    (n & !1).max(2)
-}
-
-/// A concat-demuxer list naming `segments` in order. Paths are single-
-/// quoted; a `'` inside one is closed, escaped, and reopened (`'\''`).
-pub fn concat_list(segments: &[&Path]) -> String {
-    let mut out = String::new();
-    for p in segments {
-        out.push_str("file '");
-        out.push_str(&p.to_string_lossy().replace('\'', "'\\''"));
-        out.push_str("'\n");
-    }
-    out
-}
+//! Device selection for desktop recording on Windows and macOS, from
+//! ffmpeg's own listing (`-list_devices true` prints to stderr), so a
+//! recording names a device that exists instead of guessing. Pure, so
+//! testable on any host.
 
 #[cfg(any(windows, test))]
 /// First audio device in a `-f dshow -list_devices true` listing:
@@ -76,24 +55,6 @@ pub fn avfoundation_indices(listing: &str) -> (Vec<usize>, Option<usize>) {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn even_rounds_down_with_floor_of_two() {
-        assert_eq!(
-            [0, 1, 2, 3, 1919, 1080].map(super::even),
-            [2, 2, 2, 2, 1918, 1080]
-        );
-    }
-
-    #[test]
-    fn concat_list_quotes_and_escapes_each_segment() {
-        let a = Path::new("/rec/a.part0.mp4");
-        let b = Path::new("/rec/it's.part1.mp4");
-        assert_eq!(
-            concat_list(&[a, b]),
-            "file '/rec/a.part0.mp4'\nfile '/rec/it'\\''s.part1.mp4'\n"
-        );
-    }
-
     // WHY: the class closed here is "recording names a device ffmpeg
     // does not have": a guessed `audio=default` or a fixed screen index
     // makes ffmpeg fail to open the input. Listings are ffmpeg 8's

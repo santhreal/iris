@@ -295,21 +295,25 @@ impl Editor {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let png = png_bytes(&img)?;
-                    std::fs::write(&path, &png)
-                        .map_err(|e| format!("write {}: {e}", path.display()))?;
+                    let saved = png_bytes(&img).and_then(|png| {
+                        std::fs::write(&path, &png)
+                            .map_err(|e| format!("write {}: {e}", path.display()))
+                    });
+                    saved.map_err(|e| ("Save failed", e))?;
                     // The file changed under the library's feet:
                     // regenerate the thumbnail and refresh the entry,
                     // or the card shows the pre-edit image forever.
                     if let Err(e) = iris_lib::library::add(&path, &img) {
                         iris_lib::ilog!("iris: library refresh after save: {e}");
                     }
-                    pipeline::copy_image(&img)?;
-                    Ok::<(), String>(())
+                    pipeline::copy_image(&img).map_err(|e| ("Copy failed", e))
                 })
                 .await;
-            if let Err(e) = result {
+            // The editor is gone by now: a notice is the only place
+            // left to show that the edit did not land.
+            if let Err((what, e)) = result {
                 iris_lib::ilog!("iris: save: {e}");
+                let _ = cx.update(|cx| crate::notice::failed(cx, what, &e));
             }
         })
         .detach();
@@ -339,7 +343,7 @@ impl Editor {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.status = Some(match result {
-                    Ok(text) => format!("{} chars copied", text.len()),
+                    Ok(text) => format!("Copied {} characters", text.chars().count()),
                     Err(e) => e,
                 });
                 cx.notify();

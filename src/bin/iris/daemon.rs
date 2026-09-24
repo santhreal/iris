@@ -23,17 +23,17 @@ use crate::{chip, library, overlay, settings, stage};
 mod capture;
 mod recording;
 
-/// The daemon-owned recording session. The record thread owns the
-/// border strips; the chip window is a GPUI surface.
-pub(crate) static RECORDING: std::sync::LazyLock<parking_lot::Mutex<record::RecordingManager>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(record::RecordingManager::default()));
+/// The daemon's live recording, if any: one at a time. The record
+/// thread owns the border strips; the chip window is a GPUI surface.
+pub(crate) static RECORDING: parking_lot::Mutex<Option<record::ActiveRecording>> =
+    parking_lot::Mutex::new(None);
 
 /// The daemon's command channel, installed by `start`.
 pub(crate) static COMMAND_TX: std::sync::OnceLock<UnboundedSender<Command>> =
     std::sync::OnceLock::new();
 
-/// The command channel sender for a recording source's chip-hide
-/// callback, which runs on the source thread.
+/// The command channel sender for a recording source's end notice,
+/// which runs on the source thread.
 pub(crate) fn command_tx() -> Option<UnboundedSender<Command>> {
     COMMAND_TX.get().cloned()
 }
@@ -64,55 +64,92 @@ pub enum Command {
     },
     RecordPause,
     RecordMic,
-    /// The recording source ended; close the chip.
-    ChipHide,
+    /// A recording source returned: the daemon collects the recording
+    /// when it ended on its own, not by a stop.
+    RecordingEnded,
+    /// A thread with no window of its own failed at `what`: the daemon
+    /// shows `err` in a notice.
+    Failed {
+        what: &'static str,
+        err: String,
+    },
     Quit,
 }
 
-/// Parse CLI-style args into commands. Unknown flags are ignored so an
-/// old client never wedges a new daemon.
-pub fn parse_args(args: &[String]) -> Vec<Command> {
-    let mut cmds = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--capture" => cmds.push(Command::Capture),
-            "--capture-fullscreen" => cmds.push(Command::CaptureFullscreen),
-            "--capture-window" => cmds.push(Command::CaptureWindow),
-            "--delay" => {
-                if let Some(secs) = args.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
-                    cmds.push(Command::Delayed(secs));
-                    i += 1;
-                }
-            }
-            "--settings" => cmds.push(Command::Settings),
-            "--library" => cmds.push(Command::Library),
-            "--quit" => cmds.push(Command::Quit),
-            "--home" => cmds.push(Command::Home),
-            "--record-window" => cmds.push(Command::RecordToggle),
-            "--record-region" => cmds.push(Command::RecordRegionPick),
-            "--record-pause" => cmds.push(Command::RecordPause),
-            "--record-mic" => cmds.push(Command::RecordMic),
-            "--annotate" => {
-                if let Some(path) = args.get(i + 1) {
-                    cmds.push(Command::Annotate(PathBuf::from(path)));
-                    i += 1;
-                }
-            }
-            "--toast" => {
-                if let Some(path) = args.get(i + 1) {
-                    cmds.push(Command::Toast(PathBuf::from(path)));
-                    i += 1;
-                }
-            }
-            _ => {}
+impl Command {
+    /// The notice title when this command fails. The match is
+    /// exhaustive so a new command fails to compile until it has one.
+    fn failure_title(&self) -> &'static str {
+        match self {
+            Command::Capture
+            | Command::CaptureFullscreen
+            | Command::CaptureWindow
+            | Command::Delayed(_) => "Capture failed",
+            Command::RecordToggle
+            | Command::RecordRegionPick
+            | Command::RecordRegion { .. }
+            | Command::RecordingEnded => "Recording failed",
+            Command::RecordPause => "Pause failed",
+            Command::RecordMic => "Microphone toggle failed",
+            Command::Home => "Home did not open",
+            Command::Library => "Library did not open",
+            Command::Settings => "Settings did not open",
+            Command::Annotate(_) => "Editor did not open",
+            Command::Toast(_) => "Toast did not open",
+            Command::Failed { what, .. } => what,
+            Command::Quit => "Quit failed",
         }
-        i += 1;
     }
-    cmds
 }
 
-/// Run one command against the live app.
+/// Send `err` from a thread with no window to the daemon's notice.
+/// Before the daemon's command loop starts it is only logged.
+pub(crate) fn report_failure(what: &'static str, err: String) {
+    iris_lib::ilog!("iris: {what}: {err}");
+    if let Some(tx) = command_tx() {
+        let _ = tx.unbounded_send(Command::Failed { what, err });
+    }
+}
+
+/// True when every command acts on a running daemon's live state:
+/// quit, pause, and the mic toggle. A fresh daemon holds none of that
+/// state, so the client delivers these only to a daemon that is
+/// already up and never spawns one for them. The match is exhaustive
+/// so a new command fails to compile until it is classified.
+pub fn live_daemon_only(cmds: &[Command]) -> bool {
+    !cmds.is_empty()
+        && cmds.iter().all(|c| match c {
+            Command::Quit | Command::RecordPause | Command::RecordMic => true,
+            Command::Home
+            | Command::Capture
+            | Command::CaptureFullscreen
+            | Command::CaptureWindow
+            | Command::Delayed(_)
+            | Command::Library
+            | Command::Settings
+            | Command::Annotate(_)
+            | Command::Toast(_)
+            | Command::RecordToggle
+            | Command::RecordRegionPick
+            | Command::RecordRegion { .. }
+            | Command::RecordingEnded
+            | Command::Failed { .. } => false,
+        })
+}
+
+/// Run `cmd` and show why it failed in a notice: a hotkey, the tray,
+/// a home tile, or a forwarded command line has no other place to show
+/// it.
+pub fn run(cx: &mut App, cmd: &Command) {
+    if let Err(e) = dispatch(cx, cmd) {
+        iris_lib::ilog!("iris: {cmd:?}: {e}");
+        crate::notice::failed(cx, cmd.failure_title(), &e);
+    }
+}
+
+/// Run one command against the live app. A caller with a surface of its
+/// own for the error (the library's status line) takes it here; every
+/// other caller goes through `run`.
 pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
     match cmd {
         Command::Home => crate::home::open(cx),
@@ -125,11 +162,7 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
                 cx.background_executor()
                     .timer(Duration::from_secs(secs))
                     .await;
-                let _ = cx.update(|cx| {
-                    if let Err(e) = capture::capture_fullscreen(cx) {
-                        iris_lib::ilog!("iris: capture: {e}");
-                    }
-                });
+                let _ = cx.update(|cx| run(cx, &Command::CaptureFullscreen));
             })
             .detach();
             Ok(())
@@ -137,89 +170,55 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::Library => library::open(cx),
         Command::Settings => settings::open(cx),
         Command::Annotate(path) => crate::editor::open(cx, path, None, None),
-        Command::Toast(path) => stage::show_toast(cx, path, path, 0, 0),
+        Command::Toast(path) => {
+            stage::show_toast(cx, path);
+            Ok(())
+        }
         Command::RecordToggle => recording::toggle_recording(cx),
         Command::RecordRegionPick => recording::record_region_pick(cx),
         Command::RecordRegion { x, y, w, h } => recording::record_region_start(cx, *x, *y, *w, *h),
         Command::RecordPause => {
-            let mgr = RECORDING.lock();
-            if let Some(rec) = &mgr.active {
-                chip::set_paused(!chip::paused());
-                let paused = chip::paused();
-                rec.send_control(if paused {
-                    record::RecControl::Pause
-                } else {
-                    record::RecControl::Resume
-                });
-            }
+            let paused = RECORDING
+                .lock()
+                .as_mut()
+                .ok_or("no recording is active")?
+                .toggle_pause();
+            chip::set_paused(cx, paused);
             Ok(())
         }
         Command::RecordMic => {
-            // A desktop recording joins its paused segments by stream
-            // copy, which needs one fixed set of streams.
-            if cfg!(not(target_os = "linux")) && RECORDING.lock().is_active() {
-                return Err("the mic is fixed for a recording on this platform".to_string());
-            }
-            let mut mgr = RECORDING.lock();
-            if let Some(rec) = &mut mgr.active {
-                rec.mic = !rec.mic;
-                chip::set_mic(rec.mic);
-                rec.send_control(record::RecControl::ToggleMic);
-            }
+            let on = RECORDING
+                .lock()
+                .as_mut()
+                .ok_or("no recording is active")?
+                .toggle_mic()?;
+            chip::set_mic(cx, on);
             Ok(())
         }
-        Command::ChipHide => {
-            chip::close(cx);
+        Command::RecordingEnded => {
+            recording::collect_ended(cx);
+            Ok(())
+        }
+        Command::Failed { what, err } => {
+            crate::notice::failed(cx, what, err);
             Ok(())
         }
         Command::Quit => {
             // Flush an in-flight recording before the process exits:
             // quitting with the encoder live orphans ffmpeg mid-write
             // and leaves a truncated file.
-            if let Ok(Some(path)) = RECORDING.lock().stop() {
-                iris_lib::ilog!("iris: recording saved: {}", path.display());
+            let active = RECORDING.lock().take();
+            match active.map(|rec| rec.stop()) {
+                Some(Ok(Some(path))) => {
+                    iris_lib::ilog!("iris: recording saved: {}", path.display())
+                }
+                Some(Err(e)) => iris_lib::ilog!("iris: recording: {e}"),
+                Some(Ok(None)) | None => {}
             }
             cx.quit();
             Ok(())
         }
     }
-}
-
-/// The daemon must never die with its last surface: GPUI's X11 client
-/// stops the event loop when the window list empties. This 1x1
-/// transparent notification window stays mapped for the process
-/// lifetime; notification windows are skipped by taskbars and alt-tab.
-struct Anchor;
-
-impl Render for Anchor {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full()
-    }
-}
-
-fn open_anchor(cx: &mut App) {
-    let _ = cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: point(px(0.), px(0.)),
-                size: size(px(1.), px(1.)),
-            })),
-            titlebar: None,
-            focus: false,
-            show: true,
-            kind: WindowKind::PopUp,
-            is_movable: false,
-            is_resizable: false,
-            is_minimizable: false,
-            display_id: None,
-            window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some("dev.iris.daemon".to_string()),
-            window_min_size: None,
-            window_decorations: Some(WindowDecorations::Client),
-            tabbing_identifier: None,
-        },
-        |_, cx| cx.new(|_| Anchor),
-    );
 }
 
 /// Settings saved: reload the hotkey grabs.
@@ -231,7 +230,10 @@ pub fn notify_hotkeys_changed() {
 /// socket, the tray icon, and the global hotkey grabs. The socket and
 /// command pump are channel-driven; failures degrade to log lines.
 pub fn start(cx: &mut App) {
-    open_anchor(cx);
+    // The daemon outlives every surface: GPUI's Linux and Windows run
+    // loops otherwise stop when the last window closes, and a parked
+    // stand-in window would keep a renderer and its frame timer live.
+    cx.set_quit_on_last_window_closed(false);
     iris_lib::ilog!("iris: daemon start");
     // Warm the overlay pool: the first capture reuses a live window
     // instead of paying GPUI's ~130ms renderer init on the hotkey.
@@ -246,12 +248,15 @@ pub fn start(cx: &mut App) {
         Ok(mut ipc_rx) => {
             cx.spawn(async move |cx| {
                 while let Some(args) = ipc_rx.next().await {
-                    let cmds = parse_args(&args);
+                    let parsed = crate::cli::parse(&args);
+                    // Only a client of another version sends an option
+                    // this daemon does not parse; the rest still runs.
+                    for e in &parsed.errors {
+                        iris_lib::ilog!("iris: forwarded command line: {e}");
+                    }
                     let _ = cx.update(|cx| {
-                        for cmd in cmds {
-                            if let Err(e) = dispatch(cx, &cmd) {
-                                iris_lib::ilog!("iris: dispatch: {e}");
-                            }
+                        for cmd in parsed.cmds {
+                            run(cx, &cmd);
                         }
                     });
                 }
@@ -269,12 +274,57 @@ pub fn start(cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut rx = rx;
         while let Some(cmd) = rx.next().await {
-            let _ = cx.update(|cx| {
-                if let Err(e) = dispatch(cx, &cmd) {
-                    iris_lib::ilog!("iris: dispatch: {e}");
-                }
-            });
+            let _ = cx.update(|cx| run(cx, &cmd));
         }
     })
     .detach();
+}
+
+// WHY: the class closed here is "a client spawns a daemon only to hand
+// it a command that needs an existing one": `iris --quit` with nothing
+// running started a full daemon (GPUI init, overlay warmup) just to
+// stop it, which held iris.exe open while the installer overwrote it.
+// Not covered: the socket probe itself, which needs a live listener.
+#[cfg(test)]
+mod tests {
+    use std::prelude::v1::test;
+
+    use super::*;
+
+    #[test]
+    fn live_state_commands_never_spawn_a_daemon() {
+        use Command::*;
+        for cmds in [
+            vec![Quit],
+            vec![RecordPause],
+            vec![RecordMic],
+            vec![RecordPause, RecordMic],
+            vec![Quit, RecordPause],
+        ] {
+            assert!(live_daemon_only(&cmds), "{cmds:?}");
+        }
+    }
+
+    #[test]
+    fn commands_that_start_work_may_spawn_one() {
+        use Command::*;
+        for cmds in [
+            vec![],
+            vec![Capture],
+            vec![CaptureFullscreen],
+            vec![CaptureWindow],
+            vec![Delayed(3)],
+            vec![Library],
+            vec![Settings],
+            vec![Home],
+            vec![RecordToggle],
+            vec![RecordRegionPick],
+            vec![Annotate("shot.png".into())],
+            vec![Toast("shot.png".into())],
+            vec![Quit, Capture],
+            vec![RecordPause, RecordToggle],
+        ] {
+            assert!(!live_daemon_only(&cmds), "{cmds:?}");
+        }
+    }
 }

@@ -1,9 +1,8 @@
 //! Capture flash: the 180ms soft white blink at the grab moment.
 //!
 //! A fullscreen transparent popup with a white fill that peaks at 0.38
-//! and eases out over 180ms. It never takes focus, and it is gone
-//! before the frozen frame is grabbed, so it never appears in a
-//! capture.
+//! and eases out over 180ms. It never takes focus, and it opens after
+//! the frame is grabbed, so it never appears in a capture.
 
 use std::time::Instant;
 
@@ -43,8 +42,7 @@ pub fn show(cx: &mut App) -> Result<(), String> {
         uy2 = uy2.max(m.y + m.height as i32);
     }
     let (uw, uh) = ((ux2 - ux).max(1) as u32, (uy2 - uy).max(1) as u32);
-    let s = iris_lib::capture::root_scale();
-    let win_id = crate::sys::window::unique_id("dev.iris.flash");
+    let s = crate::sys::window::root_scale(cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -61,26 +59,20 @@ pub fn show(cx: &mut App) -> Result<(), String> {
             is_minimizable: false,
             display_id: None,
             window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some(win_id.clone()),
+            app_id: Some("dev.iris.flash".to_string()),
             window_min_size: None,
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
         },
-        |_, cx| {
+        |window, cx| {
+            crate::sys::window::span_after_map(window, ux, uy, uw, uh);
             cx.new(|_| Flash {
                 started: Instant::now(),
             })
         },
     )
     .map_err(|e| format!("open flash window: {e}"))?;
-    crate::sys::window::span_after_map(win_id, ux, uy, uw, uh);
     Ok(())
-}
-
-/// Total wall time of the blink; the caller waits this long before
-/// grabbing the frame so the flash is never captured.
-pub const fn duration_ms() -> u64 {
-    FLASH_MS as u64 + 40
 }
 
 impl Render for Flash {

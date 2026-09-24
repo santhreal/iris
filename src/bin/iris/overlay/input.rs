@@ -4,7 +4,8 @@ use gpui::*;
 use iris_lib::capture::WinRect;
 
 use super::{
-    shell::{close_other_overlays, poolable, wayland, ShellLayout},
+    drag_region,
+    shell::{close_other_overlays, poolable, ShellLayout},
     Flight, Overlay, OverlayMode, MIN_SIZE,
 };
 use crate::{pipeline, pipeline::Region, stage};
@@ -20,7 +21,7 @@ impl Overlay {
     ) {
         // Wayland opened fullscreen with no layout: the frame's own
         // extent is the view, and its whole rect is the one monitor.
-        if wayland() {
+        if iris_lib::session::wayland() {
             self.origin = (0, 0);
             self.view = (width, height);
             if self.monitors.is_empty() {
@@ -39,7 +40,7 @@ impl Overlay {
         // keystroke after re-arm can land on the root window. By the
         // time the frame lands the WM has finished its map handling,
         // so activation here sticks.
-        if !wayland() {
+        if !iris_lib::session::wayland() {
             window.activate_window();
         }
         // Enter raced the grab: the selection is already committed,
@@ -200,7 +201,7 @@ impl Overlay {
             // reads root coordinates: frame-relative plus the union's
             // origin, which is negative with a monitor left of or
             // above the primary.
-            if let Err(e) = crate::daemon::dispatch(
+            crate::daemon::run(
                 cx,
                 &crate::daemon::Command::RecordRegion {
                     x: region.x as i32 + self.origin.0,
@@ -208,9 +209,7 @@ impl Overlay {
                     w: region.width as i32,
                     h: region.height as i32,
                 },
-            ) {
-                iris_lib::ilog!("iris: record-region: {e}");
-            }
+            );
             close_other_overlays(cx, Some(window.window_handle()));
             self.park(window, cx);
             return;
@@ -222,6 +221,7 @@ impl Overlay {
                 // A bad crop loses this capture, never the daemon.
                 iris_lib::ilog!("iris: capture: {e}");
                 self.cancel(window, cx);
+                crate::notice::failed(cx, "Capture failed", &e);
                 return;
             }
         };
@@ -236,29 +236,38 @@ impl Overlay {
         // re-crops from the shared frame and swizzles there, so the
         // UI thread never pays the RGBA pass.
         let flight_img = crate::widgets::render_image_from_bgra_owned(cw, ch, crop);
+        let show_toast = self.cfg.show_toast_after_capture;
+        // The toast lands on this window's display, at its scale.
+        let sf = window.scale_factor();
         let frame_for_finalize = frame_img.clone();
         let finalize = cx.background_executor().spawn(async move {
             let bgra = frame_for_finalize.as_bytes(0).unwrap_or(&[]);
-            pipeline::finalize_bgra(bgra, fw, fh, region)
+            let (path, _) = pipeline::finalize_bgra(bgra, fw, fh, region)?;
+            // The toast's pixels scale from finalize's stash while the
+            // card is still in flight: the landing opens it at once.
+            let thumb = show_toast.then(|| stage::prepare_thumb(&path, sf));
+            Ok::<_, String>((path, thumb))
         });
         cx.spawn(async move |this, cx| {
             let result = finalize.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok((path, entry)) => {
-                    this.landed = Some((path, entry.thumb, entry.width, entry.height));
+                Ok((path, Some(thumb))) => {
+                    this.landed = Some((path, thumb));
                     cx.notify();
                 }
+                // No toast, so nothing lands.
+                Ok((_, None)) => {}
                 Err(e) => {
                     // A failed save (full disk, unwritable dir) loses
                     // the capture; the daemon and the overlay recover.
                     iris_lib::ilog!("iris: capture: {e}");
                     this.finalize_failed = true;
                     cx.notify();
+                    crate::notice::failed(cx, "Capture failed", &e);
                 }
             });
         })
         .detach();
-        let show_toast = self.cfg.show_toast_after_capture;
         if show_toast {
             // The toast lands on the monitor under the selection's
             // center, in that monitor's own bottom-right corner.
@@ -266,7 +275,6 @@ impl Overlay {
                 region.x as f32 + region.width as f32 / 2.0,
                 region.y as f32 + region.height as f32 / 2.0,
             );
-            let sf = window.scale_factor();
             let (sx, sy) = Self::scale(window, self.view);
             let host = self
                 .monitors
@@ -457,8 +465,12 @@ impl Overlay {
             return;
         }
         let size = window.bounds().size;
-        let region =
-            Region::from_corners(self.anchor, (mx, my), size.width.into(), size.height.into());
+        let region = drag_region(
+            self.anchor,
+            (mx, my),
+            (f32::from(size.width), f32::from(size.height)),
+            ev.modifiers.shift,
+        );
         if (region.width as f32) < MIN_SIZE || (region.height as f32) < MIN_SIZE {
             self.current = None;
         } else {

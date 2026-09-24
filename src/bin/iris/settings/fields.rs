@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::*;
 use iris_lib::config::Config;
@@ -10,11 +10,53 @@ use super::{DropdownField, Field, Settings};
 const ROW_H: f32 = 38.0;
 const FIELD_W: f32 = 280.0;
 
+/// A dropdown's state: the value shown on the button, the option
+/// labels, and the index of the selected option.
+pub(super) struct Choice {
+    pub(super) current: SharedString,
+    pub(super) options: &'static [&'static str],
+    pub(super) selected: Option<usize>,
+}
+
+impl Choice {
+    pub(super) fn new(
+        current: impl Into<SharedString>,
+        options: &'static [&'static str],
+        selected: Option<usize>,
+    ) -> Self {
+        Self {
+            current: current.into(),
+            options,
+            selected,
+        }
+    }
+}
+
+/// A configured directory as its field shows it: `~` for the home
+/// directory, the form config.toml stores.
+fn shown_dir(dir: &Path) -> String {
+    iris_lib::config::contract_home(dir).display().to_string()
+}
+
+/// A directory typed into a field, kept as typed. It must be absolute
+/// once `~` expands: a relative path would resolve against the daemon's
+/// working directory, wherever that was when it started.
+fn typed_dir(text: &str) -> Result<PathBuf, String> {
+    if text.is_empty() {
+        return Err("directory cannot be empty".into());
+    }
+    let dir = PathBuf::from(text);
+    if !iris_lib::config::expand_home(&dir).is_absolute() {
+        return Err("directory must be absolute or start with ~".into());
+    }
+    Ok(dir)
+}
+
 impl Settings {
     pub(super) fn field_text(&self, field: Field) -> String {
         match field {
-            Field::ScreenshotsDir => self.cfg.screenshots_dir.display().to_string(),
-            Field::RecordingsDir => self.cfg.recordings_dir.display().to_string(),
+            Field::ScreenshotsDir => shown_dir(&self.cfg.screenshots_dir),
+            Field::RecordingsDir => shown_dir(&self.cfg.recordings_dir),
             Field::Template => self.cfg.screenshot_template.clone(),
             Field::Fps => self.cfg.recording_fps.to_string(),
             Field::CaptureHotkey => self.cfg.capture_hotkey.clone(),
@@ -30,25 +72,22 @@ impl Settings {
         let Some((field, text)) = self.editing.take() else {
             return Ok(());
         };
-        let text = text.trim().to_string();
+        let result = self.apply_edit(field, text.trim());
+        if result.is_err() {
+            self.editing = Some((field, text));
+        }
+        result
+    }
+
+    fn apply_edit(&mut self, field: Field, text: &str) -> Result<(), String> {
         match field {
-            Field::ScreenshotsDir => {
-                if text.is_empty() {
-                    return Err("directory cannot be empty".into());
-                }
-                self.cfg.screenshots_dir = PathBuf::from(text);
-            }
-            Field::RecordingsDir => {
-                if text.is_empty() {
-                    return Err("directory cannot be empty".into());
-                }
-                self.cfg.recordings_dir = PathBuf::from(text);
-            }
+            Field::ScreenshotsDir => self.cfg.screenshots_dir = typed_dir(text)?,
+            Field::RecordingsDir => self.cfg.recordings_dir = typed_dir(text)?,
             Field::Template => {
                 if !text.contains("{date}") && !text.contains("{time}") {
                     return Err("template needs {date} or {time}".into());
                 }
-                self.cfg.screenshot_template = text;
+                self.cfg.screenshot_template = text.to_string();
             }
             Field::Fps => {
                 let fps: u32 = text
@@ -322,15 +361,18 @@ impl Settings {
         id: &'static str,
         label: &'static str,
         field: DropdownField,
-        current: impl Into<SharedString>,
-        options: &'static [&'static str],
-        selected: Option<usize>,
+        choice: Choice,
         cx: &mut Context<Self>,
         on_select: F,
     ) -> Div
     where
         F: Fn(&mut Self, usize, &mut Window, &mut Context<Self>) + 'static + Clone,
     {
+        let Choice {
+            current,
+            options,
+            selected,
+        } = choice;
         let is_open = self.open_dropdown == Some(field);
         let btn = crate::widgets::dropdown(ElementId::Name(id.into()), current, is_open)
             .w_full()

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -75,7 +75,8 @@ pub enum RecordingFormat {
     Mp4,
     /// Animated GIF: no audio, large files, paste-able anywhere.
     Gif,
-    /// VP9 in webm: smaller than mp4 at equal quality, no mic track.
+    /// VP9 in webm. Linux muxes the mic as Opus; the ffmpeg desktop
+    /// recorder on Windows and macOS writes no audio track.
     Webm,
 }
 
@@ -196,18 +197,26 @@ impl Config {
                     cfg.expand_dirs();
                     return cfg;
                 }
-                Err(e) => crate::ilog!(
-                    "iris: invalid config {}: {e}; using defaults",
-                    path.display()
-                ),
+                // The file stays as written: replacing it with defaults
+                // would discard every setting in it over one typo.
+                Err(e) => {
+                    crate::ilog!(
+                        "iris: invalid config {}: {e}; using defaults",
+                        path.display()
+                    );
+                    return Self::default();
+                }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => crate::ilog!("iris: cannot read {}: {e}; using defaults", path.display()),
+            Err(e) => {
+                crate::ilog!("iris: cannot read {}: {e}; using defaults", path.display());
+                return Self::default();
+            }
         }
         let cfg = Self::default();
         if let Some(parent) = path.parent() {
             if std::fs::create_dir_all(parent).is_ok() {
-                if let Ok(text) = toml::to_string_pretty(&cfg) {
+                if let Ok(text) = cfg.to_toml() {
                     let _ = std::fs::write(&path, text);
                 }
             }
@@ -219,14 +228,20 @@ impl Config {
     /// this a literal "~/iris" in config.toml writes into a directory
     /// named "~" under the process cwd.
     fn expand_dirs(&mut self) {
-        let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) else {
-            return;
-        };
         for dir in [&mut self.screenshots_dir, &mut self.recordings_dir] {
-            if let Ok(rest) = dir.strip_prefix("~") {
-                *dir = home.join(rest);
-            }
+            *dir = expand_home(dir);
         }
+    }
+
+    /// The text of config.toml. Directories under the home directory
+    /// are written in `~` form, so the file stays valid on a machine
+    /// whose home directory is elsewhere.
+    fn to_toml(&self) -> Result<String, String> {
+        let mut file = self.clone();
+        for dir in [&mut file.screenshots_dir, &mut file.recordings_dir] {
+            *dir = contract_home(dir);
+        }
+        toml::to_string_pretty(&file).map_err(|e| format!("serialize config: {e}"))
     }
 
     /// Persist to config.toml, creating the config dir when missing.
@@ -235,15 +250,49 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("create config dir: {e}"))?;
         }
-        let text = toml::to_string_pretty(self).map_err(|e| format!("serialize config: {e}"))?;
-        std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
+        std::fs::write(&path, self.to_toml()?)
+            .map_err(|e| format!("write {}: {e}", path.display()))?;
         // Keep the load() cache coherent: a save must be visible to the
         // next reader even when the mtime granularity misses the write.
+        // Captures and recordings read their directories from it, so it
+        // holds them expanded, as a load from the file would.
         let stamp = std::fs::metadata(&path)
             .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
             .unwrap_or((None, 0));
-        *Self::cache().lock() = (stamp.0, stamp.1, self.clone());
+        let mut live = self.clone();
+        live.expand_dirs();
+        *Self::cache().lock() = (stamp.0, stamp.1, live);
         Ok(())
+    }
+}
+
+/// The home directory: what a leading `~` in a configured
+/// directory stands for.
+fn home_dir() -> Option<PathBuf> {
+    directories::UserDirs::new().map(|u| u.home_dir().to_path_buf())
+}
+
+/// `dir` with a leading `~` replaced by the home directory; any other
+/// path unchanged.
+pub fn expand_home(dir: &Path) -> PathBuf {
+    match (dir.strip_prefix("~"), home_dir()) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => dir.to_path_buf(),
+    }
+}
+
+/// `dir` with the home directory written as `~`, the inverse of
+/// [`expand_home`]: config.toml and the settings window use this form.
+/// A path outside the home directory is unchanged.
+pub fn contract_home(dir: &Path) -> PathBuf {
+    let Some(rest) = home_dir().and_then(|home| dir.strip_prefix(home).ok().map(Path::to_path_buf))
+    else {
+        return dir.to_path_buf();
+    };
+    if rest.as_os_str().is_empty() {
+        PathBuf::from("~")
+    } else {
+        Path::new("~").join(rest)
     }
 }
 
@@ -290,158 +339,10 @@ pub fn keybind_matches(
 }
 
 // WHY: the class closed here is "config silently lands somewhere the app
-// never reads": a wrong ProjectDirs triple, a dropped ~ expansion, or a
-// migration that overwrites the new file all look fine until a user's
-// settings vanish. Env-mutating tests run serially; XDG vars point at a
-// tempdir per test. Not covered: platform dirs on Windows/macOS.
+// never reads, or is lost": a wrong ProjectDirs triple, a dropped ~
+// expansion, a migration that overwrites the new file, or an invalid
+// file replaced by defaults all look fine until a user's settings
+// vanish. Env-mutating tests run serially; XDG vars point at a tempdir
+// per test. Not covered: platform dirs on Windows/macOS.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Root every iris location in a fresh tempdir via `IRIS_HOME`, on
-    /// every platform; returns it so the test can seed files.
-    fn isolated_home() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var(crate::dirs::HOME_ENV, dir.path());
-        dir
-    }
-
-    /// XDG layout with `IRIS_HOME` cleared, for the legacy-path
-    /// migration that only exists on Linux.
-    #[cfg(target_os = "linux")]
-    fn xdg_without_iris_home() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::remove_var(crate::dirs::HOME_ENV);
-        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
-        dir
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn toml_round_trip_preserves_every_field() {
-        let _d = isolated_home();
-        let cfg = Config::default();
-        let text = toml::to_string_pretty(&cfg).unwrap();
-        let back: Config = toml::from_str(&text).unwrap();
-        assert_eq!(back.screenshots_dir, cfg.screenshots_dir);
-        assert_eq!(back.recordings_dir, cfg.recordings_dir);
-        assert_eq!(back.screenshot_template, cfg.screenshot_template);
-        assert_eq!(back.recording_fps, cfg.recording_fps);
-        assert_eq!(back.capture_hotkey, cfg.capture_hotkey);
-        assert_eq!(back.record_hotkey, cfg.record_hotkey);
-        assert_eq!(back.toast_click_action, cfg.toast_click_action);
-        assert_eq!(back.toast_position, cfg.toast_position);
-        assert_eq!(back.toast_pin_enabled, cfg.toast_pin_enabled);
-        assert_eq!(back.toast_duration_ms, cfg.toast_duration_ms);
-        assert_eq!(back.cancel_keybind, cfg.cancel_keybind);
-        assert_eq!(back.confirm_keybind, cfg.confirm_keybind);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn old_config_without_new_fields_loads_defaults() {
-        // A config.toml written before the toast/keybind fields existed
-        // must still load; serde(default) fills them.
-        let d = isolated_home();
-        let path = Config::path().unwrap();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "recording_fps = 24\n").unwrap();
-        let cfg = Config::load();
-        assert_eq!(cfg.recording_fps, 24);
-        assert_eq!(cfg.toast_click_action, ToastClickAction::Markup);
-        assert_eq!(cfg.toast_position, ToastPosition::BottomRight);
-        assert!(cfg.toast_pin_enabled);
-        assert_eq!(cfg.toast_duration_ms, 5000);
-        assert_eq!(cfg.cancel_keybind, "Escape");
-        drop(d);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn enum_fields_parse_kebab_case() {
-        let cfg: Config =
-            toml::from_str("toast_click_action = \"copy\"\ntoast_position = \"top-left\"\n")
-                .unwrap();
-        assert_eq!(cfg.toast_click_action, ToastClickAction::Copy);
-        assert_eq!(cfg.toast_position, ToastPosition::TopLeft);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn tilde_dirs_expand_to_home() {
-        let _d = isolated_home();
-        let home = directories::UserDirs::new()
-            .unwrap()
-            .home_dir()
-            .to_path_buf();
-        let mut cfg = Config {
-            screenshots_dir: PathBuf::from("~/shots"),
-            recordings_dir: PathBuf::from("~/recs"),
-            ..Config::default()
-        };
-        cfg.expand_dirs();
-        assert_eq!(cfg.screenshots_dir, home.join("shots"));
-        assert_eq!(cfg.recordings_dir, home.join("recs"));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn load_writes_defaults_when_missing() {
-        let _d = isolated_home();
-        let cfg = Config::load();
-        assert!(Config::path().unwrap().exists());
-        assert_eq!(cfg.recording_fps, 30);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn load_reads_stored_values() {
-        let d = isolated_home();
-        let path = Config::path().unwrap();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "recording_fps = 24\ncapture_hotkey = \"F9\"\n").unwrap();
-        let cfg = Config::load();
-        assert_eq!(cfg.recording_fps, 24);
-        assert_eq!(cfg.capture_hotkey, "F9");
-        drop(d);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    #[serial_test::serial]
-    fn glint_config_migrates_to_iris_path() {
-        let d = xdg_without_iris_home();
-        let old = d.path().join("config/glint/config.toml");
-        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-        std::fs::write(&old, "recording_fps = 12\n").unwrap();
-        let cfg = Config::load();
-        assert_eq!(cfg.recording_fps, 12);
-        // The copy landed at the iris path, not just in memory.
-        assert!(Config::path().unwrap().exists());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    #[serial_test::serial]
-    fn existing_iris_config_wins_over_glint() {
-        let d = xdg_without_iris_home();
-        let old = d.path().join("config/glint/config.toml");
-        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-        std::fs::write(&old, "recording_fps = 12\n").unwrap();
-        let path = Config::path().unwrap();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "recording_fps = 60\n").unwrap();
-        assert_eq!(Config::load().recording_fps, 60);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn invalid_toml_falls_back_to_defaults() {
-        let _d = isolated_home();
-        let path = Config::path().unwrap();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "this is not toml = = =\n").unwrap();
-        let cfg = Config::load();
-        assert_eq!(cfg.recording_fps, 30);
-    }
-}
+mod tests;

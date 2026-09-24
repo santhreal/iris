@@ -1,11 +1,10 @@
-use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::*;
 
 use crate::theme;
 
-use super::{visible_rows, Library, CARD_W, GAP};
+use super::{evict_thumbs, visible_rows, Library, CARD_W, GAP, MIN_SIZE};
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -140,8 +139,7 @@ impl Render for Library {
             self.entries_dirty = false;
             let live_paths: std::collections::HashSet<&std::path::Path> =
                 self.entries.iter().map(|e| e.path.as_path()).collect();
-            self.thumb_cache
-                .retain(|p, _| live_paths.contains(p.as_path()));
+            evict_thumbs(&mut self.thumb_cache, |p| live_paths.contains(p), cx);
         }
         // Advance pointer-coupled springs by the real frame delta;
         // keep rendering until everything settles.
@@ -262,22 +260,7 @@ impl Render for Library {
                     .iter()
                     .map(|e| e.path.as_path())
                     .collect();
-                let mut evicted: Vec<Arc<RenderImage>> = Vec::new();
-                self.thumb_cache
-                    .retain(|p, img| match keep_paths.contains(p.as_path()) {
-                        true => true,
-                        false => {
-                            evicted.push(img.clone());
-                            false
-                        }
-                    });
-                if !evicted.is_empty() {
-                    cx.defer(move |cx| {
-                        for img in &evicted {
-                            crate::widgets::release_render(img, cx);
-                        }
-                    });
-                }
+                evict_thumbs(&mut self.thumb_cache, |p| keep_paths.contains(p), cx);
             }
             self.prefetch_thumbs(keep, cx);
         }
@@ -325,12 +308,7 @@ impl Render for Library {
                     }
                 }),
             )
-            .child(crate::widgets::window_frame(
-                "Iris",
-                self.class.clone(),
-                cluster,
-                grid,
-            ));
+            .child(crate::widgets::window_frame("Library", true, cluster, grid));
 
         if let Some((x0, y0, x1, y1)) = self.band {
             let (bx, by) = (x0.min(x1), y0.min(y1));
@@ -371,6 +349,6 @@ impl Render for Library {
             root = root.child(crate::widgets::status_pill(status, 10.0));
         }
 
-        root
+        root.children(crate::widgets::resize_edges(window, MIN_SIZE))
     }
 }

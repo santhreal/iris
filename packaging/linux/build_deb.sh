@@ -109,11 +109,14 @@ case "$ARCH" in
     ;;
 esac
 
-# Check for dpkg-deb
-if ! command -v dpkg-deb >/dev/null 2>&1; then
-  echo "Error: 'dpkg-deb' is required to build Debian packages but was not found." >&2
-  exit 1
-fi
+# Check for dpkg-deb, and readelf to read the binary's glibc floor
+for tool in dpkg-deb readelf; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "Error: '$tool' is required to build Debian packages but was not found." >&2
+    echo "On Debian/Ubuntu: sudo apt-get install dpkg binutils" >&2
+    exit 1
+  fi
+done
 
 # Locate the iris release binary in cargo's configured target directory.
 if [[ -z "$IRIS_BIN" ]]; then
@@ -155,6 +158,16 @@ cp "$IRIS_BIN" "$PKG_DIR/usr/bin/iris"
 chmod 0755 "$PKG_DIR/usr/bin/iris"
 if command -v strip >/dev/null 2>&1; then
   strip --strip-unneeded "$PKG_DIR/usr/bin/iris" 2>/dev/null || true
+fi
+
+# The newest glibc symbol version the binary requires (weak references
+# excepted) is the oldest libc6 it runs on.
+GLIBC_MIN=$(readelf -V --wide "$PKG_DIR/usr/bin/iris" \
+  | grep -oE 'Name: GLIBC_[0-9.]+ +Flags: none' \
+  | grep -oE '[0-9]+\.[0-9.]+' | sort -V | tail -n1 || true)
+if [[ -z "$GLIBC_MIN" ]]; then
+  echo "Error: no glibc version requirement found in $IRIS_BIN." >&2
+  exit 1
 fi
 
 # Install desktop files
@@ -233,7 +246,7 @@ Architecture: ${DEB_ARCH}
 Maintainer: Santh <64453045+santhreal@users.noreply.github.com>
 Installed-Size: ${INSTALLED_SIZE}
 Homepage: https://github.com/santhreal/iris
-Depends: libc6 (>= 2.34), libpipewire-0.3-0 (>= 0.3.0), libxkbcommon0, libxkbcommon-x11-0, libxcb1, libxcb-xkb1, libfontconfig1, libwayland-client0, libx11-6
+Depends: libc6 (>= ${GLIBC_MIN}), libpipewire-0.3-0 (>= 0.3.0), libxkbcommon0, libxkbcommon-x11-0, libxcb1, libfontconfig1, libwayland-client0, libvulkan1, libegl1, libgles2
 Recommends: wl-clipboard | xclip
 Description: Screenshot and screen-recording utility
  iris is a native, lightweight screen capture and screen recording
@@ -256,17 +269,8 @@ chmod 0755 "$PKG_DIR/DEBIAN/postrm"
 CONTRACT_DEB="iris-${VERSION}-linux-${ARCH}.deb"
 CONTRACT_DEB_PATH="$OUT_DIR/$CONTRACT_DEB"
 
-# Also create Debian standard name: iris_{ver}_{arch}.deb
-STD_DEB="iris_${VERSION}_${DEB_ARCH}.deb"
-STD_DEB_PATH="$OUT_DIR/$STD_DEB"
-
 echo "Building Debian package with dpkg-deb..."
 dpkg-deb --build --root-owner-group "$PKG_DIR" "$CONTRACT_DEB_PATH"
-
-# Create symlink/copy for standard Debian naming
-if [[ "$CONTRACT_DEB" != "$STD_DEB" ]]; then
-  cp "$CONTRACT_DEB_PATH" "$STD_DEB_PATH"
-fi
 
 # Generate SHA256 checksum sidecar
 if [[ "$GEN_SHA" == true ]]; then
@@ -276,6 +280,3 @@ fi
 
 echo "Successfully built Debian package:"
 echo "  $CONTRACT_DEB_PATH"
-if [[ -f "$STD_DEB_PATH" ]]; then
-  echo "  $STD_DEB_PATH"
-fi

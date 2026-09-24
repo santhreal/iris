@@ -16,13 +16,6 @@ pub struct ShellLayout {
     pub union: WinRect,
 }
 
-/// True on a Wayland session: no randr, no window list, no client-side
-/// placement. The overlay opens fullscreen and the compositor picks the
-/// output; the frame's own size becomes the view when it lands.
-pub(super) fn wayland() -> bool {
-    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
-}
-
 pub fn layout() -> ShellLayout {
     // Linux Wayland has no window list or client placement: the capture
     // layer reports an error there and the shell opens fullscreen.
@@ -81,11 +74,10 @@ fn open_shell_opts(
     layout: &ShellLayout,
     prewarm: bool,
 ) -> Result<WindowHandle<Overlay>, String> {
-    if !wayland() && (layout.union.width == 0 || layout.union.height == 0) {
+    if !iris_lib::session::wayland() && (layout.union.width == 0 || layout.union.height == 0) {
         return Err("no monitor layout".into());
     }
     let focus = cx.focus_handle();
-    let win_id = crate::sys::window::unique_id("dev.iris.overlay");
     let windows = layout.windows.clone();
     let monitors = layout.monitors.clone();
     let (ux, uy, uw, uh) = (
@@ -103,8 +95,8 @@ fn open_shell_opts(
     // it to a single monitor.
     let bounds = {
         // Root space is physical; window bounds are logical.
-        let s = iris_lib::capture::root_scale();
-        let (w, h) = if wayland() {
+        let s = crate::sys::window::root_scale(cx);
+        let (w, h) = if iris_lib::session::wayland() {
             cx.primary_display()
                 .map(|d| (d.bounds().size.width, d.bounds().size.height))
                 .unwrap_or((px(1280.0), px(800.0)))
@@ -131,12 +123,13 @@ fn open_shell_opts(
                 // Transparent until the frame lands: the live desktop
                 // shows through, dimmed, while the grab runs.
                 window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some(win_id.clone()),
+                app_id: Some("dev.iris.overlay".to_string()),
                 window_min_size: None,
                 window_decorations: Some(WindowDecorations::Client),
                 tabbing_identifier: None,
             },
-            |_, cx| {
+            |window, cx| {
+                crate::sys::window::span_after_map(window, ux, uy, uw, uh);
                 cx.new(|_| {
                     let cfg = iris_lib::config::Config::load();
                     let hint = SharedString::from(format!(
@@ -182,20 +175,19 @@ fn open_shell_opts(
             },
         )
         .map_err(|e| format!("open overlay window: {e}"))?;
-    crate::sys::window::span_after_map(win_id.clone(), ux, uy, uw, uh);
     // Pooling needs minimize+restore; elsewhere the window is destroyed
     // on park instead.
     if poolable() {
-        *POOL.lock() = Some((handle, win_id));
+        *POOL.lock() = Some(handle);
     }
     Ok(handle)
 }
 
-/// True where a parked (minimized) overlay can be restored: X11, whose
-/// post-map fixup unminimizes and re-spans it. Wayland has no
-/// unminimize, and Windows and macOS have no restore fixup.
+/// True where a parked (minimized) overlay can be restored: X11, where
+/// `sys::window::unpark_span` maps and re-spans it. Wayland has no
+/// unminimize, and Windows and macOS have no restore step.
 pub(super) fn poolable() -> bool {
-    cfg!(target_os = "linux") && !wayland()
+    iris_lib::session::x11()
 }
 
 /// Pre-create the overlay at daemon start and park it into the pool,

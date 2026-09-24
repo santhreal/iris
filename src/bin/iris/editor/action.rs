@@ -100,9 +100,12 @@ pub(crate) struct Action {
     /// on the UI thread only, so a RefCell suffices. The fingerprint
     /// (len, first, last) catches every mutation that exists: strokes
     /// only grow, moves shift every point.
-    pub(crate) cached_path:
-        std::cell::RefCell<Option<(f32, usize, (f32, f32), (f32, f32), Rc<Vec<[f32; 6]>>)>>,
+    pub(crate) cached_path: std::cell::RefCell<Option<PathCache>>,
 }
+
+/// Cached paint geometry: (scale, point count, first point, last
+/// point, triangles at stage origin). The first four are the key.
+pub(crate) type PathCache = (f32, usize, (f32, f32), (f32, f32), Rc<Vec<[f32; 6]>>);
 
 pub(crate) struct TextEntry {
     pub(crate) point: (f32, f32),

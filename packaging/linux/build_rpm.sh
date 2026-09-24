@@ -120,7 +120,7 @@ fi
 echo "Using iris binary: $IRIS_BIN"
 echo "Packaging iris RPM version: $VERSION ($ARCH)"
 
-# Workspace staging directory (never /tmp per AGENTS.md)
+# Staging directory inside the repository (.build-staging is gitignored).
 STAGING_BASE="$REPO_ROOT/.build-staging"
 mkdir -p "$STAGING_BASE"
 RPM_TOPDIR="$(mktemp -d "$STAGING_BASE/rpm_build.XXXXXX")"
@@ -128,8 +128,9 @@ trap 'rm -rf "$RPM_TOPDIR"' EXIT
 
 mkdir -p "$RPM_TOPDIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-# Prepare source directory layout matching spec expectation
-SOURCE_DIR="$RPM_TOPDIR/BUILD/iris-${VERSION}"
+# Source0 is a tarball of the prebuilt binary plus the packaging files,
+# unpacked by the spec's %autosetup.
+SOURCE_DIR="$RPM_TOPDIR/src/iris-${VERSION}"
 mkdir -p "$SOURCE_DIR/packaging/linux"
 mkdir -p "$SOURCE_DIR/packaging/icons"
 
@@ -148,13 +149,17 @@ fi
 # Copy icons
 cp -r "$REPO_ROOT/packaging/icons"/* "$SOURCE_DIR/packaging/icons/"
 
+tar -czf "$RPM_TOPDIR/SOURCES/iris-${VERSION}.tar.gz" -C "$RPM_TOPDIR/src" "iris-${VERSION}"
+
 # Copy spec file and update version if needed
 SPEC_FILE="$RPM_TOPDIR/SPECS/iris.spec"
 sed "s/^Version: .*/Version:        ${VERSION}/" "$SCRIPT_DIR/iris.spec" > "$SPEC_FILE"
 
-# Run rpmbuild
+# Run rpmbuild. --nodeps: the BuildRequires list the toolchain for a
+# build from source; this package holds a binary built beforehand.
 echo "Running rpmbuild..."
 rpmbuild -bb \
+  --nodeps \
   --define "_topdir $RPM_TOPDIR" \
   --define "_builddir $RPM_TOPDIR/BUILD" \
   --define "_rpmdir $RPM_TOPDIR/RPMS" \
@@ -162,7 +167,6 @@ rpmbuild -bb \
   --define "_specdir $RPM_TOPDIR/SPECS" \
   --define "_srcrpmdir $RPM_TOPDIR/SRPMS" \
   --target "${ARCH}" \
-  --noclean \
   "$SPEC_FILE"
 
 # Locate generated RPM file

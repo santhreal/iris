@@ -11,7 +11,7 @@ pub struct WaylandBackend;
 
 impl WaylandBackend {
     pub fn new() -> Result<Self, String> {
-        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        if !crate::session::wayland() {
             return Err(
                 "WAYLAND_DISPLAY is not set; the Wayland backend needs a Wayland session"
                     .to_string(),

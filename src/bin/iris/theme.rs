@@ -59,6 +59,9 @@ pub const TEXT_SMALL: f32 = 11.5;
 pub const TEXT_BODY: f32 = 13.0;
 pub const TEXT_TITLE: f32 = 13.5;
 pub const TEXT_HEADING: f32 = 17.0;
+/// Width of one glyph at `TEXT_SMALL`. JetBrains Mono is monospace at a
+/// 0.6 em advance, so a small label's width is known before layout.
+pub const SMALL_ADVANCE: f32 = 0.6 * TEXT_SMALL;
 
 /// UI font family. Every surface sets it on its root; GPUI cascades
 /// text styles down the element tree. Bundled (see `load_fonts`) so
@@ -117,4 +120,105 @@ pub fn shadow_float() -> Vec<BoxShadow> {
             spread_radius: px(0.),
         },
     ]
+}
+
+/// Floating chrome in a window with little room around it (the
+/// recording chip): a contact shadow short enough to end inside a 16px
+/// margin, where `shadow_float` would be cut off at the window edge.
+pub fn shadow_tight() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: gpui::hsla(0.0, 0.0, 0.0, 0.34),
+            offset: point(px(0.), px(2.)),
+            blur_radius: px(4.5),
+            spread_radius: px(0.),
+        },
+        BoxShadow {
+            color: gpui::hsla(0.0, 0.0, 0.0, 0.20),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(1.5),
+            spread_radius: px(0.),
+        },
+    ]
+}
+
+/// The toast and notice card shadow: a soft drop over a contact layer,
+/// the only thing separating a card from the desktop. `visibility`
+/// scales both: during an entrance the shadow fades in with the card's
+/// visible fraction, so the blur never arrives ahead of the pixels
+/// casting it. The capture flight raises it with the card's travel to
+/// full visibility at rest, so the card it hands to the toast casts the
+/// same shadow before and after.
+pub fn card_shadow(visibility: f32) -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: gpui::hsla(0.0, 0.0, 0.0, 0.34 * visibility),
+            offset: point(px(0.), px(8.)),
+            blur_radius: px(12.),
+            spread_radius: px(0.),
+        },
+        BoxShadow {
+            color: gpui::hsla(0.0, 0.0, 0.0, 0.20 * visibility),
+            offset: point(px(0.), px(2.)),
+            blur_radius: px(5.),
+            spread_radius: px(0.),
+        },
+    ]
+}
+
+/// Room around a card inside its window for `card_shadow`, logical px:
+/// its `shadow_reach`. A window edge closer to the card cuts the
+/// shadow off in a straight line.
+pub const CARD_BLEED: f32 = 44.0;
+
+/// How far past its element's bounds a shadow list paints, logical px.
+/// GPUI draws each shadow's Gaussian out to three blur radii around the
+/// element's bounds grown by the spread and moved by the offset.
+#[cfg(test)]
+pub fn shadow_reach(shadows: &[BoxShadow]) -> f32 {
+    shadows
+        .iter()
+        .map(|s| {
+            3.0 * f32::from(s.blur_radius)
+                + f32::from(s.spread_radius)
+                + f32::from(s.offset.x).abs().max(f32::from(s.offset.y).abs())
+        })
+        .fold(0.0, f32::max)
+}
+
+// WHY: the class closed here is "a card window cuts its own shadow": a
+// window edge inside the shadow's reach ends the blur in a hard line
+// over whatever lies behind, and the toast once cut a 32px blur at 44px.
+// Every window that paints `card_shadow` sizes its bleed from
+// CARD_BLEED. Not covered: a window that paints `card_shadow` with a
+// bleed of its own; the chip's pill shadow has its own test.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn card_shadow_ends_inside_the_card_bleed() {
+        let reach = shadow_reach(&card_shadow(1.0));
+        assert!(
+            reach <= CARD_BLEED,
+            "card_shadow reaches {reach}px past the card; windows leave {CARD_BLEED}px"
+        );
+    }
+
+    #[test]
+    fn reach_counts_three_blurs_the_spread_and_the_larger_offset() {
+        let s = |x: f32, y: f32, blur: f32, spread: f32| BoxShadow {
+            color: gpui::hsla(0.0, 0.0, 0.0, 1.0),
+            offset: point(px(x), px(y)),
+            blur_radius: px(blur),
+            spread_radius: px(spread),
+        };
+        assert_eq!(shadow_reach(&[]), 0.0);
+        assert_eq!(shadow_reach(&[s(0.0, 8.0, 12.0, 0.0)]), 44.0);
+        assert_eq!(shadow_reach(&[s(-6.0, 2.0, 1.0, 3.0)]), 12.0);
+        assert_eq!(
+            shadow_reach(&[s(0.0, 2.0, 5.0, 0.0), s(0.0, -9.0, 10.0, 1.0)]),
+            40.0
+        );
+    }
 }

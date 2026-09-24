@@ -1,6 +1,11 @@
 //! Toast stage window management, sizing, and lifecycle.
 
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{
+    cell::Cell,
+    path::Path,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use super::*;
 use crate::motion;
@@ -15,10 +20,7 @@ pub(super) static TOAST_HANDLE: parking_lot::Mutex<Option<WindowHandle<ToastStag
 /// capture flight lands exactly here, so the toast must not replay
 /// its entrance.
 pub fn card_rest_rect(disp_w: f32, disp_h: f32, img_w: u32, img_h: u32) -> (f32, f32, f32, f32) {
-    let (iw, ih) = (img_w as f32, img_h as f32);
-    let scale = (MAX_W / iw).min(MAX_H / ih).min(1.0);
-    let w = (iw * scale).round().max(1.0);
-    let h = (ih * scale).round().max(1.0);
+    let (w, h) = card_size(img_w as f32, img_h as f32);
     let cfg = iris_lib::config::Config::load();
     match cfg.toast_position {
         iris_lib::config::ToastPosition::BottomRight => {
@@ -30,81 +32,153 @@ pub fn card_rest_rect(disp_w: f32, disp_h: f32, img_w: u32, img_h: u32) -> (f32,
     }
 }
 
+/// The live toast's card rect while it rests in its corner, as its
+/// last render saw it. A render publishes it, so a notice opened from
+/// inside the toast's own update reads it without leasing the toast.
+static RESTING: parking_lot::Mutex<Option<Resting>> = parking_lot::Mutex::new(None);
+
+/// A toast window and its card rect: x, y, width, height.
+type Resting = (AnyWindowHandle, (f32, f32, f32, f32));
+
+/// `toast` rests with its card at `card`, or no longer rests (closing,
+/// morphing into the editor). A stale toast never clears a newer one.
+pub(super) fn publish_rest(toast: AnyWindowHandle, card: Option<(f32, f32, f32, f32)>) {
+    let mut slot = RESTING.lock();
+    match card {
+        Some(card) => *slot = Some((toast, card)),
+        None if slot.is_some_and(|(h, _)| h == toast) => *slot = None,
+        None => {}
+    }
+}
+
+/// The live toast card's rect on screen while it rests in its corner;
+/// a notice stacks beyond it instead of covering it.
+pub fn live_card_rect(cx: &App) -> Option<(f32, f32, f32, f32)> {
+    let (toast, card) = (*RESTING.lock())?;
+    cx.windows().contains(&toast).then_some(card)
+}
+
 /// Open the toast stage window in the bottom-right corner of the primary
-/// display. The card image paths must already exist on disk.
-pub fn show_toast(
-    cx: &mut App,
-    path: &Path,
-    thumb: &Path,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    show_toast_kind(cx, path, thumb, width, height, false, None)
-}
-
-/// The capture-flight landing: the card appears at rest, no entrance.
-/// `anchor` is the committing monitor's rect in screen coordinates, so
-/// the card lands where the flight ended, not on another display.
-pub fn show_toast_landed(
-    cx: &mut App,
-    path: &Path,
-    thumb: &Path,
-    width: u32,
-    height: u32,
-    anchor: Option<(f32, f32, f32, f32)>,
-) -> Result<(), String> {
-    show_toast_kind(cx, path, thumb, width, height, true, anchor)
-}
-
-fn show_toast_kind(
-    cx: &mut App,
-    path: &Path,
-    thumb: &Path,
-    width: u32,
-    height: u32,
-    landed: bool,
-    anchor: Option<(f32, f32, f32, f32)>,
-) -> Result<(), String> {
-    let _ = (width, height);
+/// display for the capture at `path`. A toast that cannot open reports
+/// why in a notice.
+pub fn show_toast(cx: &mut App, path: &Path) {
     let path = path.to_path_buf();
-    let thumb = thumb.to_path_buf();
-    // The PNG decode + Lanczos resize is too slow for the UI thread on
-    // a full-size capture; the window opens once the pixels are ready.
-    let decoded = cx.background_executor().spawn({
-        let thumb = thumb.clone();
-        async move { prepare_thumb(&thumb) }
+    // Sized for the primary display, where the card opens; a window
+    // that renders at another scale re-sizes the pixels itself.
+    let scale = crate::sys::window::root_scale(cx);
+    // Scaling a full-size capture is too slow for the UI thread; the
+    // window opens once the pixels are ready.
+    let scaled = cx.background_executor().spawn({
+        let path = path.clone();
+        async move { prepare_thumb(&path, scale) }
     });
     cx.spawn(async move |cx| {
-        let parts = match decoded.await {
-            Ok(p) => p,
-            Err(e) => {
-                iris_lib::ilog!("toast: {e}");
-                return;
-            }
-        };
+        let thumb = scaled.await;
         let _ = cx.update(|cx| {
-            if let Err(e) = open_toast_window(cx, &path, parts, landed, anchor) {
+            if let Err(e) = thumb.and_then(|t| open_toast_window(cx, &path, t, false, None)) {
                 iris_lib::ilog!("toast: {e}");
+                crate::notice::failed(cx, "Toast did not open", &e);
             }
         });
     })
     .detach();
-    Ok(())
+}
+
+/// Runs once when a landed toast is on screen, or when it cannot be.
+pub type Handoff = Box<dyn FnOnce(&mut App)>;
+
+/// The capture-flight landing: the card appears at rest, no entrance,
+/// with the pixels the flight scaled while it was in the air. `anchor`
+/// is the committing monitor's rect in screen coordinates, so the card
+/// lands where the flight ended, not on another display. `handoff` runs
+/// exactly once: after the toast's first frame is on screen, or at once
+/// if the toast cannot open. The action bar fades in after it.
+pub fn show_toast_landed(
+    cx: &mut App,
+    path: &Path,
+    thumb: Result<Thumb, String>,
+    anchor: Option<(f32, f32, f32, f32)>,
+    handoff: Handoff,
+) {
+    match thumb.and_then(|t| open_toast_window(cx, path, t, true, anchor)) {
+        Ok(toast) => {
+            let reveal = Box::new(move |cx: &mut App| {
+                handoff(cx);
+                let _ = toast.update(cx, |stage, _, cx| stage.reveal_bar(cx));
+            });
+            hand_off_after_present(toast, cx, reveal);
+        }
+        Err(e) => {
+            iris_lib::ilog!("toast: {e}");
+            crate::notice::failed(cx, "Toast did not open", &e);
+            handoff(cx);
+        }
+    }
+}
+
+/// Bound on the wait for a landed toast's first presented frame: a
+/// compositor that never answers a frame callback, or an X server that
+/// never reports the damage, still gets the handoff.
+const HANDOFF_DEADLINE: Duration = Duration::from_millis(250);
+
+/// Run `handoff` once the toast's first frame is on screen. open_window
+/// drew that frame without presenting it; the first frame callback's
+/// frame presents it. Where the platform reports a present (X11 damage)
+/// the handoff waits for that report, since an X11 frame tick follows a
+/// timer and the present lands on the server later. Elsewhere the next
+/// frame callback runs after the compositor composited the present.
+fn hand_off_after_present(toast: WindowHandle<ToastStage>, cx: &mut App, handoff: Handoff) {
+    let until = Instant::now() + HANDOFF_DEADLINE;
+    let slot = Rc::new(Cell::new(Some(handoff)));
+    let on_present = slot.clone();
+    let registered = toast.update(cx, |_, window, _| {
+        let watch = crate::sys::window::PresentWatch::open(window, until);
+        window.on_next_frame(move |window, cx| match watch.and_then(|w| w.arm()) {
+            Some(presented) => cx
+                .spawn(async move |cx| {
+                    let _ = presented.await;
+                    let _ = cx.update(|cx| run_handoff(&on_present, cx));
+                })
+                .detach(),
+            // The handoff parks another window; run it after this
+            // window's frame callback returns.
+            None => window.on_next_frame(move |_, cx| {
+                cx.defer(move |cx| run_handoff(&on_present, cx));
+            }),
+        });
+    });
+    if registered.is_err() {
+        run_handoff(&slot, cx);
+        return;
+    }
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(HANDOFF_DEADLINE).await;
+        let _ = cx.update(|cx| run_handoff(&slot, cx));
+    })
+    .detach();
+}
+
+fn run_handoff(slot: &Cell<Option<Handoff>>, cx: &mut App) {
+    if let Some(handoff) = slot.take() {
+        handoff(cx);
+    }
 }
 
 fn open_toast_window(
     cx: &mut App,
     path: &Path,
-    parts: (Arc<RenderImage>, Arc<Vec<u8>>, (f32, f32)),
+    thumb: Thumb,
     landed: bool,
     anchor: Option<(f32, f32, f32, f32)>,
-) -> Result<(), String> {
-    let mut stage = ToastStage::from_parts(path, parts.0, parts.1, parts.2);
+) -> Result<WindowHandle<ToastStage>, String> {
+    let mut stage = ToastStage::from_parts(path, thumb);
     if landed {
-        // Pretend the entrance finished long ago.
+        // Pretend the entrance finished long ago. The flight card it
+        // replaces has no action bar; the handoff fades it in.
         stage.opened = Some(Instant::now() - motion::tempo(ENTER));
+        stage.bar = Bar::Hidden;
     }
-    let (w, h) = stage.dims;
+    let (w, h) = stage.thumb.dims;
 
     let cfg = iris_lib::config::Config::load();
     let win_size = size(px(w + BLEED + MARGIN), px(h + BLEED + MARGIN));
@@ -147,7 +221,7 @@ fn open_toast_window(
         ),
         iris_lib::config::ToastPosition::TopLeft => (ox + MARGIN, oy + MARGIN, w, h),
     };
-    let win_id = crate::sys::window::unique_id("dev.iris.toast");
+    let card = stage.card_screen;
     let handle = cx
         .open_window(
             WindowOptions {
@@ -164,7 +238,7 @@ fn open_toast_window(
                 is_minimizable: false,
                 display_id: None,
                 window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some(win_id.clone()),
+                app_id: Some("dev.iris.toast".to_string()),
                 window_min_size: None,
                 window_decorations: Some(WindowDecorations::Client),
                 tabbing_identifier: None,
@@ -178,17 +252,12 @@ fn open_toast_window(
             stage.fade_out_quick(cx);
         });
     }
+    crate::notice::yield_to(cx, card);
 
     handle
         .update(cx, |stage: &mut ToastStage, _window, cx| {
             stage.arm_dismiss(cx);
         })
         .map_err(|e| format!("arm dismiss: {e}"))?;
-
-    // openbox-style WMs apply their own placement at map time; put the
-    // window back where the corner is. No-op once the WM honors the
-    // requested origin (mutter, KWin).
-    let (ox, oy): (f32, f32) = (origin.x.into(), origin.y.into());
-    crate::sys::window::place_after_map_kind(win_id, ox, oy, true);
-    Ok(())
+    Ok(handle)
 }

@@ -1,5 +1,26 @@
+//! Screen recording: one live source per platform, encoded as a run of
+//! Matroska segments and joined into the output file on stop.
+//!
+//! `codec` and `join` are shared by every platform. On Linux the source
+//! grabs frames itself and hands them to a `recorder::Recorder`, which
+//! streams them through `encoder` segments framed by `mkv`. On Windows
+//! and macOS, `desktop` runs ffmpeg's own screen capture per segment.
+
+mod child;
+pub mod codec;
+mod doorbell;
+pub mod join;
+
+pub use doorbell::Doorbell;
+
 #[cfg(target_os = "linux")]
 pub mod encoder;
+#[cfg(target_os = "linux")]
+pub mod mkv;
+#[cfg(target_os = "linux")]
+pub mod recorder;
+#[cfg(target_os = "linux")]
+mod wake;
 
 #[cfg(target_os = "linux")]
 pub mod x11;
@@ -14,13 +35,17 @@ pub mod desktop;
 mod devices;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Instant;
 
-/// Controls the chip can send a live recording. Wayland and desktop
-/// sources ignore the channel: their chip is not shown.
-#[derive(Clone, Copy, Debug)]
+use crate::config::{RecordingEncoder, RecordingFormat};
+
+/// Controls for a live recording, from the chip or the CLI. Pause ends
+/// the open segment and resume starts the next; a mic toggle ends the
+/// segment and starts the next with or without the mic track.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RecControl {
     Pause,
     Resume,
@@ -29,15 +54,21 @@ pub enum RecControl {
 
 /// What a platform recording source needs: where to encode, at what rate,
 /// and the signal to stop. The source blocks until `stop` fires or it fails,
-/// having written the finished mp4 to `spec.output`.
+/// having written the finished file to `spec.output`.
 pub struct RecordingSpec {
     pub output: PathBuf,
+    /// Frames a second, within the format's capture bounds.
     pub fps: u32,
+    /// Whether the mic track starts on. Never set for a format without
+    /// audio.
     pub mic: bool,
-    pub format: crate::config::RecordingFormat,
-    pub encoder: crate::config::RecordingEncoder,
+    pub format: RecordingFormat,
+    pub encoder: RecordingEncoder,
     pub stop: Receiver<()>,
     pub control: Receiver<RecControl>,
+    /// Rung after every send on `stop` and `control`. A source that
+    /// blocks without a timeout installs a ring that wakes it.
+    pub bell: Doorbell,
 }
 
 /// User aborted before any frame was encoded (e.g. Escape during window
@@ -45,72 +76,154 @@ pub struct RecordingSpec {
 /// prefix; the session then tears down quietly without reporting failure.
 pub const CANCELLED_PREFIX: &str = "cancelled:";
 
-pub enum Phase {
-    /// Source is still picking its target (e.g. waiting for the user to
-    /// click a window).
-    Picking,
-    Recording,
-}
-
+/// A live recording: the source thread, and the pause and mic state the
+/// chip and the CLI toggle.
 pub struct ActiveRecording {
     pub output: PathBuf,
-    pub started: Instant,
-    pub mic: bool,
-    pub phase: Phase,
+    format: RecordingFormat,
+    mic: bool,
+    paused: bool,
+    ended: Arc<AtomicBool>,
     stop: Option<Sender<()>>,
     control: Option<Sender<RecControl>>,
+    bell: Doorbell,
     join: Option<JoinHandle<Result<PathBuf, String>>>,
 }
 
+/// Marks the source ended and runs the end hook, on return or panic.
+struct EndGuard<E: FnOnce()> {
+    ended: Arc<AtomicBool>,
+    on_end: Option<E>,
+}
+
+impl<E: FnOnce()> Drop for EndGuard<E> {
+    fn drop(&mut self) {
+        self.ended.store(true, Ordering::Release);
+        if let Some(on_end) = self.on_end.take() {
+            on_end();
+        }
+    }
+}
+
 impl ActiveRecording {
-    pub fn spawn<F>(
+    /// Run `source` on its own thread. `fps` is clamped to the format's
+    /// capture bounds, and `mic` holds only for a format with audio.
+    /// `on_end` runs on that thread once the source returned or
+    /// panicked, stopped or not; `ended` is already true then.
+    pub fn spawn<F, E>(
         output: PathBuf,
         fps: u32,
         mic: bool,
-        format: crate::config::RecordingFormat,
-        encoder: crate::config::RecordingEncoder,
+        format: RecordingFormat,
+        encoder: RecordingEncoder,
         source: F,
-    ) -> Self
+        on_end: E,
+    ) -> Result<Self, String>
     where
         F: FnOnce(RecordingSpec) -> Result<PathBuf, String> + Send + 'static,
+        E: FnOnce() + Send + 'static,
     {
+        let mic = mic && format.audio_codec().is_some();
         let (tx, rx) = channel();
         let (ctx, crx) = channel();
+        let bell = Doorbell::default();
         let spec = RecordingSpec {
             output: output.clone(),
-            fps,
+            fps: format.capture_fps(fps),
             mic,
             format,
             encoder,
             stop: rx,
             control: crx,
+            bell: bell.clone(),
         };
-        let join = std::thread::spawn(move || source(spec));
-        Self {
+        let ended = Arc::new(AtomicBool::new(false));
+        let guard = EndGuard {
+            ended: ended.clone(),
+            on_end: Some(on_end),
+        };
+        let join = std::thread::Builder::new()
+            .name("iris-record".into())
+            .spawn(move || {
+                let _guard = guard;
+                source(spec)
+            })
+            .map_err(|e| format!("start the recording thread: {e}"))?;
+        Ok(Self {
             output,
-            started: Instant::now(),
+            format,
             mic,
-            phase: Phase::Picking,
+            paused: false,
+            ended,
             stop: Some(tx),
             control: Some(ctx),
+            bell,
             join: Some(join),
+        })
+    }
+
+    /// Whether the source returned: stopped, failed, lost its target, or
+    /// its pick was cancelled.
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
+    }
+
+    /// The mic track's state, or `None` for a format without audio.
+    pub fn mic(&self) -> Option<bool> {
+        self.format.audio_codec().map(|_| self.mic)
+    }
+
+    /// Whether the recording is paused.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Pause, or resume when paused. Returns whether it is paused now.
+    pub fn toggle_pause(&mut self) -> bool {
+        self.paused = !self.paused;
+        self.send(if self.paused {
+            RecControl::Pause
+        } else {
+            RecControl::Resume
+        });
+        self.paused
+    }
+
+    /// Turn the mic track on or off. Returns whether it is on now, or an
+    /// error for a format without audio.
+    pub fn toggle_mic(&mut self) -> Result<bool, String> {
+        if self.format.audio_codec().is_none() {
+            return Err(format!(
+                "a {} recording has no audio track",
+                self.format.ext()
+            ));
+        }
+        self.mic = !self.mic;
+        self.send(RecControl::ToggleMic);
+        Ok(self.mic)
+    }
+
+    /// Forward a control to the source thread. No-op once the recording
+    /// has been stopped or the source exited.
+    fn send(&self, ctl: RecControl) {
+        if let Some(tx) = &self.control {
+            let _ = tx.send(ctl);
+            self.bell.ring();
         }
     }
 
-    /// Forward a chip control to the source thread. No-op once the
-    /// recording has been stopped or the source exited.
-    pub fn send_control(&self, ctl: RecControl) {
-        if let Some(tx) = &self.control {
-            let _ = tx.send(ctl);
+    /// Send the stop, once.
+    fn signal_stop(&mut self) {
+        if let Some(tx) = self.stop.take() {
+            let _ = tx.send(());
+            self.bell.ring();
         }
     }
 
     /// Signal stop and wait for the source to flush the file. A `cancelled:`
     /// result is reported as Ok(None); anything else is a real error.
     pub fn stop(mut self) -> Result<Option<PathBuf>, String> {
-        if let Some(tx) = self.stop.take() {
-            let _ = tx.send(());
-        }
+        self.signal_stop();
         let result = self
             .join
             .take()
@@ -120,10 +233,10 @@ impl ActiveRecording {
         Self::finish_result(result, &self.output)
     }
 
-    /// Map a source's join result to the public stop result: the
-    /// source reports the LAST segment it wrote (a mid-recording split
-    /// renames the output), a `cancelled:` error becomes Ok(None) with
-    /// the stub removed, and a real error keeps a non-empty file.
+    /// Map a source's join result to the public stop result: a
+    /// `cancelled:` error becomes Ok(None) with the stub removed, and a
+    /// real error keeps a non-empty file (the segments joined before
+    /// the failure).
     fn finish_result(
         result: Result<PathBuf, String>,
         output: &Path,
@@ -154,9 +267,7 @@ impl ActiveRecording {
         mut self,
         done: impl FnOnce(Result<Option<PathBuf>, String>) + Send + 'static,
     ) {
-        if let Some(tx) = self.stop.take() {
-            let _ = tx.send(());
-        }
+        self.signal_stop();
         let join = self.join.take().expect("stop called twice");
         let output = self.output.clone();
         std::thread::spawn(move || {
@@ -170,53 +281,12 @@ impl ActiveRecording {
 }
 
 impl Drop for ActiveRecording {
-    /// A dropped recording still signals its source: the stop channel
-    /// disconnects, and every source loop treats a disconnected stop
-    /// as a stop. Without this a leaked ActiveRecording records forever.
+    /// A dropped recording still signals its source: every source loop
+    /// treats the stop, or a disconnected stop channel, as a stop.
+    /// Without this a leaked ActiveRecording records forever.
     fn drop(&mut self) {
-        if let Some(tx) = self.stop.take() {
-            let _ = tx.send(());
-        }
+        self.signal_stop();
     }
-}
-
-#[derive(Default)]
-pub struct RecordingManager {
-    pub active: Option<ActiveRecording>,
-}
-
-impl RecordingManager {
-    pub fn is_active(&self) -> bool {
-        self.active.is_some()
-    }
-
-    /// Stop the active recording, if any. Returns the finished file path,
-    /// or None when the session was cancelled before encoding.
-    pub fn stop(&mut self) -> Result<Option<PathBuf>, String> {
-        match self.active.take() {
-            Some(rec) => rec.stop(),
-            None => Ok(None),
-        }
-    }
-
-    /// Stop the active recording without blocking the caller: the join
-    /// (and ffmpeg's trailer flush) runs on a background thread and the
-    /// result arrives through `done`.
-    pub fn stop_async(
-        &mut self,
-        done: impl FnOnce(Result<Option<PathBuf>, String>) + Send + 'static,
-    ) {
-        match self.active.take() {
-            Some(rec) => rec.stop_async(done),
-            None => done(Ok(None)),
-        }
-    }
-}
-
-/// The container extension of a recording path, so a mid-recording
-/// split (resize, mic toggle, renegotiation) keeps the same format.
-pub fn ext_of(path: &Path) -> &str {
-    path.extension().and_then(|e| e.to_str()).unwrap_or("mp4")
 }
 
 /// Path for a new recording inside `dir`, using the {date}_{time} template
@@ -238,131 +308,5 @@ pub fn unique_recording_path(dir: &Path, ext: &str) -> PathBuf {
     dir.join(format!("{stem}_{}.{ext}", crate::time::now_millis()))
 }
 
-// WHY: the class closed here is "a recording leaks or double-stops": a
-// stop that leaves the thread running, a cancelled pick that leaves the
-// file, or a manager that reports active after stop all hang or corrupt
-// the next session. Sources are stub closures over the real channel so
-// the lifecycle itself is what is tested. Not covered: ffmpeg output.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unique_path_dedupes_with_numeric_suffix() {
-        let dir = tempfile::tempdir().unwrap();
-        let first = unique_recording_path(dir.path(), "mp4");
-        std::fs::write(&first, b"x").unwrap();
-        let second = unique_recording_path(dir.path(), "mp4");
-        assert_ne!(first, second);
-        assert!(second.to_string_lossy().ends_with("_2.mp4"));
-    }
-
-    #[test]
-    fn stop_returns_output_on_clean_source() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("r.mp4");
-        let rec = ActiveRecording::spawn(
-            out.clone(),
-            30,
-            false,
-            crate::config::RecordingFormat::Mp4,
-            crate::config::RecordingEncoder::Libx264,
-            |spec| {
-                spec.stop.recv().unwrap();
-                std::fs::write(&spec.output, b"mp4").unwrap();
-                Ok(spec.output.clone())
-            },
-        );
-        assert_eq!(rec.stop().unwrap(), Some(out));
-    }
-
-    #[test]
-    fn cancelled_source_removes_output_and_reports_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("r.mp4");
-        std::fs::write(&out, b"partial").unwrap();
-        let rec = ActiveRecording::spawn(
-            out.clone(),
-            30,
-            false,
-            crate::config::RecordingFormat::Mp4,
-            crate::config::RecordingEncoder::Libx264,
-            |spec| {
-                spec.stop.recv().unwrap();
-                Err(format!("{}user escaped the pick", CANCELLED_PREFIX))
-            },
-        );
-        assert_eq!(rec.stop().unwrap(), None);
-        assert!(!out.exists());
-    }
-
-    #[test]
-    fn failed_source_removes_empty_stub_and_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("r.mp4");
-        std::fs::write(&out, b"").unwrap();
-        let rec = ActiveRecording::spawn(
-            out.clone(),
-            30,
-            false,
-            crate::config::RecordingFormat::Mp4,
-            crate::config::RecordingEncoder::Libx264,
-            |spec| {
-                spec.stop.recv().unwrap();
-                Err("encoder died".to_string())
-            },
-        );
-        assert!(rec.stop().is_err());
-        assert!(!out.exists());
-    }
-
-    #[test]
-    fn failed_source_keeps_nonempty_segment() {
-        // A split can fail on the SECOND segment while the first is a
-        // complete video: a non-empty file on error is kept, not deleted.
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("r.mp4");
-        std::fs::write(&out, b"partial").unwrap();
-        let rec = ActiveRecording::spawn(
-            out.clone(),
-            30,
-            false,
-            crate::config::RecordingFormat::Mp4,
-            crate::config::RecordingEncoder::Libx264,
-            |spec| {
-                spec.stop.recv().unwrap();
-                Err("encoder died".to_string())
-            },
-        );
-        assert!(rec.stop().is_err());
-        assert!(out.exists());
-    }
-
-    #[test]
-    fn manager_stop_with_nothing_active_is_ok_none() {
-        let mut mgr = RecordingManager::default();
-        assert!(!mgr.is_active());
-        assert_eq!(mgr.stop().unwrap(), None);
-    }
-
-    #[test]
-    fn manager_clears_active_after_stop() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = RecordingManager {
-            active: Some(ActiveRecording::spawn(
-                dir.path().join("r.mp4"),
-                30,
-                false,
-                crate::config::RecordingFormat::Mp4,
-                crate::config::RecordingEncoder::Libx264,
-                |spec| {
-                    spec.stop.recv().unwrap();
-                    Ok(spec.output.clone())
-                },
-            )),
-        };
-        assert!(mgr.is_active());
-        mgr.stop().unwrap();
-        assert!(!mgr.is_active());
-    }
-}
+mod tests;

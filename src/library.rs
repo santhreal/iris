@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 const MAX_ENTRIES: usize = 200;
-const THUMB_WIDTH: u32 = 320;
+/// Thumbnails cover this pixel box: the library card's 216x132 logical
+/// image area at 2x device scale, so a HiDPI display draws the card
+/// from at least as many pixels as it shows.
+const THUMB_BOX: (u32, u32) = (432, 264);
 
 /// One capture in the library: the image plus its cached thumbnail.
 #[derive(Serialize, Deserialize, Clone)]
@@ -108,23 +111,50 @@ fn write_store(entries: &[CaptureEntry]) -> Result<(), String> {
     Ok(())
 }
 
+/// A `w`x`h` capture's thumbnail plan: the size it scales to, covering
+/// THUMB_BOX and never enlarged, then the size of the crop to the box's
+/// aspect around its center. The card shows that center crop.
+fn thumb_plan(w: u32, h: u32) -> ((u32, u32), (u32, u32)) {
+    let (bw, bh) = (f64::from(THUMB_BOX.0), f64::from(THUMB_BOX.1));
+    let (w, h) = (f64::from(w.max(1)), f64::from(h.max(1)));
+    let scale = (bw / w).max(bh / h).min(1.0);
+    let (sw, sh) = ((w * scale).round().max(1.0), (h * scale).round().max(1.0));
+    let aspect = bw / bh;
+    let (cw, ch) = (
+        sw.min((sh * aspect).round()).max(1.0),
+        sh.min((sw / aspect).round()).max(1.0),
+    );
+    ((sw as u32, sh as u32), (cw as u32, ch as u32))
+}
+
+/// The size of a `w`x`h` capture's thumbnail.
+fn thumb_size(w: u32, h: u32) -> (u32, u32) {
+    thumb_plan(w, h).1
+}
+
+/// Box-filter `img` down to its thumbnail plan and crop the center.
+fn make_thumb(img: &image::RgbaImage) -> image::RgbaImage {
+    let ((sw, sh), (cw, ch)) = thumb_plan(img.width(), img.height());
+    let scaled;
+    let base = if (sw, sh) == img.dimensions() {
+        img
+    } else {
+        // The banded replica of image's box-average thumbnail: a 4K
+        // capture is a 33MB scan, split across cores.
+        scaled = crate::thumb::thumbnail_rgba(img, sw, sh);
+        &scaled
+    };
+    image::imageops::crop_imm(base, (sw - cw) / 2, (sh - ch) / 2, cw, ch).to_image()
+}
+
 /// Register a fresh capture: build its thumbnail, prepend it, cap the list.
 /// The caller passes the already-decoded image so a save does not pay a
 /// second PNG decode just to make the thumbnail.
 pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
     let _write = store_lock().lock();
     let (width, height) = img.dimensions();
-    let scale = THUMB_WIDTH as f64 / width as f64;
-    // thumbnail_rgba is the banded replica of image's box-average
-    // thumbnail: on a 4K capture the single-threaded scan reads 33MB
-    // serially to produce 216px.
-    let thumb_img = crate::thumb::thumbnail_rgba(
-        img,
-        THUMB_WIDTH,
-        (height as f64 * scale).round().max(1.0) as u32,
-    );
     let thumb = thumbs_dir()?.join(format!("{}.png", path_key(path)));
-    thumb_img
+    make_thumb(img)
         .save(&thumb)
         .map_err(|e| format!("save thumbnail: {e}"))?;
 
@@ -141,6 +171,57 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
     entries.truncate(MAX_ENTRIES);
     write_store(&entries)?;
     Ok(entry)
+}
+
+/// The entry's thumbnail pixels. A cached file that is missing,
+/// unreadable, or of another size (an older build's sizing) is rebuilt
+/// from the capture and written back. When the capture cannot be read
+/// either, an old thumbnail still shows it.
+pub fn thumbnail(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
+    let cached = image::open(&entry.thumb)
+        .ok()
+        .map(image::DynamicImage::into_rgba8);
+    match cached {
+        Some(img) if img.dimensions() == thumb_size(entry.width, entry.height) => Ok(img),
+        cached => rebuild_thumb(entry).or_else(|e| cached.ok_or(e)),
+    }
+}
+
+/// Rebuild `entry`'s thumbnail from its capture. The file is written
+/// back only while the store still holds this exact entry: an entry
+/// that changed meanwhile (an editor save) got a fresh thumbnail from
+/// its own add. A failed write still returns the pixels.
+fn rebuild_thumb(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
+    let src = image::open(&entry.path)
+        .map_err(|e| format!("cannot open {}: {e}", entry.path.display()))?
+        .into_rgba8();
+    let thumb = make_thumb(&src);
+    let _write = store_lock().lock();
+    let mut entries = read_store();
+    let Some(stored) = entries
+        .iter_mut()
+        .find(|e| e.path == entry.path && e.created_ms == entry.created_ms)
+    else {
+        return Ok(thumb);
+    };
+    let saved = entry
+        .thumb
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .map_err(|e| e.to_string())
+        .and_then(|()| thumb.save(&entry.thumb).map_err(|e| e.to_string()));
+    if let Err(e) = saved {
+        crate::ilog!("iris: save thumbnail {}: {e}", entry.thumb.display());
+    }
+    // A capture resized outside iris: the entry takes its real size, or
+    // every load would find the thumbnail stale and rebuild it again.
+    if src.dimensions() != (stored.width, stored.height) {
+        (stored.width, stored.height) = src.dimensions();
+        if let Err(e) = write_store(&entries) {
+            crate::ilog!("iris: {e}");
+        }
+    }
+    Ok(thumb)
 }
 
 /// Parent-directory mtimes from the last full stat pass. A file
@@ -265,112 +346,5 @@ pub fn delete_many(paths: &[PathBuf]) -> usize {
     errors
 }
 
-// WHY: the class closed here is "the library loses or corrupts captures":
-// a store that does not round-trip, a delete that leaves the file, a cap
-// that keeps the wrong end, or a path_key that collides all surface as
-// missing thumbnails or vanished shots. Env-mutating tests run serially
-// with IRIS_HOME pointed at a tempdir. Not covered: thumbnail pixel content.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Root iris data/cache in a fresh tempdir via `IRIS_HOME` (on every
-    /// platform); returns it for file seeds.
-    fn isolated_home() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var(crate::dirs::HOME_ENV, dir.path());
-        dir
-    }
-
-    /// A real PNG on disk inside `dir` plus its decoded pixels; `add`
-    /// takes the image so tests exercise the same path as `finalize`.
-    fn png(dir: &Path, name: &str) -> (PathBuf, image::RgbaImage) {
-        let path = dir.join(name);
-        let img = image::RgbaImage::from_pixel(8, 6, image::Rgba([1, 2, 3, 255]));
-        img.save(&path).unwrap();
-        (path, img)
-    }
-
-    #[test]
-    fn path_key_is_stable_and_path_sensitive() {
-        let a = Path::new("/tmp/one.png");
-        let b = Path::new("/tmp/two.png");
-        assert_eq!(path_key(a), path_key(a));
-        assert_ne!(path_key(a), path_key(b));
-        assert_eq!(path_key(a).len(), 16);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn add_list_delete_round_trips() {
-        let d = isolated_home();
-        let (shot, img) = png(d.path(), "a.png");
-        let entry = add(&shot, &img).unwrap();
-        assert!(entry.thumb.exists());
-        assert_eq!(list().len(), 1);
-        delete(&shot).unwrap();
-        assert!(list().is_empty());
-        assert!(!entry.thumb.exists());
-        assert!(!shot.exists());
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn delete_unknown_path_errors() {
-        let _d = isolated_home();
-        assert!(delete(Path::new("/nonexistent.png")).is_err());
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn list_prunes_entries_whose_file_vanished() {
-        let d = isolated_home();
-        let (shot, img) = png(d.path(), "gone.png");
-        add(&shot, &img).unwrap();
-        std::fs::remove_file(&shot).unwrap();
-        assert!(list().is_empty());
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn readding_same_path_replaces_not_duplicates() {
-        let d = isolated_home();
-        let (shot, img) = png(d.path(), "dup.png");
-        add(&shot, &img).unwrap();
-        add(&shot, &img).unwrap();
-        assert_eq!(list().len(), 1);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn corrupt_store_starts_fresh() {
-        let _d = isolated_home();
-        let store = app_data_dir().unwrap().join("library.json");
-        std::fs::write(&store, "{not json").unwrap();
-        assert!(list().is_empty());
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn store_caps_at_max_entries() {
-        let d = isolated_home();
-        for i in 0..5 {
-            let (shot, img) = png(d.path(), &format!("s{i}.png"));
-            add(&shot, &img).unwrap();
-        }
-        // Push past the cap directly: 200 adds of real PNGs is slow.
-        let mut entries = read_store();
-        for i in 0..MAX_ENTRIES + 10 {
-            entries.push(CaptureEntry {
-                path: d.path().join(format!("extra{i}.png")),
-                thumb: PathBuf::new(),
-                width: 1,
-                height: 1,
-                created_ms: i as i64,
-            });
-        }
-        entries.truncate(MAX_ENTRIES);
-        write_store(&entries).unwrap();
-        assert_eq!(read_store().len(), MAX_ENTRIES);
-    }
-}
+mod tests;

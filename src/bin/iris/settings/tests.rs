@@ -14,20 +14,27 @@ fn commit_edit_updates_fields_and_validates() {
         open_dropdown: None,
         status: None,
         focus: None,
-        class: "test".into(),
     };
 
-    // Storage paths
-    s.editing = Some((Field::ScreenshotsDir, "/tmp/test-shots".into()));
+    // Storage paths: kept as typed, absolute or under `~`.
+    let shots = std::env::temp_dir().join("test-shots");
+    s.editing = Some((Field::ScreenshotsDir, shots.display().to_string()));
     assert!(s.commit_edit().is_ok());
-    assert_eq!(s.cfg.screenshots_dir, PathBuf::from("/tmp/test-shots"));
+    assert_eq!(s.cfg.screenshots_dir, shots);
+    assert_eq!(s.editing, None);
 
-    s.editing = Some((Field::RecordingsDir, "/tmp/test-recs".into()));
+    s.editing = Some((Field::RecordingsDir, "~/test-recs".into()));
     assert!(s.commit_edit().is_ok());
-    assert_eq!(s.cfg.recordings_dir, PathBuf::from("/tmp/test-recs"));
+    assert_eq!(s.cfg.recordings_dir, PathBuf::from("~/test-recs"));
 
-    s.editing = Some((Field::ScreenshotsDir, "   ".into()));
-    assert!(s.commit_edit().is_err());
+    // A relative directory would resolve against the daemon's cwd. A
+    // rejected edit stays open with the text as typed.
+    for bad in ["   ", "test-shots", "~user/shots"] {
+        s.editing = Some((Field::ScreenshotsDir, bad.into()));
+        assert!(s.commit_edit().is_err(), "{bad:?}");
+        assert_eq!(s.editing, Some((Field::ScreenshotsDir, bad.into())));
+        assert_eq!(s.cfg.screenshots_dir, shots);
+    }
 
     // Template validation
     s.editing = Some((Field::Template, "shot_{date}_{time}".into()));
@@ -52,11 +59,17 @@ fn commit_edit_updates_fields_and_validates() {
     assert!(s.commit_edit().is_err());
 }
 
+/// The storage fields show the home directory as `~`, the form
+/// config.toml stores; a directory elsewhere shows in full.
 #[test]
 fn field_text_covers_all_field_variants() {
+    let home = directories::UserDirs::new()
+        .unwrap()
+        .home_dir()
+        .to_path_buf();
     let cfg = Config {
         screenshots_dir: PathBuf::from("/custom/shots"),
-        recordings_dir: PathBuf::from("/custom/recs"),
+        recordings_dir: home.join("Videos").join("iris"),
         screenshot_template: "tmpl_{date}".into(),
         recording_fps: 45,
         capture_hotkey: "Ctrl+Shift+3".into(),
@@ -73,11 +86,17 @@ fn field_text_covers_all_field_variants() {
         open_dropdown: None,
         status: None,
         focus: None,
-        class: "test".into(),
     };
 
     assert_eq!(s.field_text(Field::ScreenshotsDir), "/custom/shots");
-    assert_eq!(s.field_text(Field::RecordingsDir), "/custom/recs");
+    assert_eq!(
+        s.field_text(Field::RecordingsDir),
+        std::path::Path::new("~")
+            .join("Videos")
+            .join("iris")
+            .display()
+            .to_string()
+    );
     assert_eq!(s.field_text(Field::Template), "tmpl_{date}");
     assert_eq!(s.field_text(Field::Fps), "45");
     assert_eq!(s.field_text(Field::CaptureHotkey), "Ctrl+Shift+3");
@@ -172,7 +191,6 @@ fn all_twenty_config_fields_persist_and_reload() {
         open_dropdown: None,
         status: None,
         focus: None,
-        class: "test".into(),
     };
 
     // Edit Storage
@@ -244,7 +262,6 @@ fn reset_defaults_restores_default_config_and_status() {
         open_dropdown: Some(DropdownField::ToastPosition),
         status: None,
         focus: None,
-        class: "test".into(),
     };
 
     // Modify some cfg fields

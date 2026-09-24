@@ -76,6 +76,104 @@ pub(super) fn copy_abs_paths(paths: &[std::path::PathBuf]) -> Result<(), String>
     Ok(())
 }
 
+/// Entry `slot` of a COM object's vtable.
+#[cfg(windows)]
+unsafe fn vtable(obj: *mut core::ffi::c_void, slot: usize) -> *const core::ffi::c_void {
+    *(*(obj as *const *const *const core::ffi::c_void)).add(slot)
+}
+
+/// Release a COM object: `IUnknown::Release` is vtable slot 2.
+#[cfg(windows)]
+unsafe fn release(obj: *mut core::ffi::c_void) {
+    let unref: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32 =
+        std::mem::transmute(vtable(obj, 2));
+    unref(obj);
+}
+
+/// The shell's data object for files (absolute paths), as Explorer
+/// builds it for a selection of those files. Created and dropped on a
+/// thread that called `OleInitialize`.
+#[cfg(windows)]
+struct ShellData {
+    obj: *mut core::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl ShellData {
+    fn new(paths: &[std::path::PathBuf]) -> Result<Self, String> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::{ILCreateFromPathW, ILFree};
+
+        let mut pidls = Vec::with_capacity(paths.len());
+        let mut made = Ok(());
+        for p in paths {
+            let w: Vec<u16> = p
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let pidl = unsafe { ILCreateFromPathW(w.as_ptr()) };
+            if pidl.is_null() {
+                made = Err(format!("drag: {} has no shell item", p.display()));
+                break;
+            }
+            pidls.push(pidl);
+        }
+        let data = made.and_then(|()| unsafe { Self::from_id_lists(&pidls) });
+        for p in pidls {
+            unsafe { ILFree(p) };
+        }
+        data
+    }
+
+    /// An item array takes absolute ID lists from any folders, and its
+    /// data object is the one Explorer drags. `SHCreateDataObject` with
+    /// no parent folder returns an object with no formats at all.
+    unsafe fn from_id_lists(
+        pidls: &[*mut windows_sys::Win32::UI::Shell::Common::ITEMIDLIST],
+    ) -> Result<Self, String> {
+        use windows_sys::core::GUID;
+        use windows_sys::Win32::UI::Shell::{BHID_DataObject, SHCreateShellItemArrayFromIDLists};
+
+        // IID_IDataObject {0000010e-0000-0000-C000-000000000046}.
+        const IID_IDATAOBJECT: GUID = GUID::from_u128(0x0000010e_0000_0000_c000_000000000046);
+        type Obj = *mut core::ffi::c_void;
+
+        let mut array: Obj = std::ptr::null_mut();
+        let hr = SHCreateShellItemArrayFromIDLists(
+            pidls.len() as u32,
+            pidls.as_ptr() as *const *const _,
+            &mut array,
+        );
+        if hr < 0 || array.is_null() {
+            return Err(format!("drag: no shell item array for the files: {hr:#x}"));
+        }
+        // IShellItemArray::BindToHandler is vtable slot 3.
+        let bind: unsafe extern "system" fn(Obj, Obj, *const GUID, *const GUID, *mut Obj) -> i32 =
+            std::mem::transmute(vtable(array, 3));
+        let mut obj: Obj = std::ptr::null_mut();
+        let hr = bind(
+            array,
+            std::ptr::null_mut(),
+            &BHID_DataObject,
+            &IID_IDATAOBJECT,
+            &mut obj,
+        );
+        release(array);
+        if hr < 0 || obj.is_null() {
+            return Err(format!("drag: no data object for the files: {hr:#x}"));
+        }
+        Ok(ShellData { obj })
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ShellData {
+    fn drop(&mut self) {
+        unsafe { release(self.obj) };
+    }
+}
+
 /// Drag `paths` (absolute) out as files, from the pointer, until the
 /// button is released. The shell builds the data object (`CF_HDROP`
 /// plus shell IDs, so Explorer, browsers, and chat apps all accept it)
@@ -88,17 +186,10 @@ pub(super) fn copy_abs_paths(paths: &[std::path::PathBuf]) -> Result<(), String>
 /// mouse capture as the window the press began in.
 #[cfg(windows)]
 pub(super) fn drag_abs_paths(paths: Vec<std::path::PathBuf>) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Ole::{OleInitialize, OleUninitialize, DROPEFFECT_COPY};
     use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-    use windows_sys::Win32::UI::Shell::{
-        ILCreateFromPathW, ILFree, SHCreateDataObject, SHDoDragDrop,
-    };
-
-    // IID_IDataObject {0000010e-0000-0000-C000-000000000046}.
-    const IID_IDATAOBJECT: windows_sys::core::GUID =
-        windows_sys::core::GUID::from_u128(0x0000010e_0000_0000_c000_000000000046);
+    use windows_sys::Win32::UI::Shell::SHDoDragDrop;
 
     if paths.is_empty() {
         return Err("drag: no files".to_string());
@@ -106,155 +197,39 @@ pub(super) fn drag_abs_paths(paths: Vec<std::path::PathBuf>) -> Result<(), Strin
     let ui_tid = unsafe { GetCurrentThreadId() };
     std::thread::Builder::new()
         .name("iris-ole-drag".into())
-        .spawn(move || {
-            unsafe {
-                if OleInitialize(std::ptr::null()) < 0 {
-                    crate::ilog!("drag: OleInitialize failed");
-                    return;
-                }
-                let me = GetCurrentThreadId();
-                let attached = AttachThreadInput(me, ui_tid, 1) != 0;
-                let pidls: Vec<_> = paths
-                    .iter()
-                    .map(|p| {
-                        let w: Vec<u16> = p
-                            .as_os_str()
-                            .encode_wide()
-                            .chain(std::iter::once(0))
-                            .collect();
-                        ILCreateFromPathW(w.as_ptr())
-                    })
-                    .filter(|p| !p.is_null())
-                    .collect();
-                if pidls.len() == paths.len() {
-                    let mut obj: *mut core::ffi::c_void = std::ptr::null_mut();
-                    // Absolute ID lists with no parent folder: files may
-                    // come from different directories.
-                    let hr = SHCreateDataObject(
-                        std::ptr::null(),
-                        pidls.len() as u32,
-                        pidls.as_ptr() as *const *const _,
-                        std::ptr::null_mut(),
-                        &IID_IDATAOBJECT,
-                        &mut obj,
-                    );
-                    // The press may already be over (a flick shorter
-                    // than a thread spawn): a drag started then would
-                    // follow the pointer with no button held.
-                    if hr >= 0 && !obj.is_null() && GetAsyncKeyState(VK_LBUTTON as i32) < 0 {
+        .spawn(move || unsafe {
+            if OleInitialize(std::ptr::null()) < 0 {
+                crate::ilog!("drag: OleInitialize failed");
+                return;
+            }
+            let me = GetCurrentThreadId();
+            let attached = AttachThreadInput(me, ui_tid, 1) != 0;
+            match ShellData::new(&paths) {
+                // The press may already be over (a flick shorter than a
+                // thread spawn): a drag started then would follow the
+                // pointer with no button held.
+                Ok(data) => {
+                    if GetAsyncKeyState(VK_LBUTTON as i32) < 0 {
                         let mut effect = 0u32;
                         SHDoDragDrop(
                             std::ptr::null_mut(),
-                            obj,
+                            data.obj,
                             std::ptr::null_mut(),
                             DROPEFFECT_COPY,
                             &mut effect,
                         );
-                    } else if hr < 0 {
-                        crate::ilog!("drag: SHCreateDataObject failed: {hr:#x}");
                     }
-                    if !obj.is_null() {
-                        // IUnknown::Release is vtable slot 2.
-                        let vtbl = *(obj as *const *const usize);
-                        let release: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32 =
-                            std::mem::transmute(*vtbl.add(2));
-                        release(obj);
-                    }
-                } else {
-                    crate::ilog!("drag: a path has no shell item");
                 }
-                for p in pidls {
-                    ILFree(p);
-                }
-                if attached {
-                    AttachThreadInput(me, ui_tid, 0);
-                }
-                OleUninitialize();
+                Err(e) => crate::ilog!("{e}"),
             }
+            if attached {
+                AttachThreadInput(me, ui_tid, 0);
+            }
+            OleUninitialize();
         })
         .map_err(|e| format!("spawn drag thread: {e}"))?;
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    // WHY: the class closed here is "Explorer reads a malformed file
-    // list": a wrong pFiles offset, a missing fWide flag, or a missing
-    // terminator makes Explorer paste nothing or read past the buffer.
-    // `clipboard_round_trip_reads_back_as_file_list` covers ownership and
-    // Explorer's reader on a real Windows clipboard; it is ignored by
-    // default because it replaces the clipboard contents.
-    use super::*;
-
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
-    #[cfg(windows)]
-    #[test]
-    #[ignore = "replaces the clipboard; run with --ignored on Windows"]
-    fn clipboard_round_trip_reads_back_as_file_list() {
-        use std::os::windows::ffi::OsStringExt;
-        use windows_sys::Win32::System::DataExchange::{
-            CloseClipboard, GetClipboardData, OpenClipboard,
-        };
-        use windows_sys::Win32::System::Ole::CF_HDROP;
-        use windows_sys::Win32::UI::Shell::DragQueryFileW;
-
-        let dir = tempfile::tempdir().unwrap();
-        let files = [dir.path().join("shot one.png"), dir.path().join("é.png")];
-        for f in &files {
-            std::fs::write(f, b"x").unwrap();
-        }
-        crate::dragcopy::copy_file_paths(&files).unwrap();
-
-        let mut read = Vec::new();
-        unsafe {
-            assert_ne!(OpenClipboard(std::ptr::null_mut()), 0);
-            let h = GetClipboardData(CF_HDROP as u32);
-            assert!(!h.is_null(), "CF_HDROP absent after copy");
-            let n = DragQueryFileW(h, u32::MAX, std::ptr::null_mut(), 0);
-            for i in 0..n {
-                let len = DragQueryFileW(h, i, std::ptr::null_mut(), 0);
-                let mut buf = vec![0u16; len as usize + 1];
-                DragQueryFileW(h, i, buf.as_mut_ptr(), buf.len() as u32);
-                buf.truncate(len as usize);
-                read.push(std::path::PathBuf::from(std::ffi::OsString::from_wide(
-                    &buf,
-                )));
-            }
-            CloseClipboard();
-        }
-        let expect: Vec<_> = files
-            .iter()
-            .map(|f| std::path::absolute(f).unwrap())
-            .collect();
-        assert_eq!(read, expect);
-    }
-
-    #[test]
-    fn header_points_past_itself_and_marks_wide() {
-        let p = hdrop_payload(&[wide("C:\\a.png")]);
-        assert_eq!(u32::from_le_bytes(p[0..4].try_into().unwrap()), 20);
-        assert_eq!(i32::from_le_bytes(p[16..20].try_into().unwrap()), 1);
-    }
-
-    #[test]
-    fn paths_are_nul_separated_and_double_nul_terminated() {
-        let p = hdrop_payload(&[wide("C:\\a"), wide("D:\\é")]);
-        let units: Vec<u16> = p[20..]
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        let mut expect = wide("C:\\a");
-        expect.push(0);
-        expect.extend(wide("D:\\é"));
-        expect.extend([0, 0]);
-        assert_eq!(units, expect);
-    }
-
-    #[test]
-    fn empty_list_is_header_plus_terminator() {
-        assert_eq!(hdrop_payload(&[]).len(), 22);
-    }
-}
+mod tests;

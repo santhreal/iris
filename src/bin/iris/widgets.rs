@@ -5,11 +5,12 @@
 //! the single primary action.
 
 mod image;
-#[cfg(test)]
-mod tests;
+mod resize;
+mod window_move;
 
-pub(crate) use self::image::swizzle_rgba_bgra;
 pub use self::image::*;
+pub use self::resize::resize_edges;
+pub use self::window_move::{move_handle, Double};
 
 use gpui::*;
 
@@ -312,33 +313,42 @@ fn win_dot(id: &'static str, color: Rgba) -> Stateful<Div> {
 }
 
 /// The three window controls, macOS order and register: close,
-/// minimize, zoom (fullscreen). Used by window_frame so every Normal
-/// window offers the same controls in the same place.
-pub fn traffic_lights(
-    on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_min: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_zoom: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> Div {
+/// minimize, zoom. Used by window_frame so every Normal window offers
+/// the same controls in the same place. A fixed-size window gets a
+/// dimmed, inert zoom control, as on macOS.
+fn traffic_lights(resizable: bool) -> Div {
+    let zoom = if resizable {
+        win_dot("win-zoom", theme::WIN_ZOOM)
+            .on_click(|_, window, _| crate::sys::window::zoom_control(window))
+    } else {
+        div()
+            .id("win-zoom")
+            .w(px(12.))
+            .h(px(12.))
+            .rounded_full()
+            .bg(theme::alpha(theme::FG, 0.18))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    };
     div()
         .flex()
         .items_center()
         .gap(px(8.))
-        .child(win_dot("win-close", theme::WIN_CLOSE).on_click(on_close))
-        .child(win_dot("win-min", theme::WIN_MIN).on_click(on_min))
-        .child(win_dot("win-zoom", theme::WIN_ZOOM).on_click(on_zoom))
+        .child(
+            win_dot("win-close", theme::WIN_CLOSE).on_click(|_, window, _| window.remove_window()),
+        )
+        .child(win_dot("win-min", theme::WIN_MIN).on_click(|_, window, _| window.minimize_window()))
+        .child(zoom)
 }
 
 /// The shared Normal-window scaffold: rounded root (the window is
 /// transparent; this root's 12px corners are the window's shape),
 /// a 56px toolbar with traffic lights, a semibold title and the
-/// caller's right-side cluster, then the content. Double-clicking
-/// the toolbar toggles fullscreen; pressing it drags the window via
-/// _NET_WM_MOVERESIZE, because client-side decorations leave the WM
-/// nothing to grab. `class` is the window's unique WM_CLASS, how
-/// the move request finds its XID.
+/// caller's right-side cluster, then the content. The toolbar is the
+/// window's title bar (`move_handle`): a drag moves the window, and a
+/// double click on a resizable one runs the platform's title bar action.
 pub fn window_frame(
     title: &'static str,
-    class: SharedString,
+    resizable: bool,
     right: Vec<AnyElement>,
     content: impl IntoElement,
 ) -> Div {
@@ -366,31 +376,17 @@ pub fn window_frame(
                 .px(px(20.))
                 .border_b_1()
                 .border_color(theme::HAIRLINE)
-                .on_mouse_down(MouseButton::Left, move |ev, window, _| {
-                    if ev.click_count == 2 {
-                        window.toggle_fullscreen();
-                        return;
-                    }
-                    // Single press: hand the drag to the WM. Root
-                    // coordinates are window origin + local position.
-                    let origin = window.bounds().origin;
-                    crate::sys::window::begin_wm_move(
-                        window,
-                        class.to_string(),
-                        (f32::from(origin.x) + f32::from(ev.position.x)) as i32,
-                        (f32::from(origin.y) + f32::from(ev.position.y)) as i32,
-                    );
-                })
+                .child(move_handle(if resizable {
+                    Double::TitleBar
+                } else {
+                    Double::Nothing
+                }))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap(px(14.))
-                        .child(traffic_lights(
-                            |_, window, _| window.remove_window(),
-                            |_, window, _| window.minimize_window(),
-                            |_, window, _| window.toggle_fullscreen(),
-                        ))
+                        .child(traffic_lights(resizable))
                         .child(
                             div()
                                 .text_size(px(theme::TEXT_TITLE))

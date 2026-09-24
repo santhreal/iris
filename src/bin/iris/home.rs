@@ -1,9 +1,13 @@
 //! Home: the launch surface. An iris/aperture mark opens with a
-//! spring (the brand moment), then the minimal home settles in:
-//! three action tiles (New Screenshot, Record Window, Library)
-//! centered, settings as a small gear in the bottom-right corner.
-//! Bare `iris` launches here; the daemon stays headless.
+//! spring (the brand moment), then glides up over the wordmark while
+//! the minimal home rises in: three action tiles (New Screenshot,
+//! Record Window, Library) centered, settings as a small gear in the
+//! bottom-right corner. The brand moment plays on the first home of a
+//! daemon's lifetime; later opens start at the content reveal, so the
+//! tiles are live on the first frame. Bare `iris` launches here; the
+//! daemon stays headless.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::*;
@@ -12,8 +16,53 @@ use crate::{daemon, icons, motion, theme, widgets};
 use icons::Icon;
 
 const WIN: (f32, f32) = (560.0, 420.0);
-/// Loading beat: the iris opens, a breath, then the content fades.
-const LOADING: Duration = Duration::from_millis(1100);
+/// The entrance: the iris opens, then the content rises in under it.
+const LOADING: Duration = Duration::from_millis(810);
+/// Fraction of LOADING the brand mark plays alone. The content starts
+/// as the mark's spring comes within 0.2% of rest, so no frame holds a
+/// still mark between the two phases.
+const REVEAL: f32 = 0.62;
+/// Fraction of LOADING at which the mark's spring completes: one pace
+/// across both phases.
+const MARK_END: f32 = 0.98;
+/// Set once the brand moment has played in this process.
+static BRAND_PLAYED: AtomicBool = AtomicBool::new(false);
+
+/// The mark's edge at rest over the wordmark, and in the brand moment.
+const MARK: f32 = 56.0;
+const BRAND_MARK: f32 = 88.0;
+/// The content column, top to bottom: the mark, a gap, the wordmark's
+/// line, a gap, the tile row. The wordmark's line height is set rather
+/// than derived from the font, and the tiles' entrance offsets do not
+/// take part in layout, so the column's height is this constant sum.
+const HEADER_GAP: f32 = 12.0;
+const WORDMARK_LINE: f32 = 28.0;
+const COLUMN_GAP: f32 = 22.0;
+const TILE: (f32, f32) = (152.0, 104.0);
+/// How far the mark's rest center sits above the content center, where
+/// the brand moment draws it: the column is centered and the mark tops it.
+const MARK_RISE: f32 = (MARK + HEADER_GAP + WORDMARK_LINE + COLUMN_GAP + TILE.1) / 2.0 - MARK / 2.0;
+
+/// Loading progress of a home opened `elapsed` ago at progress `start`
+/// (0.0 plays the brand moment, REVEAL skips it). Saturates at exactly
+/// 1.0, which is the frame loop's end condition.
+fn loading_progress(start: f32, elapsed: Duration, total: Duration) -> f32 {
+    (start + elapsed.as_secs_f32() / total.as_secs_f32()).min(1.0)
+}
+
+/// Content reveal progress: 0.0 up to REVEAL, exactly 1.0 when loading
+/// completes. The span divides by itself at the end, so no rounding
+/// can leave the reveal a hair short of done.
+fn reveal(loading_t: f32) -> f32 {
+    ((loading_t - REVEAL) / (1.0 - REVEAL)).clamp(0.0, 1.0)
+}
+
+/// The mark's edge and its drop below its rest slot at glide progress
+/// `m`: 0.0 is the brand moment's pose, centered in the content area,
+/// and 1.0 rests over the wordmark.
+fn mark_pose(m: f32) -> (f32, f32) {
+    (BRAND_MARK + (MARK - BRAND_MARK) * m, MARK_RISE * (1.0 - m))
+}
 
 /// What a home tile does when clicked.
 #[derive(Clone, Copy)]
@@ -39,10 +88,10 @@ const TILES: [(&str, Icon, &str, Tile); 3] = [
 pub struct Home {
     focus: FocusHandle,
     opened: Option<Instant>,
+    /// Whether this window plays the brand moment (see BRAND_PLAYED).
+    brand: bool,
     hovered: Option<usize>,
     pressed: Option<usize>,
-    /// This window's unique WM_CLASS, for the title-bar drag.
-    class: SharedString,
     /// Pointer-coupled springs per tile. They reverse mid-flight
     /// when the pointer leaves or the button releases early.
     hover: [motion::Spring; TILES.len()],
@@ -54,7 +103,6 @@ pub struct Home {
 pub fn open(cx: &mut App) -> Result<(), String> {
     let focus = cx.focus_handle();
     let origin = crate::sys::window::centered_origin(cx, WIN.0, WIN.1, (200.0, 120.0));
-    let win_id = crate::sys::window::unique_id("dev.iris.home");
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -70,28 +118,28 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::Transparent,
-            app_id: Some(win_id.clone()),
+            app_id: Some("dev.iris.home".to_string()),
             window_min_size: Some(size(px(WIN.0), px(WIN.1))),
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
         },
-        |_, cx| {
+        |window, cx| {
+            // Task switchers and taskbars list the window by this title;
+            // the client-drawn frame shows its own.
+            window.set_window_title("iris");
             cx.new(|_| Home {
                 focus,
                 opened: None,
+                brand: !BRAND_PLAYED.swap(true, Ordering::Relaxed),
                 hovered: None,
                 pressed: None,
                 hover: [motion::Spring::default(); TILES.len()],
                 press: [motion::Spring::default(); TILES.len()],
                 last_frame: None,
-                class: SharedString::from(win_id.clone()),
             })
         },
     )
     .map_err(|e| format!("open home window: {e}"))?;
-    // openbox-class WMs cascade Normal windows off-center and may
-    // decorate them; re-place and strip.
-    crate::sys::window::place_after_map(win_id, origin.0, origin.1);
     Ok(())
 }
 
@@ -145,7 +193,8 @@ fn iris_mark(t: f32, size: f32) -> Div {
 
 /// One action tile: glyph over a label. `lift` (hover spring) grows
 /// the shadow, `squish` (press spring) sinks the card and tightens
-/// the shadow.
+/// the shadow. The entrance rise and the press sink offset the drawn
+/// tile only: as layout they would resize the row and move the column.
 fn action_tile(
     id: &'static str,
     glyph: Icon,
@@ -161,8 +210,8 @@ fn action_tile(
     shadow.offset.y = px(2. + 4.0 * lift + 1.0 * squish);
     div()
         .id(ElementId::Name(id.into()))
-        .w(px(152.))
-        .h(px(104.))
+        .w(px(TILE.0))
+        .h(px(TILE.1))
         .flex()
         .flex_col()
         .items_center()
@@ -180,7 +229,8 @@ fn action_tile(
         .border_color(theme::SEPARATOR)
         .shadow(vec![shadow])
         .opacity(enter)
-        .mt(px(
+        .relative()
+        .top(px(
             (1.0 - motion::ease_out_cubic(enter)) * 12.0 + 1.0 * squish
         ))
         .cursor_pointer()
@@ -198,8 +248,8 @@ impl Render for Home {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.focus.focus(window);
         let opened = *self.opened.get_or_insert_with(Instant::now);
-        let elapsed = opened.elapsed();
-        let loading_t = (elapsed.as_secs_f32() / motion::tempo(LOADING).as_secs_f32()).min(1.0);
+        let start = if self.brand { 0.0 } else { REVEAL };
+        let loading_t = loading_progress(start, opened.elapsed(), motion::tempo(LOADING));
 
         // Advance the pointer-coupled springs by real frame delta and
         // keep the frame loop alive until everything settles.
@@ -224,19 +274,32 @@ impl Render for Home {
         }
 
         let mut content = div().flex_1().flex().items_center().justify_center();
+        // The mark's spring keeps one pace across both phases; a later
+        // open shows the mark at rest.
+        let mark_t = if self.brand {
+            (loading_t / MARK_END).min(1.0)
+        } else {
+            1.0
+        };
 
-        if loading_t < 0.72 {
+        if loading_t < REVEAL {
             // The brand moment: the iris opens alone in the dark.
-            content = content.child(iris_mark((loading_t / 0.72).min(1.0), 88.0));
+            content = content.child(iris_mark(mark_t, BRAND_MARK));
         } else {
             // Content: mark, wordmark, tiles; each enters staggered.
-            let content_t = ((loading_t - 0.72) / 0.28).clamp(0.0, 1.0);
+            // The frame loop runs on loading_t alone (`live` above).
+            let content_t = reveal(loading_t);
             let stagger = |i: u32| ((content_t - i as f32 * 0.18) / 0.64).clamp(0.0, 1.0);
-            if content_t < 1.0 {
-                window.request_animation_frame();
-            }
             let enters: [f32; TILES.len()] =
                 std::array::from_fn(|i| motion::ease_out_cubic(stagger(i as u32)));
+            // After the brand moment the mark glides from the center up
+            // to its rest; a later open fades it in there.
+            let (mark_size, mark_drop, mark_alpha) = if self.brand {
+                let (size, drop) = mark_pose(enters[0]);
+                (size, drop, 1.0)
+            } else {
+                (MARK, 0.0, enters[0])
+            };
             let mut tiles = div().flex().gap(px(14.));
             for (ix, &(id, glyph, label, act)) in TILES.iter().enumerate() {
                 tiles = tiles.child(
@@ -273,14 +336,12 @@ impl Render for Home {
                     )
                     .on_click(cx.listener(move |_, _, window, cx| {
                         window.remove_window();
-                        let r = match act {
-                            Tile::Capture => daemon::dispatch(cx, &daemon::Command::Capture),
-                            Tile::Record => daemon::dispatch(cx, &daemon::Command::RecordToggle),
-                            Tile::Library => crate::library::open(cx),
+                        let cmd = match act {
+                            Tile::Capture => daemon::Command::Capture,
+                            Tile::Record => daemon::Command::RecordToggle,
+                            Tile::Library => daemon::Command::Library,
                         };
-                        if let Err(e) = r {
-                            iris_lib::ilog!("iris: {e}");
-                        }
+                        daemon::run(cx, &cmd);
                     })),
                 );
             }
@@ -289,32 +350,44 @@ impl Render for Home {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(px(22.))
+                    .gap(px(COLUMN_GAP))
                     .child(
+                        // Reversed, so the gliding mark paints over the
+                        // wordmark it uncovers.
                         div()
                             .flex()
-                            .flex_col()
+                            .flex_col_reverse()
                             .items_center()
-                            .gap(px(12.))
-                            .opacity(enters[0])
-                            .child(iris_mark(1.0, 56.0))
+                            .gap(px(HEADER_GAP))
                             .child(
                                 div()
                                     .text_size(px(theme::TEXT_HEADING))
+                                    .line_height(px(WORDMARK_LINE))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::FG)
-                                    .child("Iris"),
+                                    .opacity(enters[0])
+                                    .child("iris"),
+                            )
+                            .child(
+                                div().relative().size(px(MARK)).child(
+                                    iris_mark(mark_t, mark_size)
+                                        .absolute()
+                                        .left(px((MARK - mark_size) / 2.0))
+                                        .top(px((MARK - mark_size) / 2.0 + mark_drop))
+                                        .opacity(mark_alpha),
+                                ),
                             ),
                     )
                     .child(tiles),
             );
         }
 
+        // No frame title: the wordmark below the toolbar names the window.
+        let mut frame = widgets::window_frame("", false, vec![], content);
         // Settings: a small gear resting in the bottom-right corner,
         // appearing with the content.
-        let mut frame = widgets::window_frame("Iris", self.class.clone(), vec![], content);
-        if loading_t >= 0.72 {
-            let gear_enter = (((loading_t - 0.72) / 0.28).clamp(0.0, 1.0) - 0.36).max(0.0) / 0.64;
+        if loading_t >= REVEAL {
+            let gear_enter = (reveal(loading_t) - 0.36).max(0.0) / 0.64;
             frame = frame.child(
                 div()
                     .absolute()
@@ -329,9 +402,7 @@ impl Render for Home {
                             30.0,
                         )
                         .on_click(cx.listener(|_, _, _, cx| {
-                            if let Err(e) = crate::settings::open(cx) {
-                                iris_lib::ilog!("iris: {e}");
-                            }
+                            daemon::run(cx, &daemon::Command::Settings);
                         })),
                     ),
             );
@@ -344,5 +415,75 @@ impl Render for Home {
             },
         ));
         frame
+    }
+}
+
+// WHY: the classes closed here are "a settled surface keeps requesting
+// frames" and "the entrance holds a still frame". The loop's end
+// condition must be reachable exactly, so the home renders nothing
+// once its entrance completes: a derived ratio (the reveal span over a
+// separately written constant) once stopped at 0.9999999 and kept the
+// window drawing every frame while open. And the content must start as
+// the mark comes to rest: a reveal timed apart from the mark's spring
+// once held a still mark on screen for 250 ms of a 1.1 s entrance. Not
+// covered: the pointer springs, whose convergence motion.rs tests, and
+// the glide's start pose matching the brand pose, which depends on
+// layout and is checked on rendered frames.
+#[cfg(test)]
+mod tests {
+    use std::prelude::v1::test;
+
+    use super::*;
+
+    #[test]
+    fn loading_reaches_exactly_one_from_either_start() {
+        for start in [0.0, REVEAL] {
+            for extra_ms in [0, 1, 16, 5_000] {
+                let t = loading_progress(start, LOADING + Duration::from_millis(extra_ms), LOADING);
+                assert_eq!(t, 1.0, "start {start}, +{extra_ms}ms");
+            }
+        }
+    }
+
+    #[test]
+    fn reveal_is_exactly_done_when_loading_is() {
+        assert_eq!(reveal(1.0), 1.0);
+        assert_eq!(reveal(REVEAL), 0.0);
+        assert_eq!(reveal(0.0), 0.0);
+        // Monotonic across the content phase, never past its ends.
+        let mut last = 0.0;
+        for i in 0..=1000 {
+            let r = reveal(REVEAL + (1.0 - REVEAL) * i as f32 / 1000.0);
+            assert!((0.0..=1.0).contains(&r) && r >= last, "step {i}: {r}");
+            last = r;
+        }
+    }
+
+    #[test]
+    fn warm_open_starts_at_the_reveal() {
+        // A later home opens with the tiles already entering: the
+        // first frame is past the brand-only phase.
+        let t = loading_progress(REVEAL, Duration::ZERO, LOADING);
+        assert!(t >= REVEAL && reveal(t) == 0.0);
+        let t = loading_progress(REVEAL, Duration::from_millis(16), LOADING);
+        assert!(reveal(t) > 0.0);
+    }
+
+    #[test]
+    fn the_content_starts_as_the_mark_comes_to_rest() {
+        // The mark stops moving on screen within 0.1% of rest.
+        let off_rest = |loading_t: f32| (1.0 - motion::spring(loading_t / MARK_END)).abs();
+        let still = (0..=10_000)
+            .map(|i| i as f32 / 10_000.0)
+            .rev()
+            .take_while(|&t| off_rest(t) < 0.001)
+            .last()
+            .expect("the mark comes to rest");
+        let frame = 1.0 / 60.0 / LOADING.as_secs_f32();
+        assert!(
+            (still - REVEAL).abs() < frame,
+            "the mark rests at {still}, the content starts at {REVEAL}: \
+             more than a frame apart"
+        );
     }
 }

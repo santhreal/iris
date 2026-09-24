@@ -178,10 +178,7 @@ pub(super) fn convert_frame(
         (4, true) => {
             crate::par::par_bands_mut(out, 4096, |out_chunk, start| {
                 let in_chunk = &src[start..start + out_chunk.len()];
-                for (o, i) in out_chunk.chunks_exact_mut(4).zip(in_chunk.chunks_exact(4)) {
-                    let v = u32::from_le_bytes([i[0], i[1], i[2], i[3]]);
-                    o.copy_from_slice(&(v | 0xFF00_0000).to_le_bytes());
-                }
+                crate::pixel::map_into(in_chunk, out_chunk, crate::pixel::opaque);
             });
         }
         // BGRX little-endian -> RGBA: swap R and B, stamp alpha.
@@ -190,33 +187,29 @@ pub(super) fn convert_frame(
             // loop is a visible slice of the latency.
             crate::par::par_bands_mut(out, 4096, |out_chunk, start| {
                 let in_chunk = &src[start..start + out_chunk.len()];
-                for (o, i) in out_chunk.chunks_exact_mut(4).zip(in_chunk.chunks_exact(4)) {
-                    let v = u32::from_le_bytes([i[0], i[1], i[2], i[3]]);
-                    let rgb = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
-                    o.copy_from_slice(&(rgb | 0xFF00_0000).to_le_bytes());
-                }
+                crate::pixel::map_into(in_chunk, out_chunk, crate::pixel::swap_rb_opaque);
             });
         }
         // BGR triplets -> BGRA: bytes already land B,G,R; stamp alpha.
+        // Banded like 4bpp: a 24bpp root at 12M pixels is the same
+        // per-byte loop cost.
         (3, true) => {
             crate::par::par_bands_mut(out, 4096, |out_chunk, start| {
                 let in_start = start / 4 * 3;
-                let in_chunk = &src[in_start..in_start + out_chunk.len() / 4 * 3];
-                for (o, px) in out_chunk.chunks_exact_mut(4).zip(in_chunk.chunks_exact(3)) {
-                    o.copy_from_slice(&[px[0], px[1], px[2], 255]);
-                }
+                expand24::<0>(
+                    &src[in_start..in_start + out_chunk.len() / 4 * 3],
+                    out_chunk,
+                );
             });
         }
         // BGR triplets -> RGBA: swap R and B, stamp alpha.
         (3, false) => {
-            // Same banding as 4bpp: a 24bpp root at 12M pixels is the
-            // same per-byte loop cost.
             crate::par::par_bands_mut(out, 4096, |out_chunk, start| {
                 let in_start = start / 4 * 3;
-                let in_chunk = &src[in_start..in_start + out_chunk.len() / 4 * 3];
-                for (o, px) in out_chunk.chunks_exact_mut(4).zip(in_chunk.chunks_exact(3)) {
-                    o.copy_from_slice(&[px[2], px[1], px[0], 255]);
-                }
+                expand24::<2>(
+                    &src[in_start..in_start + out_chunk.len() / 4 * 3],
+                    out_chunk,
+                );
             });
         }
         (other, _) => {
@@ -227,6 +220,31 @@ pub(super) fn convert_frame(
         }
     }
     Ok(())
+}
+
+/// Packed 24-bit pixels to opaque 32-bit. `FIRST` is the source byte
+/// written first: 0 keeps B,G,R (BGRA out), 2 swaps R and B (RGBA out).
+/// Four pixels per step, 12 bytes in and 16 out: on a 3840x2160 frame
+/// the four-pixel literal measured 1.2x (BGRA) and 1.6x (RGBA) the
+/// throughput of a per-pixel loop, which LLVM leaves scalar.
+fn expand24<const FIRST: usize>(src: &[u8], out: &mut [u8]) {
+    let (a, c) = (FIRST, 2 - FIRST);
+    let (blocks, tail) = out.as_chunks_mut::<16>();
+    let (ins, in_tail) = src.as_chunks::<12>();
+    for (o, i) in blocks.iter_mut().zip(ins) {
+        #[rustfmt::skip]
+        let block = [
+            i[a], i[1], i[c], 255,
+            i[3 + a], i[4], i[3 + c], 255,
+            i[6 + a], i[7], i[6 + c], 255,
+            i[9 + a], i[10], i[9 + c], 255,
+        ];
+        *o = block;
+    }
+    let tail = tail.as_chunks_mut::<4>().0.iter_mut();
+    for (o, i) in tail.zip(in_tail.as_chunks::<3>().0) {
+        *o = [i[a], i[1], i[c], 255];
+    }
 }
 
 /// A grab rectangle inside the root window, in root coordinates.
@@ -313,5 +331,34 @@ mod tests {
         assert_eq!(out, [0x33, 0x22, 0x11, 0xFF]);
         convert_frame(&src3, 1, 3, &mut out, 1, 1, true).unwrap();
         assert_eq!(out, [0x11, 0x22, 0x33, 0xFF]);
+    }
+
+    /// Every pixel of a frame, not one: the 24bpp path converts four
+    /// pixels per step plus a per-pixel tail, and bands split the frame
+    /// on 1024-pixel edges. A tail or band-offset slip corrupts pixels
+    /// the single-pixel test above never reaches. Counts straddle the
+    /// four-pixel step and the band edge; the last one is past the 1 MiB
+    /// size gate, so it bands across threads with a ragged final band.
+    /// Not covered: the SHM and GetImage transports that feed `src`.
+    #[test]
+    fn convert_frame_matches_per_pixel_reference_across_bands() {
+        for n in [1usize, 2, 3, 4, 5, 7, 1023, 1024, 1025, 4097, (1 << 18) + 3] {
+            for bpp in [3usize, 4] {
+                let src: Vec<u8> = (0..n * bpp).map(|i| (i * 131 % 251) as u8).collect();
+                for bgra in [false, true] {
+                    let mut out = vec![0u8; n * 4];
+                    convert_frame(&src, n, bpp, &mut out, n as u32, 1, bgra).unwrap();
+                    let pixels = out.as_chunks::<4>().0.iter().zip(src.chunks(bpp));
+                    for (p, (o, s)) in pixels.enumerate() {
+                        let want = if bgra {
+                            [s[0], s[1], s[2], 255]
+                        } else {
+                            [s[2], s[1], s[0], 255]
+                        };
+                        assert_eq!(*o, want, "bpp {bpp} bgra {bgra} n {n} pixel {p}");
+                    }
+                }
+            }
+        }
     }
 }

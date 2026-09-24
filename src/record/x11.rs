@@ -4,20 +4,23 @@
 //! the window's own pixels.
 //!
 //! While recording, the target window wears a thin red override-redirect
-//! border with an empty input shape (clicks pass straight through) plus a
-//! display-only timer chip: recording state is visible on the window
-//! itself rather than in a floating panel.
+//! border with an empty input shape (clicks pass straight through), and
+//! the chip follows it: recording state is visible on the window itself
+//! rather than in a floating panel.
 
+mod damage;
 mod grab;
 mod mark;
 mod pick;
+#[cfg(test)]
+mod tests;
 
 pub use mark::RecordingMark;
-pub use pick::pick_window;
 
+use std::os::fd::{AsFd, BorrowedFd};
 use std::path::PathBuf;
+use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
@@ -26,11 +29,15 @@ use x11rb::protocol::xproto::{ConnectionExt as XprotoExt, EventMask, Window};
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
-use super::encoder::{Encoder, EncoderConfig, PixFmt};
-use super::{unique_recording_path, RecordingSpec};
+use super::mkv::PixFmt;
+use super::recorder::{Recorder, Shape};
+use super::wake::Wake;
+use super::{RecControl, RecordingSpec};
 
-use grab::{grab_pixmap, grab_root_rect, resolve_pix_fmt, DamageWatch, NamedPixmap, ShmGrab};
+use damage::DamageWatch;
+use grab::{grab_pixmap, grab_root_rect, resolve_pix_fmt, NamedPixmap, ShmGrab};
 use mark::connect;
+use pick::pick_window;
 
 /// Picked target: window id plus its geometry.
 pub struct PickedWindow {
@@ -67,12 +74,11 @@ impl FrameGeom {
 }
 
 /// Follow target for the recording chip: the border thread reports the
-/// target window's rect, and the chip's owner repositions (and at the
-/// end removes) the chip window. The GPUI daemon implements this over
-/// its native chip window.
+/// target window's rect, and the chip's owner repositions the chip
+/// window. The GPUI daemon implements this over its native chip window
+/// and removes the chip when the recording ends.
 pub trait ChipFollow: Send + Sync {
     fn place(&self, rect: Rect);
-    fn hide(&self);
 }
 
 /// Record the picked window until `spec.stop` fires, with the chip owned
@@ -82,18 +88,19 @@ pub fn record_window_follow(
     spec: RecordingSpec,
     chip: Arc<dyn ChipFollow>,
 ) -> Result<PathBuf, String> {
-    let chip_inner = chip.clone();
-    let result = (move || {
-        let picked = pick_window(&spec.stop)?;
-        let _mark = RecordingMark::show(chip_inner, picked.id);
-        record_target(&picked, &spec)
-    })();
-    // On every exit (cancel, error, or clean stop), the chip goes away.
-    chip.hide();
-    result
+    // Installed first: the pick and the recording both sleep until X
+    // input or a ring.
+    let wake = Wake::install(&spec.bell)?;
+    let picked = pick_window(&spec.stop, &wake)?;
+    let _mark = RecordingMark::show(chip, picked.id)?;
+    record_target(&picked, &spec, &wake)
 }
 
-fn record_target(picked: &PickedWindow, spec: &RecordingSpec) -> Result<PathBuf, String> {
+fn record_target(
+    picked: &PickedWindow,
+    spec: &RecordingSpec,
+    wake: &Wake,
+) -> Result<PathBuf, String> {
     let (conn, screen_num) = connect()?;
 
     // Composite 0.2+ for window redirection + named pixmaps.
@@ -114,7 +121,7 @@ fn record_target(picked: &PickedWindow, spec: &RecordingSpec) -> Result<PathBuf,
         .check()
         .map_err(|e| format!("redirect window: {e}"))?;
 
-    let result = record_loop(&conn, screen_num, picked, spec);
+    let result = record_loop(&conn, screen_num, picked, spec, wake);
 
     let _ = conn.composite_unredirect_window(picked.id, Redirect::AUTOMATIC);
     result
@@ -125,6 +132,7 @@ fn record_loop(
     screen_num: usize,
     picked: &PickedWindow,
     spec: &RecordingSpec,
+    wake: &Wake,
 ) -> Result<PathBuf, String> {
     let (pix_fmt, depth) = resolve_pix_fmt(conn, screen_num, picked.id)?;
     let bpp = pix_fmt.bytes_per_pixel();
@@ -169,23 +177,8 @@ fn record_loop(
     // Damage subscription on the window: an idle window repeats the
     // writer's last buffer instead of paying a grab + frame copy for
     // identical output.
-    let mut watch = DamageWatch::arm(conn, picked.id, None);
-    struct WatchGuard<'a> {
-        conn: &'a RustConnection,
-        watch: Option<DamageWatch>,
-    }
-    impl Drop for WatchGuard<'_> {
-        fn drop(&mut self) {
-            if let Some(w) = self.watch.take() {
-                w.release(self.conn);
-            }
-        }
-    }
-    let mut watch_guard = WatchGuard {
-        conn,
-        watch: watch.take(),
-    };
-    let probe_events = move || {
+    let mut watch = DamageWatch::new(conn, picked.id, None);
+    let probe_events = move |paused: bool| {
         loop {
             match conn.poll_for_event() {
                 Ok(Some(Event::ConfigureNotify(ev))) if ev.window == picked.id => {
@@ -194,22 +187,13 @@ fn record_loop(
                 Ok(Some(Event::DestroyNotify(ev))) if ev.window == picked.id => {
                     return None;
                 }
-                Ok(Some(Event::DamageNotify(ev))) => {
-                    if let Some(w) = watch_guard.watch.as_mut() {
-                        w.note(&ev);
-                    }
-                }
+                Ok(Some(Event::DamageNotify(ev))) => watch.note(&ev),
                 Ok(Some(_)) => {}
                 Ok(None) => break,
                 Err(_) => return None, // connection died
             }
         }
-        let dirty = watch_guard
-            .watch
-            .as_mut()
-            .map(|w| w.take_dirty(conn))
-            .unwrap_or(true);
-        dims.map(|d| (d, dirty))
+        dims.map(|d| (d, watch.take_dirty(paused)))
     };
     let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
         let geom = FrameGeom {
@@ -227,7 +211,14 @@ fn record_loop(
             rgba,
         )
     };
-    record_loop_inner(spec, pix_fmt, probe_events, grab)
+    record_loop_inner(
+        spec,
+        conn.stream().as_fd(),
+        wake,
+        pix_fmt,
+        probe_events,
+        grab,
+    )
 }
 
 /// Record a fixed screen region until `spec.stop` fires. The overlay
@@ -239,254 +230,138 @@ pub fn record_region(
     chip: Arc<dyn ChipFollow>,
     rect: Rect,
 ) -> Result<PathBuf, String> {
-    let chip_inner = chip.clone();
-    let result = (move || {
-        let (conn, screen_num) = connect()?;
-        let root = conn.setup().roots[screen_num].root;
-        let (pix_fmt, depth) = resolve_pix_fmt(&conn, screen_num, root)?;
-        let bpp = pix_fmt.bytes_per_pixel();
-        let _mark = RecordingMark::show_static(chip_inner, root, rect);
-        struct ShmGuard<'a> {
-            conn: &'a RustConnection,
-            shm: Option<ShmGrab>,
-        }
-        impl Drop for ShmGuard<'_> {
-            fn drop(&mut self) {
-                if let Some(s) = self.shm.take() {
-                    s.detach(self.conn);
-                }
+    let wake = Wake::install(&spec.bell)?;
+    let (conn, screen_num) = connect()?;
+    let root = conn.setup().roots[screen_num].root;
+    let (pix_fmt, depth) = resolve_pix_fmt(&conn, screen_num, root)?;
+    let bpp = pix_fmt.bytes_per_pixel();
+    let _mark = RecordingMark::show_static(chip, root, rect);
+    struct ShmGuard<'a> {
+        conn: &'a RustConnection,
+        shm: Option<ShmGrab>,
+    }
+    impl Drop for ShmGuard<'_> {
+        fn drop(&mut self) {
+            if let Some(s) = self.shm.take() {
+                s.detach(self.conn);
             }
         }
-        let mut guard = ShmGuard {
-            conn: &conn,
-            shm: None,
-        };
-        // Damage on the root window, filtered to the record rect: a
-        // quiet region repeats the writer's last buffer.
-        let mut watch = DamageWatch::arm(&conn, root, Some(rect));
-        struct WatchGuard<'a> {
-            conn: &'a RustConnection,
-            watch: Option<DamageWatch>,
-        }
-        impl Drop for WatchGuard<'_> {
-            fn drop(&mut self) {
-                if let Some(w) = self.watch.take() {
-                    w.release(self.conn);
-                }
+    }
+    let mut guard = ShmGuard {
+        conn: &conn,
+        shm: None,
+    };
+    // Damage on the root window, filtered to the record rect: a
+    // quiet region repeats the writer's last buffer.
+    let mut watch = DamageWatch::new(&conn, root, Some(rect));
+    let probe = |paused: bool| {
+        loop {
+            match conn.poll_for_event() {
+                Ok(Some(Event::DamageNotify(ev))) => watch.note(&ev),
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(_) => return None,
             }
         }
-        let mut watch_guard = WatchGuard {
-            conn: &conn,
-            watch: watch.take(),
+        Some(((rect.w as u32, rect.h as u32), watch.take_dirty(paused)))
+    };
+    let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
+        let geom = FrameGeom {
+            width: w,
+            height: h,
+            depth,
+            bpp,
         };
-        let probe = || {
-            loop {
-                match conn.poll_for_event() {
-                    Ok(Some(Event::DamageNotify(ev))) => {
-                        if let Some(w) = watch_guard.watch.as_mut() {
-                            w.note(&ev);
-                        }
-                    }
-                    Ok(Some(_)) => {}
-                    Ok(None) => break,
-                    Err(_) => return None,
-                }
-            }
-            let dirty = watch_guard
-                .watch
-                .as_mut()
-                .map(|w| w.take_dirty(&conn))
-                .unwrap_or(true);
-            Some(((rect.w as u32, rect.h as u32), dirty))
-        };
-        let grab = |w: u32, h: u32, rgba: &mut Vec<u8>| {
-            let geom = FrameGeom {
-                width: w,
-                height: h,
-                depth,
-                bpp,
-            };
-            grab_root_rect(&conn, &mut guard.shm, root, rect, geom, rgba)
-        };
-        record_loop_inner(&spec, pix_fmt, probe, grab)
-    })();
-    chip.hide();
-    result
+        grab_root_rect(&conn, &mut guard.shm, root, rect, geom, rgba)
+    };
+    record_loop_inner(&spec, conn.stream().as_fd(), &wake, pix_fmt, probe, grab)
 }
 
-/// The shared recording loop: chip controls, the absolute frame
-/// schedule, encoder splits on resize, and the zero-copy frame queue.
-/// `events` drains the source's event state and reports its current
-/// dimensions plus whether its pixels changed since the last call
-/// (None = source gone, a clean end); `grab` fills `rgba` with one
-/// frame. An unchanged source repeats the writer's last buffer: the
-/// grab and the frame copy both skip. Returns the path of the LAST
-/// segment written: splits rename the output, and the caller must
-/// report the file that actually holds the tail.
+/// The shared recording loop. `events` drains the source's events and
+/// reports its size and whether its pixels changed since the last call
+/// (None: the source is gone, a clean end); paused, it may stop
+/// watching for changes. `grab` fills a buffer with one frame. A frame
+/// is grabbed only when the source changed, at most `spec.fps` times a
+/// second. A still or paused source costs no grab, no encode, and no
+/// wakeup: the loop sleeps without a timeout until `input` (the X
+/// connection) is readable or `wake` rings.
 fn record_loop_inner(
     spec: &RecordingSpec,
-    pix_fmt: PixFmt,
-    mut events: impl FnMut() -> Option<((u32, u32), bool)>,
+    input: BorrowedFd<'_>,
+    wake: &Wake,
+    pix: PixFmt,
+    mut events: impl FnMut(bool) -> Option<((u32, u32), bool)>,
     mut grab: impl FnMut(u32, u32, &mut Vec<u8>) -> Result<(), String>,
 ) -> Result<PathBuf, String> {
-    let Some(((mut width, mut height), _)) = events() else {
-        return Err("recording source gone before first frame".to_string());
-    };
-    let mut output: PathBuf = spec.output.clone();
-    let mut encoder = Encoder::start(&EncoderConfig {
-        output: output.clone(),
-        width,
-        height,
-        fps: spec.fps,
-        mic: spec.mic,
-        format: spec.format,
-        encoder: spec.encoder,
-        pix_fmt,
-    })?;
-    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(spec.fps));
-    let mut start = Instant::now();
-    let mut mic = spec.mic;
-    let mut frame_no: u64 = 0;
-    // Reused RGBA scratch: recording would otherwise allocate a fresh
-    // w*h*4 buffer on every frame.
-    let mut rgba: Vec<u8> = Vec::new();
-
-    // A stop is a send OR a disconnect: a dropped ActiveRecording must
-    // still end the loop, or the recording runs forever detached.
-    let stopped = |stop: &std::sync::mpsc::Receiver<()>| -> bool {
-        !matches!(stop.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
-    };
-    // Split the file at the current dimensions/format and start a new
-    // segment under a fresh unique name.
-    macro_rules! split_encoder {
-        () => {{
-            encoder.finish()?;
-            let dir = output
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."));
-            output = unique_recording_path(&dir, super::ext_of(&output));
-            encoder = Encoder::start(&EncoderConfig {
-                output: output.clone(),
-                width,
-                height,
-                fps: spec.fps,
-                mic,
-                format: spec.format,
-                encoder: spec.encoder,
-                pix_fmt,
-            })?;
-        }};
-    }
-
+    let mut rec = Recorder::new(spec);
+    let interval = Duration::from_secs_f64(1.0 / f64::from(spec.fps));
+    let mut due = Instant::now();
+    // Set by damage, a resize, a resume (damage during a pause is
+    // drained unrecorded), and at the start; cleared by a grab.
+    let mut changed = true;
+    let mut size = (0, 0);
     loop {
-        if stopped(&spec.stop) {
-            encoder.finish()?;
-            return Ok(output);
+        // Drained before the channels are read: a send after the read
+        // rings again, and the next wait ends at once.
+        wake.drain();
+        // A stop is a send OR a disconnect: a dropped ActiveRecording
+        // must still end the loop, or the recording runs forever.
+        if !matches!(spec.stop.try_recv(), Err(TryRecvError::Empty)) {
+            return rec.finish(Instant::now());
         }
-
-        // Chip controls: pause blocks the schedule (the mp4 simply has
-        // no frames for the paused span), mic toggle splits the file the
-        // same way a resize does. Any split must grab the next frame:
-        // the new writer's `last` is empty, so a Repeat writes nothing.
-        let mut force_grab = false;
-        while let Ok(ctl) = spec.control.try_recv() {
-            match ctl {
-                super::RecControl::Pause => {
-                    let paused_at = Instant::now();
-                    loop {
-                        if stopped(&spec.stop) {
-                            encoder.finish()?;
-                            return Ok(output);
-                        }
-                        match spec.control.recv_timeout(Duration::from_millis(100)) {
-                            Ok(super::RecControl::Resume) => break,
-                            Ok(super::RecControl::ToggleMic) => {
-                                mic = !mic;
-                                split_encoder!();
-                                force_grab = true;
-                            }
-                            Ok(super::RecControl::Pause) => {}
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                        }
+        loop {
+            match spec.control.try_recv() {
+                Ok(ctl) => {
+                    changed |= ctl == RecControl::Resume;
+                    if let Err(e) = rec.apply(ctl, Instant::now()) {
+                        return Err(rec.fail(Instant::now(), e));
                     }
-                    // Rebase the absolute schedule so the paused span
-                    // does not arrive as a burst of dropped frames.
-                    start += paused_at.elapsed();
                 }
-                super::RecControl::Resume => {}
-                super::RecControl::ToggleMic => {
-                    mic = !mic;
-                    split_encoder!();
-                    force_grab = true;
-                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return rec.finish(Instant::now()),
             }
         }
-
-        // Detect resize / close each frame. A vanished source is a clean
-        // end of the recording, not an error; so is a zero-size probe
-        // (a minimized window reports 0x0 and would kill the encoder).
-        let Some(((w, h), dirty_early)) = events() else {
-            encoder.finish()?;
-            return Ok(output);
+        // Every queued event goes before a wait: input already read
+        // into the connection's buffer does not wake the poll. Drained
+        // while paused too. A vanished source ends the recording
+        // cleanly, and so does a minimized window, which reports 0x0.
+        let paused = rec.paused();
+        let Some(((w, h), dirty)) = events(paused).filter(|((w, h), _)| *w > 0 && *h > 0) else {
+            return rec.finish(Instant::now());
         };
-        if w == 0 || h == 0 {
-            encoder.finish()?;
-            return Ok(output);
-        }
-        // A resize split must grab the first frame of the new segment:
-        // the writer's `last` belongs to the old encoder's queue.
-        if w != width || h != height {
-            width = w;
-            height = h;
-            split_encoder!();
-            force_grab = true;
-        }
-
-        // Absolute schedule: frame n is due at start + n/fps. On overrun,
-        // skip the counter forward (drop) instead of bursting.
-        let due = start + frame_interval.mul_f64(frame_no as f64);
-        let now = Instant::now();
-        if now < due {
-            thread::sleep(due - now);
-        } else if now - due > frame_interval * 2 {
-            frame_no = ((now - start).as_secs_f64() * f64::from(spec.fps)) as u64;
-        }
-
-        // Sample the dirty flag after the sleep so damage that landed
-        // while waiting is caught; a source that never changed repeats
-        // the writer's last buffer and skips the grab entirely.
-        let Some((_, dirty_late)) = events() else {
-            encoder.finish()?;
-            return Ok(output);
-        };
-        if !dirty_early && !dirty_late && !force_grab {
-            if let Err(e) = encoder.repeat_frame() {
-                let _ = encoder.finish();
-                return Err(e);
-            }
-            frame_no += 1;
+        changed |= !paused && (dirty || (w, h) != size);
+        if paused || !changed {
+            wake.wait(Some(input), None);
             continue;
         }
-
-        match grab(width, height, &mut rgba) {
-            Ok(()) => {}
-            Err(_) => {
-                // Source closed mid-grab: keep what we have.
-                encoder.finish()?;
-                return Ok(output);
-            }
-        };
-        // The frame buffer moves to the writer thread; the next frame
-        // fills a recycled one.
-        let frame = std::mem::replace(&mut rgba, encoder.take_buf());
-        if let Err(e) = encoder.write_frame(frame) {
-            // Salvage the buffered frames before reporting: a write
-            // failure must not also lose the minutes already encoded.
-            let _ = encoder.finish();
-            return Err(e);
+        let now = Instant::now();
+        if now < due {
+            // Only a ring cuts the rate limit short: the frame is taken
+            // at `due` whatever X input arrives meanwhile.
+            wake.wait(None, Some(due - now));
+            continue;
         }
-        frame_no += 1;
+        let mut buf = rec.take_buf();
+        if grab(w, h, &mut buf).is_err() {
+            // The source closed mid-grab: keep what was recorded.
+            rec.give_back(buf);
+            return rec.finish(now);
+        }
+        let shape = Shape {
+            width: w,
+            height: h,
+            pix,
+        };
+        if let Err(e) = rec.frame(buf, shape, now) {
+            return Err(rec.fail(Instant::now(), e));
+        }
+        (changed, size) = (false, (w, h));
+        // The next frame is due one interval on; a loop that fell a
+        // whole interval behind starts over from this frame.
+        due = if due + interval < now {
+            now + interval
+        } else {
+            due + interval
+        };
     }
 }
