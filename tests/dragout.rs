@@ -60,19 +60,13 @@ fn a_toast_drag_onto_a_folder_window_copies_the_capture_there() {
     drag(toast.at(0.5, 0.5), folder.rect.at(0.65, 0.6));
 
     let copied = dest.join("drag-out.png");
-    let len = std::fs::metadata(&shot).unwrap().len();
-    home.until(
-        "the file manager to copy the capture into the folder",
-        || {
-            let meta = std::fs::metadata(&copied).ok()?;
-            (meta.len() == len).then_some(())
-        },
-    );
-    assert_eq!(
-        std::fs::read(&copied).unwrap(),
-        std::fs::read(&shot).unwrap(),
-        "the folder's copy differs from the capture"
-    );
+    let want = std::fs::read(&shot).unwrap();
+    // Explorer sets the copy's length before it writes the bytes, and
+    // holds the file open until the copy ends: the copy is complete
+    // when it reads back whole and equal to the capture.
+    home.until("the folder's copy to equal the capture", || {
+        (std::fs::read(&copied).ok()? == want).then_some(())
+    });
     assert!(
         shot.exists(),
         "the drag moved the capture instead of copying it"
