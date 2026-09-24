@@ -69,10 +69,10 @@ When a capture commits, iris executes the following pipeline in order:
    - **macOS**: Plays `/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif` (fallback `Grab.aif`) through `/usr/bin/afplay`.
    - **Windows**: Synthesizes a shutter click waveform in memory and plays it via `PlaySoundW` on the system-sounds volume channel.
    - Absence of audio utilities or files produces silence without error.
-2. **Directory Creation**: Creates `screenshots_dir` (default: `~/Pictures/iris`, see [configuration.md#storage](configuration.md#storage)) if the directory does not exist.
-3. **Filename Generation**: Formats the output path under `screenshots_dir` using `screenshot_template` (default: `"{date}_{time}"`). Substitutes `{date}` with `YYYY-MM-DD` and `{time}` with `HH-MM-SS` from a single local clock read. If the file exists, appends `-2.png`, `-3.png`, and ascending numbers.
-4. **Pixel Stashing**: Caches decoded RGBA pixels in a process-wide single-slot memory cache so immediate thumbnail generation or annotation avoids re-decoding the saved file.
-5. **Disk Save**: Encodes RGBA pixels to PNG format using Fast compression and Adaptive filtering, then writes the file to disk on a background thread.
-6. **Clipboard Copy**: If `copy_to_clipboard` is true in [configuration.md#capture](configuration.md#capture) (default: `true`), copies RGBA bitmap data to the system clipboard on a dedicated background thread named `iris-clipboard`.
+2. **Clipboard Copy**: If `copy_to_clipboard` is true in [configuration.md#capture](configuration.md#capture) (default: `true`), starts copying the RGBA pixels to the system clipboard on a dedicated background thread named `iris-clipboard`. The copy runs alongside the steps that follow.
+3. **Directory Creation**: Creates `screenshots_dir` (default: `~/Pictures/iris`, see [configuration.md#storage](configuration.md#storage)) if the directory does not exist.
+4. **Filename Generation**: Formats the output path under `screenshots_dir` using `screenshot_template` (default: `"{date}_{time}"`). Substitutes `{date}` with `YYYY-MM-DD` and `{time}` with `HH-MM-SS` from a single local clock read. If the file exists, appends `-2.png`, `-3.png`, and ascending numbers.
+5. **Pixel Stashing**: Caches decoded RGBA pixels in a process-wide single-slot memory cache so immediate thumbnail generation or annotation avoids re-decoding the saved file.
+6. **Disk Save**: Encodes RGBA pixels to PNG format using Fast compression and Adaptive filtering, then writes the file to disk on a background thread.
 7. **Library Registration**: Records image dimensions, file path, and creation timestamp into `library.json` and writes a cached thumbnail to disk.
 8. **Interactive Toast**: If `show_toast_after_capture` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), opens the toast stage. Region captures animate a flight from selection coordinates to the resting card position; fullscreen and window captures display the toast directly (see [toast.md#toast-notifications](toast.md#toast-notifications)).

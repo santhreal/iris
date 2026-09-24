@@ -209,18 +209,37 @@ pub fn finalize_bgra(
 pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry), String> {
     let t_png = std::time::Instant::now();
     let cfg = Config::load();
+    let img = std::sync::Arc::new(img);
+    // The clipboard set encodes the pixels to PNG itself. It starts
+    // first, on its own thread, so its encode runs beside the file's
+    // below and a paste waits on one encode, not two in a row. The
+    // file is the product: a clipboard failure costs the copy, never
+    // the capture, and a notice reports it. copy_to_clipboard gates
+    // whether the capture lands on the clipboard at all.
+    if cfg.copy_to_clipboard {
+        let shared = img.clone();
+        if let Err(e) = std::thread::Builder::new()
+            .name("iris-clipboard".into())
+            .spawn(move || {
+                if let Err(e) = copy_image(&shared) {
+                    crate::daemon::report_failure("Copy failed", e);
+                }
+            })
+        {
+            crate::daemon::report_failure("Copy failed", format!("spawn clipboard thread: {e}"));
+        }
+    }
     std::fs::create_dir_all(&cfg.screenshots_dir)
         .map_err(|e| format!("create screenshots dir: {e}"))?;
     let path = unique_path(&cfg);
-    // Fast PNG: the default Balanced deflate is ~3x slower than Fast on
-    // a 4K frame, and a screenshot's redundancy means Fast still
-    // compresses well. The capture is durable sooner and the toast's
-    // thumbnail source exists earlier.
-    let img = std::sync::Arc::new(img);
     // Stash the decoded pixels: the editor's annotate path re-reads
     // and re-decodes the PNG just written, a ~100ms+ 4K decode the
     // stash skips entirely.
     stash_decoded(path.clone(), img.clone());
+    // Fast PNG: Balanced deflate is ~3x slower than Fast on a 4K
+    // frame, and a screenshot's redundancy means Fast still compresses
+    // well. The capture is durable sooner and the toast's thumbnail
+    // source exists earlier.
     let mut png = std::io::Cursor::new(Vec::new());
     image::codecs::png::PngEncoder::new_with_quality(
         &mut png,
@@ -236,24 +255,6 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
     .map_err(|e| format!("encode screenshot: {e}"))?;
     std::fs::write(&path, png.into_inner()).map_err(|e| format!("save screenshot: {e}"))?;
     iris_lib::ilog!("iris: capture: png written in {:?}", t_png.elapsed());
-    // The file is the product; a clipboard failure costs the copy, never
-    // the capture, and a notice reports it. copy_to_clipboard gates
-    // whether the capture lands on the clipboard at all. The clipboard set
-    // re-encodes the pixels to PNG at arboard's default compression,
-    // which is slower than the file encode above: it runs on its own
-    // thread so the toast does not wait on a second encode.
-    // img is already Arc'd above; the clipboard thread shares it.
-    if cfg.copy_to_clipboard {
-        let img = img.clone();
-        std::thread::Builder::new()
-            .name("iris-clipboard".into())
-            .spawn(move || {
-                if let Err(e) = copy_image(&img) {
-                    crate::daemon::report_failure("Copy failed", e);
-                }
-            })
-            .map_err(|e| format!("spawn clipboard thread: {e}"))?;
-    }
     let entry = library::add(&path, &img)?;
     Ok((path, entry))
 }
