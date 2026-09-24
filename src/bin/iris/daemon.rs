@@ -248,19 +248,11 @@ pub fn start(cx: &mut App) {
     cx.set_quit_on_last_window_closed(false);
     cx.on_app_quit(quit).detach();
     iris_lib::ilog!("iris: daemon start");
-    // Warm the overlay pool: the first capture reuses a live window
-    // instead of paying GPUI's ~130ms renderer init on the hotkey.
-    overlay::warmup(cx);
-    let (tx, rx) = unbounded::<Command>();
-    let _ = COMMAND_TX.set(tx.clone());
-    // A store write runs on whichever thread saved or deleted a capture;
-    // the command pump brings it to the open library window.
-    iris_lib::library::on_write(|| {
-        if let Some(tx) = command_tx() {
-            let _ = tx.unbounded_send(Command::LibraryChanged);
-        }
-    });
-
+    // The socket binds before the overlay warmup's renderer init: a
+    // client that spawned this daemon waits for the bind, and a second
+    // `iris` started meanwhile forwards here instead of starting another
+    // daemon. A command that lands during the warmup runs once `start`
+    // returns.
     match crate::sys::ipc::spawn_listener() {
         // The accept thread pushes each connection's argv here; the
         // pump parses and dispatches it. Channel-driven, so a forwarded
@@ -285,6 +277,18 @@ pub fn start(cx: &mut App) {
         }
         Err(e) => iris_lib::ilog!("iris: single-instance socket unavailable: {e}"),
     }
+    // Warm the overlay pool: the first capture reuses a live window
+    // instead of paying GPUI's ~130ms renderer init on the hotkey.
+    overlay::warmup(cx);
+    let (tx, rx) = unbounded::<Command>();
+    let _ = COMMAND_TX.set(tx.clone());
+    // A store write runs on whichever thread saved or deleted a capture;
+    // the command pump brings it to the open library window.
+    iris_lib::library::on_write(|| {
+        if let Some(tx) = command_tx() {
+            let _ = tx.unbounded_send(Command::LibraryChanged);
+        }
+    });
 
     crate::sys::hotkeys::spawn(tx.clone());
     crate::sys::tray::spawn(tx.clone());

@@ -48,7 +48,7 @@ On Linux the daemon exits when its X server or Wayland compositor exits, as at t
 ### Invocations Without Running Daemon
 
 1. Bare invocation (`iris` without arguments):
-   The process runs in the foreground as the daemon. It initializes the single-instance IPC listener, system tray icon, and global hotkeys. It does not open the home window.
+   The process runs in the foreground as the daemon. It connects to the display, loads its fonts, and binds the single-instance IPC socket before it opens any window. It then starts the system tray icon and global hotkeys. A command that arrives on the socket during startup runs once startup completes. It does not open the home window.
 2. Live-daemon-only commands (`--quit`, `--record-pause`, `--record-mic`):
    The client attempts to connect to the socket and does not spawn a daemon. When no daemon answers, `--quit` exits with status 0; `--record-pause` and `--record-mic` print `iris: no iris daemon is running` to standard error and exit with status 1.
 3. Other flagged commands (`--capture`, `--library`, `--settings`, etc.):
