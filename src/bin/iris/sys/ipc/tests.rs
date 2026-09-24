@@ -128,7 +128,10 @@ fn past_the_reader_limit_a_connection_is_closed_unread_until_a_slot_frees() {
         {
             break;
         }
-        assert!(Instant::now() < deadline, "no slot freed after a client closed");
+        assert!(
+            Instant::now() < deadline,
+            "no slot freed after a client closed"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
 }

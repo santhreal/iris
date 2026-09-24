@@ -114,7 +114,11 @@ mod tests {
         let (mut reader, writer) = std::io::pipe().unwrap();
         // SAFETY: `writer` is an open pipe handle this test owns.
         let marked = unsafe {
-            SetHandleInformation(writer.as_raw_handle(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
+            SetHandleInformation(
+                writer.as_raw_handle(),
+                HANDLE_FLAG_INHERIT,
+                HANDLE_FLAG_INHERIT,
+            )
         };
         assert_ne!(marked, 0, "{}", io::Error::last_os_error());
         // PING.EXE counting six echoes of the loopback address: a

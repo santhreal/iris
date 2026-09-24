@@ -86,7 +86,10 @@ fn private(dir: &Path, uid: u32) -> bool {
 pub(super) fn scratch_name() -> (Name<'static>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let path = socket_dir(dir.path()).unwrap().join("iris.sock");
-    let name = path.into_os_string().to_fs_name::<GenericFilePath>().unwrap();
+    let name = path
+        .into_os_string()
+        .to_fs_name::<GenericFilePath>()
+        .unwrap();
     (name, dir)
 }
 
@@ -153,7 +156,10 @@ mod tests {
         });
         check("a symlink to a private directory", |dir| {
             let target = dir.with_file_name("elsewhere");
-            std::fs::DirBuilder::new().mode(0o700).create(&target).unwrap();
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&target)
+                .unwrap();
             std::os::unix::fs::symlink(&target, dir).unwrap();
         });
         check("a regular file", |dir| std::fs::write(dir, b"").unwrap());
