@@ -137,7 +137,9 @@ jobs:
           $pe = [IO.File]::ReadAllBytes($exe.FullName)
           $subsystem = [BitConverter]::ToUInt16($pe, [BitConverter]::ToInt32($pe, 0x3C) + 0x5C)
           if ($subsystem -ne 2) { throw "iris.exe subsystem $subsystem, not GUI (2)" }
-          $printed = & $exe.FullName --version
+          # PowerShell waits for a GUI-subsystem program only when its
+          # output feeds a pipeline (docs/platforms.md, Windows).
+          $printed = & $exe.FullName --version | Write-Output
           if ($printed -ne "iris $version") { throw "--version printed '$printed'" }
           $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
           $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris'

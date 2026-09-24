@@ -111,21 +111,21 @@ fn run_local(local: cli::Local) {
     let version = env!("CARGO_PKG_VERSION");
     let result = match local {
         cli::Local::Help => {
-            print!("{}", cli::usage());
+            say(format_args!("{}", cli::usage()));
             Ok(())
         }
         cli::Local::Version => {
-            println!("iris {version}");
+            say(format_args!("iris {version}\n"));
             Ok(())
         }
         cli::Local::CheckUpdate => update::check().map(|found| match found {
-            Some(info) => println!("iris: update available: {}", info.version),
-            None => println!("iris: up to date ({version})"),
+            Some(info) => say(format_args!("iris: update available: {}\n", info.version)),
+            None => say(format_args!("iris: up to date ({version})\n")),
         }),
         cli::Local::Update => match update::check() {
             Ok(Some(info)) => update::apply(&info),
             Ok(None) => {
-                println!("iris: up to date ({version})");
+                say(format_args!("iris: up to date ({version})\n"));
                 Ok(())
             }
             Err(e) => Err(e),
@@ -133,6 +133,17 @@ fn run_local(local: cli::Local) {
     };
     if let Err(e) = result {
         eprintln!("{e}");
+        std::process::exit(1);
+    }
+}
+
+/// Print to standard output. When stdout fails, as when its reader
+/// closed the pipe before the command wrote, the command exits with
+/// status 1 and prints no panic.
+fn say(text: std::fmt::Arguments) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    if out.write_fmt(text).and_then(|()| out.flush()).is_err() {
         std::process::exit(1);
     }
 }

@@ -221,14 +221,24 @@ echo "    Binary:      $IRIS_BIN"
 echo "    Icon:        $ICON_PATH"
 echo "    Output:      $OUT_FILE"
 
-# 6. Execute makensis compiler
+# 6. Execute makensis compiler. Under Git Bash, makensis finds no file
+# for a File path in the C:/dir/file form MSYS converts arguments to;
+# cygpath gives the C:\dir\file form. Elsewhere paths pass unchanged.
+nsis_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 makensis \
   -DVERSION="$VERSION" \
   -DVERSION_QUAD="$VERSION_QUAD" \
-  -DBINARY_PATH="$IRIS_BIN" \
-  -DICON_PATH="$ICON_PATH" \
-  -DOUTFILE="$OUT_FILE" \
-  "$SCRIPT_DIR/iris.nsi"
+  -DBINARY_PATH="$(nsis_path "$IRIS_BIN")" \
+  -DICON_PATH="$(nsis_path "$ICON_PATH")" \
+  -DOUTFILE="$(nsis_path "$OUT_FILE")" \
+  "$(nsis_path "$SCRIPT_DIR/iris.nsi")"
 
 # 7. Generate SHA-256 sidecar (matching CONTRACT.md: each asset + .sha256 sidecar)
 if [[ "$GEN_SHA" == "true" && "$SYNTAX_CHECK" == "false" ]]; then

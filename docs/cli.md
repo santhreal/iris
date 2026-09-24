@@ -65,6 +65,8 @@ IPC uses a local socket implementation:
 - `--check-update` queries `https://api.github.com/repos/santhreal/iris/releases/latest`. If a newer release exists, it prints `iris: update available: <version>` and exits with status 0. If the binary is current, it prints `iris: up to date (<version>)` and exits with status 0. On network or parsing failure, it prints the error to standard error and exits with status 1.
 - `--update` checks for a newer release. If current, it prints `iris: up to date (<version>)` and exits with status 0. If a newer release exists, it downloads the platform asset to the `update` directory under the [cache directory](configuration.md), sends `--quit` to any running daemon, waits up to 5 seconds for the socket to release, applies the replacement file, and relaunches the executable. On failure, it prints the error to standard error and exits with status 1.
 
+A local command whose standard output cannot be written, such as a pipe whose reader has exited, exits with status 1 and prints nothing to standard error.
+
 ## Window Manager and Compositor Keybindings
 
 On [Wayland](platforms.md#linux-wayland), X11 root-window global key grabs are unavailable. Wayland compositors must bind shortcuts to `iris` command invocations, which forward commands to the daemon over the IPC socket.
