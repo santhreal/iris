@@ -1,16 +1,23 @@
-//! A Vulkan driver with no devices that connects to the X server `DISPLAY`
-//! names when the loader loads it, as the NVIDIA driver does. It appends a
-//! line to the file `IRIS_TEST_DRIVER_LOG` names at each load and at each
-//! device enumeration: `load` or `devices`, then the `DISPLAY` it saw, or
-//! `-` for none.
+//! A Vulkan driver with no devices that makes X connections to the
+//! server `DISPLAY` names. When the loader loads it, it sets up a
+//! connection and closes it, as Mesa's device selection layer does as it
+//! enumerates devices; the NVIDIA driver connects when it is loaded.
+//! When the library is unloaded, at a `dlclose` or at the exit of a
+//! process that still has it loaded, it sets up a connection and waits
+//! for the server's answer without a bound, as the NVIDIA driver's
+//! destructor makes a round trip to the X server. It appends a line to
+//! the file `IRIS_TEST_DRIVER_LOG` names at each load and at each device
+//! enumeration: `load` or `devices`, then the `DISPLAY` it saw, or `-`
+//! for none.
 //!
-//! tests/startup.rs builds it into a shared library with rustc.
+//! tests/support/driver.rs builds it into a shared library with rustc.
 
 use std::ffi::{c_char, c_void, CStr};
-use std::io::Write as _;
+use std::io::{ErrorKind, Read as _, Write as _};
 use std::os::linux::net::SocketAddrExt as _;
 use std::os::unix::net::{SocketAddr, UnixStream};
 use std::ptr::null;
+use std::time::Duration;
 
 const SUCCESS: i32 = 0;
 /// The loader-driver interface version this driver implements: its
@@ -35,20 +42,40 @@ fn record(event: &str) -> Option<String> {
     display
 }
 
+/// Set up a connection to the X server `display` names, `:N` or `:N.S`,
+/// and wait at most `bound` for its answer, or without a bound for
+/// `None`. The connection closes on return.
+fn set_up(display: &str, bound: Option<Duration>) -> std::io::Result<()> {
+    let number = display
+        .strip_prefix(':')
+        .and_then(|name| name.split('.').next())
+        .ok_or(ErrorKind::InvalidInput)?;
+    // An X client reaches display `:N` through the abstract socket
+    // `/tmp/.X11-unix/XN` first.
+    let name = format!("/tmp/.X11-unix/X{number}");
+    let mut stream = UnixStream::connect_addr(&SocketAddr::from_abstract_name(name.as_bytes())?)?;
+    stream.set_read_timeout(bound)?;
+    // The setup request: little-endian byte order, protocol 11.0, and no
+    // authorization. The first byte of the answer is its status.
+    stream.write_all(&[b'l', 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0])?;
+    stream.read_exact(&mut [0u8])
+}
+
+/// Runs when the library is unloaded.
+#[used]
+#[link_section = ".fini_array"]
+static UNLOAD: extern "C" fn() = unload;
+
+extern "C" fn unload() {
+    if let Ok(display) = std::env::var("DISPLAY") {
+        let _ = set_up(&display, None);
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn vk_icdNegotiateLoaderICDInterfaceVersion(version: *mut u32) -> i32 {
-    // An X client reaches display `:N` or `:N.S` through the abstract
-    // socket `/tmp/.X11-unix/XN` first.
-    let display = record("load");
-    let number = display
-        .as_deref()
-        .and_then(|name| name.strip_prefix(':'))
-        .and_then(|name| name.split('.').next());
-    if let Some(number) = number {
-        let name = format!("/tmp/.X11-unix/X{number}");
-        if let Ok(address) = SocketAddr::from_abstract_name(name.as_bytes()) {
-            let _ = UnixStream::connect_addr(&address);
-        }
+    if let Some(display) = record("load") {
+        let _ = set_up(&display, Some(Duration::from_secs(5)));
     }
     *version = (*version).min(INTERFACE_VERSION);
     SUCCESS

@@ -232,10 +232,17 @@ pub fn notify_hotkeys_changed() {
 /// the windows and drops the GPU device: the OS frees both, and on a
 /// display that is gone a driver's swapchain teardown can block. With
 /// its X server killed mid-present, lavapipe's X11 swapchain teardown
-/// holds the process about 5 s.
+/// holds the process about 5 s. `_exit` also skips the destructors and
+/// exit handlers of the loaded libraries, which `std::process::exit`
+/// runs: the destructor of NVIDIA's Vulkan driver makes a round trip to
+/// the X server, and a stopped server never answers it.
 fn quit(_: &mut App) -> std::future::Ready<()> {
     recording::save_before_exit();
-    std::process::exit(0)
+    // Rust's buffered stdout is the one flush of `std::process::exit`
+    // that iris needs.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    // SAFETY: _exit takes no pointers and does not return.
+    unsafe { libc::_exit(0) }
 }
 
 /// Start daemon services inside the GPUI app: the global hotkey grabs,

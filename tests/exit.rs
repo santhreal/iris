@@ -14,12 +14,18 @@
 //! the exit closed the windows and dropped the GPU device: a window's
 //! checked UnmapWindow waits on the X server, and with the server killed
 //! mid-present, lavapipe's swapchain teardown held the process about 5 s.
+//! The exit then ran the destructors of the loaded libraries, and the
+//! NVIDIA Vulkan driver's destructor makes a round trip to the X server:
+//! with the server stopped, a `--quit` never ended the daemon.
 //!
 //! The exit cases start the daemon on a display server of its own, kill
 //! the server, and bound the time the daemon takes to exit, for the two
 //! session kinds `iris_lib::session` distinguishes: X11 and Wayland. A
 //! third stops the X server, which then answers nothing, and bounds the
-//! exit on `--quit`: an exit that waits on the display never ends. The
+//! exit on `--quit`: an exit that waits on the display never ends. Its
+//! daemon's Vulkan loader also loads tests/fixtures/display_driver.rs,
+//! whose destructor waits for the X server's answer to a setup without a
+//! bound, as the NVIDIA driver's destructor waits on its round trip. The
 //! save cases record a window on Xvfb and end the daemon three ways:
 //! `--quit` while it records, `--quit` while a stopped recording still
 //! flushes, and the X server's death while it records. Each bounds the
@@ -40,6 +46,10 @@
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
 mod daemon;
+// The startup cases read the driver's log.
+#[allow(dead_code)]
+#[path = "support/driver.rs"]
+mod driver;
 #[path = "exit/recording.rs"]
 mod recording;
 // The other test files use the rest of the helpers.
@@ -50,6 +60,7 @@ mod x11;
 use std::time::Duration;
 
 use daemon::{enabled, runtime_dir, sway, xvfb, Daemon};
+use driver::Driver;
 use recording::Recording;
 
 /// How long the daemon has to exit once its display server is gone.
@@ -85,8 +96,10 @@ fn a_quit_ends_a_daemon_whose_x_server_stopped_answering() {
         return;
     };
     let dir = tempfile::tempdir().unwrap();
+    let driver = Driver::build(dir.path());
     let mut daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("DISPLAY", display).env_remove("WAYLAND_DISPLAY");
+        driver.add_to(cmd);
     });
     // The daemon holds a window from its start: the parked overlay.
     daemon.settle();
