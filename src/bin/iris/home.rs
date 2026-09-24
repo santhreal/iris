@@ -99,8 +99,11 @@ pub struct Home {
     last_frame: Option<Instant>,
 }
 
-/// Open the home window.
+/// Open the home window, or raise the one already open.
 pub fn open(cx: &mut App) -> Result<(), String> {
+    if crate::widgets::raise_open::<Home>(cx, |_| true) {
+        return Ok(());
+    }
     let focus = cx.focus_handle();
     let origin = crate::sys::window::centered_origin(cx, WIN.0, WIN.1, (200.0, 120.0));
     cx.open_window(

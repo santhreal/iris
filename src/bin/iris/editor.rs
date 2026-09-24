@@ -205,19 +205,28 @@ fn resolve_window_placement(
     (origin, win)
 }
 
-/// Open an editor window for the given image file. The window opens
-/// instantly on dimensions parsed from the PNG header; the full decode
-/// runs behind it in the background and swaps in. `from` is an optional
-/// starting rect for an expand-morph animation (from a library card or
-/// toast), in screen coordinates; `morph_sync` is an atomic signaled
-/// after the first frame presents so a source toast can leave without
-/// visual pop.
+/// Open an editor window for the given image file, or raise the one
+/// already open on it. The window opens instantly on dimensions parsed
+/// from the PNG header; the full decode runs behind it in the
+/// background and swaps in. `from` is an optional starting rect for an
+/// expand-morph animation (from a library card or toast), in screen
+/// coordinates; `morph_sync` is an atomic signaled after the first
+/// frame presents so a source toast can leave without visual pop.
 pub fn open(
     cx: &mut App,
     path: &std::path::Path,
     from: Option<(f32, f32, f32, f32)>,
     morph_sync: Option<Arc<AtomicBool>>,
 ) -> Result<(), String> {
+    // Two editors on one file would each save their own markup over the
+    // other's. An editor fading out after Done or Discard is leaving.
+    if crate::widgets::raise_open::<Editor>(cx, |e| e.path == path && e.closing.is_none()) {
+        // A toast handing off has no morph to wait for.
+        if let Some(ready) = morph_sync {
+            ready.store(true, Ordering::Release);
+        }
+        return Ok(());
+    }
     let mut header = [0u8; 24];
     {
         use std::io::Read;

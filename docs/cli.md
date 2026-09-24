@@ -14,10 +14,10 @@
 | `--record-region` | None | Open region selection overlay to record selected screen rectangle. |
 | `--record-pause` | None | Pause or resume active screen recording. Requires running daemon. |
 | `--record-mic` | None | Toggle microphone capture on active recording. Requires running daemon. Returns an error for a GIF recording, which has no audio track. |
-| `--library` | None | Open [capture library](library.md#capture-library) window. |
-| `--settings` | None | Open [settings window](configuration.md#settings-window). |
-| `--home` | None | Open home window displaying quick action buttons. |
-| `--annotate` | `<file>` | Open [annotation editor](editor.md#annotation-editor) for the image at `<file>`. |
+| `--library` | None | Open [capture library](library.md#capture-library) window, or raise and focus the one already open. |
+| `--settings` | None | Open [settings window](configuration.md#settings-window), or raise and focus the one already open. |
+| `--home` | None | Open home window displaying quick action buttons, or raise and focus the one already open. |
+| `--annotate` | `<file>` | Open [annotation editor](editor.md#annotation-editor) for the image at `<file>`, or raise and focus the editor already open on that file. |
 | `--toast` | `<file>` | Display [toast notification](toast.md#toast-notifications) for the image at `<file>`. |
 | `--quit` | None | Terminate running daemon process after saving any active recording. Requires running daemon. |
 | `--version` | None | Print version string to standard output and exit. |

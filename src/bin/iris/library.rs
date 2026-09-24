@@ -165,8 +165,11 @@ pub struct Library {
 /// The library window's minimum logical size, where its resize stops.
 pub(super) const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
 
-/// Open the library window.
+/// Open the library window, or raise the one already open.
 pub fn open(cx: &mut App) -> Result<(), String> {
+    if crate::widgets::raise_open::<Library>(cx, |_| true) {
+        return Ok(());
+    }
     let focus = cx.focus_handle();
     let win = (960.0f32, 640.0f32);
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (140.0, 90.0));

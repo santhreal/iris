@@ -49,9 +49,13 @@ pub struct Settings {
 /// The settings window's minimum logical size, where its resize stops.
 const MIN_SIZE: Size<Pixels> = size(px(640.), px(600.));
 
-/// Open the settings window. A second call focuses a new window; the
-/// daemon milestone owns single-instance behavior for all windows.
+/// Open the settings window, or raise the one already open: two
+/// windows would each save their own snapshot of the config over the
+/// other's edits.
 pub fn open(cx: &mut App) -> Result<(), String> {
+    if crate::widgets::raise_open::<Settings>(cx, |_| true) {
+        return Ok(());
+    }
     let focus = Some(cx.focus_handle());
     let win = (680.0f32, 650.0f32);
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (220.0, 140.0));

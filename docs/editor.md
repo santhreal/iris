@@ -10,6 +10,8 @@ Open the editor via:
 - Left-clicking a capture card in the Library window.
 - Running `iris --annotate <path/to/file.png>` from the command line.
 
+One editor is open per file. Opening a file that an editor already shows raises and focuses that editor, unless the editor is closing after **Done** or **Discard**.
+
 ## Tools and Hotkeys
 
 Select tools from the left sidebar or using single-letter hotkeys without modifiers:

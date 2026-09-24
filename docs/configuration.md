@@ -153,7 +153,7 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 
 ![Settings Window](images/settings.png)
 
-Open the settings window by executing `iris --settings`, selecting **Settings** from the system tray menu, or clicking the gear button in the bottom-right corner of the home window.
+Open the settings window by executing `iris --settings`, selecting **Settings** from the system tray menu, or clicking the gear button in the bottom-right corner of the home window. One settings window is open at a time: each of these raises and focuses the settings window when it is already open.
 
 The settings window contains six sections:
 1. **Storage**: Configure screenshots directory, recordings directory, and filename template.

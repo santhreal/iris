@@ -9,6 +9,8 @@ Open the library via:
 - System tray context menu: **Library** item
 - Home window: **Library** tile
 
+One library window is open at a time. Opening the library while it is open raises and focuses that window.
+
 ## Header and Toolbar
 
 The window header uses the client-side decorated frame (56 pixels high) containing traffic light window controls, the title **Library**, and action clusters:

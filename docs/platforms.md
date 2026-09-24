@@ -21,6 +21,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 | **Reveal in Folder** | DBus `org.freedesktop.FileManager1.ShowItems` | DBus `org.freedesktop.FileManager1.ShowItems` | Win32 `SHOpenFolderAndSelectItems` | Command `/usr/bin/open -R` |
 | **Shutter Sound** | `pw-play` / `paplay` / `canberra-gtk-play` | `pw-play` / `paplay` / `canberra-gtk-play` | Win32 `PlaySoundW` (synthesized WAV) | Command `/usr/bin/afplay` |
 | **Window Move and Resize** | Title bar and edge strips; `_NET_WM_MOVERESIZE`, or the window follows the pointer on XInput 2.1 raw events | Title bar and edge strips; `xdg_toplevel.move` / `xdg_toplevel.resize` | `WM_NCLBUTTONDOWN(HTCAPTION)` move; frame hit test (`WM_NCHITTEST`) resize | `performWindowDragWithEvent:` move; AppKit frame resize |
+| **Window Activation** | `_NET_ACTIVE_WINDOW` request and `SetInputFocus` | `xdg_activation_v1` token; the compositor's focus policy applies | `ShowWindowAsync(SW_RESTORE)` when minimized, then `SetForegroundWindow` | `makeKeyAndOrderFront:` |
 | **Update / Install** | AppImage overwrite via `$APPIMAGE` rename | AppImage overwrite via `$APPIMAGE` rename | Detached NSIS installer (`/S` silent) | DMG mount via `hdiutil`, replace `.app` |
 
 ## Linux (X11)
@@ -44,6 +45,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Recording**: Window recording invokes `org.freedesktop.portal.ScreenCast` via `ashpd` with `SourceType::Window` and `CursorMode::Hidden`. Video frames arrive over PipeWire as `MemPtr`, `MemFd`, or `DMA-buf` (imported through EGL and read with `glReadPixels`, or read through CPU mapping). The segment recorder accepts pause and microphone controls over IPC. Region recording is unsupported. The floating indicator chip is disabled.
 - **Global Hotkeys**: Wayland protocols reject client-side global key grabs. Shortcuts are defined in compositor configurations (such as Hyprland or Sway) to execute `iris --capture` or `iris --record-window`. Invocations forward commands to the daemon over the IPC socket.
 - **System Tray**: Registers a StatusNotifierItem interface using `ksni`.
+- **Window Activation**: A second open of the home, library, settings, or editor window requests an `xdg_activation_v1` token and activates the open window with it. The compositor's focus policy applies to the request: sway, by default (`focus_on_window_activation urgent`), marks the window urgent instead of focusing it.
 - **IPC Transport**: Binds a Unix domain socket at `$XDG_RUNTIME_DIR/iris.sock` (mode 0600).
 - **Drag-Out and Clipboard**: File drag-out and file-list clipboard copies are unsupported. Image clipboard operations run through `arboard`.
 - **Reveal in Folder**: Calls DBus method `org.freedesktop.FileManager1.ShowItems` via `dbus-send`, falling back to `xdg-open`.

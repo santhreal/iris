@@ -400,6 +400,22 @@ pub fn window_frame(
         .child(content)
 }
 
+/// Raise and focus the open window whose root view is a `V` that
+/// passes `is`, and return true; return false when there is none, so
+/// the caller opens one. A surface with one window per subject opens
+/// through this, and a second open brings the first one forward.
+pub fn raise_open<V: Render>(cx: &mut App, is: impl Fn(&V) -> bool) -> bool {
+    let found = cx
+        .windows()
+        .into_iter()
+        .filter_map(|w| w.downcast::<V>())
+        .find(|w| w.read(cx).is_ok_and(&is));
+    found.is_some_and(|w| {
+        w.update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+    })
+}
+
 /// A keyboard-shortcuts sheet: centered card over a dim layer, rows
 /// of action / key combination. The surface owns the open state and
 /// closes on Esc or a press on the dim layer.
