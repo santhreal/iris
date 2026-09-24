@@ -212,18 +212,9 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             crate::notice::failed(cx, what, err);
             Ok(())
         }
+        // The quit observer `start` registers saves a live or flushing
+        // recording before the process exits.
         Command::Quit => {
-            // Flush an in-flight recording before the process exits:
-            // quitting with the encoder live orphans ffmpeg mid-write
-            // and leaves a truncated file.
-            let active = RECORDING.lock().take();
-            match active.map(|rec| rec.stop()) {
-                Some(Ok(Some(path))) => {
-                    iris_lib::ilog!("iris: recording saved: {}", path.display())
-                }
-                Some(Err(e)) => iris_lib::ilog!("iris: recording: {e}"),
-                Some(Ok(None)) | None => {}
-            }
             cx.quit();
             Ok(())
         }
@@ -235,6 +226,18 @@ pub fn notify_hotkeys_changed() {
     crate::sys::hotkeys::request_regrab();
 }
 
+/// The daemon's quit, on `--quit` and when the display server goes
+/// away. It saves the recording first: a process that exits mid-flush
+/// leaves no output file. Then it ends the process, before GPUI closes
+/// the windows and drops the GPU device: the OS frees both, and on a
+/// display that is gone a driver's swapchain teardown can block. With
+/// its X server killed mid-present, lavapipe's X11 swapchain teardown
+/// holds the process about 5 s.
+fn quit(_: &mut App) -> std::future::Ready<()> {
+    recording::save_before_exit();
+    std::process::exit(0)
+}
+
 /// Start daemon services inside the GPUI app: the single-instance
 /// socket, the tray icon, and the global hotkey grabs. The socket and
 /// command pump are channel-driven; failures degrade to log lines.
@@ -243,6 +246,7 @@ pub fn start(cx: &mut App) {
     // loops otherwise stop when the last window closes, and a parked
     // stand-in window would keep a renderer and its frame timer live.
     cx.set_quit_on_last_window_closed(false);
+    cx.on_app_quit(quit).detach();
     iris_lib::ilog!("iris: daemon start");
     // Warm the overlay pool: the first capture reuses a live window
     // instead of paying GPUI's ~130ms renderer init on the hotkey.

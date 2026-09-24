@@ -114,21 +114,33 @@ fn send(name: Name<'_>, args: &[String]) -> bool {
     imp::connect(name).is_ok_and(|mut stream| stream.write_all(args.join("\n").as_bytes()).is_ok())
 }
 
-/// Wait until no daemon answers the socket (it exited), up to `ms`
-/// milliseconds. The updater polls this after sending `--quit` so the
-/// binary is free to overwrite before the swap.
-pub fn wait_for_daemon_exit(ms: u64) -> bool {
+/// Send `--quit` to the running daemon and wait until it exits, for at
+/// most `within`. `true` once no daemon answers the socket: it exited,
+/// or none ran. A quitting daemon saves its recording first and
+/// answers until it exits. The updater runs this before the file swap,
+/// so the binary is free to replace.
+pub fn quit_daemon(within: Duration) -> bool {
     let Ok(name) = imp::socket_name() else {
         return true;
     };
-    let deadline = Instant::now() + Duration::from_millis(ms);
-    while Instant::now() < deadline {
+    quit(name.borrow(), within)
+}
+
+/// Send `--quit` to `name`, then poll until nothing answers it, for at
+/// most `within`. A `--quit` that does not land leaves the daemon
+/// answering, and the wait fails.
+fn quit(name: Name<'_>, within: Duration) -> bool {
+    send(name.borrow(), &["--quit".to_string()]);
+    let deadline = Instant::now() + within;
+    loop {
         if imp::connect(name.borrow()).is_err() {
             return true;
         }
+        if Instant::now() >= deadline {
+            return false;
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
-    false
 }
 
 /// Start this executable as a detached daemon (see `sys::detach`),

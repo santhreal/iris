@@ -263,10 +263,13 @@ impl ActiveRecording {
     /// trailer flush can take seconds on a long recording, and joining
     /// on the UI thread freezes hotkeys and socket commands for the
     /// whole flush. `done` runs on the joining thread with the result.
+    /// The returned handle joins that thread: a process that exits
+    /// before it ends loses the recording, whose segments are joined
+    /// into the output file last.
     pub fn stop_async(
         mut self,
         done: impl FnOnce(Result<Option<PathBuf>, String>) + Send + 'static,
-    ) {
+    ) -> std::thread::JoinHandle<()> {
         self.signal_stop();
         let join = self.join.take().expect("stop called twice");
         let output = self.output.clone();
@@ -276,7 +279,7 @@ impl ActiveRecording {
                 .map_err(|_| "recording thread panicked".to_string())
                 .and_then(|r| Self::finish_result(r, &output));
             done(result);
-        });
+        })
     }
 }
 

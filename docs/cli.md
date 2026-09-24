@@ -19,7 +19,7 @@
 | `--home` | None | Open home window displaying quick action buttons, or raise and focus the one already open. |
 | `--annotate` | `<file>` | Open [annotation editor](editor.md#annotation-editor) for the image at `<file>`, or raise and focus the editor already open on that file. |
 | `--toast` | `<file>` | Display [toast notification](toast.md#toast-notifications) for the image at `<file>`. |
-| `--quit` | None | Terminate running daemon process after saving any active recording. Requires running daemon. |
+| `--quit` | None | Terminate running daemon process after saving the active recording and any stopped recording still being joined. Requires running daemon. |
 | `--version` | None | Print version string to standard output and exit. |
 | `--check-update` | None | Query GitHub releases API for newer version and print status. |
 | `--update` | None | Download and apply latest release asset for current platform, then restart daemon. |
@@ -43,6 +43,8 @@ IPC uses a local socket implementation:
 
 The daemon reads each connection on a thread of its own, up to 16 at once, and closes a connection past that without reading it. A command line longer than 1 MiB, or still arriving 5 seconds after the daemon accepts the connection, is dropped, and the daemon runs none of it.
 
+On Linux the daemon exits when its X server or Wayland compositor exits, as at the end of the desktop session. It saves recordings first; see [Screen Recording](recording.md#window-recording).
+
 ### Invocations Without Running Daemon
 
 1. Bare invocation (`iris` without arguments):
@@ -65,7 +67,7 @@ The daemon reads each connection on a thread of its own, up to 16 at once, and c
 - `--help` prints the option list and exits with status 0.
 - `--version` prints `iris <version>` to standard output and exits with status 0.
 - `--check-update` queries `https://api.github.com/repos/santhreal/iris/releases/latest`. If a newer release exists, it prints `iris: update available: <version>` and exits with status 0. If the binary is current, it prints `iris: up to date (<version>)` and exits with status 0. On network or parsing failure, it prints the error to standard error and exits with status 1.
-- `--update` checks for a newer release. If current, it prints `iris: up to date (<version>)` and exits with status 0. If a newer release exists, it downloads the platform asset to the `update` directory under the [cache directory](configuration.md), sends `--quit` to any running daemon, waits up to 5 seconds for the socket to release, applies the replacement file, and relaunches the executable. On Windows it starts the installer and exits with status 0, and the installer replaces the file and starts iris ([Installation](install.md#updates)). On failure, it prints the error to standard error and exits with status 1.
+- `--update` checks for a newer release. If current, it prints `iris: up to date (<version>)` and exits with status 0. If a newer release exists, it downloads the platform asset to the `update` directory under the [cache directory](configuration.md), sends `--quit` to any running daemon, waits up to 60 seconds for it to exit, applies the replacement file, and relaunches the executable. On Windows it starts the installer and exits with status 0, and the installer replaces the file and starts iris ([Installation](install.md#updates)). A daemon still running 60 seconds after `--quit` fails the update with nothing installed. On failure, it prints the error to standard error and exits with status 1.
 
 A local command whose standard output cannot be written, such as a pipe whose reader has exited, exits with status 1 and prints nothing to standard error.
 

@@ -239,7 +239,7 @@ Download and apply the latest release:
 iris --update
 ```
 
-`--update` downloads the matching platform asset, sends `--quit` to any running daemon, waits up to 5 seconds for socket release, applies the replacement file, and relaunches the executable.
+`--update` downloads the matching platform asset, sends `--quit` to any running daemon, waits up to 60 seconds for it to exit, applies the replacement file, and relaunches the executable. A quitting daemon saves its recording before it exits. When the daemon still runs 60 seconds after `--quit`, `iris --update` installs nothing, prints `update: the running iris still answers 60 s after --quit; nothing was installed, run iris --update again once it exits`, and exits with status 1.
 
 Platform update mechanisms:
 - Windows: Downloads `windows-x86_64-setup.exe`, starts it with `/S /RUN` as a detached process that receives no handle of the `iris --update` process, and exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris. When the installation fails, it starts the `iris.exe` already in place.

@@ -20,9 +20,15 @@
 //! thread. Neither path blocks the UI loop.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// The GitHub repo that publishes releases.
 const REPO: &str = "santhreal/iris";
+
+/// How long `--update` waits for the running daemon to exit after
+/// `--quit`. A quitting daemon saves its recording first: the encoder
+/// gives a wedged ffmpeg 10 s, and the segment join follows.
+const QUIT_WAIT: Duration = Duration::from_secs(60);
 
 /// A newer release and the asset that applies to this platform.
 #[derive(Debug, Clone)]
@@ -158,16 +164,23 @@ fn download(info: &UpdateInfo) -> Result<PathBuf, String> {
 pub fn apply(info: &UpdateInfo) -> Result<(), String> {
     crate::sys::install::ready()?;
     let file = download(info)?;
-    stop_daemon();
+    stop_daemon()?;
     crate::sys::install::apply_file(&file)
 }
 
-/// Ask the running daemon to quit and wait for its socket to free. A
-/// missing daemon is a no-op. This runs before the file swap so the
-/// binary is not locked or busy when it is replaced.
-fn stop_daemon() {
-    crate::sys::ipc::send_to_daemon(&["--quit".to_string()]);
-    crate::sys::ipc::wait_for_daemon_exit(5000);
+/// Quit the running daemon and wait for it to exit. A missing daemon is
+/// a no-op. A daemon still running `QUIT_WAIT` after `--quit` fails the
+/// update before the swap: replacing the binary under it would fail, or
+/// leave no daemon running once it exits.
+fn stop_daemon() -> Result<(), String> {
+    if crate::sys::ipc::quit_daemon(QUIT_WAIT) {
+        return Ok(());
+    }
+    Err(format!(
+        "update: the running iris still answers {} s after --quit; nothing was installed, \
+         run iris --update again once it exits",
+        QUIT_WAIT.as_secs()
+    ))
 }
 
 // WHY: the classes closed here are "a release asset name steers the

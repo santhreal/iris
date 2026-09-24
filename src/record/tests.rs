@@ -233,11 +233,11 @@ fn every_send_rings_the_source_once() {
 
     let (rec, rings) = rung();
     let (done, result) = mpsc::channel();
-    rec.stop_async(move |r| done.send(r).unwrap());
-    result
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap()
-        .unwrap();
+    let flush = rec.stop_async(move |r| done.send(r).unwrap());
+    // The handle joins the thread that runs `done`: once it joins, the
+    // result is there without a wait.
+    flush.join().unwrap();
+    result.try_recv().unwrap().unwrap();
     assert_eq!(n(&rings), 1, "stop_async");
 
     let (rec, rings) = rung();

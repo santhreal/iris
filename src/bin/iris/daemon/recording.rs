@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use gpui::*;
 use iris_lib::config::Config;
@@ -9,6 +10,25 @@ use crate::sys::record::{self as source, Params};
 use crate::{chip, notice, overlay, pipeline};
 
 use super::RECORDING;
+
+/// Recordings stopped and still flushing: ffmpeg's trailer and the
+/// segment join run on these threads after the chip closes.
+static FLUSHING: parking_lot::Mutex<Vec<JoinHandle<()>>> = parking_lot::Mutex::new(Vec::new());
+
+/// Stop the live recording and wait for every flush in flight. The
+/// daemon runs this as it quits, on `--quit` or because its display
+/// server went away: the segments are joined into the output file
+/// last, so an exit before a flush ends loses the recording.
+pub(super) fn save_before_exit() {
+    let active = RECORDING.lock().take();
+    if let Some(rec) = active {
+        log_result(&rec.stop());
+    }
+    let flushing = std::mem::take(&mut *FLUSHING.lock());
+    for flush in flushing {
+        let _ = flush.join();
+    }
+}
 
 /// One action for the record hotkey/tray/CLI: stop when active, start
 /// the platform's default recording when idle.
@@ -44,9 +64,15 @@ pub(super) fn collect_ended(cx: &mut App) {
 fn finish(cx: &mut App, rec: ActiveRecording) {
     chip::close(cx);
     let (tx, rx) = futures::channel::oneshot::channel();
-    rec.stop_async(move |result| {
+    let flush = rec.stop_async(move |result| {
+        log_result(&result);
         let _ = tx.send(result);
     });
+    {
+        let mut flushing = FLUSHING.lock();
+        flushing.retain(|f| !f.is_finished());
+        flushing.push(flush);
+    }
     cx.spawn(async move |cx| {
         if let Ok(result) = rx.await {
             let _ = cx.update(|cx| report(cx, result));
@@ -55,19 +81,23 @@ fn finish(cx: &mut App, rec: ActiveRecording) {
     .detach();
 }
 
-/// Report a finished recording: the saved file, or why it failed. A
-/// recording with no file (a cancelled pick) reports nothing.
+/// Show a finished recording: the saved file, or why it failed. A
+/// recording with no file (a cancelled pick) shows nothing.
 fn report(cx: &mut App, result: Result<Option<PathBuf>, String>) {
     match result {
-        Ok(Some(path)) => {
-            iris_lib::ilog!("iris: recording saved: {}", path.display());
-            notice::saved(cx, "Recording saved", &path);
-        }
+        Ok(Some(path)) => notice::saved(cx, "Recording saved", &path),
         Ok(None) => {}
-        Err(e) => {
-            iris_lib::ilog!("iris: recording: {e}");
-            notice::failed(cx, "Recording failed", &e);
-        }
+        Err(e) => notice::failed(cx, "Recording failed", &e),
+    }
+}
+
+/// Log a finished recording: the saved file, or why it failed. Runs
+/// where the flush ends, so a flush the exit waits on is logged too.
+fn log_result(result: &Result<Option<PathBuf>, String>) {
+    match result {
+        Ok(Some(path)) => iris_lib::ilog!("iris: recording saved: {}", path.display()),
+        Ok(None) => {}
+        Err(e) => iris_lib::ilog!("iris: recording: {e}"),
     }
 }
 

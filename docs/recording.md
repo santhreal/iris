@@ -19,9 +19,11 @@ Stop an active recording through any of the following triggers:
 - Run `iris --record-window`
 - Click **Record window** in the system tray menu
 - Click **Record Window** in the Home window
-- Run `iris --quit` (flushes and saves the recording before process exit)
+- Run `iris --quit` (saves the recording before process exit)
 
 A recording also ends automatically when its target window closes, its target window minimizes, or its compositor session ends.
+
+The daemon saves every recording before it exits: the recording in progress, and a stopped recording whose segments are still being joined. This applies to `iris --quit` and, on Linux, to the exit that follows the loss of the X server or Wayland compositor. When the X server exits during an X11 recording, the recording ends and its file is saved before the daemon exits.
 
 Platform behavior for window recording:
 - **Linux (X11)**: Activates a window picker. The pointer cursor changes to a crosshair. Click any window to select it as the recording target. Press `Escape` during selection to cancel without saving a file. No indicator chip shows during selection; the chip opens over the target once it is picked, and its timer starts then. Four red border strips (`#f7768e`, 3 pixels wide) outline the target window. The border strips set an empty input region via the XFixes shape extension so cursor events pass through to underlying windows. The target window is redirected via the XComposite extension (`composite_redirect_window`). Frame capture reads the window pixmap via X11 shared memory (MIT-SHM). Occluding windows and the desktop background do not enter the recording. A tracking thread monitors `ConfigureNotify` events and updates border strip geometry and indicator chip placement to follow window movement. When the target window minimizes (reporting zero width or height) or closes, recording ends and saves accumulated frames.

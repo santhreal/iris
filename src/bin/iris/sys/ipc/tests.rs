@@ -1,14 +1,18 @@
-//! WHY: the classes closed here are "a daemon no client can reach" and
-//! "a client that stalls the daemon or runs part of a command line".
-//! The first: a listener that fails to bind on one platform, as every
+//! WHY: the classes closed here are "a daemon no client can reach",
+//! "a client that stalls the daemon or runs part of a command line",
+//! and "a quit that ends its wait while the daemon still runs". The
+//! first: a listener that fails to bind on one platform, as every
 //! macOS bind did while the socket's mode was set with an fchmod macOS
 //! rejects, or a command line that arrives split or altered. The
 //! second: a client that connects and sends nothing, which held the
 //! accept thread and every later command line behind it, and a command
-//! line cut short at a limit, whose first part ran. Each test tightens
-//! only the limit it reaches, on a name no daemon uses, wherever
-//! `cargo test` runs. Not covered: the daemon's own start, which needs a
-//! display, and a second daemon racing the first for the name.
+//! line cut short at a limit, whose first part ran. The third: `--update`
+//! sent `--quit` and replaced the binary 5 s later whether or not the
+//! daemon had exited, and a daemon saving a recording runs longer. Each
+//! test tightens only the limit it reaches, on a name no daemon uses,
+//! wherever `cargo test` runs. Not covered: the daemon's own start,
+//! which needs a display, a second daemon racing the first for the
+//! name, and the update's own 60 s wait.
 
 use std::prelude::v1::test;
 
@@ -174,4 +178,77 @@ fn a_command_line_that_arrives_late_is_dropped_whole() {
         assert!(send(name.borrow(), &args));
         assert_eq!(drain(&mut rx, Duration::from_millis(500)), [args]);
     }
+}
+
+/// A daemon that answers for `saving` after `--quit` arrives, as one
+/// saving a recording does, and then exits: its listener closes.
+fn saving_daemon(name: Name<'static>, saving: Duration) -> std::thread::JoinHandle<()> {
+    let listener = imp::bind(name).unwrap();
+    std::thread::spawn(move || {
+        let mut quit_at: Option<Instant> = None;
+        for mut conn in listener.incoming().flatten() {
+            let mut line = String::new();
+            let _ = conn.read_to_string(&mut line);
+            if line == "--quit" {
+                quit_at.get_or_insert_with(Instant::now);
+            }
+            if quit_at.is_some_and(|at| at.elapsed() >= saving) {
+                return;
+            }
+        }
+    })
+}
+
+/// `quit(name, within)` on a thread of its own: whether no daemon
+/// answers at its end, and how long it took. Fails when the quit has
+/// not returned 5 s past `within`.
+fn timed_quit(name: &Name<'static>, within: Duration) -> (bool, Duration) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let name = name.clone();
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        let exited = quit(name.borrow(), within);
+        let _ = tx.send((exited, start.elapsed()));
+    });
+    let limit = within + Duration::from_secs(5);
+    rx.recv_timeout(limit)
+        .unwrap_or_else(|_| panic!("the quit still waited {limit:?} after --quit"))
+}
+
+#[test]
+fn a_quit_waits_for_a_daemon_that_saves_before_it_exits() {
+    let (name, _dir) = imp::scratch_name();
+    let saving = Duration::from_millis(300);
+    let daemon = saving_daemon(name.clone(), saving);
+    let (exited, waited) = timed_quit(&name, Duration::from_secs(10));
+    assert!(exited, "the daemon still answered {waited:?} after --quit");
+    assert!(
+        waited >= saving,
+        "the quit ended {waited:?} after --quit, while the daemon still saved"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "the quit ended {waited:?} after --quit, long after the daemon exited"
+    );
+    daemon.join().unwrap();
+}
+
+#[test]
+fn a_quit_gives_up_on_a_daemon_that_still_answers() {
+    let (name, _dir) = imp::scratch_name();
+    let mut rx = listen(name.clone(), LIMITS).unwrap();
+    let within = Duration::from_millis(300);
+    let (exited, waited) = timed_quit(&name, within);
+    assert!(
+        !exited,
+        "a quit reported a daemon that still answers as exited"
+    );
+    assert!(
+        waited >= within && waited < within + Duration::from_secs(2),
+        "the quit gave up {waited:?} after --quit, not {within:?}"
+    );
+    assert_eq!(
+        next_within(&mut rx, Duration::from_secs(5)),
+        argv(&["--quit"])
+    );
 }

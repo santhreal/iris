@@ -109,6 +109,8 @@ embed-resource = "3"
 [dev-dependencies]
 tempfile = "3"
 serial_test = "3"
+# XTest: tests/exit.rs clicks the window a recording picks.
+x11rb = { version = "0.13", features = ["xtest"] }
 
 # The santhreal gpui fork's gpui-0.2.2-iris branch is crates.io 0.2.2
 # (the "Bump gpui to 0.2.2" commit) plus fixes: wl_keyboard Modifiers
@@ -143,8 +145,11 @@ serial_test = "3"
 # position before the map, and a window that draws its own frame turns
 # the window manager's frame off before the map, so each opens where
 # iris put it with no frame drawn and removed; a configure that changes
-# neither size nor origin lays out and draws nothing. Pinned to a rev so
-# a later fork push cannot move the dependency under the build.
+# neither size nor origin lays out and draws nothing. A failed X11
+# connection ends the event loop, so the daemon exits when its X server
+# does instead of polling the closed socket at full CPU; an event that
+# fails to parse is skipped. Pinned to a rev so a later fork push cannot
+# move the dependency under the build.
 #
 # The santhreal blade fork's blade-graphics-0.7.1-iris branch is
 # crates.io blade-graphics 0.7.1 plus ContextDesc::ray_tracing, off by
@@ -153,5 +158,5 @@ serial_test = "3"
 # (+160 MB resident) and adds a driver thread, for a renderer that never
 # traces a ray.
 [patch.crates-io]
-gpui = { git = "https://github.com/santhreal/gpui.git", rev = "d9bcbf412d", version = "=0.2.2" }
+gpui = { git = "https://github.com/santhreal/gpui.git", rev = "8ca3bb3592", version = "=0.2.2" }
 blade-graphics = { git = "https://github.com/santhreal/blade.git", rev = "dcee837cea", version = "=0.7.1" }
