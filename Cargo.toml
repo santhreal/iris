@@ -70,6 +70,12 @@ pipewire = "0.8"
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 khronos-egl = { version = "6", features = ["dynamic"] }
 libloading = "0.8"
+# The Wayland clipboard through the compositor's data-control protocol
+# (ext-data-control-v1 or wlr-data-control-unstable-v1), which a client
+# with no focused window can set. Without it every copy on Wayland goes
+# through the X server in DISPLAY, and the first one can start an
+# on-demand XWayland.
+arboard = { version = "3", features = ["wayland-data-control"] }
 
 [target.'cfg(windows)'.dependencies]
 # Win32 for monitor enumeration, the foreground-window rect, region

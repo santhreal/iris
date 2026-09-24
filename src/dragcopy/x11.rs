@@ -1,26 +1,19 @@
-//! X11 file transfer: XDnD drag-out and CLIPBOARD serving of
-//! `text/uri-list`, each from a private 1x1 window on its own
-//! connection. Wayland sessions have no route here and fail with an
-//! explicit error.
+//! X11 drag-out: XDnD from a private 1x1 window on its own connection.
+//! Wayland sessions have no route here and fail with an explicit error.
 
 use std::path::PathBuf;
 
 use super::{uri_encode_path, DragIcon};
 
-mod clipboard;
 mod icon;
 #[cfg(test)]
 mod tests;
 mod xdnd;
 
-use clipboard::serve_x11_clipboard;
 use xdnd::{run_xdnd_drag, XdndAtoms};
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xfixes::{ConnectionExt as XfixesExt, SelectionEventMask};
-use x11rb::protocol::xproto::{
-    ConnectionExt as XprotoExt, CreateWindowAux, EventMask, WindowClass,
-};
+use x11rb::protocol::xproto::{ConnectionExt as XprotoExt, CreateWindowAux, WindowClass};
 use x11rb::CURRENT_TIME;
 
 /// Validate and normalize drag paths before any platform work.
@@ -111,19 +104,9 @@ pub(super) fn start_file_drag_at_cursor(
     Ok(())
 }
 
-/// The four atoms a clipboard serve answers on. Grouping them stops a
-/// TARGETS/uri-list/UTF8 transposition at the call site from compiling
-/// silently.
-pub(super) struct CbAtoms {
-    pub(super) clipboard: x11rb::protocol::xproto::Atom,
-    pub(super) targets: x11rb::protocol::xproto::Atom,
-    pub(super) uri_list: x11rb::protocol::xproto::Atom,
-    pub(super) utf8: x11rb::protocol::xproto::Atom,
-}
-
-/// Interned atoms shared across drags and clipboard serves: atoms are
-/// server-global constants, so the 13-name XDnD set and the 4-name
-/// clipboard set resolve once per process instead of once per call.
+/// Interned atoms shared across drags: atoms are server-global
+/// constants, so the 13-name XDnD set resolves once per process instead
+/// of once per drag.
 pub(super) fn atom_cached<C: Connection>(conn: &C, name: &'static [u8]) -> Option<u32> {
     static CACHE: std::sync::LazyLock<
         parking_lot::Mutex<std::collections::HashMap<&'static [u8], u32>>,
@@ -134,89 +117,4 @@ pub(super) fn atom_cached<C: Connection>(conn: &C, name: &'static [u8]) -> Optio
     let atom = conn.intern_atom(false, name).ok()?.reply().ok()?.atom;
     CACHE.lock().insert(name, atom);
     Some(atom)
-}
-
-pub(super) fn copy_abs_paths(abs: &[PathBuf]) -> Result<(), String> {
-    let first = abs[0].to_string_lossy().into_owned();
-    serve_uri_list(build_uri_list(abs), first)
-}
-
-/// Acquire CLIPBOARD with a text/uri-list payload and serve it from a
-/// background thread until another owner takes over or 5 minutes pass.
-fn serve_uri_list(uri_list: String, fallback_text: String) -> Result<(), String> {
-    if !crate::session::x11() {
-        return Err("file copy needs an X11 session".to_string());
-    }
-    let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("X11 connect: {e}"))?;
-    let screen = &conn.setup().roots[screen_num];
-    let root = screen.root;
-
-    let clipboard_atom = atom_cached(&conn, b"CLIPBOARD").ok_or("intern CLIPBOARD failed")?;
-    let targets_atom = atom_cached(&conn, b"TARGETS").ok_or("intern TARGETS failed")?;
-    let uri_list_atom =
-        atom_cached(&conn, b"text/uri-list").ok_or("intern text/uri-list failed")?;
-    let utf8_atom = atom_cached(&conn, b"UTF8_STRING").ok_or("intern UTF8_STRING failed")?;
-
-    let win = conn
-        .generate_id()
-        .map_err(|e| format!("generate window id: {e}"))?;
-    let aux = CreateWindowAux::new()
-        .override_redirect(1)
-        .event_mask(EventMask::PROPERTY_CHANGE);
-    conn.create_window(
-        x11rb::COPY_FROM_PARENT as u8,
-        win,
-        root,
-        0,
-        0,
-        1,
-        1,
-        0,
-        WindowClass::INPUT_OUTPUT,
-        x11rb::COPY_FROM_PARENT,
-        &aux,
-    )
-    .map_err(|e| format!("create clipboard window: {e}"))?;
-
-    conn.set_selection_owner(win, clipboard_atom, CURRENT_TIME)
-        .map_err(|e| format!("set selection owner: {e}"))?;
-    let owner = conn
-        .get_selection_owner(clipboard_atom)
-        .map_err(|e| format!("get selection owner: {e}"))?
-        .reply()
-        .map_err(|e| format!("get selection owner reply: {e}"))?
-        .owner;
-    if owner != win {
-        return Err("failed to acquire CLIPBOARD selection".to_string());
-    }
-
-    if let Ok(cookie) = conn.xfixes_query_version(4, 0) {
-        if cookie.reply().is_ok() {
-            let _ = conn.xfixes_select_selection_input(
-                root,
-                clipboard_atom,
-                SelectionEventMask::SET_SELECTION_OWNER,
-            );
-        }
-    }
-    let _ = conn.flush();
-
-    std::thread::Builder::new()
-        .name("iris-x11-clipboard".into())
-        .spawn(move || {
-            serve_x11_clipboard(
-                conn,
-                win,
-                CbAtoms {
-                    clipboard: clipboard_atom,
-                    targets: targets_atom,
-                    uri_list: uri_list_atom,
-                    utf8: utf8_atom,
-                },
-                uri_list,
-                fallback_text,
-            );
-        })
-        .map_err(|e| format!("spawn clipboard thread: {e}"))?;
-    Ok(())
 }

@@ -136,7 +136,7 @@ Failure titles:
 | `Recording failed` | Starting, picking, or finishing a recording |
 | `Pause failed` | `--record-pause` |
 | `Microphone toggle failed` | `--record-mic` |
-| `Copy failed` | Clipboard copy after a capture or an editor save |
+| `Copy failed` | Clipboard copy after a capture or an editor save, or of a color in the capture overlay |
 | `Save failed` | Writing the edited image when the editor closes |
 | `Pin failed` | Pinning a capture |
 | `Home did not open`, `Library did not open`, `Settings did not open`, `Editor did not open`, `Toast did not open`, `Recording chip did not open` | Opening that window |

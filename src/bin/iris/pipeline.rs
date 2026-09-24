@@ -9,21 +9,10 @@ use image::ImageEncoder;
 
 use iris_lib::{
     capture::{self, Frame},
+    clipboard,
     config::Config,
     dragcopy, library, ocr,
 };
-
-/// The process-global clipboard owner: the X11 selection is served only
-/// while a Clipboard instance lives, so the app holds one for its whole
-/// lifetime instead of dropping it after each capture. None when the
-/// clipboard could not be opened: a capture must still save to disk.
-pub static CLIPBOARD: std::sync::LazyLock<Option<parking_lot::Mutex<arboard::Clipboard>>> =
-    std::sync::LazyLock::new(|| {
-        arboard::Clipboard::new()
-            .map(parking_lot::Mutex::new)
-            .map_err(|e| iris_lib::ilog!("iris: clipboard unavailable: {e}"))
-            .ok()
-    });
 
 /// The most recent capture's decoded pixels, stashed so the editor
 /// skips re-decoding the PNG finalize just wrote. Single-slot: only
@@ -58,16 +47,6 @@ pub fn peek_decoded(path: &Path) -> Option<std::sync::Arc<image::RgbaImage>> {
     } else {
         None
     }
-}
-
-/// Run `f` against the shared clipboard. An unavailable clipboard is
-/// an honest error, never a panic mid-capture.
-pub fn with_clipboard(f: impl FnOnce(&mut arboard::Clipboard)) -> Result<(), String> {
-    let Some(clipboard) = CLIPBOARD.as_ref() else {
-        return Err("clipboard unavailable".into());
-    };
-    f(&mut clipboard.lock());
-    Ok(())
 }
 
 /// Camera shutter at the grab moment, when the config asks for one.
@@ -280,23 +259,14 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
 }
 
 pub fn copy_image(img: &image::RgbaImage) -> Result<(), String> {
-    let mut out = Ok(());
-    with_clipboard(|c| {
-        out = c
-            .set_image(arboard::ImageData {
-                width: img.width() as usize,
-                height: img.height() as usize,
-                bytes: std::borrow::Cow::Borrowed(img.as_raw()),
-            })
-            .map_err(|e| format!("set clipboard image: {e}"));
-    })?;
-    out
+    clipboard::set_image(img)
 }
 
 pub fn copy_image_file(path: &Path) -> Result<(), String> {
-    let mut out = Ok(());
-    with_clipboard(|c| out = dragcopy::clipboard_set_image(c, path))?;
-    out
+    let img = image::open(path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?
+        .into_rgba8();
+    clipboard::set_image(&img)
 }
 
 pub fn copy_path_text(path: &Path) -> Result<(), String> {
@@ -304,10 +274,7 @@ pub fn copy_path_text(path: &Path) -> Result<(), String> {
         return Err(format!("path does not exist: {}", path.display()));
     }
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let text = abs.to_string_lossy().into_owned();
-    let mut out = Ok(());
-    with_clipboard(|c| out = dragcopy::clipboard_set_text(c, &text))?;
-    out
+    clipboard::set_text(&abs.to_string_lossy())
 }
 
 /// Copy as file (text/uri-list): file managers paste the file itself.
@@ -323,9 +290,7 @@ pub fn copy_files(paths: &[PathBuf]) -> Result<(), String> {
 /// caller can report the character count.
 pub fn copy_ocr_text(path: &Path) -> Result<String, String> {
     let text = ocr::recognize_text(path)?;
-    let mut out = Ok(());
-    with_clipboard(|c| out = dragcopy::clipboard_set_text(c, &text))?;
-    out?;
+    clipboard::set_text(&text)?;
     Ok(text)
 }
 

@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Lavapipe, where installed: a daemon on a private server renders the
@@ -119,6 +121,37 @@ pub fn sway(case: &str, run: &Path) -> Option<(Server, std::ffi::OsString)> {
             })
     });
     Some((sway, socket))
+}
+
+/// An X display name no server uses, and the number of connections made
+/// to it. An X client on Linux connects to display `:N` through the
+/// abstract socket `/tmp/.X11-unix/XN` first, which names no file; a
+/// thread accepts each connection there, counts it, and closes it.
+pub fn counted_x_display() -> (String, Arc<AtomicUsize>) {
+    use std::os::linux::net::SocketAddrExt as _;
+    use std::os::unix::net::{SocketAddr, UnixListener};
+    for n in 200..400 {
+        let name = format!("/tmp/.X11-unix/X{n}");
+        // A server listening on the path would answer a client that
+        // found no abstract socket.
+        if Path::new(&name).exists() {
+            continue;
+        }
+        let address = SocketAddr::from_abstract_name(name.as_bytes()).unwrap();
+        let Ok(listener) = UnixListener::bind_addr(&address) else {
+            continue;
+        };
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counted = connections.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                drop(stream);
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        return (format!(":{n}"), connections);
+    }
+    panic!("every X display number from :200 to :399 is in use");
 }
 
 /// `root/run`, private to this user as a session's runtime directory is.

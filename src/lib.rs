@@ -2,6 +2,7 @@
 //! clipboard and file drag-out. The UI lives in the `gpui` binary.
 
 pub mod capture;
+pub mod clipboard;
 pub mod config;
 pub mod dirs;
 pub mod dragcopy;

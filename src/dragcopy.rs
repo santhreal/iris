@@ -1,10 +1,13 @@
 //! Files out of iris: drag-out and file-list copy, one implementation
-//! per platform behind these functions. X11 speaks XDnD and serves
-//! `text/uri-list`; Windows uses OLE drag and `CF_HDROP`; macOS uses an
-//! `NSDraggingSession` and `NSURL`s on the pasteboard.
+//! per platform behind these functions. X11 speaks XDnD; Windows uses
+//! OLE drag and `CF_HDROP`; macOS uses an `NSDraggingSession` and
+//! `NSURL`s on the pasteboard. Linux copies a `text/uri-list` through
+//! the process's clipboard ([`crate::clipboard`]), on X11 and Wayland.
 
 use std::path::PathBuf;
 
+#[cfg(test)]
+mod tests;
 #[cfg(target_os = "linux")]
 mod x11;
 
@@ -12,12 +15,12 @@ mod x11;
 mod macos;
 #[cfg(any(windows, test))]
 mod windows;
+#[cfg(target_os = "linux")]
+use crate::clipboard::set_file_list as copy_abs_paths;
 #[cfg(target_os = "macos")]
 use macos::copy_abs_paths;
 #[cfg(windows)]
 use windows::copy_abs_paths;
-#[cfg(target_os = "linux")]
-use x11::copy_abs_paths;
 
 /// Thumbnail carried under the pointer during a drag. On X11 it is an
 /// override-redirect window with a rounded shape mask, moved at poll
@@ -46,6 +49,26 @@ pub fn uri_encode_path(path: &str) -> String {
         }
     }
     out
+}
+
+/// The path a percent-encoded file-URI path component names, the
+/// inverse of [`uri_encode_path`]. A `%` that starts no two-digit hex
+/// escape stays as it is.
+pub fn uri_decode_path(encoded: &str) -> PathBuf {
+    let bytes = encoded.as_bytes();
+    let hex = |at: usize| bytes.get(at).and_then(|&b| (b as char).to_digit(16));
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if let (b'%', Some(high), Some(low)) = (bytes[i], hex(i + 1), hex(i + 2)) {
+            out.push(((high << 4) | low) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    PathBuf::from(String::from_utf8_lossy(&out).into_owned())
 }
 
 /// Linux: an XDnD drag on X11, imaged with `icon`.
@@ -84,28 +107,6 @@ pub fn start_file_drag_from_view(
         .map(|p| absolute_existing(p))
         .collect::<Result<Vec<_>, _>>()?;
     macos::drag_abs_paths(ns_view, &abs)
-}
-
-/// Shared clipboard image set: used by the capture pipeline's
-/// process-global clipboard owner.
-pub fn clipboard_set_image(
-    cb: &mut arboard::Clipboard,
-    path: &std::path::Path,
-) -> Result<(), String> {
-    let img = image::open(path)
-        .map_err(|e| format!("cannot open {}: {e}", path.display()))?
-        .to_rgba8();
-    cb.set_image(arboard::ImageData {
-        width: img.width() as usize,
-        height: img.height() as usize,
-        bytes: std::borrow::Cow::Borrowed(img.as_raw()),
-    })
-    .map_err(|e| format!("clipboard set_image: {e}"))
-}
-
-pub fn clipboard_set_text(cb: &mut arboard::Clipboard, text: &str) -> Result<(), String> {
-    cb.set_text(text)
-        .map_err(|e| format!("clipboard set_text: {e}"))
 }
 
 /// Copy files to the clipboard in the platform's file-list format:

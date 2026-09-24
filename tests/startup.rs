@@ -56,14 +56,11 @@ mod daemon;
 mod x11;
 
 use std::ffi::OsString;
-use std::os::linux::net::SocketAddrExt as _;
-use std::os::unix::net::{SocketAddr, UnixListener};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use daemon::{enabled, runtime_dir, sway, xvfb, Daemon};
+use daemon::{counted_x_display, enabled, runtime_dir, sway, xvfb, Daemon};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
@@ -180,35 +177,6 @@ fn a_daemon_on_a_wayland_session_leaves_its_x_display_alone() {
         "the daemon connected to DISPLAY={display} on a Wayland session; daemon log:\n{}",
         daemon.log()
     );
-}
-
-/// An X display name no server uses, and the number of connections made
-/// to it. An X client on Linux connects to display `:N` through the
-/// abstract socket `/tmp/.X11-unix/XN` first, which names no file; a
-/// thread accepts each connection there, counts it, and closes it.
-fn counted_x_display() -> (String, Arc<AtomicUsize>) {
-    for n in 200..400 {
-        let name = format!("/tmp/.X11-unix/X{n}");
-        // A server listening on the path would answer a client that
-        // found no abstract socket.
-        if std::path::Path::new(&name).exists() {
-            continue;
-        }
-        let address = SocketAddr::from_abstract_name(name.as_bytes()).unwrap();
-        let Ok(listener) = UnixListener::bind_addr(&address) else {
-            continue;
-        };
-        let connections = Arc::new(AtomicUsize::new(0));
-        let counted = connections.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                drop(stream);
-                counted.fetch_add(1, Ordering::SeqCst);
-            }
-        });
-        return (format!(":{n}"), connections);
-    }
-    panic!("every X display number from :200 to :399 is in use");
 }
 
 /// tests/fixtures/display_driver.rs built into a shared library, the

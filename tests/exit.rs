@@ -36,6 +36,8 @@
 
 #![cfg(target_os = "linux")]
 
+// The other test files use the rest of the harness.
+#[allow(dead_code)]
 #[path = "support/daemon.rs"]
 mod daemon;
 #[path = "exit/recording.rs"]

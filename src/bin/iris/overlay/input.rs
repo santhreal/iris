@@ -388,14 +388,19 @@ impl Overlay {
                 return;
             }
         }
-        // 'c' copies the loupe's center hex while dragging.
+        // 'c' copies the loupe's center hex while dragging. The set waits
+        // on the display server, so it runs off the UI thread.
         if key == "c" {
             if let Some((_, info)) = &self.loupe {
                 if let Some(hex) = info.split('#').nth(1) {
                     let text = format!("#{hex}");
-                    let _ = pipeline::with_clipboard(|c| {
-                        let _ = iris_lib::dragcopy::clipboard_set_text(c, &text);
-                    });
+                    cx.background_executor()
+                        .spawn(async move {
+                            if let Err(e) = iris_lib::clipboard::set_text(&text) {
+                                crate::daemon::report_failure("Copy failed", e);
+                            }
+                        })
+                        .detach();
                 }
             }
             cx.notify();
