@@ -1,22 +1,26 @@
 //! WHY: the classes closed here are "a daemon no client can reach",
 //! "a client that stalls the daemon or runs part of a command line",
-//! "a quit that ends its wait while the daemon still runs", and "two
-//! daemons". The first: a listener that fails to bind on one platform,
-//! as every macOS bind did while the socket's mode was set with an
-//! fchmod macOS rejects, or a command line that arrives split or
-//! altered. The second: a client that connects and sends nothing, which
-//! held the accept thread and every later command line behind it, and a
-//! command line cut short at a limit, whose first part ran. The third:
-//! `--update` sent `--quit` and replaced the binary 5 s later whether or
-//! not the daemon had exited, and a daemon saving a recording runs
-//! longer. The fourth: processes that started at once each found no
-//! daemon and became one, and on Unix each bind replaced the socket file
-//! of the one before, so every daemon ran on. A claim must go to one
-//! taker at a time, to one of many that take it at once, and to the
-//! next once dropped. Each test tightens only the limit it reaches, on a
-//! name no daemon uses, wherever `cargo test` runs. Not covered: the
-//! daemon's own start, which needs a display (tests/instance.rs), a
-//! claim that ends with its process, and the update's own 60 s wait.
+//! "a quit that ends its wait while the daemon still runs", "two
+//! daemons", and "a forward that lags the bind". The first: a listener
+//! that fails to bind on one platform, as every macOS bind did while
+//! the socket's mode was set with an fchmod macOS rejects, or a command
+//! line that arrives split or altered. The second: a client that
+//! connects and sends nothing, which held the accept thread and every
+//! later command line behind it, and a command line cut short at a
+//! limit, whose first part ran. The third: `--update` sent `--quit` and
+//! replaced the binary 5 s later whether or not the daemon had exited,
+//! and a daemon saving a recording runs longer. The fourth: processes
+//! that started at once each found no daemon and became one, and on
+//! Unix each bind replaced the socket file of the one before, so every
+//! daemon ran on. A claim must go to one taker at a time, to one of
+//! many that take it at once, and to the next once dropped. The fifth:
+//! a client waiting for a starting daemon retried its connect every
+//! 50 ms, so a cold `iris --home` opened its window up to 50 ms after
+//! the daemon could have. Each test tightens only the limit it reaches,
+//! on a name no daemon uses, wherever `cargo test` runs. Not covered:
+//! the daemon's own start, which needs a display (tests/instance.rs), a
+//! claim that ends with its process, the update's own 60 s wait, and a
+//! lag under 10 ms.
 
 use std::prelude::v1::test;
 
@@ -298,4 +302,39 @@ fn of_claims_made_at_once_one_is_granted() {
             "round {round}: {granted} of {TAKERS} claims made at once were granted"
         );
     }
+}
+
+#[test]
+fn a_forward_lands_soon_after_a_starting_daemon_binds() {
+    // The bind comes 30 ms after the client starts to wait: a client that
+    // retried every 50 ms forwarded 20 ms after it.
+    const BIND_AFTER: Duration = Duration::from_millis(30);
+    const WITHIN: Duration = Duration::from_millis(10);
+    let mut lags: Vec<Duration> = (0..5)
+        .map(|_| {
+            let (name, _dir) = imp::scratch_name();
+            let daemon = {
+                let name = name.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(BIND_AFTER);
+                    let rx = listen(name, LIMITS).unwrap();
+                    (Instant::now(), rx)
+                })
+            };
+            assert!(forward_when_ready(&name, &argv(&["--home"])));
+            let forwarded = Instant::now();
+            let (bound, mut rx) = daemon.join().unwrap();
+            assert_eq!(
+                next_within(&mut rx, Duration::from_secs(5)),
+                argv(&["--home"])
+            );
+            forwarded.saturating_duration_since(bound)
+        })
+        .collect();
+    lags.sort();
+    let median = lags[lags.len() / 2];
+    assert!(
+        median <= WITHIN,
+        "a forward landed a median {median:?} after the bind: {lags:?}"
+    );
 }

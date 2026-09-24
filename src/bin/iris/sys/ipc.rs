@@ -38,6 +38,12 @@ mod tests;
 /// socket.
 const READY_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// How often a client waiting for a starting daemon retries its connect.
+/// A connect to a name nothing listens on fails at once, so a short
+/// interval costs little, and the forward lands within one interval of
+/// the bind.
+const READY_POLL: Duration = Duration::from_millis(2);
+
 /// What one connection may cost the daemon.
 #[derive(Clone, Copy)]
 struct Limits {
@@ -186,8 +192,8 @@ fn spawn_daemon() -> bool {
 
 /// Forward `args` once the daemon that is starting binds the socket. It
 /// binds only after it has connected to the display and grabbed its
-/// hotkeys, so poll the connect for a few seconds rather than assume
-/// readiness.
+/// hotkeys, so retry the connect every `READY_POLL` for `READY_TIMEOUT`
+/// rather than assume readiness.
 fn forward_when_ready(name: &Name<'_>, args: &[String]) -> bool {
     let payload = args.join("\n");
     let deadline = Instant::now() + READY_TIMEOUT;
@@ -195,7 +201,7 @@ fn forward_when_ready(name: &Name<'_>, args: &[String]) -> bool {
         if let Ok(mut stream) = imp::connect(name.borrow()) {
             return stream.write_all(payload.as_bytes()).is_ok();
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(READY_POLL);
     }
     false
 }
