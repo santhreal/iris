@@ -192,6 +192,9 @@ fn a_still_source_sleeps_until_x_input_or_a_ring() {
 fn damage_faster_than_the_rate_grabs_at_the_rate_and_wakes_no_more() {
     let mut rig = rig(10, false);
     rig.until("the first frame", |r| r.grabs() == 1);
+    // The first frame starts the encoder, which can outlast the whole
+    // window under load: the rate counts from the drain after it.
+    rig.until("the encoder's start", |r| r.drained.load(Ordering::SeqCst));
     let t0 = Instant::now();
     let mut sent = 0;
     while t0.elapsed() < Duration::from_millis(600) {
