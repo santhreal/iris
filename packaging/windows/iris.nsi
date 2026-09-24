@@ -24,6 +24,9 @@
 ;
 ; Supported Parameters:
 ;   - /S             = Silent installation / uninstallation.
+;   - /RUN           = Start iris when the installation ends, whether it
+;                      succeeded or failed. `iris --update` starts the
+;                      installer with /S /RUN.
 ;   - /D=path        = Custom target directory (must be the last parameter).
 ; ==============================================================================
 
@@ -141,6 +144,44 @@ VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-x86_64-setup.exe"
 !insertmacro MUI_LANGUAGE "English"
 
 ; ------------------------------------------------------------------------------
+; Stopping iris
+; ------------------------------------------------------------------------------
+; Ask a running daemon to quit, then wait up to 30 seconds until no
+; process runs $INSTDIR\iris.exe: Windows denies write access to the
+; file of a running program. While iris.exe stays in use, a message box
+; offers Retry, which waits again, and Cancel, which aborts. A silent
+; run aborts.
+!macro StopIris
+    ${If} ${FileExists} "$INSTDIR\iris.exe"
+        DetailPrint "Stopping ${APP_NAME}..."
+        ExecWait '"$INSTDIR\iris.exe" --quit'
+        ${Do}
+            StrCpy $R1 0
+            ${Do}
+                ClearErrors
+                FileOpen $R0 "$INSTDIR\iris.exe" a
+                ${IfNot} ${Errors}
+                    FileClose $R0
+                    StrCpy $R1 "free"
+                    ${Break}
+                ${EndIf}
+                IntOp $R1 $R1 + 1
+                ${If} $R1 >= 300
+                    ${Break}
+                ${EndIf}
+                Sleep 100
+            ${Loop}
+            ${If} $R1 == "free"
+                ${Break}
+            ${EndIf}
+            ${IfNot} ${Cmd} `MessageBox MB_RETRYCANCEL|MB_ICONSTOP "$INSTDIR\iris.exe is in use. Quit iris, then click Retry." /SD IDCANCEL IDRETRY`
+                Abort
+            ${EndIf}
+        ${Loop}
+    ${EndIf}
+!macroend
+
+; ------------------------------------------------------------------------------
 ; Installer Initialization
 ; ------------------------------------------------------------------------------
 Function .onInit
@@ -150,16 +191,27 @@ Function .onInit
     ${EndIf}
 FunctionEnd
 
+; With /RUN, start $INSTDIR\iris.exe: the new one after a successful
+; installation, the one found in place after a failed one.
+Function StartIfRequested
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "/RUN" $R1
+    ${IfNot} ${Errors}
+        Exec '"$INSTDIR\iris.exe"'
+    ${EndIf}
+FunctionEnd
+
+Function .onInstFailed
+    Call StartIfRequested
+FunctionEnd
+
 ; ------------------------------------------------------------------------------
 ; Installation Section
 ; ------------------------------------------------------------------------------
 Section "Install" SecInstall
-    ; 1. Gracefully stop any running daemon instance before replacing binaries
-    ${If} ${FileExists} "$INSTDIR\iris.exe"
-        DetailPrint "Stopping existing instance of ${APP_NAME}..."
-        ExecWait '"$INSTDIR\iris.exe" --quit'
-        Sleep 1000
-    ${EndIf}
+    ; 1. Stop a running iris before replacing its executable
+    !insertmacro StopIris
 
     ; 2. Create destination directory and copy files
     SetOutPath "$INSTDIR"
@@ -202,18 +254,17 @@ Section "Install" SecInstall
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
     IntFmt $0 "0x%08X" $0
     WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" $0
+
+    ; 8. /RUN: start the installed iris
+    Call StartIfRequested
 SectionEnd
 
 ; ------------------------------------------------------------------------------
 ; Uninstallation Section
 ; ------------------------------------------------------------------------------
 Section "Uninstall"
-    ; 1. Gracefully stop any running daemon instance before deleting files
-    ${If} ${FileExists} "$INSTDIR\iris.exe"
-        DetailPrint "Stopping existing instance of ${APP_NAME}..."
-        ExecWait '"$INSTDIR\iris.exe" --quit'
-        Sleep 1000
-    ${EndIf}
+    ; 1. Stop a running iris before deleting its executable
+    !insertmacro StopIris
 
     ; 2. Remove autostart entry from HKCU\...\Run
     DetailPrint "Removing login autostart entry..."

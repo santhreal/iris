@@ -15,14 +15,14 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 | **Recording Chip** | Supported (Positioned by XID; outside frame) | Disabled | Supported (`SetWindowDisplayAffinity`) | Supported (`NSWindowSharingNone`) |
 | **Global Hotkeys** | X11 key grabs (`xcb_grab_key`) | Compositor keybindings via IPC | Win32 `RegisterHotKey` | Carbon `RegisterEventHotKey` |
 | **System Tray** | StatusNotifierItem (`ksni`) | StatusNotifierItem (`ksni`) | Win32 `Shell_NotifyIconW` | AppKit `NSStatusItem` |
-| **Single-Instance IPC** | Unix socket (`$XDG_RUNTIME_DIR/iris.sock`) | Unix socket (`$XDG_RUNTIME_DIR/iris.sock`) | Named pipe (`\\.\pipe\iris`) | Unix socket (`$XDG_RUNTIME_DIR/iris.sock` or `$TMPDIR/iris.sock`) |
+| **Single-Instance IPC** | Unix socket (`$XDG_RUNTIME_DIR/iris.sock`) | Unix socket (`$XDG_RUNTIME_DIR/iris.sock`) | Named pipe (`\\.\pipe\iris-<SID>`) | Unix socket (`$XDG_RUNTIME_DIR/iris.sock` or `$TMPDIR/iris.sock`) |
 | **Clipboard** | `arboard` (images); X11 window (`text/uri-list`) | `arboard` (images); file list unsupported | `arboard` (images); `CF_HDROP` (files) | `arboard` (images); `NSPasteboard` `NSURL` (files) |
 | **File Drag-Out** | XDND protocol via private window | Unsupported | Win32 `SHDoDragDrop` (OLE) | AppKit `NSDraggingSession` |
 | **Reveal in Folder** | DBus `org.freedesktop.FileManager1.ShowItems` | DBus `org.freedesktop.FileManager1.ShowItems` | Win32 `SHOpenFolderAndSelectItems` | Command `/usr/bin/open -R` |
 | **Shutter Sound** | `pw-play` / `paplay` / `canberra-gtk-play` | `pw-play` / `paplay` / `canberra-gtk-play` | Win32 `PlaySoundW` (synthesized WAV) | Command `/usr/bin/afplay` |
 | **Window Move and Resize** | Title bar and edge strips; `_NET_WM_MOVERESIZE`, or the window follows the pointer on XInput 2.1 raw events | Title bar and edge strips; `xdg_toplevel.move` / `xdg_toplevel.resize` | `WM_NCLBUTTONDOWN(HTCAPTION)` move; frame hit test (`WM_NCHITTEST`) resize | `performWindowDragWithEvent:` move; AppKit frame resize |
 | **Window Activation** | `_NET_ACTIVE_WINDOW` request and `SetInputFocus` | `xdg_activation_v1` token; the compositor's focus policy applies | `ShowWindowAsync(SW_RESTORE)` when minimized, then `SetForegroundWindow` | `makeKeyAndOrderFront:` |
-| **Update / Install** | AppImage overwrite via `$APPIMAGE` rename | AppImage overwrite via `$APPIMAGE` rename | Detached NSIS installer (`/S` silent) | DMG mount via `hdiutil`, replace `.app` |
+| **Update / Install** | AppImage overwrite via `$APPIMAGE` rename | AppImage overwrite via `$APPIMAGE` rename | Detached NSIS installer (`/S /RUN`) | DMG mount via `hdiutil`, replace `.app` |
 
 ## Linux (X11)
 
@@ -31,7 +31,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Recording**: Window recording redirects the target window via XComposite (`composite_redirect_window`) and captures its named pixmap via MIT-SHM. Red border strips (`#f7768e`) with empty XFixes input shapes outline the window. A tracking thread follows `ConfigureNotify` events to move the border strips and reposition the floating indicator chip by XID (`configure_window`). Region recording captures root window rectangles via MIT-SHM.
 - **Global Hotkeys**: Registers passive root key grabs via `grab_key` (`xcb_grab_key`) across modifier lock combinations.
 - **System Tray**: Registers a StatusNotifierItem interface using `ksni`.
-- **IPC Transport**: Binds a Unix domain socket at `$XDG_RUNTIME_DIR/iris.sock` (mode 0600, fallback `/tmp/iris.sock`) using `interprocess::local_socket`.
+- **IPC Transport**: Binds a Unix domain socket at `$XDG_RUNTIME_DIR/iris.sock` (fallback: the temporary directory) using `interprocess::local_socket`. When that directory admits other users, the socket is in its subdirectory `iris-<uid>` (mode 0700). See [Interprocess Communication Transport](cli.md#interprocess-communication-transport).
 - **Drag-Out and Clipboard**: Drag-out speaks the XDND protocol from a private 1x1 window tracking the pointer via `XQueryPointer`. File-path clipboard operations serve `text/uri-list` on the X11 `CLIPBOARD` selection. Image clipboard operations run through `arboard`.
 - **Reveal in Folder**: Calls DBus method `org.freedesktop.FileManager1.ShowItems` via `dbus-send`, falling back to `xdg-open`.
 - **Shutter Sound**: Executes `pw-play /usr/share/sounds/freedesktop/stereo/camera-shutter.oga`, falling back to `paplay`, then `canberra-gtk-play -i camera-shutter`.
@@ -48,7 +48,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **System Tray**: Registers a StatusNotifierItem interface using `ksni`.
 - **Window Identity**: Every iris window sets the `xdg_toplevel` app id `dev.iris.app`, the id of the desktop entry `dev.iris.app.desktop`. Titles are the same as on X11. A window rule selects one iris window by title, for example in sway: `for_window [app_id="dev.iris.app" title="^Pin - iris$"] sticky enable`.
 - **Window Activation**: A second open of the home, library, settings, or editor window requests an `xdg_activation_v1` token and activates the open window with it. The compositor's focus policy applies to the request: sway, by default (`focus_on_window_activation urgent`), marks the window urgent instead of focusing it.
-- **IPC Transport**: Binds a Unix domain socket at `$XDG_RUNTIME_DIR/iris.sock` (mode 0600).
+- **IPC Transport**: Binds a Unix domain socket at `$XDG_RUNTIME_DIR/iris.sock`, as on X11.
 - **Drag-Out and Clipboard**: File drag-out and file-list clipboard copies are unsupported. Image clipboard operations run through `arboard`.
 - **Reveal in Folder**: Calls DBus method `org.freedesktop.FileManager1.ShowItems` via `dbus-send`, falling back to `xdg-open`.
 - **Shutter Sound**: Executes `pw-play /usr/share/sounds/freedesktop/stereo/camera-shutter.oga`, `paplay`, or `canberra-gtk-play`.
@@ -64,11 +64,11 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Indicator Chip**: Sets `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` on the window handle so GDI, `gdigrab`, and Desktop Window Manager exclude the chip from captures.
 - **Global Hotkeys**: Registers system-wide shortcut chords via Win32 `RegisterHotKey` on a dedicated thread pumping `GetMessageW` and handling `WM_HOTKEY`. Settings reload uses `WM_APP + 1`.
 - **System Tray**: Creates a notification icon via `Shell_NotifyIconW` associated with an `HWND_MESSAGE` window.
-- **IPC Transport**: Binds a Windows named pipe at `\\.\pipe\iris` using `interprocess::local_socket`.
+- **IPC Transport**: Binds the named pipe `\\.\pipe\iris-<SID>`, where `<SID>` is the account's security identifier, using `interprocess::local_socket`. The pipe's security descriptor, `O:<SID>D:P(A;;GA;;;<SID>)`, sets the account as owner and grants access to that account alone. A client reads the pipe's owner with `GetSecurityInfo` and writes nothing to a pipe another account owns. See [Interprocess Communication Transport](cli.md#interprocess-communication-transport).
 - **Drag-Out and Clipboard**: File drag-out executes on an STA thread. `SHCreateShellItemArrayFromIDLists` and `IShellItemArray::BindToHandler(BHID_DataObject)` build the shell's data object for the files, which holds `CF_HDROP`, the shell ID list array, and file descriptors, and `SHDoDragDrop` (`DROPEFFECT_COPY`) runs the drag. File-path clipboard copy writes `CF_HDROP` payloads (`DROPFILES`) via `OpenClipboard` and `SetClipboardData`. Image clipboard operations run through `arboard`.
 - **Reveal in Folder**: Calls Win32 Shell API `SHOpenFolderAndSelectItems` with `ILCreateFromPathW`, falling back to `explorer.exe`.
 - **Shutter Sound**: Plays an in-memory synthesized WAV buffer using Win32 `PlaySoundW` (`SND_MEMORY | SND_ASYNC | SND_NODEFAULT | SND_SYSTEM`).
-- **Update**: Spawns a detached `cmd.exe` process that executes the NSIS installer `windows-x86_64-setup.exe` in silent mode (`/S`).
+- **Update**: Starts the NSIS installer `windows-x86_64-setup.exe` with `/S /RUN` through `CreateProcessW` with `DETACHED_PROCESS` and `bInheritHandles` FALSE, then exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris.
 
 ## macOS
 
@@ -79,7 +79,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Global Hotkeys**: Registers shortcut chords via Carbon `RegisterEventHotKey` and installs an event handler with `InstallEventHandler` for `kEventClassApplication` / `kEventHotKeyPressed` on `GetApplicationEventTarget()`. Does not require Accessibility permissions.
 - **System Tray**: Creates an `NSStatusItem` in the macOS menu bar with an `NSMenu`.
 - **Reopen**: Opening iris.app while the daemon runs starts no second process. AppKit sends the running daemon `applicationShouldHandleReopen:hasVisibleWindows:`, and with no iris window visible the daemon opens the home window.
-- **IPC Transport**: Binds a Unix domain socket under `$XDG_RUNTIME_DIR/iris.sock` or `$TMPDIR/iris.sock` (mode 0600) using `interprocess::local_socket`.
+- **IPC Transport**: Binds a Unix domain socket at `$XDG_RUNTIME_DIR/iris.sock`, or at `$TMPDIR/iris.sock` when `$XDG_RUNTIME_DIR` is unset, using `interprocess::local_socket`. When that directory admits other users, the socket is in its subdirectory `iris-<uid>` (mode 0700).
 - **Drag-Out and Clipboard**: File drag-out initiates `beginDraggingSessionWithItems:event:source:` on the window content `NSView` using `NSDraggingItem` and `NSDraggingSource` (`NSDragOperationCopy`). File-path clipboard copy writes `NSURL` file objects to `NSPasteboard` (`writeObjects:`). Image clipboard operations run through `arboard`.
 - **Reveal in Folder**: Executes `/usr/bin/open -R <path>`, falling back to `/usr/bin/open <folder>`.
 - **Shutter Sound**: Plays `/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif` (fallback `Grab.aif`) using `/usr/bin/afplay`.

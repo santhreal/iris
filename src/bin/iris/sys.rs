@@ -9,14 +9,17 @@
 //! no-op.
 //!
 //! `ipc` is fully cross-platform (interprocess local sockets map to
-//! Unix domain sockets on Unix and named pipes on Windows). `alloc`
-//! sets the glibc allocator policy and `console` attaches a Windows
-//! command line to its terminal; both are empty elsewhere. `hotkeys`,
-//! `install`, `record`, `reveal`, `sound`, `tray`, and `window` have a
-//! per-OS implementation each.
+//! Unix domain sockets on Unix and named pipes on Windows); only the
+//! socket's name is per OS. `detach` starts the daemon so that it
+//! holds none of the caller's streams. `alloc` sets the glibc allocator
+//! policy and `console` attaches a Windows command line to its
+//! terminal; both are empty elsewhere. `hotkeys`, `install`, `record`,
+//! `reveal`, `sound`, `tray`, and `window` have a per-OS implementation
+//! each.
 
 pub mod alloc;
 pub mod console;
+pub mod detach;
 pub mod ipc;
 
 pub mod hotkeys;

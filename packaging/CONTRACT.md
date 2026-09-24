@@ -50,7 +50,8 @@ deviate without updating this file and every consumer.
 ## Update mechanism
 - `iris --check-update`: GET latest release, compare semver to current.
 - `iris --update`: download the platform asset, apply it, restart the
-  daemon. Windows runs the NSIS installer silent (`/S`); macOS mounts
+  daemon. Windows starts the NSIS installer with `/S /RUN`: it waits
+  for iris.exe to be free, replaces it, and starts iris; macOS mounts
   the DMG and swaps the .app; Linux replaces the AppImage. A deb or
   rpm install fails before the download and leaves the daemon
   running: the package manager updates it.

@@ -118,7 +118,7 @@ jobs:
         run: |
           cargo build --locked --release --bin iris
           bash packaging/windows/build_installer.sh --binary target/release/iris.exe --out dist
-      - name: Install, run, and uninstall
+      - name: Install, upgrade over a running daemon, and uninstall
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
@@ -147,6 +147,41 @@ jobs:
           if ((Get-ItemProperty $uninstall).DisplayVersion -ne $version) { throw 'Uninstall DisplayVersion' }
           $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'iris.lnk'
           if (-not (Test-Path $lnk)) { throw "setup did not create $lnk" }
+          # Upgrade over a running daemon with the options `iris --update`
+          # passes: the installer asks the daemon to quit, waits while a
+          # second process holds iris.exe open, replaces it, and starts
+          # iris (/RUN). Start-Process -Wait would also wait for that
+          # iris, a descendant of the installer.
+          function Wait-Until([scriptblock]$cond, [string]$what) {
+            $deadline = (Get-Date).AddSeconds(30)
+            while (-not (& $cond)) {
+              if ((Get-Date) -gt $deadline) { throw "timed out waiting for $what" }
+              Start-Sleep -Milliseconds 200
+            }
+          }
+          # The daemon's pipe holds the account's SID (docs/cli.md).
+          $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          $pipe = { [IO.Directory]::GetFiles('\\.\pipe\') -contains "\\.\pipe\iris-$sid" }
+          $irises = { @(Get-CimInstance Win32_Process -Filter "Name='iris.exe'" | Where-Object ExecutablePath -eq "$dir\iris.exe") }
+          $daemon = Start-Process -PassThru -FilePath "$dir\iris.exe"
+          $null = $daemon.Handle
+          Wait-Until $pipe 'the daemon pipe'
+          $held = Join-Path $env:RUNNER_TEMP 'iris-held'
+          $hold = "`$f = [IO.File]::Open('$dir\iris.exe', 'Open', 'Read', 'Read'); New-Item '$held' | Out-Null; Start-Sleep 5; `$f.Close()"
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
+          Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
+          Wait-Until { Test-Path $held } 'the process holding iris.exe'
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $upgrade = Start-Process -PassThru -FilePath $setup -ArgumentList '/S', '/RUN'
+          $null = $upgrade.Handle
+          if (-not $upgrade.WaitForExit(120000)) { throw 'the upgrade ran over 120 s' }
+          $took = $clock.ElapsedMilliseconds
+          if ($upgrade.ExitCode -ne 0) { throw "upgrade exit code $($upgrade.ExitCode) after $took ms" }
+          if ($took -lt 4000) { throw "the upgrade took $took ms: it did not wait for iris.exe" }
+          if (-not $daemon.HasExited) { throw 'the daemon runs after the upgrade' }
+          Wait-Until $pipe 'the pipe of the iris /RUN started'
+          $after = @(& $irises)
+          if ($after.Count -ne 1 -or $after[0].ProcessId -eq $daemon.Id) { throw "iris processes after the upgrade: $($after.ProcessId)" }
           # The uninstaller runs from a copy in %TEMP% and returns at once.
           Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S'
           $deadline = (Get-Date).AddSeconds(60)
@@ -155,6 +190,8 @@ jobs:
           if (Test-Path $lnk) { throw "$lnk remains after uninstall" }
           if ((Get-Item $run).Property -contains 'iris') { throw 'Run value remains after uninstall' }
           if (Test-Path $uninstall) { throw 'Uninstall key remains after uninstall' }
+          if (@(& $irises).Count) { throw 'iris runs after uninstall' }
+          if (& $pipe) { throw 'the daemon pipe remains after uninstall' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: iris-windows-setup

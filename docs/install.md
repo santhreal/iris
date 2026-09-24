@@ -30,6 +30,14 @@ For unattended installation, append the `/S` flag:
 iris-<ver>-windows-x86_64-setup.exe /S
 ```
 
+To start iris when the installation ends, append `/RUN`. The installer starts iris whether the installation succeeded or failed:
+
+```cmd
+iris-<ver>-windows-x86_64-setup.exe /S /RUN
+```
+
+When iris is installed and running, the installer sends it `--quit` and waits up to 30 seconds for every process that runs `iris.exe` to exit before it replaces the file. When `iris.exe` stays in use, the installer shows a message box with **Retry** and **Cancel**. **Cancel** stops the installation, and a silent installation stops without the message box and exits with status 2.
+
 The installer runs per-user without administrative privileges:
 - Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `iris.ico`, `uninstall.exe`).
 - Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe --home`.
@@ -42,7 +50,7 @@ To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
 "%LOCALAPPDATA%\Programs\iris\uninstall.exe"
 ```
 
-The uninstaller sends `--quit` to terminate any running iris daemon, removes installed files and shortcuts, deletes the autostart registry value, and removes application registry entries.
+The uninstaller sends `--quit` to a running iris daemon and waits for `iris.exe` in the same way, then removes installed files and shortcuts, deletes the autostart registry value, and removes application registry entries.
 
 ## macOS
 
@@ -234,7 +242,7 @@ iris --update
 `--update` downloads the matching platform asset, sends `--quit` to any running daemon, waits up to 5 seconds for socket release, applies the replacement file, and relaunches the executable.
 
 Platform update mechanisms:
-- Windows: Downloads `windows-x86_64-setup.exe`. Spawns a detached process running `cmd.exe /C timeout /t 2 /nobreak >nul & "<file>" /S & start "" "<exe>"`, then terminates.
+- Windows: Downloads `windows-x86_64-setup.exe`, starts it with `/S /RUN` as a detached process that receives no handle of the `iris --update` process, and exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris. When the installation fails, it starts the `iris.exe` already in place.
 - macOS: Downloads `macos-universal.dmg`. Attaches disk image with `hdiutil attach -nobrowse -readonly`, deletes `/Applications/iris.app`, copies new bundle via `cp -R`, detaches volume with `hdiutil detach`, and relaunches `/Applications/iris.app/Contents/MacOS/iris`.
 - Linux (AppImage): Overwrites the file defined in `$APPIMAGE` via a temporary sibling file and atomic rename, then launches the new file.
 - Linux (deb/rpm): When a newer release exists, `iris --update` outside an AppImage prints `update: not an AppImage install; update via apt/dnf` and exits with status 1 before downloading anything. The running daemon keeps running.

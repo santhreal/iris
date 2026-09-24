@@ -7,8 +7,8 @@
 //! the download to `sys::install`, which swaps it in.
 //!
 //! Update strategy per OS:
-//!   Windows — run the NSIS installer silent (`/S`), which overwrites
-//!             the exe and re-registers autostart; then relaunch.
+//!   Windows — start the NSIS installer with `/S /RUN`: it waits for
+//!             iris.exe to be free, replaces it, and starts iris.
 //!   macOS   — mount the DMG, replace `/Applications/iris.app`, relaunch.
 //!   Linux   — AppImage: overwrite the file `$APPIMAGE` points at and
 //!             relaunch. A deb/rpm install is owned by the package

@@ -74,12 +74,16 @@ libloading = "0.8"
 [target.'cfg(windows)'.dependencies]
 # Win32 for monitor enumeration, the foreground-window rect, region
 # grabs, CF_HDROP file copy, the shutter sound, the registry PATH
-# searched for ffmpeg and tesseract, and the parent console a command
-# line prints to. windows-sys is already in the tree through gpui.
+# searched for ffmpeg and tesseract, the parent console a command line
+# prints to, the process starts that pass the child no handle, and the
+# account SID that names and secures the daemon's pipe. windows-sys is
+# already in the tree through gpui.
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_System_Console",
     "Win32_System_DataExchange",
     "Win32_System_Environment",
@@ -94,6 +98,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# The UTF-16 security descriptor string interprocess takes for the
+# daemon's pipe. Already in the tree through interprocess.
+widestring = "1"
 
 [target.'cfg(windows)'.build-dependencies]
 # Embeds packaging/windows/iris.rc (icon + version info) into iris.exe.

@@ -38,8 +38,10 @@ The process model differentiates between client commands, daemon processes, and 
 ### Interprocess Communication Transport
 
 IPC uses a local socket implementation:
-- Linux and macOS: Unix domain socket at `$XDG_RUNTIME_DIR/iris.sock`. If `$XDG_RUNTIME_DIR` is unset, the socket path is `<temp_dir>/iris.sock`. Socket file permissions are set to `0600`.
-- Windows: named pipe at `\\.\pipe\iris`.
+- Linux and macOS: Unix domain socket `iris.sock` in `$XDG_RUNTIME_DIR`, or in the temporary directory when `$XDG_RUNTIME_DIR` is unset or empty. When another user owns that directory or its mode admits other users, as with `/tmp`, the socket is in its subdirectory `iris-<uid>`, which iris creates with mode `0700`. The directory controls access to the socket. When `iris-<uid>` is a symbolic link, is owned by another user, or has a mode that admits other users, the command prints `iris: <dir> is not a directory of uid <uid> with mode 0700; remove it` to standard error and exits with status 1.
+- Windows: named pipe `\\.\pipe\iris-<SID>`, where `<SID>` is the security identifier of the account, such as `S-1-5-21-…`. The pipe's owner is that account, and its access control list grants access to that account alone. A client writes nothing to a pipe another account owns. `--quit`, `--record-pause`, and `--record-mic` then act as with no daemon running; any other invocation prints `iris: connect to the daemon: the pipe belongs to <owner SID>, not to this account, <SID>` to standard error and exits with status 1.
+
+The daemon reads each connection on a thread of its own, up to 16 at once, and closes a connection past that without reading it. A command line longer than 1 MiB, or still arriving 5 seconds after the daemon accepts the connection, is dropped, and the daemon runs none of it.
 
 ### Invocations Without Running Daemon
 
@@ -48,7 +50,7 @@ IPC uses a local socket implementation:
 2. Live-daemon-only commands (`--quit`, `--record-pause`, `--record-mic`):
    The client attempts to connect to the socket and does not spawn a daemon. When no daemon answers, `--quit` exits with status 0; `--record-pause` and `--record-mic` print `iris: no iris daemon is running` to standard error and exit with status 1.
 3. Other flagged commands (`--capture`, `--library`, `--settings`, etc.):
-   The client spawns a detached background daemon process with standard streams redirected to null. The client polls the IPC socket for up to 8 seconds. Once the socket accepts connections, the client transmits the options, each `<file>` as an absolute path, separated by newlines and exits with status 0. If the daemon process fails to spawn, the client runs the daemon and executes the commands in the foreground. If the spawned daemon does not bind the socket within 8 seconds, the client prints `iris: the daemon did not start within 8s; see <log file>` to standard error and exits with status 1.
+   The client starts a detached daemon process. On Linux and macOS the daemon's standard streams are `/dev/null` and it runs in a process group of its own. On Windows the daemon has no console and inherits no handle from the client. A caller that reads the client's output to its end returns when the client exits. The client polls the IPC socket for up to 8 seconds. Once the socket accepts connections, the client transmits the options, each `<file>` as an absolute path, separated by newlines and exits with status 0. If the daemon process fails to start, the client runs the daemon and executes the commands in the foreground. If the spawned daemon does not bind the socket within 8 seconds, the client prints `iris: the daemon did not start within 8s; see <log file>` to standard error and exits with status 1.
 
 ### Invocations With Running Daemon
 
@@ -63,7 +65,7 @@ IPC uses a local socket implementation:
 - `--help` prints the option list and exits with status 0.
 - `--version` prints `iris <version>` to standard output and exits with status 0.
 - `--check-update` queries `https://api.github.com/repos/santhreal/iris/releases/latest`. If a newer release exists, it prints `iris: update available: <version>` and exits with status 0. If the binary is current, it prints `iris: up to date (<version>)` and exits with status 0. On network or parsing failure, it prints the error to standard error and exits with status 1.
-- `--update` checks for a newer release. If current, it prints `iris: up to date (<version>)` and exits with status 0. If a newer release exists, it downloads the platform asset to the `update` directory under the [cache directory](configuration.md), sends `--quit` to any running daemon, waits up to 5 seconds for the socket to release, applies the replacement file, and relaunches the executable. On failure, it prints the error to standard error and exits with status 1.
+- `--update` checks for a newer release. If current, it prints `iris: up to date (<version>)` and exits with status 0. If a newer release exists, it downloads the platform asset to the `update` directory under the [cache directory](configuration.md), sends `--quit` to any running daemon, waits up to 5 seconds for the socket to release, applies the replacement file, and relaunches the executable. On Windows it starts the installer and exits with status 0, and the installer replaces the file and starts iris ([Installation](install.md#updates)). On failure, it prints the error to standard error and exits with status 1.
 
 A local command whose standard output cannot be written, such as a pipe whose reader has exited, exits with status 1 and prints nothing to standard error.
 

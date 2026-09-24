@@ -33,12 +33,16 @@ pub fn ready() -> Result<(), String> {
     }
 }
 
-/// Spawn the new binary at `exe` and exit this process. The daemon is
+/// Start the new binary at `exe` and exit this process. The daemon is
 /// already stopped (see `update::apply`), so the fresh `iris` binds the
 /// socket and becomes the daemon rather than forwarding to a stale
-/// instance. Windows hands off to a detached installer helper instead.
+/// instance. It starts detached, as a client starts the daemon: closing
+/// the terminal `iris --update` ran in does not end it. On Windows the
+/// installer starts iris instead (`/RUN`).
 #[cfg(not(windows))]
 fn relaunch(exe: &Path) -> ! {
-    let _ = std::process::Command::new(exe).spawn();
+    if let Err(e) = crate::sys::detach::spawn(exe, &[]) {
+        iris_lib::ilog!("iris: start the updated daemon {}: {e}", exe.display());
+    }
     std::process::exit(0);
 }

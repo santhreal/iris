@@ -2855,6 +2855,7 @@ dependencies = [
  "tempfile",
  "toml 0.8.23",
  "ureq",
+ "widestring",
  "windows-sys 0.59.0",
  "x11rb",
 ]

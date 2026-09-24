@@ -195,6 +195,14 @@ impl Daemon {
         for sub in ["config", "run", "shots", "vids"] {
             std::fs::create_dir_all(dir.path().join(sub)).unwrap();
         }
+        // A session's runtime directory admits only its user, so the
+        // daemon binds `run/iris.sock` in it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let private = std::fs::Permissions::from_mode(0o700);
+            std::fs::set_permissions(dir.path().join("run"), private).unwrap();
+        }
         let quoted = |p: &Path| toml::Value::from(p.to_str().unwrap()).to_string();
         std::fs::write(
             dir.path().join("config").join("config.toml"),

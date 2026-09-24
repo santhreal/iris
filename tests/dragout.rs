@@ -8,7 +8,9 @@
 //! operation the folder rejects. The tests beside each implementation
 //! cover the payload with no pointer; this one moves the system pointer
 //! with synthetic input, so the drag runs as a press and a move by hand
-//! run it.
+//! run it. The client that starts the daemon must exit and close its
+//! output within `CLIENT`; a daemon that holds the output of the client
+//! that started it fails the test instead of stalling it.
 //!
 //! Runs only with `IRIS_DESKTOP_TEST` set: the test takes the pointer of
 //! the logged-in desktop and opens a file manager window, which a CI
@@ -19,9 +21,13 @@
 #![cfg(any(windows, target_os = "macos"))]
 
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
+
+/// How long a client has to exit and close its output.
+const CLIENT: Duration = Duration::from_secs(20);
 
 /// The toast window's title.
 const TOAST: &str = "Screenshot - iris";
@@ -145,18 +151,44 @@ impl Home {
         self.dir.path()
     }
 
-    /// `iris <args>`; a client with no daemon starts one.
+    /// `iris <args>`; a client with no daemon starts one. The client
+    /// exits and its output closes within `CLIENT`: a daemon that holds
+    /// the client's output keeps a caller that reads it to its end
+    /// waiting for as long as the daemon runs.
     fn iris(&self, args: &[&OsStr]) {
-        let out = Command::new(env!("CARGO_BIN_EXE_iris"))
-            .args(args)
+        let (mut output, writer) = std::io::pipe().unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_iris"));
+        cmd.args(args)
             .env("IRIS_HOME", self.path())
-            .output()
-            .unwrap();
+            .stdout(writer.try_clone().unwrap())
+            .stderr(writer);
+        let mut client = cmd.spawn().unwrap();
+        // The command holds this process's write ends.
+        drop(cmd);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let _ = output.read_to_end(&mut text);
+            let _ = tx.send(text);
+        });
+        let Ok(text) = rx.recv_timeout(CLIENT) else {
+            let exited = client.try_wait().unwrap().is_some();
+            let _ = client.kill();
+            panic!(
+                "iris {args:?}: {} {CLIENT:?}",
+                if exited {
+                    "exited, but a process it started held its output open for"
+                } else {
+                    "did not exit within"
+                }
+            );
+        };
+        let status = client.wait().unwrap();
         assert_eq!(
-            out.status.code(),
+            status.code(),
             Some(0),
             "iris {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
+            String::from_utf8_lossy(&text)
         );
     }
 
