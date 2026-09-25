@@ -38,10 +38,11 @@ mod tests;
 /// socket.
 const READY_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// How often a client waiting for a starting daemon retries its connect.
-/// A connect to a name nothing listens on fails at once, so a short
-/// interval costs little, and the forward lands within one interval of
-/// the bind.
+/// Longest wait between the connect tries of a client waiting for a
+/// starting daemon. A connect to a name nothing listens on fails at
+/// once, so a short interval costs little. Where `BindWait` sees the
+/// bind, the forward lands at the bind; elsewhere, within one interval
+/// of it.
 const READY_POLL: Duration = Duration::from_millis(2);
 
 /// What one connection may cost the daemon.
@@ -124,7 +125,7 @@ pub fn forward_if_running(args: &[String]) -> Result<Option<Claimed>, String> {
             return Ok(Some(claimed));
         }
     }
-    if forward_when_ready(&name, effective) {
+    if forward_when_ready(&name, &imp::bind_wait()?, effective) {
         return Ok(None);
     }
     Err(format!(
@@ -192,18 +193,22 @@ fn spawn_daemon() -> bool {
 
 /// Forward `args` once the daemon that is starting binds the socket. It
 /// binds only after it has connected to the display and grabbed its
-/// hotkeys, so retry the connect every `READY_POLL` for `READY_TIMEOUT`
-/// rather than assume readiness.
-fn forward_when_ready(name: &Name<'_>, args: &[String]) -> bool {
+/// hotkeys, so retry the connect for `READY_TIMEOUT` rather than assume
+/// readiness. Between tries `ready` ends its wait when the bind makes
+/// the socket, or after `READY_POLL` where it cannot see the bind.
+fn forward_when_ready(name: &Name<'_>, ready: &imp::BindWait, args: &[String]) -> bool {
     let payload = args.join("\n");
     let deadline = Instant::now() + READY_TIMEOUT;
-    while Instant::now() < deadline {
+    loop {
         if let Ok(mut stream) = imp::connect(name.borrow()) {
             return stream.write_all(payload.as_bytes()).is_ok();
         }
-        std::thread::sleep(READY_POLL);
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        ready.wait(left.min(READY_POLL));
     }
-    false
 }
 
 /// Bind the daemon's socket and spawn the accept thread. Each

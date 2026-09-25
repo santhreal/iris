@@ -94,6 +94,26 @@ pub(super) fn connect(name: Name<'_>) -> io::Result<LocalSocketStream> {
     Ok(stream)
 }
 
+/// A wait for a daemon to create its pipe: a timed sleep. The pipe
+/// namespace takes no change notification, and a Windows sleep ends on
+/// a high-resolution timer.
+pub(super) struct BindWait;
+
+impl BindWait {
+    pub(super) fn wait(&self, limit: std::time::Duration) {
+        std::thread::sleep(limit);
+    }
+}
+
+pub(super) fn bind_wait() -> Result<BindWait, String> {
+    Ok(BindWait)
+}
+
+#[cfg(test)]
+pub(super) fn scratch_bind_wait((): &()) -> BindWait {
+    BindWait
+}
+
 /// The string SID of the account this process runs as, read once.
 fn account() -> Result<String, String> {
     static SID: OnceLock<Result<String, String>> = OnceLock::new();

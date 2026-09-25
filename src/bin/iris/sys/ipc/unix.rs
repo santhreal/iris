@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 
 use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions, Name, ToFsName};
 
+mod bind_wait;
+pub(super) use bind_wait::BindWait;
+
 /// The daemon's claim: the lock file, locked.
 pub(super) type Claim = File;
 
@@ -78,6 +81,17 @@ pub(super) fn bind(name: Name<'static>) -> Result<LocalSocketListener, String> {
 /// directory that holds it, so the daemon that answers is this user's.
 pub(super) fn connect(name: Name<'_>) -> io::Result<LocalSocketStream> {
     LocalSocketStream::connect(name)
+}
+
+/// A wait that ends when a daemon binds the socket (see `BindWait`).
+pub(super) fn bind_wait() -> Result<BindWait, String> {
+    Ok(BindWait::new(&dir()?))
+}
+
+/// A `BindWait` on the directory of a `scratch_name` socket.
+#[cfg(test)]
+pub(super) fn scratch_bind_wait(guard: &tempfile::TempDir) -> BindWait {
+    BindWait::new(&socket_dir(guard.path()).unwrap())
 }
 
 /// The directory that holds the socket: `base` itself when only this

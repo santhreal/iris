@@ -16,11 +16,15 @@
 //! many that take it at once, and to the next once dropped. The fifth:
 //! a client waiting for a starting daemon retried its connect every
 //! 50 ms, so a cold `iris --home` opened its window up to 50 ms after
-//! the daemon could have. Each test tightens only the limit it reaches,
-//! on a name no daemon uses, wherever `cargo test` runs. Not covered:
-//! the daemon's own start, which needs a display (tests/instance.rs), a
-//! claim that ends with its process, the update's own 60 s wait, and a
-//! lag under 10 ms.
+//! the daemon could have, and a client that retried on a 2 ms sleep
+//! still forwarded a median 15 ms after the bind on a loaded macOS
+//! host, where the sleep overran. On Linux and macOS the wait ends at
+//! the bind itself. Each test tightens only the limit it reaches, on a
+//! name no daemon uses, wherever `cargo test` runs. Not covered: the
+//! daemon's own start, which needs a display (tests/instance.rs), a
+//! claim that ends with its process, the update's own 60 s wait, a lag
+//! under 10 ms, and a bind the directory watch misses, which the retry
+//! interval still bounds.
 
 use std::prelude::v1::test;
 
@@ -312,7 +316,8 @@ fn a_forward_lands_soon_after_a_starting_daemon_binds() {
     const WITHIN: Duration = Duration::from_millis(10);
     let mut lags: Vec<Duration> = (0..5)
         .map(|_| {
-            let (name, _dir) = imp::scratch_name();
+            let (name, dir) = imp::scratch_name();
+            let ready = imp::scratch_bind_wait(&dir);
             let daemon = {
                 let name = name.clone();
                 std::thread::spawn(move || {
@@ -321,7 +326,7 @@ fn a_forward_lands_soon_after_a_starting_daemon_binds() {
                     (Instant::now(), rx)
                 })
             };
-            assert!(forward_when_ready(&name, &argv(&["--home"])));
+            assert!(forward_when_ready(&name, &ready, &argv(&["--home"])));
             let forwarded = Instant::now();
             let (bound, mut rx) = daemon.join().unwrap();
             assert_eq!(
@@ -336,5 +341,42 @@ fn a_forward_lands_soon_after_a_starting_daemon_binds() {
     assert!(
         median <= WITHIN,
         "a forward landed a median {median:?} after the bind: {lags:?}"
+    );
+}
+
+/// The wait a client makes between its connect tries ends when the
+/// daemon binds, not when a timer that may overrun fires.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_bind_wait_ends_at_the_bind() {
+    const BIND_AFTER: Duration = Duration::from_millis(30);
+    let (name, dir) = imp::scratch_name();
+    let ready = imp::scratch_bind_wait(&dir);
+    let start = Instant::now();
+    let daemon = std::thread::spawn(move || {
+        std::thread::sleep(BIND_AFTER);
+        listen(name, LIMITS).unwrap()
+    });
+    ready.wait(Duration::from_secs(5));
+    let woke = start.elapsed();
+    let _rx = daemon.join().unwrap();
+    assert!(
+        (BIND_AFTER..Duration::from_secs(1)).contains(&woke),
+        "a wait for a bind 30 ms away ended after {woke:?}"
+    );
+}
+
+/// With no bind, the wait still ends at its limit.
+#[test]
+fn a_bind_wait_with_no_bind_ends_at_its_limit() {
+    const LIMIT: Duration = Duration::from_millis(40);
+    let (_name, dir) = imp::scratch_name();
+    let ready = imp::scratch_bind_wait(&dir);
+    let start = Instant::now();
+    ready.wait(LIMIT);
+    let waited = start.elapsed();
+    assert!(
+        (LIMIT..LIMIT + Duration::from_secs(1)).contains(&waited),
+        "a {LIMIT:?} wait with no bind ended after {waited:?}"
     );
 }
