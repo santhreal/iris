@@ -58,10 +58,26 @@ fn the_kernel_s_path_for_a_replaced_binary_resolves_to_the_new_file() {
         }
     }
     let mut child = child.expect("run the copy");
-    let staged = dir.path().join("sleep.new");
-    std::fs::copy("/bin/sleep", &staged).expect("copy sleep");
-    std::fs::rename(&staged, &bin).expect("rename over the running copy");
-    let exe = std::fs::read_link(format!("/proc/{}/exe", child.id()));
+    // The spawn returns once the child releases this process's memory
+    // in execve, and Linux does that before the child's exe link names
+    // the new binary: until then the link names this test binary.
+    let link = format!("/proc/{}/exe", child.id());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut execed = false;
+    while !execed && std::time::Instant::now() < deadline {
+        execed = std::fs::read_link(&link).is_ok_and(|exe| exe == bin);
+        if !execed {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    let exe = if execed {
+        let staged = dir.path().join("sleep.new");
+        std::fs::copy("/bin/sleep", &staged).expect("copy sleep");
+        std::fs::rename(&staged, &bin).expect("rename over the running copy");
+        std::fs::read_link(&link)
+    } else {
+        Err(std::io::Error::other("the child's exe link never named the copy within 5 s"))
+    };
     let _ = child.kill();
     let _ = child.wait();
     let exe = exe.expect("read the child's exe link");
