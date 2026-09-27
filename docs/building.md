@@ -56,7 +56,12 @@ bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
 
 `build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version the executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` runs `appimagetool` from `PATH`, from `--appimagetool <path>`, or downloads it to `.build-staging/`.
 
-`packaging/linux/check_installed.sh` starts an installed iris on a private Xvfb display, waits for the home window, and quits it.
+`packaging/linux/check_installed.sh` starts an installed iris on a private Xvfb display, waits for the home window, and quits it. With `--upgrade <command>`, it runs the command while the daemon runs, checks that the daemon still runs on the replaced binary, quits it with the upgraded iris, and starts the upgraded iris. To check an upgrade of an installed deb to a package of the same binary at a higher version:
+
+```sh
+bash packaging/linux/build_deb.sh --bin target/release/iris --version 0.1.0.1 --out dist/next
+bash packaging/linux/check_installed.sh --upgrade "sudo apt-get install -y ./dist/next/iris-0.1.0.1-linux-x86_64.deb"
+```
 
 ### Windows
 

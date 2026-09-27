@@ -217,18 +217,25 @@ jobs:
             libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
             libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal \
             rpm desktop-file-utils
+      # The packages in dist/next hold the same binary at a higher
+      # version, so installing one over the first is a package upgrade.
       - name: Build iris, the deb, the rpm, and the AppImage
         run: |
           cargo build --locked --release --bin iris
           bash packaging/linux/build_deb.sh --bin target/release/iris --out dist
           bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
           bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
+          next=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1).1
+          bash packaging/linux/build_deb.sh --bin target/release/iris --version "$next" --out dist/next --skip-sha
+          bash packaging/linux/build_rpm.sh --bin target/release/iris --version "$next" --out dist/next --skip-sha
       # Each package installs in a clean container without the packages
       # it recommends, so a library it does not depend on is missing
       # there: the deb on ubuntu:24.04, the rpm on fedora:42. In each,
       # check_installed.sh starts the daemon on Xvfb with the lavapipe
-      # Vulkan driver, waits for the home window, and quits it. The
-      # AppImage runs without FUSE.
+      # Vulkan driver and waits for the home window. The package from
+      # dist/next then upgrades the running install: the daemon runs on
+      # the replaced binary, exits on --quit from the upgraded one, and
+      # the upgraded iris starts. The AppImage runs without FUSE.
       - name: Install, run, and remove each package
         run: |
           set -euo pipefail
@@ -246,7 +253,9 @@ jobs:
             [ "$(iris --version)" = "iris $version" ]
             for f in $files; do dpkg -L iris | grep -qx "$f" || { echo "deb lacks $f"; exit 1; }; done
             apt-get install -y -qq --no-install-recommends xvfb x11-utils mesa-vulkan-drivers >/dev/null
-            bash /linux/check_installed.sh
+            bash /linux/check_installed.sh --upgrade \
+              "apt-get install -y -qq --no-install-recommends /pkg/next/iris-${version}.1-linux-x86_64.deb >/dev/null"
+            [ "$(dpkg-query -W -f="\${Version}" iris)" = "${version}.1" ]
             apt-get remove -y -qq iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '
@@ -255,7 +264,9 @@ jobs:
             [ "$(iris --version)" = "iris $version" ]
             for f in $files; do rpm -ql iris | grep -qx "$f" || { echo "rpm lacks $f"; exit 1; }; done
             dnf install -y -q --setopt=install_weak_deps=False xorg-x11-server-Xvfb xdpyinfo xwininfo mesa-vulkan-drivers >/dev/null
-            bash /linux/check_installed.sh
+            bash /linux/check_installed.sh --upgrade \
+              "dnf install -y -q --setopt=install_weak_deps=False /pkg/next/iris-${version}.1-linux-x86_64.rpm >/dev/null"
+            [ "$(rpm -q --qf "%{VERSION}" iris)" = "${version}.1" ]
             dnf remove -y -q iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '
