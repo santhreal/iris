@@ -1,6 +1,7 @@
 # Summary
 
 - [Installation](install.md)
+- [Usage](usage.md)
 - [Command-Line Interface](cli.md)
 - [Configuration](configuration.md)
 - [Screen Capture](capture.md)
