@@ -155,13 +155,14 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 
 Open the settings window by executing `iris --settings`, selecting **Settings** from the system tray menu, or clicking the gear button in the bottom-right corner of the home window. One settings window is open at a time: each of these raises and focuses the settings window when it is already open.
 
-The settings window contains six sections:
+The settings window contains seven sections:
 1. **Storage**: Configure screenshots directory, recordings directory, and filename template.
 2. **Capture**: Toggle screen flash, shutter sound, post-capture toast display, and automatic clipboard copy.
 3. **Toast**: Select click action, drag-to-export toggle, action buttons visibility, auto-dismiss duration (2s, 3s, 5s, 8s, 10s), and screen corner position.
 4. **Recording**: Configure frame rate, container format, MP4 encoder, and default microphone toggle.
 5. **Keyboard**: Record hotkeys for region capture, recording toggle, cancel action, and confirm action.
-6. **Updates**: Displays current version, a **Check for updates** button, and an **Install update** button once a check finds a newer release (see [Updates](install.md#updates)).
+6. **Startup**: Toggle **Start at login** (see [Start at Login](#start-at-login)).
+7. **Updates**: Displays current version, a **Check for updates** button, and an **Install update** button once a check finds a newer release (see [Updates](install.md#updates)).
 
 Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×600.
 
@@ -174,5 +175,22 @@ Clicking **Save**:
 2. Serializes the updated configuration and writes to `config.toml` via `Config::store`.
 3. Updates the in-memory configuration cache with the directories expanded.
 4. Re-registers global hotkeys in the running daemon.
+5. Writes or deletes the start-at-login entry when it differs from the **Start at login** toggle.
+
+When the configuration or the start-at-login entry fails to save, the other still saves, and the status line shows the first error.
 
 Clicking **Reset to defaults** restores default configuration values in the form. Restored values do not overwrite `config.toml` until **Save** is clicked.
+
+### Start at Login
+
+**Start at login** reads and writes this account's operating system entry that runs `iris --daemon` at login. `config.toml` holds no start-at-login setting. The toggle reads on only for an entry that starts the running iris; an entry that starts another copy of iris reads off, and **Save** points it at the running one.
+
+| Platform | Entry | On | Off |
+| --- | --- | --- | --- |
+| Linux | `$XDG_CONFIG_HOME/autostart/iris-autostart.desktop` | Writes an entry that runs this binary, or `$APPIMAGE` for an AppImage, with `--daemon` | Deletes the entry. When `/etc/xdg/autostart/iris-autostart.desktop` (any `$XDG_CONFIG_DIRS` directory) exists, writes an entry with `Hidden=true` that overrides it |
+| macOS | `~/Library/LaunchAgents/dev.iris.app.plist` | Writes a LaunchAgent that runs this binary with `--daemon` at load, in the GUI session | Deletes the LaunchAgent |
+| Windows | Value `iris` of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | Writes `"<path of iris.exe>" --daemon` | Deletes the value |
+
+On Linux, a package's `/etc/xdg/autostart` entry reads on for a deb or rpm install and off for an AppImage, which the package entry does not start. An entry with `Hidden=true` or `X-GNOME-Autostart-enabled=false` reads off. On Windows, a Run value that Task Manager's **Startup apps** list turned off reads off, and **Save** deletes Task Manager's setting when it writes or deletes the Run value.
+
+Changes apply at the next login. The toggle does not start or stop the running daemon.

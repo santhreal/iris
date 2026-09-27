@@ -5,8 +5,7 @@ use iris_lib::config::Config;
 
 use crate::theme;
 
-use super::{DropdownField, Field, Release, Settings};
-use crate::update::UpdateInfo;
+use super::{DropdownField, Field, Settings};
 
 const ROW_H: f32 = 38.0;
 const FIELD_W: f32 = 280.0;
@@ -116,11 +115,15 @@ impl Settings {
                 return;
             }
         }
-        self.status = Some(match self.cfg.store() {
-            Ok(()) => {
-                crate::daemon::notify_hotkeys_changed();
-                "saved".to_string()
-            }
+        // Each saves when the other fails; the pill shows the first
+        // error.
+        let stored = self
+            .cfg
+            .store()
+            .map(|()| crate::daemon::notify_hotkeys_changed());
+        let login = self.store_login();
+        self.status = Some(match stored.and(login) {
+            Ok(()) => "saved".to_string(),
             Err(e) => e,
         });
         cx.notify();
@@ -136,96 +139,6 @@ impl Settings {
     pub(super) fn reset_to_defaults(&mut self, cx: &mut Context<Self>) {
         self.reset_defaults_state();
         cx.notify();
-    }
-
-    /// Check GitHub for a newer release on a background thread and
-    /// report the result in the status pill. The network call never
-    /// touches the UI loop.
-    pub(super) fn check_updates(&mut self, cx: &mut Context<Self>) {
-        self.status = Some("checking…".to_string());
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { crate::update::check() })
-                .await;
-            this.update(cx, |this, cx| {
-                this.checked(result);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Show a check's `result`. A newer release shows Install. While
-    /// Install runs, a check that finishes changes nothing.
-    pub(super) fn checked(&mut self, result: Result<Option<UpdateInfo>, String>) {
-        if matches!(self.release, Release::Installing) {
-            return;
-        }
-        let (status, release) = match result {
-            Ok(Some(info)) => (
-                format!("update available: {}", info.version),
-                Release::Found(info),
-            ),
-            Ok(None) => ("up to date".to_string(), Release::None),
-            Err(e) => (e, Release::None),
-        };
-        self.status = Some(status);
-        self.release = release;
-    }
-
-    /// Download and verify the release a check found, off the UI loop,
-    /// then hand it to a detached `iris --update`, which stops this
-    /// daemon, installs it, and starts the new iris.
-    pub(super) fn install_update(&mut self, cx: &mut Context<Self>) {
-        let Some(info) = self.start_install() else {
-            return;
-        };
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let (info, result) = cx
-                .background_executor()
-                .spawn(async move {
-                    let result = crate::update::hand_off(&info);
-                    (info, result)
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                this.installed(info, result);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// The release to install, when a check found one. Check and
-    /// Install hide until the download ends.
-    pub(super) fn start_install(&mut self) -> Option<UpdateInfo> {
-        match std::mem::replace(&mut self.release, Release::Installing) {
-            Release::Found(info) => {
-                self.status = Some(format!("downloading {}…", info.version));
-                Some(info)
-            }
-            other => {
-                self.release = other;
-                None
-            }
-        }
-    }
-
-    /// Show how the download of `info` ended. A failed one shows its
-    /// error and offers Install again.
-    pub(super) fn installed(&mut self, info: UpdateInfo, result: Result<(), String>) {
-        self.status = Some(match result {
-            Ok(()) => format!("installing {}; iris restarts when it is done", info.version),
-            Err(e) => {
-                self.release = Release::Found(info);
-                e
-            }
-        });
     }
 
     /// Format a pressed keystroke the way config.toml stores hotkeys:

@@ -14,6 +14,7 @@ fn commit_edit_updates_fields_and_validates() {
         open_dropdown: None,
         status: None,
         release: Release::None,
+        login: false,
         focus: None,
     };
 
@@ -87,6 +88,7 @@ fn field_text_covers_all_field_variants() {
         open_dropdown: None,
         status: None,
         release: Release::None,
+        login: false,
         focus: None,
     };
 
@@ -194,6 +196,7 @@ fn all_twenty_config_fields_persist_and_reload() {
         open_dropdown: None,
         status: None,
         release: Release::None,
+        login: false,
         focus: None,
     };
 
@@ -266,6 +269,7 @@ fn reset_defaults_restores_default_config_and_status() {
         open_dropdown: Some(DropdownField::ToastPosition),
         status: None,
         release: Release::None,
+        login: false,
         focus: None,
     };
 
@@ -299,6 +303,7 @@ fn settings(release: Release) -> Settings {
         open_dropdown: None,
         status: None,
         release,
+        login: false,
         focus: None,
     }
 }

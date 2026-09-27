@@ -232,9 +232,16 @@ Section "Install" SecInstall
     CreateShortcut "$SMPROGRAMS\iris.lnk" "$INSTDIR\iris.exe" "--home" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
 
     ; 5. Register HKCU\...\Run autostart: runs the daemon at login, and
-    ;    nothing when a daemon already runs
-    DetailPrint "Registering login autostart..."
-    WriteRegStr HKCU "${RUN_KEY}" "iris" '"$INSTDIR\iris.exe" --daemon'
+    ;    nothing when a daemon already runs. A first installation writes
+    ;    it. An upgrade (InstallDir recorded) rewrites a Run value that
+    ;    exists and writes none the account turned off in Settings.
+    ReadRegStr $R2 HKCU "${APP_KEY}" "InstallDir"
+    ReadRegStr $R3 HKCU "${RUN_KEY}" "iris"
+    ${If} $R2 == ""
+    ${OrIf} $R3 != ""
+        DetailPrint "Registering login autostart..."
+        WriteRegStr HKCU "${RUN_KEY}" "iris" '"$INSTDIR\iris.exe" --daemon'
+    ${EndIf}
 
     ; 6. Store app metadata in registry for update checks and location lookup
     WriteRegStr HKCU "${APP_KEY}" "InstallDir" "$INSTDIR"

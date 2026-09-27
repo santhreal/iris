@@ -42,7 +42,7 @@ When iris is installed and running, the installer sends it `--quit` and waits up
 The installer runs per-user without administrative privileges:
 - Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `iris.ico`, `uninstall.exe`).
 - Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe --home`.
-- Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --daemon`.
+- Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --daemon`. An upgrade rewrites the value when it exists and writes none when **Start at login** was turned off ([Start at Login](configuration.md#start-at-login)).
 - Registers uninstallation metadata under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris`.
 
 To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
@@ -57,7 +57,7 @@ The uninstaller sends `--quit` to a running iris daemon and waits for `iris.exe`
 
 Download `iris-<ver>-windows-x86_64-portable.zip`, unpack it to a folder your account can write, and run `iris\iris.exe`. The zip holds `iris\iris.exe`, `iris\LICENSE-APACHE`, and `iris\LICENSE-MIT`.
 
-The portable iris creates no shortcut, no autostart registry value, and no uninstall entry. It keeps settings, captures, and logs in the same directories as an installed iris ([paths](configuration.md#iris_home-directory-override)). To start it at login, place a shortcut to `iris.exe --daemon` in the folder `shell:startup` opens. To remove it, quit iris (`iris.exe --quit`) and delete the folder.
+The portable iris creates no shortcut, no autostart registry value, and no uninstall entry. It keeps settings, captures, and logs in the same directories as an installed iris ([paths](configuration.md#iris_home-directory-override)). To start it at login, turn on **Start at login** in the settings window ([Start at Login](configuration.md#start-at-login)). To remove it, turn off **Start at login**, quit iris (`iris.exe --quit`), and delete the folder.
 
 An `iris.exe` with `uninstall.exe` beside it updates through the installer; any other `iris.exe` is portable and updates from the portable zip ([Updates](#updates)).
 
@@ -78,42 +78,9 @@ cp -R /Volumes/iris/iris.app /Applications/
 hdiutil detach /Volumes/iris
 ```
 
-3. Configure launch at login by creating a LaunchAgent plist:
+3. To start iris at login, turn on **Start at login** in the settings window (`/Applications/iris.app/Contents/MacOS/iris --settings`). **Save** writes the LaunchAgent `~/Library/LaunchAgents/dev.iris.app.plist`, and turning it off deletes it ([Start at Login](configuration.md#start-at-login)).
 
-```sh
-mkdir -p ~/Library/LaunchAgents
-cat << 'EOF' > ~/Library/LaunchAgents/dev.iris.app.plist
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>dev.iris.app</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/Applications/iris.app/Contents/MacOS/iris</string>
-		<string>--daemon</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>ProcessType</key>
-	<string>Interactive</string>
-	<key>LimitLoadToSessionType</key>
-	<string>Aqua</string>
-</dict>
-</plist>
-EOF
-launchctl load ~/Library/LaunchAgents/dev.iris.app.plist
-```
-
-To remove login autostart:
-
-```sh
-launchctl unload ~/Library/LaunchAgents/dev.iris.app.plist
-rm ~/Library/LaunchAgents/dev.iris.app.plist
-```
-
-To uninstall, delete `/Applications/iris.app`.
+To uninstall, turn off **Start at login**, quit iris (`/Applications/iris.app/Contents/MacOS/iris --quit`), and delete `/Applications/iris.app`.
 
 ## Linux
 
@@ -174,6 +141,8 @@ Set execution permissions and run:
 chmod +x iris-<ver>-linux-x86_64.AppImage
 ./iris-<ver>-linux-x86_64.AppImage
 ```
+
+To start the AppImage at login, turn on **Start at login** in the settings window. **Save** writes `~/.config/autostart/iris-autostart.desktop` running the AppImage's path with `--daemon` ([Start at Login](configuration.md#start-at-login)). Turn it off before moving or deleting the AppImage.
 
 ## Build Requirements and Compilation
 

@@ -11,7 +11,9 @@ use iris_lib::config::{Config, ToastClickAction, ToastPosition};
 
 use crate::theme;
 
+mod app;
 mod fields;
+use app::Release;
 use fields::Choice;
 #[cfg(test)]
 mod tests;
@@ -44,19 +46,10 @@ pub struct Settings {
     pub(super) open_dropdown: Option<DropdownField>,
     pub(super) status: Option<String>,
     pub(super) release: Release,
+    /// Start at login: `sys::autostart::enabled` when the window
+    /// opened, then the toggle. Save writes it.
+    pub(super) login: bool,
     pub(super) focus: Option<FocusHandle>,
-}
-
-/// What the Updates section offers.
-#[derive(Debug)]
-pub(super) enum Release {
-    /// No check has found a newer release.
-    None,
-    /// The newer release the last check found. Install shows.
-    Found(crate::update::UpdateInfo),
-    /// Install is downloading the release or has handed it off. Check
-    /// and Install hide, and a check already running changes nothing.
-    Installing,
 }
 
 /// The settings window's minimum logical size, where its resize stops.
@@ -102,6 +95,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 open_dropdown: None,
                 status: None,
                 release: Release::None,
+                login: crate::sys::autostart::enabled(),
                 focus,
             })
         },
@@ -405,38 +399,7 @@ impl Render for Settings {
             ],
         ));
 
-        // Updates section: current version, a manual check, and Install
-        // once a check finds a newer release. Both run off the UI loop
-        // and report through the status pill. Install goes left of the
-        // right-aligned Check, so Check stays under the pointer that
-        // clicked it and a second click checks again.
-        let mut release = div().flex().gap(px(8.));
-        if let Release::Found(_) = self.release {
-            release = release.child(
-                crate::widgets::button("install-update", "Install update", false)
-                    .on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
-            );
-        }
-        if !matches!(self.release, Release::Installing) {
-            release = release.child(
-                crate::widgets::button("check-update", "Check for updates", false)
-                    .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx))),
-            );
-        }
-        form = form.child(self.section(
-            "Updates",
-            vec![
-                self.row_shell(
-                    "Version",
-                    div()
-                        .text_size(px(theme::TEXT_BODY))
-                        .text_color(theme::FG_DIM)
-                        .child(env!("CARGO_PKG_VERSION").to_string()),
-                )
-                .into_any_element(),
-                self.row_shell("Latest release", release).into_any_element(),
-            ],
-        ));
+        form = form.children(self.app_sections(cx));
 
         form = form.child(
             div().flex().justify_start().pt(px(4.)).child(

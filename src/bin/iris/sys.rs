@@ -13,15 +13,16 @@
 //! socket's name is per OS. `detach` starts the daemon so that it
 //! holds none of the caller's streams. `alloc` sets the glibc allocator
 //! policy and `console` attaches a Windows command line to its
-//! terminal; both are empty elsewhere. `hotkeys`, `install`, `record`,
-//! `reveal`, `sound`, `tray`, and `window` have a per-OS implementation
-//! each.
+//! terminal; both are empty elsewhere. `autostart`, `hotkeys`,
+//! `install`, `record`, `reveal`, `sound`, `tray`, and `window` have a
+//! per-OS implementation each.
 
 pub mod alloc;
 pub mod console;
 pub mod detach;
 pub mod ipc;
 
+pub mod autostart;
 pub mod hotkeys;
 pub mod install;
 pub mod record;

@@ -41,19 +41,24 @@ missing from it.
 ## Install layout
 - Windows: per-user, `%LOCALAPPDATA%\Programs\iris\iris.exe`; Start
   Menu shortcut; autostart via `HKCU\...\Run` value `iris` =
-  `"...\iris.exe" --daemon`. Uninstaller removes files, shortcuts, the
-  Run value.
+  `"...\iris.exe" --daemon`, written on a first install and rewritten
+  on an upgrade only when it exists. Uninstaller removes files,
+  shortcuts, the Run value.
 - Windows portable: `iris\iris.exe` wherever the zip is unpacked; no
-  shortcut, no Run value, no Uninstall key. Delete the folder to remove
-  it.
+  shortcut, no Uninstall key, and no Run value until Start at login
+  writes one. Delete the folder to remove it.
 - macOS: `/Applications/iris.app`; autostart via a LaunchAgent
   `~/Library/LaunchAgents/dev.iris.app.plist` running
-  `iris --daemon`, installed by hand (`docs/install.md`).
+  `iris --daemon`, written by Settings' Start at login.
 - Linux (deb/rpm): `/usr/bin/iris`; `dev.iris.app.desktop` in
   `/usr/share/applications`; icon in
   `/usr/share/icons/hicolor/*/apps/iris.png`; autostart via
   `/etc/xdg/autostart/iris-autostart.desktop` (XDG autostart,
   `Exec=iris --daemon`).
+- Start at login (Settings) reads and writes the account's entry:
+  `$XDG_CONFIG_HOME/autostart/iris-autostart.desktop` (off over a
+  package entry is `Hidden=true` there), the LaunchAgent, or the Run
+  value. It is the one record of the setting.
 
 ## Runtime model
 - `iris` with no args = the app/daemon (tray + hotkeys + IPC listener),

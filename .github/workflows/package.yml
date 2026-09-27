@@ -155,6 +155,9 @@ jobs:
           $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
           Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
           Wait-Until { Test-Path $held } 'the process holding iris.exe'
+          # Start at login turned off (Settings deletes the Run value):
+          # the upgrade writes none.
+          Remove-ItemProperty $run -Name iris
           $clock = [Diagnostics.Stopwatch]::StartNew()
           $upgrade = Start-Process -PassThru -FilePath $setup -ArgumentList '/S', '/RUN'
           $null = $upgrade.Handle
@@ -166,6 +169,11 @@ jobs:
           Wait-Until $pipe 'the pipe of the iris /RUN started'
           $after = @(& $irises)
           if ($after.Count -ne 1 -or $after[0].ProcessId -eq $daemon.Id) { throw "iris processes after the upgrade: $($after.ProcessId)" }
+          if ((Get-Item $run).Property -contains 'iris') { throw 'the upgrade wrote the Run value the account deleted' }
+          # An upgrade rewrites a Run value that exists.
+          Set-ItemProperty $run -Name iris -Value 'stale'
+          Start-Process -Wait -FilePath $setup -ArgumentList '/S'
+          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`" --daemon") { throw "Run value after an upgrade: $((Get-ItemProperty $run).iris)" }
           # The uninstaller runs from a copy in %TEMP% and returns at once.
           Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S'
           $deadline = (Get-Date).AddSeconds(60)
