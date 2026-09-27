@@ -19,7 +19,7 @@ jobs:
     name: Package (macOS)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -71,7 +71,7 @@ jobs:
           "$exe" --quit || fail "iris --quit exited with $?"
           for _ in $(seq 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
           ! kill -0 "$pid" 2>/dev/null || fail "the daemon runs 10 s after --quit"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iris-macos-dmg
           path: dist/iris-*-macos-universal.dmg*
@@ -81,7 +81,7 @@ jobs:
     name: Package (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -201,12 +201,12 @@ jobs:
           if (Test-Path $uninstall) { throw 'Uninstall key remains after uninstall' }
           if (@(& $irises).Count) { throw 'iris runs after uninstall' }
           if (& $pipe) { throw 'the daemon pipe remains after uninstall' }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iris-windows-setup
           path: dist/iris-*-windows-x86_64-setup.exe*
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iris-windows-portable
           path: dist/iris-*-windows-x86_64-portable.zip*
@@ -218,7 +218,7 @@ jobs:
     # (build_deb.sh reads it from the binary), so it moves only here.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -300,7 +300,7 @@ jobs:
             [ "$(/pkg/iris-${version}-linux-x86_64.AppImage --version)" = "iris $version" ]
             bash /linux/check_installed.sh "/pkg/iris-${version}-linux-x86_64.AppImage"
           ' --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iris-linux-packages
           path: dist/iris-*-linux-x86_64.*
