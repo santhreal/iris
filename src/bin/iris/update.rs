@@ -11,7 +11,8 @@
 //! Update strategy per OS:
 //!   Windows — start the NSIS installer with `/S /RUN`: it waits for
 //!             iris.exe to be free, replaces it, and starts iris.
-//!   macOS   — mount the DMG, replace `/Applications/iris.app`, relaunch.
+//!   macOS   — mount the DMG, swap its iris.app for the bundle iris
+//!             runs from, relaunch.
 //!   Linux   — AppImage: overwrite the file `$APPIMAGE` points at and
 //!             relaunch. A deb/rpm install is owned by the package
 //!             manager, so `--update` reports that path instead of

@@ -70,7 +70,9 @@ or when an updater asset (`sys::install::ASSET`) is missing from it.
   from it, fails the update before the daemon stops; the download is
   deleted. Windows starts the NSIS installer with `/S /RUN`: it waits
   for iris.exe to be free, replaces it, and starts iris; macOS mounts
-  the DMG and swaps the .app; Linux replaces the AppImage. A deb or
-  rpm install fails before the download and leaves the daemon
-  running: the package manager updates it.
+  the DMG and swaps its iris.app for the bundle iris runs from in one
+  rename; Linux replaces the AppImage. A deb or rpm install, or a
+  macOS iris outside an .app bundle, fails before the download and
+  leaves the daemon running: the package manager updates a deb or
+  rpm.
 - Settings UI gets a "Check for updates" row + current version label.

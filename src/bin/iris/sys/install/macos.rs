@@ -1,52 +1,147 @@
-//! macOS: the DMG, copied over `/Applications/iris.app`.
+//! macOS: the DMG's iris.app, swapped in for the bundle this iris runs
+//! from.
 
-use std::path::Path;
+use std::ffi::CString;
+use std::io;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[cfg(test)]
+mod tests;
 
 /// Release asset suffix for this platform.
 pub const ASSET: &str = "macos-universal.dmg";
 
+/// Where `install` copies the new bundle before the swap: a sibling of
+/// the installed one, so the two share a volume and one rename swaps
+/// them. The dot keeps it out of Finder and Launchpad.
+const STAGED: &str = ".iris.app.update";
+
+/// The `.app` bundle this iris runs from. A binary outside a bundle,
+/// as a `cargo build` leaves it, has no bundle to replace.
+fn bundle() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .map_err(|e| format!("update: locate the running iris: {e}"))?;
+    bundle_of(&exe).ok_or_else(|| {
+        format!(
+            "update: {} is not inside an iris.app bundle; install the release DMG by hand",
+            exe.display()
+        )
+    })
+}
+
+/// The bundle of an executable at `<bundle>.app/Contents/MacOS/<exe>`.
+fn bundle_of(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    let inside = macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && bundle.extension()? == "app";
+    inside.then(|| bundle.to_path_buf())
+}
+
+/// Ok when this iris runs from an `.app` bundle, the one an update
+/// replaces.
+pub fn ready() -> Result<(), String> {
+    bundle().map(drop)
+}
+
 /// Replace the installed iris with the downloaded asset `file` and
 /// restart; returns only on failure.
 pub fn apply_file(file: &Path) -> Result<(), String> {
-    // Mount the DMG, replace /Applications/iris.app, unmount, relaunch.
-    // macOS lets a running .app be unlinked, so rm the old bundle before
-    // copying: a bare `cp -R` would merge and leave stale files behind.
-    let out = std::process::Command::new("hdiutil")
-        .args(["attach", "-nobrowse", "-readonly"])
-        .arg(file)
-        .output()
-        .map_err(|e| format!("update: hdiutil attach: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "update: hdiutil attach failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let mount = stdout
-        .lines()
-        .rev()
-        .find_map(|l| {
-            l.split('\t')
-                .next_back()
-                .map(str::trim)
-                .filter(|s| s.starts_with('/'))
+    let target = bundle()?;
+    install(file, &target)?;
+    super::relaunch(&target.join("Contents/MacOS/iris"))
+}
+
+/// Put the `iris.app` of the DMG `file` in place of the bundle
+/// `target`. The new bundle is copied beside `target`, then the two
+/// trade places in one rename (`RENAME_SWAP`): a failure at any step
+/// leaves `target` as it was, and the running iris is never left
+/// without a bundle.
+fn install(file: &Path, target: &Path) -> Result<(), String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("update: {} has no parent directory", target.display()))?;
+    let staged = parent.join(STAGED);
+    let _ = std::fs::remove_dir_all(&staged);
+    // A mount point of its own: the DMG's volume name, iris, may
+    // already be mounted at /Volumes/iris.
+    let mount = file.with_extension("mount");
+    std::fs::create_dir_all(&mount)
+        .map_err(|e| format!("update: create {}: {e}", mount.display()))?;
+    let attached = run(Command::new("hdiutil")
+        .args([
+            "attach",
+            "-nobrowse",
+            "-readonly",
+            "-noautoopen",
+            "-mountpoint",
+        ])
+        .arg(&mount)
+        .arg(file));
+    let installed = attached.and_then(|()| {
+        // ditto copies a bundle whole: symlinks, extended attributes,
+        // and the code signature.
+        let copied = run(Command::new("ditto")
+            .arg(mount.join("iris.app"))
+            .arg(&staged));
+        // -force: Spotlight may still be reading the volume, and
+        // nothing more is read from it.
+        let _ = Command::new("hdiutil")
+            .args(["detach", "-force", "-quiet"])
+            .arg(&mount)
+            .status();
+        copied?;
+        let exe = staged.join("Contents/MacOS/iris");
+        if !exe.is_file() {
+            return Err(format!(
+                "update: the iris.app in {} has no Contents/MacOS/iris",
+                file.display()
+            ));
+        }
+        swap(&staged, target).map_err(|e| {
+            format!(
+                "update: swap {} for {}: {e}",
+                staged.display(),
+                target.display()
+            )
         })
-        .ok_or_else(|| "update: no mount point in hdiutil output".to_string())?;
-    let src = Path::new(mount).join("iris.app");
-    let dst = Path::new("/Applications/iris.app");
-    let _ = std::fs::remove_dir_all(dst);
-    let copy = std::process::Command::new("cp")
-        .args(["-R"])
-        .arg(&src)
-        .arg(dst)
-        .status();
-    let _ = std::process::Command::new("hdiutil")
-        .args(["detach", mount])
-        .status();
-    match copy {
-        Ok(s) if s.success() => super::relaunch(&dst.join("Contents/MacOS/iris")),
-        Ok(s) => Err(format!("update: copy app exited {s}")),
-        Err(e) => Err(format!("update: copy app: {e}")),
+    });
+    let _ = std::fs::remove_dir(&mount);
+    // After the swap the staged path holds the old bundle; after a
+    // failure, the partial copy.
+    let _ = std::fs::remove_dir_all(&staged);
+    installed
+}
+
+/// Run `cmd`. An exit status other than 0 is an error with its stderr.
+fn run(cmd: &mut Command) -> Result<(), String> {
+    let program = cmd.get_program().to_string_lossy().into_owned();
+    let out = cmd
+        .output()
+        .map_err(|e| format!("update: run {program}: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "update: {program} {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
+/// Exchange the directory entries `a` and `b` in one rename.
+fn swap(a: &Path, b: &Path) -> io::Result<()> {
+    let a = CString::new(a.as_os_str().as_bytes())?;
+    let b = CString::new(b.as_os_str().as_bytes())?;
+    // SAFETY: both are NUL-terminated paths that outlive the call.
+    if unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_SWAP) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
 }

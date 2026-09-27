@@ -10,6 +10,12 @@ pub const ASSET: &str = "windows-x86_64-setup.exe";
 /// it succeeded or failed.
 const OPTIONS: [&str; 2] = ["/S", "/RUN"];
 
+/// Ok: the installer replaces any install, and on an upgrade it
+/// installs into the directory the last installation used.
+pub fn ready() -> Result<(), String> {
+    Ok(())
+}
+
 /// Replace the installed iris with the downloaded installer `file` and
 /// restart; returns only on failure.
 ///

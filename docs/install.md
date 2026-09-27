@@ -246,7 +246,7 @@ Before it stops the daemon, `--update` checks the download against the `.sha256`
 
 Platform update mechanisms:
 - Windows: Downloads `windows-x86_64-setup.exe`, starts it with `/S /RUN` as a detached process that receives no handle of the `iris --update` process, and exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris. When the installation fails, it starts the `iris.exe` already in place.
-- macOS: Downloads `macos-universal.dmg`. Attaches disk image with `hdiutil attach -nobrowse -readonly`, deletes `/Applications/iris.app`, copies new bundle via `cp -R`, detaches volume with `hdiutil detach`, and relaunches `/Applications/iris.app/Contents/MacOS/iris`.
+- macOS: Downloads `macos-universal.dmg` and attaches it at a mount point of its own with `hdiutil attach -nobrowse -readonly`. It copies the disk image's `iris.app` with `ditto` to `.iris.app.update` beside the bundle iris runs from, detaches the disk image, and swaps the two bundles in one `renamex_np(RENAME_SWAP)` rename, then deletes the old bundle and relaunches the new one. A failure before the swap leaves the installed bundle as it was. An iris outside an `.app` bundle prints `update: <path> is not inside an iris.app bundle; install the release DMG by hand` and exits with status 1 before downloading anything.
 - Linux (AppImage): Overwrites the file defined in `$APPIMAGE` via a temporary sibling file and atomic rename, then launches the new file.
 - Linux (deb/rpm): When a newer release exists, `iris --update` outside an AppImage prints `update: not an AppImage install; update via apt/dnf` and exits with status 1 before downloading anything. The running daemon keeps running.
 

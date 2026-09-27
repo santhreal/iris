@@ -299,19 +299,16 @@ fn asset_names_that_leave_the_update_dir_are_rejected() {
     }
 }
 
-/// A deb or rpm install refuses before anything runs: no download,
-/// and the daemon keeps running. The asset name here would fail the
-/// download with a different error. An install that replaces itself
-/// has nothing to refuse.
+/// An install that cannot replace itself (a deb or rpm install, a
+/// macOS binary outside a bundle) refuses before anything runs: no
+/// download, and the daemon keeps running. The asset name here would
+/// fail the download with a different error. An install that replaces
+/// itself has nothing to refuse.
 #[test]
 fn a_refused_install_fails_before_the_download() {
     let Err(refusal) = crate::sys::install::ready() else {
         return;
     };
-    assert_eq!(
-        refusal,
-        "update: not an AppImage install; update via apt/dnf"
-    );
     assert_eq!(
         apply(&info("https://invalid.example", "../escape")).expect_err("refused"),
         refusal

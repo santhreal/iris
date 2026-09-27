@@ -12,26 +12,11 @@ mod macos;
 mod windows;
 
 #[cfg(target_os = "linux")]
-pub use linux::{apply_file, ASSET};
+pub use linux::{apply_file, ready, ASSET};
 #[cfg(target_os = "macos")]
-pub use macos::{apply_file, ASSET};
+pub use macos::{apply_file, ready, ASSET};
 #[cfg(windows)]
-pub use windows::{apply_file, ASSET};
-
-/// Ok when this install can replace itself. `update::apply` checks it
-/// before the download and before it stops the daemon, so a refusal
-/// leaves the running iris as it was. A deb or rpm install cannot: the
-/// package manager owns its files.
-pub fn ready() -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        linux::ready()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(())
-    }
-}
+pub use windows::{apply_file, ready, ASSET};
 
 /// Start the new binary at `exe` and exit this process. The daemon is
 /// already stopped (see `update::apply`), so the fresh `iris` binds the

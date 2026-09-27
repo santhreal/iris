@@ -84,4 +84,4 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Drag-Out and Clipboard**: File drag-out initiates `beginDraggingSessionWithItems:event:source:` on the window content `NSView` using `NSDraggingItem` and `NSDraggingSource` (`NSDragOperationCopy`). File-path clipboard copy writes `NSURL` file objects to `NSPasteboard` (`writeObjects:`). Image clipboard operations run through `arboard`.
 - **Reveal in Folder**: Executes `/usr/bin/open -R <path>`, falling back to `/usr/bin/open <folder>`.
 - **Shutter Sound**: Plays `/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif` (fallback `Grab.aif`) using `/usr/bin/afplay`.
-- **Update**: Mounts `macos-universal.dmg` via `hdiutil attach -nobrowse -readonly`, deletes `/Applications/iris.app`, copies the bundle with `cp -R`, and unmounts via `hdiutil detach`.
+- **Update**: Mounts `macos-universal.dmg` via `hdiutil attach -nobrowse -readonly` at a mount point of its own, copies its `iris.app` with `ditto` beside the bundle iris runs from, unmounts via `hdiutil detach`, and swaps the two bundles with `renamex_np(RENAME_SWAP)`.

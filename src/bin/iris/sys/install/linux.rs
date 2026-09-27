@@ -15,6 +15,8 @@ fn appimage() -> Result<PathBuf, String> {
         .ok_or_else(|| "update: not an AppImage install; update via apt/dnf".to_string())
 }
 
+/// Ok when this install can replace itself: an AppImage can. A deb or
+/// rpm install cannot: the package manager owns its files.
 pub fn ready() -> Result<(), String> {
     appimage().map(drop)
 }
@@ -38,4 +40,18 @@ pub fn apply_file(file: &Path) -> Result<(), String> {
     // The new file, not current_exe(): that path is inside the old
     // AppImage's mount, which still serves the old binary.
     super::relaunch(&target)
+}
+
+// WHY: docs/install.md prints this refusal for a deb or rpm install;
+// the test process, like a package install, has no $APPIMAGE.
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_install_outside_an_appimage_refuses_to_update() {
+        assert!(std::env::var_os("APPIMAGE").is_none());
+        assert_eq!(
+            super::ready(),
+            Err("update: not an AppImage install; update via apt/dnf".to_string())
+        );
+    }
 }
