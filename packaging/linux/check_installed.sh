@@ -67,13 +67,15 @@ home_window() {
   [ -n "$id" ] && [[ $(xwininfo -id "$id") == *'Map State: IsViewable'* ]]
 }
 
-# The daemon is the one running process named iris once the client has
-# exited. A daemon that exited and is not yet reaped keeps its name but
-# has no binary.
+# The daemon is the one running process named iris with this check's
+# IRIS_HOME once the client has exited; an iris of the desktop session
+# has another. A daemon that exited and is not yet reaped keeps its
+# name but has no binary.
 daemon_pid() {
   local d
   for d in /proc/[0-9]*; do
-    if [ "$(cat "$d/comm" 2>/dev/null)" = iris ] && readlink "$d/exe" >/dev/null 2>&1; then
+    if [ "$(cat "$d/comm" 2>/dev/null)" = iris ] && readlink "$d/exe" >/dev/null 2>&1 \
+      && grep -qxzF "IRIS_HOME=$home" "$d/environ" 2>/dev/null; then
       echo "${d#/proc/}"
       return 0
     fi
