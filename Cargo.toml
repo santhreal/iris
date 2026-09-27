@@ -48,6 +48,9 @@ libc = "0.2"
 # rustls (no system OpenSSL), blocking API — the updater runs on its own
 # thread, not the UI loop.
 ureq = { version = "2", default-features = false, features = ["tls"] }
+# SHA-256 of an update download, checked against the release's .sha256
+# sidecar. Already in the tree through ureq's rustls.
+ring = "0.17"
 # Compares the running version against the release tag.
 semver = "1"
 arboard = "3"

@@ -2,9 +2,11 @@
 //! platform asset, apply it, restart the daemon.
 //!
 //! The release contract lives in `packaging/CONTRACT.md`: tags are
-//! `v{semver}` and each platform has one asset name. `check` reads the
-//! latest-release JSON and picks the asset for this OS; `apply` hands
-//! the download to `sys::install`, which swaps it in.
+//! `v{semver}` and each platform has one asset name, published with a
+//! `.sha256` sidecar. `check` reads the latest-release JSON and picks
+//! the asset for this OS and its sidecar; `apply` downloads the asset,
+//! deletes it unless its SHA-256 is the sidecar's, and hands it to
+//! `sys::install`, which swaps it in.
 //!
 //! Update strategy per OS:
 //!   Windows — start the NSIS installer with `/S /RUN`: it waits for
@@ -19,7 +21,10 @@
 //! forward probe; the Settings window calls `check` on a background
 //! thread. Neither path blocks the UI loop.
 
-use std::path::PathBuf;
+mod checksum;
+
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// The GitHub repo that publishes releases.
@@ -39,6 +44,8 @@ pub struct UpdateInfo {
     pub asset_url: String,
     /// The asset filename, used as the download's file name.
     pub asset_name: String,
+    /// Direct download URL for the asset's `.sha256` sidecar.
+    pub checksum_url: String,
 }
 
 /// The currently running version, from Cargo.toml at build time.
@@ -74,49 +81,61 @@ pub fn check() -> Result<Option<UpdateInfo>, String> {
         .map_err(|e| format!("update: read release body: {e}"))?;
     let json: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("update: parse release JSON: {e}"))?;
+    select(&json, &current_version(), crate::sys::install::ASSET)
+}
 
-    let tag = json
-        .get("tag_name")
-        .and_then(|t| t.as_str())
+/// The update `release`, a latest-release JSON object, offers over
+/// `current`: `None` when its tag is not newer, the asset whose name
+/// ends in `selector` and that asset's `.sha256` sidecar when it is. A
+/// newer release that lacks either is an error: an asset with no
+/// sidecar cannot be checked, so it is never downloaded.
+fn select(
+    release: &serde_json::Value,
+    current: &semver::Version,
+    selector: &str,
+) -> Result<Option<UpdateInfo>, String> {
+    let tag = str_field(release, "tag_name")
         .ok_or_else(|| "update: release has no tag_name".to_string())?;
     let version = semver::Version::parse(tag.trim_start_matches('v'))
         .map_err(|e| format!("update: bad tag {tag}: {e}"))?;
-
-    if version <= current_version() {
+    if version <= *current {
         return Ok(None);
     }
 
-    let selector = crate::sys::install::ASSET;
-    let assets = json
+    let assets = release
         .get("assets")
         .and_then(|a| a.as_array())
         .ok_or_else(|| "update: release has no assets".to_string())?;
-    let asset = assets
+    let (asset_name, asset) = assets
         .iter()
-        .find(|a| {
-            a.get("name")
-                .and_then(|n| n.as_str())
-                .map(|n| n.ends_with(selector))
-                .unwrap_or(false)
+        .find_map(|a| {
+            str_field(a, "name")
+                .filter(|n| n.ends_with(selector))
+                .map(|n| (n, a))
         })
         .ok_or_else(|| format!("update: no asset ending in {selector}"))?;
-
-    let asset_url = asset
-        .get("browser_download_url")
-        .and_then(|u| u.as_str())
-        .ok_or_else(|| "update: asset has no download url".to_string())?
-        .to_string();
-    let asset_name = asset
-        .get("name")
-        .and_then(|n| n.as_str())
-        .unwrap_or("iris-update")
-        .to_string();
+    let asset_url = str_field(asset, "browser_download_url")
+        .ok_or_else(|| "update: asset has no download url".to_string())?;
+    let sidecar = format!("{asset_name}.sha256");
+    let checksum_url = assets
+        .iter()
+        .find(|a| str_field(a, "name") == Some(sidecar.as_str()))
+        .and_then(|a| str_field(a, "browser_download_url"))
+        .ok_or_else(|| {
+            format!("update: release {tag} has no {sidecar} to check {asset_name} against")
+        })?;
 
     Ok(Some(UpdateInfo {
         version,
-        asset_url,
-        asset_name,
+        asset_url: asset_url.to_string(),
+        asset_name: asset_name.to_string(),
+        checksum_url: checksum_url.to_string(),
     }))
+}
+
+/// The string at `key` of a JSON object.
+fn str_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value.get(key)?.as_str()
 }
 
 /// Download `info.asset_url` into this user's cache and return its
@@ -124,29 +143,61 @@ pub fn check() -> Result<Option<UpdateInfo>, String> {
 /// directory could be swapped by another local user between the write
 /// and the install.
 fn download(info: &UpdateInfo) -> Result<PathBuf, String> {
-    // The name comes from the release JSON; a separator in it would
-    // move the write out of the update directory.
-    let name = std::path::Path::new(&info.asset_name);
-    if name.file_name() != Some(name.as_os_str()) {
-        return Err(format!("update: bad asset name {:?}", info.asset_name));
-    }
     let dir = iris_lib::dirs::cache_dir()
         .ok_or_else(|| "update: no cache directory for this user".to_string())?
         .join("update");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("update: create {}: {e}", dir.display()))?;
+    download_into(info, &dir)
+}
+
+/// Download `info.asset_url` into `dir` and return its path. The
+/// download's SHA-256 is the one its sidecar lists, or it is deleted
+/// and this fails: a truncated, corrupt, or substituted file never
+/// reaches the installer.
+fn download_into(info: &UpdateInfo, dir: &Path) -> Result<PathBuf, String> {
+    // The name comes from the release JSON; a separator in it would
+    // move the write out of the update directory.
+    let name = Path::new(&info.asset_name);
+    if name.file_name() != Some(name.as_os_str()) {
+        return Err(format!("update: bad asset name {:?}", info.asset_name));
+    }
+    let want = fetch_sidecar(info)?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("update: create {}: {e}", dir.display()))?;
     let path = dir.join(name);
     // create_new never writes through a file or link already there.
     let _ = std::fs::remove_file(&path);
-    let mut file = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)
         .map_err(|e| format!("update: create {}: {e}", path.display()))?;
-    let resp =
-        http_get(&info.asset_url).map_err(|e| format!("update: GET {}: {e}", info.asset_url))?;
-    std::io::copy(&mut resp.into_reader(), &mut file)
-        .map_err(|e| format!("update: download {}: {e}", info.asset_name))?;
+    // The file closes before a failure deletes it: Windows deletes no
+    // open file.
+    let fetched = http_get(&info.asset_url)
+        .map_err(|e| format!("update: GET {}: {e}", info.asset_url))
+        .and_then(|resp| {
+            let mut out = checksum::Sha256Writer::new(file);
+            std::io::copy(&mut resp.into_reader(), &mut out)
+                .map_err(|e| format!("update: download {}: {e}", info.asset_name))?;
+            Ok(out.finish())
+        })
+        .and_then(|got| checksum::verify(&info.asset_name, &got, &want));
+    if let Err(e) = fetched {
+        let _ = std::fs::remove_file(&path);
+        return Err(e);
+    }
     Ok(path)
+}
+
+/// The digest `info`'s sidecar lists for its asset.
+fn fetch_sidecar(info: &UpdateInfo) -> Result<checksum::Digest, String> {
+    let resp = http_get(&info.checksum_url)
+        .map_err(|e| format!("update: GET {}: {e}", info.checksum_url))?;
+    let mut text = String::new();
+    resp.into_reader()
+        .take(checksum::SIDECAR_MAX)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("update: read {}.sha256: {e}", info.asset_name))?;
+    checksum::parse_sidecar(&text, &info.asset_name)
 }
 
 /// Apply a downloaded update and restart the daemon.
@@ -184,53 +235,11 @@ fn stop_daemon() -> Result<(), String> {
 }
 
 // WHY: the classes closed here are "a release asset name steers the
-// download's write outside the per-user update directory" and "an
-// install that cannot replace itself stops the daemon before it says
-// so": `iris --update` on a deb or rpm install downloaded the AppImage,
-// quit the daemon, and only then failed. Not covered: the network
-// fetch and the per-OS install that follow.
+// download's write outside the per-user update directory", "an install
+// that cannot replace itself stops the daemon before it says so", and
+// "a download that is not the released file reaches the installer":
+// `iris --update` installed whatever bytes arrived, so a dropped
+// connection or a corrupt body replaced a working install. Not covered:
+// the per-OS install that follows.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn asset_names_that_leave_the_update_dir_are_rejected() {
-        for name in [
-            "../iris.AppImage",
-            "a/b.dmg",
-            "/abs/setup.exe",
-            "..",
-            ".",
-            "",
-        ] {
-            let info = UpdateInfo {
-                version: semver::Version::new(9, 9, 9),
-                asset_url: "https://invalid.example/asset".to_string(),
-                asset_name: name.to_string(),
-            };
-            let err = download(&info).expect_err(name);
-            assert!(err.starts_with("update: bad asset name"), "{name:?}: {err}");
-        }
-    }
-
-    /// A deb or rpm install refuses before anything runs: no download,
-    /// and the daemon keeps running. The asset name here would fail the
-    /// download with a different error. An install that replaces itself
-    /// has nothing to refuse.
-    #[test]
-    fn a_refused_install_fails_before_the_download() {
-        let Err(refusal) = crate::sys::install::ready() else {
-            return;
-        };
-        assert_eq!(
-            refusal,
-            "update: not an AppImage install; update via apt/dnf"
-        );
-        let info = UpdateInfo {
-            version: semver::Version::new(9, 9, 9),
-            asset_url: "https://invalid.example/asset".to_string(),
-            asset_name: "../escape".to_string(),
-        };
-        assert_eq!(apply(&info).expect_err("refused"), refusal);
-    }
-}
+mod tests;

@@ -64,8 +64,11 @@ or when an updater asset (`sys::install::ASSET`) is missing from it.
 
 ## Update mechanism
 - `iris --check-update`: GET latest release, compare semver to current.
-- `iris --update`: download the platform asset, apply it, restart the
-  daemon. Windows starts the NSIS installer with `/S /RUN`: it waits
+- `iris --update`: download the platform asset, check its SHA-256
+  against the asset's `.sha256` sidecar, apply it, restart the
+  daemon. A release without the sidecar, or a download that differs
+  from it, fails the update before the daemon stops; the download is
+  deleted. Windows starts the NSIS installer with `/S /RUN`: it waits
   for iris.exe to be free, replaces it, and starts iris; macOS mounts
   the DMG and swaps the .app; Linux replaces the AppImage. A deb or
   rpm install fails before the download and leaves the daemon

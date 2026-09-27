@@ -2895,6 +2895,7 @@ dependencies = [
  "parking_lot",
  "pipewire",
  "raw-window-handle",
+ "ring",
  "semver",
  "serde",
  "serde_json",
