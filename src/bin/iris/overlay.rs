@@ -40,18 +40,40 @@ pub(super) const HANDLE_PX: f32 = 10.0;
 
 /// What a committed selection does. Capture crops and saves; RecordPick
 /// reports the rect to the daemon and starts a region recording.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OverlayMode {
     Capture,
     RecordPick,
+}
+
+impl OverlayMode {
+    /// What the confirm key does in this mode, as the hint prints it.
+    fn verb(self) -> &'static str {
+        match self {
+            OverlayMode::Capture => "capture",
+            OverlayMode::RecordPick => "record",
+        }
+    }
+}
+
+/// The committed-selection hint: the confirm key and what it does in
+/// `mode`, then the cancel key.
+fn hint(cfg: &iris_lib::config::Config, mode: OverlayMode) -> SharedString {
+    SharedString::from(format!(
+        "{} {}   {} cancel",
+        cfg.confirm_keybind,
+        mode.verb(),
+        cfg.cancel_keybind
+    ))
 }
 
 pub struct Overlay {
     /// Parked (minimized): the window stays alive with its renderer,
     /// and the next capture reuses it.
     pub hidden: bool,
-    /// What finish() does with the committed selection.
-    pub mode: OverlayMode,
+    /// What finish() does with the committed selection. Set through
+    /// set_mode(), which rebuilds `hint` to match.
+    mode: OverlayMode,
     /// None until the background grab lands: the window maps at once,
     /// transparent over the live desktop with crosshair and snap
     /// already live, and the frozen frame fades in behind it.
@@ -113,8 +135,8 @@ pub struct Overlay {
     /// The config snapshot for this session: render and the key handler
     /// read it every frame, and Config::load() hits the disk each call.
     cfg: iris_lib::config::Config,
-    /// The committed-selection hint line, built once per session from
-    /// cfg: formatting it per frame allocates a String a frame.
+    /// The committed-selection hint line, built by set_mode() from cfg
+    /// and the mode: formatting it per frame allocates a String a frame.
     hint: SharedString,
     /// Idle coordinate chip: the frame pixel it was built for, and the
     /// label. A mousemove inside the same pixel reuses it.

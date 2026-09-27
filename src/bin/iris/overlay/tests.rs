@@ -1,7 +1,7 @@
 use super::{
     drag_region,
     flight::{flight_at_rest, flight_rect},
-    Overlay,
+    hint, Overlay, OverlayMode,
 };
 use crate::pipeline::Region;
 
@@ -142,5 +142,28 @@ fn shift_drag_stays_square_inside_the_window_with_the_anchor_a_corner() {
                 }
             }
         }
+    }
+}
+
+// WHY: the class closed here is "the hint names an action the confirm
+// key does not take": a record-region pick printed `Enter capture`,
+// because the hint was built for Capture once per session and the
+// daemon flipped the mode after it. The mode is now private to the
+// overlay and set_mode() rebuilds the hint with it; the exhaustive
+// match in `OverlayMode::verb` fails the build on a new mode until it
+// has a verb. Not covered: set_mode() itself, which needs a live
+// overlay window, and the hint's position and paint.
+#[test]
+fn the_hint_names_the_configured_keys_and_what_confirm_does() {
+    let cfg = iris_lib::config::Config {
+        confirm_keybind: "Ctrl+Enter".into(),
+        cancel_keybind: "Ctrl+C".into(),
+        ..Default::default()
+    };
+    for (mode, want) in [
+        (OverlayMode::Capture, "Ctrl+Enter capture   Ctrl+C cancel"),
+        (OverlayMode::RecordPick, "Ctrl+Enter record   Ctrl+C cancel"),
+    ] {
+        assert_eq!(hint(&cfg, mode).as_ref(), want, "{mode:?}");
     }
 }

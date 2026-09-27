@@ -66,12 +66,8 @@ impl Overlay {
         self.current = None;
         self.landed = None;
         self.finalize_failed = false;
-        self.mode = OverlayMode::Capture;
         self.cfg = iris_lib::config::Config::load();
-        self.hint = SharedString::from(format!(
-            "{} capture   {} cancel",
-            self.cfg.confirm_keybind, self.cfg.cancel_keybind
-        ));
+        self.set_mode(OverlayMode::Capture);
         self.loupe = None;
         self.loupe_at = None;
         self.finishing = false;
@@ -85,6 +81,12 @@ impl Overlay {
         self.hover_in = None;
         self.hover_out = None;
         self.flight = None;
+    }
+
+    /// Set what a committed selection does, and the hint that shows it.
+    pub fn set_mode(&mut self, mode: OverlayMode) {
+        self.mode = mode;
+        self.hint = super::hint(&self.cfg, mode);
     }
 
     /// Frame-pixel hit test for hover-snap. The window list is in frame

@@ -125,7 +125,7 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
         let session = h.update(cx, |o, _, cx| {
             if o.hidden {
                 o.reset(&layout);
-                o.mode = overlay::OverlayMode::RecordPick;
+                o.set_mode(overlay::OverlayMode::RecordPick);
                 cx.notify();
                 true
             } else {
@@ -150,7 +150,7 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
                 *overlay::POOL.lock() = None;
                 let h = overlay::open_shell(cx, &layout)?;
                 h.update(cx, |o, _, cx| {
-                    o.mode = overlay::OverlayMode::RecordPick;
+                    o.set_mode(overlay::OverlayMode::RecordPick);
                     cx.notify();
                 })
                 .map_err(|e| format!("set pick mode: {e}"))?;
@@ -160,7 +160,7 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
     } else {
         let h = overlay::open_shell(cx, &layout)?;
         h.update(cx, |o, _, cx| {
-            o.mode = overlay::OverlayMode::RecordPick;
+            o.set_mode(overlay::OverlayMode::RecordPick);
             cx.notify();
         })
         .map_err(|e| format!("set pick mode: {e}"))?;

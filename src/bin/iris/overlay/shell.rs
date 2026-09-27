@@ -133,10 +133,7 @@ fn open_shell_opts(
             crate::sys::window::span_after_map(window, ux, uy, uw, uh);
             cx.new(|_| {
                 let cfg = iris_lib::config::Config::load();
-                let hint = SharedString::from(format!(
-                    "{} capture   {} cancel",
-                    cfg.confirm_keybind, cfg.cancel_keybind
-                ));
+                let hint = super::hint(&cfg, super::OverlayMode::Capture);
                 Overlay {
                     hidden: false,
                     mode: super::OverlayMode::Capture,

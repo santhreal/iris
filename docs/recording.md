@@ -37,7 +37,7 @@ Platform behavior for window recording:
 iris --record-region
 ```
 
-Opens the selection overlay in region-pick mode (`RecordPick`). Drag a bounding box or select a detected window rectangle. Press `Enter` or double-click to commit the selection. Press `Escape` or click the right mouse button to cancel.
+Opens the selection overlay in region-pick mode (`RecordPick`). Drag a bounding box or select a detected window rectangle. Press `Enter` or double-click to commit the selection. Press `Escape` or click the right mouse button to cancel. An instruction line below the selection displays the bindings (`Enter record   Escape cancel` by default).
 
 If the selection width or height is zero or negative, iris rejects the command with `empty region {w}x{h}`.
 
