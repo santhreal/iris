@@ -1,13 +1,7 @@
-use futures::channel::mpsc::UnboundedSender;
+use super::Row;
 
-use crate::daemon::Command;
+pub(super) struct IrisTray;
 
-#[cfg(target_os = "linux")]
-pub(super) struct IrisTray {
-    pub(super) tx: UnboundedSender<Command>,
-}
-
-#[cfg(target_os = "linux")]
 impl ksni::Tray for IrisTray {
     fn id(&self) -> String {
         "iris".into()
@@ -44,25 +38,17 @@ impl ksni::Tray for IrisTray {
     }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::*;
-        let item = |label: &str, cmd: Command| {
-            let tx = self.tx.clone();
-            StandardItem {
-                label: label.to_string(),
-                activate: Box::new(move |_| {
-                    let _ = tx.unbounded_send(cmd.clone());
-                }),
-                ..Default::default()
-            }
-            .into()
-        };
-        vec![
-            item("Capture", Command::Capture),
-            item("Record window", Command::RecordToggle),
-            item("Library", Command::Library),
-            item("Settings", Command::Settings),
-            MenuItem::Separator,
-            item("Quit", Command::Quit),
-        ]
+        super::rows()
+            .map(|(id, row)| match row {
+                Row::Item { label, .. } => StandardItem {
+                    label: (*label).to_string(),
+                    activate: Box::new(move |_| super::pick(id)),
+                    ..Default::default()
+                }
+                .into(),
+                Row::Separator => MenuItem::Separator,
+            })
+            .collect()
     }
 
     fn watcher_online(&self) {
@@ -81,11 +67,10 @@ impl ksni::Tray for IrisTray {
 /// registered for the process lifetime. A watcher that is absent at
 /// startup does not fail the spawn: the item registers when one
 /// appears. Only a session bus failure degrades to a log line.
-pub(super) fn spawn(tx: futures::channel::mpsc::UnboundedSender<Command>) {
-    std::thread::spawn(move || {
+pub(super) fn spawn() {
+    std::thread::spawn(|| {
         use ksni::blocking::TrayMethods;
-        let tray = IrisTray { tx };
-        match tray.assume_sni_available(true).spawn() {
+        match IrisTray.assume_sni_available(true).spawn() {
             Err(e) => iris_lib::ilog!("iris: tray unavailable: {e}"),
             Ok(handle) => {
                 let _keep = handle;

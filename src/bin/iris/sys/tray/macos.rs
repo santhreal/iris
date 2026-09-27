@@ -1,46 +1,25 @@
 //! The system-tray icon on macOS via `NSStatusItem`.
 //!
-//! The status item lives in the menu bar and owns an `NSMenu` of the
-//! same commands as the other platforms. Menu items need an ObjC
-//! target that responds to a selector, so `spawn` defines a tiny
-//! `IrisTrayTarget` class at runtime whose `onItem:` reads the item's
-//! tag and pushes the matching `Command` onto the daemon channel.
-//! All runtime calls go through `iris_lib::sys::objc`'s typed sends.
-
-use futures::channel::mpsc::UnboundedSender;
-use std::sync::OnceLock;
+//! The status item lives in the menu bar and owns an `NSMenu` drawn
+//! from the shared rows. Menu items need an ObjC target that responds
+//! to a selector, so `spawn` defines a tiny `IrisTrayTarget` class at
+//! runtime whose `onItem:` reads the item's tag, the row id, and
+//! reports the pick. All runtime calls go through
+//! `iris_lib::sys::objc`'s typed sends.
 
 use iris_lib::sys::objc::{
     class, class_addMethod, nsstring, objc_allocateClassPair, objc_registerClassPair, sel, send,
     send1, send3, Id, Imp, Sel,
 };
 
-use crate::daemon::Command;
-
-// ---- menu -> command --------------------------------------------------
-
-const TAG_CAPTURE: isize = 1;
-const TAG_RECORD: isize = 2;
-const TAG_LIBRARY: isize = 3;
-const TAG_SETTINGS: isize = 4;
-const TAG_QUIT: isize = 5;
-
-static TX: OnceLock<UnboundedSender<Command>> = OnceLock::new();
+use super::Row;
 
 /// `onItem:` — the menu action. `sender` is the NSMenuItem; its tag
-/// selects the command. Signature `v@:@` (void, self, _cmd, sender).
+/// is the row id. Signature `v@:@` (void, self, _cmd, sender).
 unsafe extern "C" fn on_item(_this: Id, _cmd: Sel, sender: Id) {
     let tag: isize = send(sender, sel(c"tag"));
-    let cmd = match tag {
-        TAG_CAPTURE => Some(Command::Capture),
-        TAG_RECORD => Some(Command::RecordToggle),
-        TAG_LIBRARY => Some(Command::Library),
-        TAG_SETTINGS => Some(Command::Settings),
-        TAG_QUIT => Some(Command::Quit),
-        _ => None,
-    };
-    if let (Some(cmd), Some(tx)) = (cmd, TX.get()) {
-        let _ = tx.unbounded_send(cmd);
+    if let Ok(id) = usize::try_from(tag) {
+        super::pick(id);
     }
 }
 
@@ -64,8 +43,7 @@ unsafe fn tray_target() -> Id {
 /// the calling thread; AppKit delivers `onItem:` on the main run loop,
 /// which GPUI already runs, so no dedicated thread is needed. A
 /// failure degrades to a log line, never a crash.
-pub(super) fn spawn(tx: UnboundedSender<Command>) {
-    let _ = TX.set(tx);
+pub(super) fn spawn() {
     unsafe {
         let bar: Id = send(class(c"NSStatusBar"), sel(c"systemStatusBar"));
         if bar.is_null() {
@@ -88,29 +66,22 @@ pub(super) fn spawn(tx: UnboundedSender<Command>) {
 
         let target = tray_target();
         let menu: Id = send(send::<Id>(class(c"NSMenu"), sel(c"alloc")), sel(c"init"));
-        let entries = [
-            (TAG_CAPTURE, "Capture"),
-            (TAG_RECORD, "Record window"),
-            (TAG_LIBRARY, "Library"),
-            (TAG_SETTINGS, "Settings"),
-            (0, ""),
-            (TAG_QUIT, "Quit"),
-        ];
-        for (tag, label) in entries {
-            // Tag 0 marks the separator before Quit.
-            let mi: Id = if tag == 0 {
-                send(class(c"NSMenuItem"), sel(c"separatorItem"))
-            } else {
-                let mi: Id = send3(
-                    send::<Id>(class(c"NSMenuItem"), sel(c"alloc")),
-                    sel(c"initWithTitle:action:keyEquivalent:"),
-                    nsstring(label),
-                    sel(c"onItem:"),
-                    nsstring(""),
-                );
-                send1::<isize, ()>(mi, sel(c"setTag:"), tag);
-                send1::<Id, ()>(mi, sel(c"setTarget:"), target);
-                mi
+        for (id, row) in super::rows() {
+            let mi: Id = match row {
+                Row::Separator => send(class(c"NSMenuItem"), sel(c"separatorItem")),
+                Row::Item { label, .. } => {
+                    let mi: Id = send3(
+                        send::<Id>(class(c"NSMenuItem"), sel(c"alloc")),
+                        sel(c"initWithTitle:action:keyEquivalent:"),
+                        nsstring(label),
+                        sel(c"onItem:"),
+                        nsstring(""),
+                    );
+                    // Row ids are small: the cast cannot wrap.
+                    send1::<isize, ()>(mi, sel(c"setTag:"), id as isize);
+                    send1::<Id, ()>(mi, sel(c"setTarget:"), target);
+                    mi
+                }
             };
             send1::<Id, ()>(menu, sel(c"addItem:"), mi);
         }

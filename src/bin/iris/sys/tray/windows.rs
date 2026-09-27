@@ -3,12 +3,8 @@
 //! A tray icon needs a window to receive its callback and menu
 //! commands, so one thread owns a message-only window (`HWND_MESSAGE`
 //! parent) and pumps it. The icon's callback message arrives on a
-//! right-click and shows a popup menu; the chosen item comes back as
-//! `WM_COMMAND` and is pushed onto the daemon channel. That mirrors
-//! the Linux `ksni` tray: same menu, same `Command`s, same channel.
-
-use futures::channel::mpsc::UnboundedSender;
-use std::sync::OnceLock;
+//! click and shows the popup menu drawn from the shared rows; the
+//! chosen row id comes back as `WM_COMMAND`.
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -24,22 +20,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSEXW,
 };
 
-use crate::daemon::Command;
+use super::Row;
 
 /// The tray icon's callback message id (distinct from the hotkey
 /// thread's `WM_APP` offsets; they live on different queues anyway).
 const WM_TRAYICON: u32 = WM_APP + 2;
-
-// Menu item ids, reported in WM_COMMAND's low wParam word.
-const IDM_CAPTURE: usize = 1;
-const IDM_RECORD: usize = 2;
-const IDM_LIBRARY: usize = 3;
-const IDM_SETTINGS: usize = 4;
-const IDM_QUIT: usize = 5;
-
-/// The daemon channel, published once by `spawn` so the plain-fn
-/// window procedure can reach it. `WNDPROC` cannot capture.
-static TX: OnceLock<UnboundedSender<Command>> = OnceLock::new();
 
 /// A 16x16 tray icon: a white aperture ring with a center dot on
 /// transparency, matching the Linux tray glyph. `CreateIcon` takes the
@@ -90,19 +75,15 @@ unsafe fn show_menu(hwnd: HWND) {
     if menu.is_null() {
         return;
     }
-    for (id, label) in [
-        (IDM_CAPTURE, "Capture"),
-        (IDM_RECORD, "Record window"),
-        (IDM_LIBRARY, "Library"),
-        (IDM_SETTINGS, "Settings"),
-        (0, ""),
-        (IDM_QUIT, "Quit"),
-    ] {
-        if id == 0 {
-            AppendMenuW(menu, MF_SEPARATOR, 0, core::ptr::null());
-        } else {
-            let wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
-            AppendMenuW(menu, MF_STRING, id, wide.as_ptr());
+    for (id, row) in super::rows() {
+        match row {
+            Row::Separator => {
+                AppendMenuW(menu, MF_SEPARATOR, 0, core::ptr::null());
+            }
+            Row::Item { label, .. } => {
+                let wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+                AppendMenuW(menu, MF_STRING, id, wide.as_ptr());
+            }
         }
     }
     SetForegroundWindow(hwnd);
@@ -129,17 +110,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_COMMAND => {
-            let cmd = match wparam & 0xFFFF {
-                x if x == IDM_CAPTURE => Some(Command::Capture),
-                x if x == IDM_RECORD => Some(Command::RecordToggle),
-                x if x == IDM_LIBRARY => Some(Command::Library),
-                x if x == IDM_SETTINGS => Some(Command::Settings),
-                x if x == IDM_QUIT => Some(Command::Quit),
-                _ => None,
-            };
-            if let (Some(cmd), Some(tx)) = (cmd, TX.get()) {
-                let _ = tx.unbounded_send(cmd);
-            }
+            super::pick(wparam & 0xFFFF);
             0
         }
         WM_DESTROY => {
@@ -153,8 +124,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// Spawn the tray on its own thread: register the window class, create
 /// the message-only window, add the icon, and pump messages for the
 /// process lifetime. A failure degrades to a log line, never a crash.
-pub(super) fn spawn(tx: UnboundedSender<Command>) {
-    let _ = TX.set(tx);
+pub(super) fn spawn() {
     std::thread::spawn(|| unsafe {
         let hinst = GetModuleHandleW(core::ptr::null());
         let class: Vec<u16> = "iris-tray\0".encode_utf16().collect();
