@@ -16,8 +16,20 @@
 //! `iris --library` at once, then an `iris --daemon` beside the daemon,
 //! and requires one daemon, one library window, and no home window. The
 //! third kills the daemon with SIGKILL, which leaves its socket file, and
-//! requires the next `iris --home` to start a daemon in its place. The
-//! cases run only with `IRIS_X11_TEST_DISPLAY` set and need `Xvfb`;
+//! requires the next `iris --home` to start a daemon in its place.
+//!
+//! The fourth closes "a client that cannot watch for the bind reports
+//! the command it completes as an error": a client that starts the
+//! daemon waits for its bind on an inotify watch, and when the watch
+//! cannot be made, as when the user's inotify instances are used up, the
+//! client retried on a timer and wrote the watch's error to stderr of a
+//! command that succeeded. The case runs `iris --home` with the runtime
+//! directory at mode 0300, where inotify refuses the watch, and requires
+//! it to succeed with nothing on stderr, the error in the log file, and
+//! one daemon with its home window. It does not run for a user that
+//! reads a directory of mode 0300, as root does.
+//!
+//! The cases run only with `IRIS_X11_TEST_DISPLAY` set and need `Xvfb`;
 //! without it a case prints that it did not run. Not covered: a start
 //! racing a daemon that quits, Wayland, Windows, and macOS.
 
@@ -171,6 +183,61 @@ fn a_start_replaces_a_killed_daemon() {
     succeeds(dir, &mut client, "iris --home after a killed daemon");
     let started = one_process(dir, 0);
     assert_ne!(started, killed);
+    windows(dir, &conn, root, HOME, 1, 0);
+    quit(dir, &display);
+}
+
+#[test]
+fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
+    use std::os::unix::fs::PermissionsExt;
+    if !enabled() {
+        return;
+    }
+    let case = "a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly";
+    let Some((_xvfb, display)) = xvfb(case) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path();
+    let _reaper = Reaper(dir);
+    let mut cmd = iris(dir);
+    // Write and search but no read: the socket binds and accepts, and
+    // inotify refuses a watch on the directory with EACCES.
+    let run = dir.join("run");
+    let mode = |bits| std::fs::set_permissions(&run, std::fs::Permissions::from_mode(bits));
+    mode(0o300).unwrap();
+    if std::fs::read_dir(&run).is_ok() {
+        mode(0o700).unwrap();
+        eprintln!("{case}: did not run, this user reads a directory of mode 0300");
+        return;
+    }
+    let mut client = cmd
+        .arg("--home")
+        .env("DISPLAY", &display)
+        .env_remove("WAYLAND_DISPLAY")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let status = within(dir, "iris --home to exit", || {
+        client.try_wait().unwrap().ok_or("it still runs".to_string())
+    });
+    mode(0o700).unwrap();
+    let mut stderr = String::new();
+    client.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
+    assert!(status.success(), "iris --home exited {status}: {stderr}");
+    assert_eq!(stderr, "", "iris --home wrote to stderr");
+    let log = std::fs::read_to_string(dir.join("state").join("iris.log")).unwrap();
+    let line = format!(
+        "iris: watch {} for the daemon's socket: Permission denied (os error 13); \
+         retrying the connect every 2 ms",
+        run.display()
+    );
+    assert!(log.contains(&line), "the log lacks {line:?}:\n{log}");
+    one_process(dir, 0);
     windows(dir, &conn, root, HOME, 1, 0);
     quit(dir, &display);
 }

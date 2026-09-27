@@ -45,6 +45,12 @@ pub fn init() {
 /// log without bound.
 pub fn line(msg: &str) {
     eprintln!("{msg}");
+    file_line(msg);
+}
+
+/// Write one line to the log file only: a degraded path the command
+/// still completes on, which a command line's output does not report.
+pub fn file_line(msg: &str) {
     let mut guard = LOG_FILE.lock();
     if let Some((f, len)) = guard.as_mut() {
         let now = crate::time::log_stamp();

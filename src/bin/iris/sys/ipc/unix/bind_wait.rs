@@ -17,11 +17,19 @@ use std::time::Duration;
 pub(in crate::sys::ipc) struct BindWait(Option<Watch>);
 
 impl BindWait {
+    /// A watch that cannot be made, as when this user has used up
+    /// fs.inotify.max_user_instances, leaves the client to retry its
+    /// connect on a timer. The command still completes, so the failure
+    /// goes to the log file and not to the command's stderr.
     pub(in crate::sys::ipc) fn new(dir: &Path) -> Self {
         match Watch::new(dir) {
             Ok(watch) => Self(Some(watch)),
             Err(e) => {
-                iris_lib::ilog!("iris: watch {} for the daemon's socket: {e}", dir.display());
+                iris_lib::log::file_line(&format!(
+                    "iris: watch {} for the daemon's socket: {e}; retrying the connect every {} ms",
+                    dir.display(),
+                    crate::sys::ipc::READY_POLL.as_millis()
+                ));
                 Self(None)
             }
         }
