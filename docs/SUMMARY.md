@@ -9,3 +9,4 @@
 - [Capture Library](library.md)
 - [Screen Recording](recording.md)
 - [Platform Backends](platforms.md)
+- [Building](building.md)

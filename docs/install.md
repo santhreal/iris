@@ -144,43 +144,9 @@ chmod +x iris-<ver>-linux-x86_64.AppImage
 
 To start the AppImage at login, turn on **Start at login** in the settings window. **Save** writes `~/.config/autostart/iris-autostart.desktop` running the AppImage's path with `--daemon` ([Start at Login](configuration.md#start-at-login)). Turn it off before moving or deleting the AppImage.
 
-## Build Requirements and Compilation
+## From Source
 
-Compiling iris from source requires Rust 1.90 or newer and `cargo`.
-
-### System Build Dependencies
-
-#### Ubuntu / Debian
-
-```sh
-sudo apt-get install -y \
-  build-essential pkg-config cmake clang \
-  libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
-  libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
-  libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
-  libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal
-```
-
-#### Fedora / RHEL
-
-```sh
-sudo dnf install -y \
-  gcc gcc-c++ make cmake clang pkgconf-pkg-config \
-  alsa-lib-devel fontconfig-devel glib2-devel openssl-devel \
-  wayland-devel libxcb-devel libxkbcommon-x11-devel \
-  vulkan-loader mesa-libEGL-devel mesa-libGL-devel \
-  pipewire-devel
-```
-
-### Compile
-
-Build the release executable:
-
-```sh
-cargo build --release --bin iris
-```
-
-The compiled executable is written to `target/release/iris` (`target/release/iris.exe` on Windows).
+[Building](building.md) lists the build dependencies per platform and the package scripts.
 
 ## Runtime Tools
 
