@@ -62,7 +62,7 @@ pub fn span_after_map(xid: u32, x: i32, y: i32, w: u32, h: u32) {
 /// managed while parked, so the requests go out at once, from the
 /// calling thread.
 pub fn unpark_span(xid: u32, x: i32, y: i32, w: u32, h: u32) {
-    let Ok((conn, screen)) = iris_lib::capture::x11::shared_conn() else {
+    let Ok((conn, screen)) = iris_lib::sys::capture::x11::shared_conn() else {
         return;
     };
     let root = conn.setup().roots[screen].root;

@@ -1,14 +1,5 @@
-#[cfg(target_os = "linux")]
-pub mod x11;
-
-#[cfg(target_os = "linux")]
-pub mod wayland;
-
-#[cfg(windows)]
-pub mod windows;
-
-#[cfg(target_os = "macos")]
-pub mod macos;
+//! Captured frames and screen rects, shared by every platform. The
+//! grabs themselves are in [`crate::sys::capture`].
 
 /// One grabbed frame: RGBA8, row-major, tightly packed, origin at the
 /// top-left of the virtual screen.
@@ -47,112 +38,6 @@ impl WinRect {
 pub trait CaptureBackend {
     /// Grab the whole virtual screen as one frame.
     fn grab_screen(&self) -> Result<Frame, String>;
-}
-
-#[cfg(target_os = "macos")]
-use self::macos as native;
-/// The Windows or macOS capture module: one native backend per OS, so
-/// each entry point below dispatches once instead of per platform.
-#[cfg(windows)]
-use self::windows as native;
-
-/// Run an X11 query, or fail on a Wayland-only session: Wayland exposes
-/// no monitor geometry, window list, or root grab to clients.
-#[cfg(target_os = "linux")]
-fn x11_only<T>(what: &str, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    if !crate::session::wayland() {
-        f()
-    } else {
-        Err(format!("{what} is not available on Wayland"))
-    }
-}
-
-/// Pick the capture backend for the current session. Wayland is checked
-/// before X11 on Linux: under Wayland the X11 backend would see only the
-/// XWayland root, not the real session.
-pub fn backend() -> Result<Box<dyn CaptureBackend>, String> {
-    #[cfg(target_os = "linux")]
-    {
-        if crate::session::wayland() {
-            return wayland::WaylandBackend::new().map(|b| Box::new(b) as Box<dyn CaptureBackend>);
-        }
-        if crate::session::x11() {
-            return x11::X11Backend::new().map(|b| Box::new(b) as Box<dyn CaptureBackend>);
-        }
-        Err("no display: neither WAYLAND_DISPLAY nor DISPLAY is set".to_string())
-    }
-    #[cfg(not(target_os = "linux"))]
-    Ok(Box::new(native::Backend))
-}
-
-/// Root-space pixels per logical window pixel: macOS points and Windows
-/// DIPs at the system DPI. Root space (monitors, window rects, frames)
-/// is physical. X11 defines no logical unit; the UI toolkit picks its
-/// own scale there.
-#[cfg(not(target_os = "linux"))]
-pub fn root_scale() -> f32 {
-    native::root_scale()
-}
-
-/// Per-monitor rectangles in root space, primary first. Used to slice
-/// the frozen frame per monitor and to place windows on the right
-/// display.
-pub fn monitors() -> Result<Vec<WinRect>, String> {
-    #[cfg(target_os = "linux")]
-    return x11_only("monitor enumeration", x11::monitors);
-    #[cfg(not(target_os = "linux"))]
-    native::monitors()
-}
-
-/// Monitors plus top-level windows for the overlay's hover-snap.
-pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
-    #[cfg(target_os = "linux")]
-    return x11_only("the window layout", x11::layout);
-    #[cfg(not(target_os = "linux"))]
-    native::layout()
-}
-
-/// The focused window's rect in root space, decorations included.
-/// X11 reads _NET_ACTIVE_WINDOW; Windows uses GetForegroundWindow;
-/// macOS takes the frontmost on-screen window.
-pub fn active_window_rect() -> Result<WinRect, String> {
-    #[cfg(target_os = "linux")]
-    return x11_only("focused-window capture", x11::active_window_rect);
-    #[cfg(not(target_os = "linux"))]
-    native::active_window_rect()
-}
-
-/// Grab one rect of the screen into a fresh RGBA frame. The window
-/// capture path reads only the target's pixels instead of grabbing the
-/// whole screen and cropping.
-pub fn grab_rect(rect: WinRect) -> Result<Frame, String> {
-    #[cfg(target_os = "linux")]
-    return x11_only("region grab", || x11::grab_root_rect(rect));
-    #[cfg(not(target_os = "linux"))]
-    native::grab_rect(rect)
-}
-
-/// Grab the whole screen into a BGRA buffer: the overlay's GPU-bound
-/// frame consumes BGRA. X11 and Windows read BGRA natively; Wayland and
-/// macOS grab RGBA and are swizzled here.
-pub fn grab_screen_bgra() -> Result<(u32, u32, Vec<u8>), String> {
-    #[cfg(target_os = "linux")]
-    if !crate::session::wayland() {
-        return x11::grab_screen_bgra();
-    }
-    #[cfg(windows)]
-    return windows::grab_screen_bgra();
-    #[cfg(not(windows))]
-    {
-        // Banded across cores: a 4K frame is 33MB of channel swaps.
-        let frame = backend()?.grab_screen()?;
-        let mut bgra = frame.rgba;
-        let row = frame.width as usize * 4;
-        crate::par::par_bands_mut(&mut bgra, row, |band, _| {
-            crate::pixel::swap_rb_in_place(band)
-        });
-        Ok((frame.width, frame.height, bgra))
-    }
 }
 
 // WHY: the class closed here is "a window placed for a rect lands on

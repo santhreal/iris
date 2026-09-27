@@ -5,7 +5,7 @@
 //! audio. It draws a frame when its clock reaches the next second and
 //! when the recording's state changes: a recording pays for one chip
 //! frame a second, and a paused one for none. On X11 the border thread
-//! in record::x11 moves it by XID (x11rb configure_window), so it
+//! in sys::record::x11 moves it by XID (x11rb configure_window), so it
 //! follows the target window without going through the app event
 //! loop. On Windows and macOS it opens above the recorded region and is
 //! excluded from screen capture, so it never appears in the recording.

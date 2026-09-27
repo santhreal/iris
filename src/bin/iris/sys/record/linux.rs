@@ -9,7 +9,8 @@ use std::sync::Arc;
 use futures::channel::oneshot;
 use gpui::App;
 use iris_lib::capture::WinRect;
-use iris_lib::record::{self, ActiveRecording};
+use iris_lib::record::ActiveRecording;
+use iris_lib::sys::record;
 
 use super::Params;
 use crate::chip;
@@ -17,7 +18,7 @@ use crate::chip;
 /// Region recording reads the root window through X11 SHM; the portal
 /// cannot name a rect.
 pub(super) fn region_available() -> Result<(), String> {
-    if iris_lib::session::wayland() {
+    if iris_lib::sys::session::wayland() {
         return Err("region recording needs X11; on Wayland record a window".to_string());
     }
     Ok(())
@@ -27,10 +28,10 @@ pub(super) fn region_available() -> Result<(), String> {
 /// none shows while the pick waits for a click, and its clock starts
 /// with the recording.
 pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, String> {
-    if iris_lib::session::wayland() {
+    if iris_lib::sys::session::wayland() {
         return p.spawn(record::wayland::record_window);
     }
-    let monitors = iris_lib::capture::monitors().unwrap_or_default();
+    let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
     let (picked, landed) = oneshot::channel();
     let follower = XcbChip::new(
         0,
@@ -92,7 +93,7 @@ pub(super) fn start_region(
         h: u16::try_from(rect.height)
             .map_err(|_| format!("region height {} out of range", rect.height))?,
     };
-    let monitors = iris_lib::capture::monitors().unwrap_or_default();
+    let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
     let xid = chip::open(cx, p.chip_mic(), Some(rect), &monitors)?;
     let follower = XcbChip::new(xid, monitors, crate::sys::window::root_scale(cx), None);
     p.spawn(move |spec| record::x11::record_region(spec, follower, root))
@@ -124,7 +125,9 @@ impl XcbChip {
     ) -> Arc<Self> {
         Arc::new(Self {
             xid: AtomicU32::new(xid),
-            conn: iris_lib::capture::x11::shared_conn().ok().map(|(c, _)| c),
+            conn: iris_lib::sys::capture::x11::shared_conn()
+                .ok()
+                .map(|(c, _)| c),
             monitors,
             scale,
             pick: parking_lot::Mutex::new(pick),

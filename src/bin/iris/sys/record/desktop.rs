@@ -4,7 +4,8 @@
 
 use gpui::App;
 use iris_lib::capture::WinRect;
-use iris_lib::record::{self, ActiveRecording};
+use iris_lib::record::ActiveRecording;
+use iris_lib::sys::record;
 
 use super::Params;
 use crate::chip;
@@ -26,7 +27,7 @@ pub(super) fn start_region(
 }
 
 fn start(cx: &mut App, p: Params, region: Option<WinRect>) -> Result<ActiveRecording, String> {
-    let monitors = iris_lib::capture::monitors().unwrap_or_default();
+    let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
     chip::open(cx, p.chip_mic(), region, &monitors)?;
     p.spawn(move |spec| record::desktop::record_desktop(spec, region))
 }

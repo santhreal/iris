@@ -21,7 +21,7 @@ struct Flash {
 /// and fullscreened by the post-map helper so no monitor is left
 /// out. Returns after the windows open; they dismiss themselves.
 pub fn show(cx: &mut App) -> Result<(), String> {
-    let mut monitors = iris_lib::capture::monitors().unwrap_or_default();
+    let mut monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
     if monitors.is_empty() {
         monitors.push(iris_lib::capture::WinRect {
             x: 0,

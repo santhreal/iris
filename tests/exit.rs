@@ -20,7 +20,7 @@
 //!
 //! The exit cases start the daemon on a display server of its own, kill
 //! the server, and bound the time the daemon takes to exit, for the two
-//! session kinds `iris_lib::session` distinguishes: X11 and Wayland. A
+//! session kinds `iris_lib::sys::session` distinguishes: X11 and Wayland. A
 //! third stops the X server, which then answers nothing, and bounds the
 //! exit on `--quit`: an exit that waits on the display never ends. Its
 //! daemon's Vulkan loader also loads tests/fixtures/display_driver.rs,

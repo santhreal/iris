@@ -178,7 +178,7 @@ fn grab_all(conn: &RustConnection, root: Window) -> Grabs {
 /// delivers keys only while an X11 client has the focus, and there the
 /// compositor binds `iris --capture` instead.
 pub(super) fn spawn(tx: UnboundedSender<Command>) {
-    if !iris_lib::session::x11() {
+    if !iris_lib::sys::session::x11() {
         return;
     }
     let Ok((conn, screen_num)) = x11rb::connect(None) else {

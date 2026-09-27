@@ -292,7 +292,7 @@ impl Library {
                     // RGBA, into the Arc the drag owns.
                     let src = img.as_bytes(0)?;
                     let rgba = iris_lib::pixel::map_to_vec(src, iris_lib::pixel::swap_rb);
-                    Some(iris_lib::dragcopy::DragIcon {
+                    Some(iris_lib::sys::dragcopy::DragIcon {
                         width: size.width.0 as u32,
                         height: size.height.0 as u32,
                         rgba: std::sync::Arc::new(rgba),

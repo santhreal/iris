@@ -5,12 +5,12 @@
 //! target that responds to a selector, so `spawn` defines a tiny
 //! `IrisTrayTarget` class at runtime whose `onItem:` reads the item's
 //! tag and pushes the matching `Command` onto the daemon channel.
-//! All runtime calls go through `iris_lib::objc`'s typed sends.
+//! All runtime calls go through `iris_lib::sys::objc`'s typed sends.
 
 use futures::channel::mpsc::UnboundedSender;
 use std::sync::OnceLock;
 
-use iris_lib::objc::{
+use iris_lib::sys::objc::{
     class, class_addMethod, nsstring, objc_allocateClassPair, objc_registerClassPair, sel, send,
     send1, send3, Id, Imp, Sel,
 };

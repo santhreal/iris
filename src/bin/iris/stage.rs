@@ -340,7 +340,7 @@ impl Render for ToastStage {
                     });
                 } else if stage.cfg.toast_drag_enabled {
                     stage.gesture = Gesture::FileDrag;
-                    let icon = iris_lib::dragcopy::DragIcon {
+                    let icon = iris_lib::sys::dragcopy::DragIcon {
                         width: stage.thumb.px.0,
                         height: stage.thumb.px.1,
                         // The stage already holds the pixels behind

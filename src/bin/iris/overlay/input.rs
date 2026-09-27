@@ -21,7 +21,7 @@ impl Overlay {
     ) {
         // Wayland opened fullscreen with no layout: the frame's own
         // extent is the view, and its whole rect is the one monitor.
-        if iris_lib::session::wayland() {
+        if iris_lib::sys::session::wayland() {
             self.origin = (0, 0);
             self.view = (width, height);
             if self.monitors.is_empty() {
@@ -40,7 +40,7 @@ impl Overlay {
         // keystroke after re-arm can land on the root window. By the
         // time the frame lands the WM has finished its map handling,
         // so activation here sticks.
-        if !iris_lib::session::wayland() {
+        if !iris_lib::sys::session::wayland() {
             window.activate_window();
         }
         // Enter raced the grab: the selection is already committed,

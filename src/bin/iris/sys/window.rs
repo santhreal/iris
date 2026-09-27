@@ -18,7 +18,7 @@
 pub fn root_scale(cx: &gpui::App) -> f32 {
     #[cfg(target_os = "linux")]
     {
-        if iris_lib::session::wayland() {
+        if iris_lib::sys::session::wayland() {
             return 1.0;
         }
         cx.primary_display()
@@ -28,7 +28,7 @@ pub fn root_scale(cx: &gpui::App) -> f32 {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = cx;
-        iris_lib::capture::root_scale()
+        iris_lib::sys::capture::root_scale()
     }
 }
 
@@ -38,8 +38,8 @@ pub fn root_scale(cx: &gpui::App) -> f32 {
 /// screen; elsewhere GPUI's answer is already correct.
 pub fn primary_monitor_rect(cx: &gpui::App) -> Option<(f32, f32, f32, f32)> {
     #[cfg(target_os = "linux")]
-    if !iris_lib::session::wayland() {
-        if let Ok(monitors) = iris_lib::capture::x11::monitors() {
+    if !iris_lib::sys::session::wayland() {
+        if let Ok(monitors) = iris_lib::sys::capture::x11::monitors() {
             if let Some(m) = monitors.first() {
                 let s = root_scale(cx);
                 return Some((
@@ -125,7 +125,7 @@ pub fn begin_wm_move(window: &gpui::Window, grab: gpui::Point<gpui::Pixels>) {
         // X11: the window manager moves it on _NET_WM_MOVERESIZE, with
         // its snapping and tiling; under one that does not handle that,
         // the window follows the root pointer.
-        if iris_lib::session::wayland() || x11::wm_moveresize() {
+        if iris_lib::sys::session::wayland() || x11::wm_moveresize() {
             window.start_window_move();
         } else if let Some(xid) = x11::xid(window) {
             let s = window.scale_factor();
@@ -169,7 +169,7 @@ pub fn begin_wm_resize(
         // window manager resizes on _NET_WM_MOVERESIZE and enforces the
         // minimum from WM_NORMAL_HINTS; under one that does not handle
         // that, the window follows the root pointer and stops at `min`.
-        if iris_lib::session::wayland() || x11::wm_moveresize() {
+        if iris_lib::sys::session::wayland() || x11::wm_moveresize() {
             window.start_window_resize(edge);
         } else if let Some(xid) = x11::xid(window) {
             let s = window.scale_factor();
@@ -214,18 +214,18 @@ pub fn zoom_control(window: &gpui::Window) {
 pub fn start_file_drag(
     window: &gpui::Window,
     paths: Vec<std::path::PathBuf>,
-    icon: Option<iris_lib::dragcopy::DragIcon>,
+    icon: Option<iris_lib::sys::dragcopy::DragIcon>,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let _ = icon;
         let view = macos::ns_view(window).ok_or("drag: no window view")?;
-        iris_lib::dragcopy::start_file_drag_from_view(view, paths)
+        iris_lib::sys::dragcopy::start_file_drag_from_view(view, paths)
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = window;
-        iris_lib::dragcopy::start_file_drag_at_cursor(paths, icon)
+        iris_lib::sys::dragcopy::start_file_drag_at_cursor(paths, icon)
     }
 }
 

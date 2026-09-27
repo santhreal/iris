@@ -8,16 +8,6 @@ fn isolated_home() -> tempfile::TempDir {
     dir
 }
 
-/// XDG layout with `IRIS_HOME` cleared, for the legacy-path
-/// migration that only exists on Linux.
-#[cfg(target_os = "linux")]
-fn xdg_without_iris_home() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    std::env::remove_var(crate::dirs::HOME_ENV);
-    std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
-    dir
-}
-
 #[test]
 #[serial_test::serial]
 fn toml_round_trip_preserves_every_field() {
@@ -159,31 +149,44 @@ fn load_reads_stored_values() {
     drop(d);
 }
 
-#[cfg(target_os = "linux")]
+/// A tempdir holding a glint config with `recording_fps = 12`, and its
+/// path.
+fn glint_config() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("glint/config.toml");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(&old, "recording_fps = 12\n").unwrap();
+    (dir, old)
+}
+
 #[test]
 #[serial_test::serial]
 fn glint_config_migrates_to_iris_path() {
-    let d = xdg_without_iris_home();
-    let old = d.path().join("config/glint/config.toml");
-    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-    std::fs::write(&old, "recording_fps = 12\n").unwrap();
-    let cfg = Config::load();
-    assert_eq!(cfg.recording_fps, 12);
+    let _d = isolated_home();
+    let (_g, old) = glint_config();
+    let path = Config::path().unwrap();
+    migrate_legacy(&path, &old);
     // The copy landed at the iris path, not just in memory.
-    assert!(Config::path().unwrap().exists());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "recording_fps = 12\n"
+    );
+    assert_eq!(Config::load().recording_fps, 12);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 #[serial_test::serial]
 fn existing_iris_config_wins_over_glint() {
-    let d = xdg_without_iris_home();
-    let old = d.path().join("config/glint/config.toml");
-    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-    std::fs::write(&old, "recording_fps = 12\n").unwrap();
+    let _d = isolated_home();
+    let (_g, old) = glint_config();
     let path = Config::path().unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "recording_fps = 60\n").unwrap();
+    migrate_legacy(&path, &old);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "recording_fps = 60\n"
+    );
     assert_eq!(Config::load().recording_fps, 60);
 }
 

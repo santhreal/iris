@@ -9,7 +9,7 @@ pub fn reveal(path: &Path) {
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let uri = format!(
         "file://{}",
-        iris_lib::dragcopy::uri_encode_path(&abs.to_string_lossy())
+        iris_lib::sys::dragcopy::uri_encode_path(&abs.to_string_lossy())
     );
     let parent = abs.parent().unwrap_or(&abs).to_path_buf();
     std::thread::spawn(move || {

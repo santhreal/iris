@@ -1,38 +1,15 @@
 //! Screen recording: one live source per platform, encoded as a run of
 //! Matroska segments and joined into the output file on stop.
 //!
-//! `codec` and `join` are shared by every platform. On Linux the source
-//! grabs frames itself and hands them to a `recorder::Recorder`, which
-//! streams them through `encoder` segments framed by `mkv`. On Windows
-//! and macOS, `desktop` runs ffmpeg's own screen capture per segment.
+//! `codec` and `join` are shared by every platform. The sources are in
+//! [`crate::sys::record`].
 
-mod child;
+pub(crate) mod child;
 pub mod codec;
 mod doorbell;
 pub mod join;
 
 pub use doorbell::Doorbell;
-
-#[cfg(target_os = "linux")]
-pub mod encoder;
-#[cfg(target_os = "linux")]
-pub mod mkv;
-#[cfg(target_os = "linux")]
-pub mod recorder;
-#[cfg(target_os = "linux")]
-mod wake;
-
-#[cfg(target_os = "linux")]
-pub mod x11;
-
-#[cfg(target_os = "linux")]
-pub mod wayland;
-
-#[cfg(any(windows, target_os = "macos"))]
-pub mod desktop;
-
-#[cfg(any(windows, target_os = "macos", test))]
-mod devices;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

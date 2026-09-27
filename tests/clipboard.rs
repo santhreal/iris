@@ -9,7 +9,7 @@
 //! The case starts a headless sway with no XWayland and `DISPLAY` naming a
 //! socket that counts connections, copies text, an image, and two files,
 //! pastes each back with `wl-paste`, and requires no connection to
-//! `DISPLAY`. src/clipboard.rs covers X11. Not covered: a compositor with
+//! `DISPLAY`. src/sys/clipboard.rs covers X11. Not covered: a compositor with
 //! no data-control protocol, where a copy goes through XWayland, and
 //! `ext-data-control-v1`, which sway 1.9 does not offer. The case runs
 //! only with `IRIS_X11_TEST_DISPLAY` set, the switch for a host that runs
@@ -31,7 +31,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use daemon::{counted_x_display, enabled, runtime_dir, sway, until};
-use iris_lib::{clipboard, dragcopy};
+use iris_lib::clipboard;
+use iris_lib::sys::dragcopy;
 
 #[test]
 fn a_copy_on_wayland_pastes_back_and_connects_to_no_x_server() {

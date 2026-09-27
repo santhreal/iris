@@ -7,12 +7,9 @@ use std::path::{Path, PathBuf};
 
 use image::ImageEncoder;
 
-use iris_lib::{
-    capture::{self, Frame},
-    clipboard,
-    config::Config,
-    dragcopy, library, ocr,
-};
+use iris_lib::capture::Frame;
+use iris_lib::sys::{capture, dragcopy};
+use iris_lib::{clipboard, config::Config, library, ocr};
 
 /// The most recent capture's decoded pixels, stashed so the editor
 /// skips re-decoding the PNG finalize just wrote. Single-slot: only

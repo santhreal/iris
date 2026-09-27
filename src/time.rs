@@ -13,36 +13,18 @@ pub fn local_now() -> (i32, u32, u32, u32, u32, u32) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    unsafe {
-        let mut tm: libc::tm = std::mem::zeroed();
-        if !localtime(secs, &mut tm) {
-            // UTC fallback: civil-from-days over the raw epoch.
-            return utc_fields(secs);
-        }
-        (
-            tm.tm_year + 1900,
-            (tm.tm_mon + 1) as u32,
-            tm.tm_mday as u32,
-            tm.tm_hour as u32,
-            tm.tm_min as u32,
-            tm.tm_sec as u32,
-        )
-    }
-}
-
-/// Fill `tm` from epoch `secs` in local time; false on failure. POSIX
-/// `localtime_r` and Windows `localtime_s` differ in argument order and
-/// return convention; this wrapper hides both behind one call.
-#[cfg(unix)]
-unsafe fn localtime(secs: i64, tm: &mut libc::tm) -> bool {
-    !libc::localtime_r(&secs, tm).is_null()
-}
-
-/// Windows `localtime_s` takes the destination first and returns an
-/// errno (0 = success) rather than a pointer.
-#[cfg(windows)]
-unsafe fn localtime(secs: i64, tm: &mut libc::tm) -> bool {
-    libc::localtime_s(tm, &secs) == 0
+    let Some(tm) = crate::sys::time::localtime(secs) else {
+        // UTC fallback: civil-from-days over the raw epoch.
+        return utc_fields(secs);
+    };
+    (
+        tm.tm_year + 1900,
+        (tm.tm_mon + 1) as u32,
+        tm.tm_mday as u32,
+        tm.tm_hour as u32,
+        tm.tm_min as u32,
+        tm.tm_sec as u32,
+    )
 }
 
 /// Milliseconds since the Unix epoch, for ordering and dedup.

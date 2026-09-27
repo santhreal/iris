@@ -147,11 +147,11 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
 /// Wayland portal cannot name a window, so there this returns an error.
 pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
     fn grab_and_finish() -> Result<(PathBuf, iris_lib::library::CaptureEntry), String> {
-        let rect = iris_lib::capture::active_window_rect()?;
+        let rect = iris_lib::sys::capture::active_window_rect()?;
         // Grab only the window's rect off the root: the whole-screen
         // grab + crop this replaced moved up to 200MB for a window
         // that may be a megabyte. Root pixels keep the decorations.
-        let frame = iris_lib::capture::grab_rect(rect)?;
+        let frame = iris_lib::sys::capture::grab_rect(rect)?;
         pipeline::play_shutter_sound();
         let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
             .ok_or("frame buffer size mismatch")?;

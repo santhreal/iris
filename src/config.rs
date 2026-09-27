@@ -179,17 +179,8 @@ impl Config {
         let Some(path) = Self::path() else {
             return Self::default();
         };
-        // One-time migration from the glint name: carry the existing
-        // config over, then read only the new location.
-        if !path.exists() {
-            if let Some(old) = crate::dirs::legacy_glint_config_file() {
-                if old.exists() {
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let _ = std::fs::copy(&old, &path);
-                }
-            }
+        if let Some(old) = crate::dirs::legacy_glint_config_file() {
+            migrate_legacy(&path, &old);
         }
         match std::fs::read_to_string(&path) {
             Ok(text) => match toml::from_str::<Config>(&text) {
@@ -264,6 +255,19 @@ impl Config {
         *Self::cache().lock() = (stamp.0, stamp.1, live);
         Ok(())
     }
+}
+
+/// Copy the config file of the app's former name, `old`, to `path`
+/// when `path` does not exist yet: the one-time migration from glint.
+/// An existing `path` is left as it is, and later loads read only it.
+fn migrate_legacy(path: &Path, old: &Path) {
+    if path.exists() || !old.exists() {
+        return;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::copy(old, path);
 }
 
 /// The home directory: what a leading `~` in a configured

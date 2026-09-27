@@ -28,7 +28,7 @@ pub fn xid(window: &gpui::Window) -> Option<u32> {
 /// _NET_WM_MOVERESIZE. _NET_SUPPORTED outlives a window manager that
 /// exits, so its _NET_SUPPORTING_WM_CHECK window must still name itself.
 pub fn wm_moveresize() -> bool {
-    let Ok((conn, screen_num)) = iris_lib::capture::x11::shared_conn() else {
+    let Ok((conn, screen_num)) = iris_lib::sys::capture::x11::shared_conn() else {
         return false;
     };
     let root = conn.setup().roots[screen_num].root;

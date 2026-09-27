@@ -170,7 +170,7 @@ fn resolve_window_placement(
         // Monitors are physical pixels; `from` and window bounds are
         // logical.
         let s = crate::sys::window::root_scale(cx);
-        let mons = iris_lib::capture::monitors().unwrap_or_default();
+        let mons = iris_lib::sys::capture::monitors().unwrap_or_default();
         let host = mons.iter().copied().find(|m| {
             let (mx, my) = (m.x as f32 / s, m.y as f32 / s);
             fx >= mx && fx < mx + m.width as f32 / s && fy >= my && fy < my + m.height as f32 / s

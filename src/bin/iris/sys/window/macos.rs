@@ -4,7 +4,7 @@
 //! the mouse event being handled, which starts the system's drag and
 //! follows the held button until release.
 
-use iris_lib::objc::{class, sel, send, send1, Id};
+use iris_lib::sys::objc::{class, sel, send, send1, Id};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 /// The window's content `NSView`.

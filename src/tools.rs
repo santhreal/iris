@@ -10,9 +10,6 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;
 
-#[cfg(windows)]
-mod windows;
-
 /// A program iris spawns. The matches below are exhaustive, so a new
 /// tool does not compile until it has an install command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,12 +42,10 @@ impl Tool {
                 "run `winget install UB-Mannheim.TesseractOCR`",
             ),
         };
-        if cfg!(windows) {
-            windows
-        } else if cfg!(target_os = "macos") {
-            macos
-        } else {
-            linux
+        match std::env::consts::OS {
+            "windows" => windows,
+            "macos" => macos,
+            _ => linux,
         }
     }
 
@@ -69,10 +64,8 @@ impl Tool {
         let program = self
             .find()
             .map_or_else(|| OsString::from(self.name()), PathBuf::into_os_string);
-        #[allow(unused_mut)]
         let mut cmd = Command::new(program);
-        #[cfg(windows)]
-        windows::hide_console(&mut cmd);
+        crate::sys::tools::hide_console(&mut cmd);
         cmd
     }
 
@@ -93,30 +86,12 @@ impl Tool {
     }
 }
 
-/// Directories beyond PATH, searched after it: Homebrew (Apple silicon,
-/// then Intel) and MacPorts.
-#[cfg(target_os = "macos")]
-fn extra_dirs() -> Vec<PathBuf> {
-    ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
-        .map(PathBuf::from)
-        .into()
-}
-
-#[cfg(windows)]
-use windows::extra_dirs;
-
-/// A Linux session's PATH already holds the package manager's prefix.
-#[cfg(not(any(windows, target_os = "macos")))]
-fn extra_dirs() -> Vec<PathBuf> {
-    Vec::new()
-}
-
 /// PATH in order, then `extra_dirs`.
 fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
-    dirs.extend(extra_dirs());
+    dirs.extend(crate::sys::tools::extra_dirs());
     dirs
 }
 
@@ -136,6 +111,7 @@ fn find_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys::tools::extra_dirs;
     use std::path::Path;
 
     fn tool(dir: &Path, name: &str) -> PathBuf {

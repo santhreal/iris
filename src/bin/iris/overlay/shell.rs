@@ -19,7 +19,7 @@ pub struct ShellLayout {
 pub fn layout() -> ShellLayout {
     // Linux Wayland has no window list or client placement: the capture
     // layer reports an error there and the shell opens fullscreen.
-    let (monitors, windows) = iris_lib::capture::layout().unwrap_or((Vec::new(), Vec::new()));
+    let (monitors, windows) = iris_lib::sys::capture::layout().unwrap_or((Vec::new(), Vec::new()));
     let union = monitors.iter().skip(1).fold(
         monitors.first().copied().unwrap_or(WinRect {
             x: 0,
@@ -74,7 +74,7 @@ fn open_shell_opts(
     layout: &ShellLayout,
     prewarm: bool,
 ) -> Result<WindowHandle<Overlay>, String> {
-    if !iris_lib::session::wayland() && (layout.union.width == 0 || layout.union.height == 0) {
+    if !iris_lib::sys::session::wayland() && (layout.union.width == 0 || layout.union.height == 0) {
         return Err("no monitor layout".into());
     }
     let focus = cx.focus_handle();
@@ -96,7 +96,7 @@ fn open_shell_opts(
     let bounds = {
         // Root space is physical; window bounds are logical.
         let s = crate::sys::window::root_scale(cx);
-        let (w, h) = if iris_lib::session::wayland() {
+        let (w, h) = if iris_lib::sys::session::wayland() {
             cx.primary_display()
                 .map(|d| (d.bounds().size.width, d.bounds().size.height))
                 .unwrap_or((px(1280.0), px(800.0)))
@@ -188,7 +188,7 @@ fn open_shell_opts(
 /// `sys::window::unpark_span` maps and re-spans it. Wayland has no
 /// unminimize, and Windows and macOS have no restore step.
 pub(super) fn poolable() -> bool {
-    iris_lib::session::x11()
+    iris_lib::sys::session::x11()
 }
 
 /// Pre-create the overlay at daemon start and park it into the pool,
