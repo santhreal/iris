@@ -36,7 +36,6 @@ ab_glyph = "0.2"
 # mpsc channels + StreamExt drive the daemon command pump and the IPC
 # accept thread on every platform, not just Linux.
 futures = "0.3"
-x11rb = { version = "0.13", features = ["composite", "damage", "randr", "xfixes", "shape", "shm", "xinput"] }
 # Santh GPUI: the framework crate and the platform crate that constructs
 # the application for the current OS (X11 and Wayland on Linux, AppKit
 # on macOS, Win32 on Windows). Pinned to a rev so a later push to
@@ -84,6 +83,9 @@ libloading = "0.8"
 # through the X server in DISPLAY, and the first one can start an
 # on-demand XWayland.
 arboard = { version = "3", features = ["wayland-data-control"] }
+# X11: the root and window grabs, the recording sources, XDnD drag-out,
+# and window placement.
+x11rb = { version = "0.13", features = ["composite", "damage", "randr", "xfixes", "shape", "shm", "xinput"] }
 
 [target.'cfg(windows)'.dependencies]
 # Win32 for monitor enumeration, the foreground-window rect, region
@@ -123,5 +125,7 @@ embed-resource = "3"
 [dev-dependencies]
 tempfile = "3"
 serial_test = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 # XTest: tests/exit.rs clicks the window a recording picks.
 x11rb = { version = "0.13", features = ["xtest"] }

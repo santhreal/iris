@@ -16,26 +16,22 @@
 //! new editor, Wayland, where the compositor's activation policy
 //! applies, Windows, and macOS.
 
-use std::ffi::{OsStr, OsString};
-use std::path::Path;
-use std::process::{Child, Command};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
-use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ConnectionExt as _, InputFocus};
-
-// Other test files use the rest of the helpers.
+// The window case uses the rest of the table's helpers, on Linux only.
+#[allow(dead_code)]
 #[path = "support/options.rs"]
 mod options;
+#[cfg(target_os = "linux")]
+#[path = "surfaces/window.rs"]
+mod window;
+// Other test files use the rest of the helpers.
+#[cfg(target_os = "linux")]
 #[allow(dead_code)]
 #[path = "support/x11.rs"]
 mod x11;
 
-use options::{open_args, single_png, Kind, EDITOR, OPTIONS};
-use x11::{focus, windows_of};
-
-/// How long a window that should not exist has to map.
-const SETTLE: Duration = Duration::from_millis(800);
+use options::OPTIONS;
 
 #[test]
 fn every_option_has_a_window_decision() {
@@ -56,160 +52,4 @@ fn every_option_has_a_window_decision() {
         listed, classified,
         "classify every `iris --help` option in OPTIONS, in its order"
     );
-}
-
-#[test]
-fn a_second_open_focuses_the_window_already_open() {
-    let Some(display) = std::env::var_os("IRIS_X11_TEST_DISPLAY") else {
-        return;
-    };
-    let daemon = Daemon::start(&display);
-    let name = display.to_str().expect("IRIS_X11_TEST_DISPLAY is UTF-8");
-    let (conn, screen) = x11rb::connect(Some(name)).unwrap();
-    let root = conn.setup().roots[screen].root;
-    let shot = single_png(&daemon.dir.path().join("shots"));
-    for &(option, kind) in OPTIONS {
-        let Kind::Single(title) = kind else {
-            continue;
-        };
-        let args = open_args(option, &shot);
-        daemon.forward(&args);
-        let first = daemon.until(
-            &format!("{option} to open a window titled {title:?}"),
-            || match windows_of(&conn, root, title).as_slice() {
-                [window] => Some(*window),
-                _ => None,
-            },
-        );
-        // Focus leaves the window; the round trip orders the change
-        // before the second open.
-        conn.set_input_focus(InputFocus::POINTER_ROOT, root, x11rb::CURRENT_TIME)
-            .unwrap();
-        assert_eq!(focus(&conn), root);
-        daemon.forward(&args);
-        daemon.until(
-            &format!("a second {option} to focus the open window"),
-            || (focus(&conn) == first).then_some(()),
-        );
-        std::thread::sleep(SETTLE);
-        assert_eq!(
-            windows_of(&conn, root, title),
-            [first],
-            "a second {option} opened another window titled {title:?}"
-        );
-    }
-    // The editor's subject is its file: another file opens another
-    // editor beside the first.
-    let other = daemon.dir.path().join("shots").join("other.png");
-    std::fs::copy(&shot, &other).unwrap();
-    daemon.forward(&[OsStr::new("--annotate"), other.as_os_str()]);
-    daemon.until("--annotate on another file to open a second editor", || {
-        (windows_of(&conn, root, "other.png - iris").len() == 1
-            && windows_of(&conn, root, EDITOR).len() == 1)
-            .then_some(())
-    });
-}
-
-/// A daemon on the test display with every iris location, its socket,
-/// and its captures in a fresh directory. Its session bus address leads
-/// nowhere, so its tray never registers on a desktop's panel. Killed on
-/// drop.
-struct Daemon {
-    dir: tempfile::TempDir,
-    display: OsString,
-    child: Child,
-}
-
-impl Daemon {
-    fn start(display: &OsStr) -> Daemon {
-        let dir = tempfile::tempdir().unwrap();
-        for sub in ["config", "run", "shots", "vids"] {
-            std::fs::create_dir_all(dir.path().join(sub)).unwrap();
-        }
-        // A session's runtime directory admits only its user, so the
-        // daemon binds `run/iris.sock` in it.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let private = std::fs::Permissions::from_mode(0o700);
-            std::fs::set_permissions(dir.path().join("run"), private).unwrap();
-        }
-        let quoted = |p: &Path| toml::Value::from(p.to_str().unwrap()).to_string();
-        std::fs::write(
-            dir.path().join("config").join("config.toml"),
-            format!(
-                "screenshots_dir = {}\nrecordings_dir = {}\n",
-                quoted(&dir.path().join("shots")),
-                quoted(&dir.path().join("vids")),
-            ),
-        )
-        .unwrap();
-        let log = std::fs::File::create(dir.path().join("daemon.log")).unwrap();
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_iris"));
-        configure(&mut cmd, dir.path(), display);
-        let child = cmd
-            .stdout(log.try_clone().unwrap())
-            .stderr(log)
-            .spawn()
-            .unwrap();
-        let daemon = Daemon {
-            dir,
-            display: display.to_owned(),
-            child,
-        };
-        let socket = daemon.dir.path().join("run").join("iris.sock");
-        daemon.until("the daemon to bind its socket", || {
-            socket.exists().then_some(())
-        });
-        daemon
-    }
-
-    /// `iris <args>` as a client of this daemon.
-    fn forward(&self, args: &[&OsStr]) {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_iris"));
-        configure(&mut cmd, self.dir.path(), &self.display);
-        let out = cmd.args(args).output().unwrap();
-        assert_eq!(
-            out.status.code(),
-            Some(0),
-            "iris {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    /// Poll `f` until it returns a value, for at most 10 s.
-    fn until<T>(&self, what: &str, mut f: impl FnMut() -> Option<T>) -> T {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if let Some(value) = f() {
-                return value;
-            }
-            if Instant::now() > deadline {
-                let log =
-                    std::fs::read_to_string(self.dir.path().join("daemon.log")).unwrap_or_default();
-                panic!("timed out waiting for {what}; daemon log:\n{log}");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// The environment every iris process of one daemon shares.
-fn configure(cmd: &mut Command, dir: &Path, display: &OsStr) {
-    cmd.env("DISPLAY", display)
-        .env_remove("WAYLAND_DISPLAY")
-        .env_remove("IRIS_SLOWMO")
-        .env("IRIS_HOME", dir)
-        .env("XDG_RUNTIME_DIR", dir.join("run"))
-        .env(
-            "DBUS_SESSION_BUS_ADDRESS",
-            format!("unix:path={}", dir.join("no-bus").display()),
-        );
 }

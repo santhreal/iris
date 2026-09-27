@@ -1,12 +1,19 @@
 //! Isolate the XComposite pixmap grab path from the app: pick a window by
 //! id (arg 1, decimal), grab 10 frames, print per-frame results.
-//! Usage: DISPLAY=:99 record_smoke <window-id>
+//! Usage: DISPLAY=:99 record_smoke <window-id>. Linux only.
 
-use x11rb::connection::Connection;
-use x11rb::protocol::composite::{ConnectionExt as CompositeExt, Redirect};
-use x11rb::protocol::xproto::{ConnectionExt as XprotoExt, ImageFormat};
-
+#[cfg(not(target_os = "linux"))]
 fn main() {
+    eprintln!("record_smoke reads an X11 window pixmap: Linux only");
+    std::process::exit(2);
+}
+
+#[cfg(target_os = "linux")]
+fn main() {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::composite::{ConnectionExt as CompositeExt, Redirect};
+    use x11rb::protocol::xproto::{ConnectionExt as XprotoExt, ImageFormat};
+
     let id: u32 = std::env::args()
         .nth(1)
         .and_then(|a| a.parse().ok())
