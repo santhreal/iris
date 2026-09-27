@@ -135,7 +135,7 @@ sudo dnf remove iris
 
 Download `iris-<ver>-linux-x86_64.AppImage`.
 
-The AppImage holds the iris executable and uses the system's libraries: PipeWire (`libpipewire-0.3`), xkbcommon and xkbcommon-x11, XCB, fontconfig, the Wayland client library, the Vulkan loader, EGL, and GLES 2, the libraries the deb depends on. It mounts itself with FUSE through `fusermount3`, from the `fuse3` package. Without FUSE, run it with `--appimage-extract-and-run`.
+The AppImage holds the iris executable and uses the system's libraries: PipeWire (`libpipewire-0.3`), xkbcommon and xkbcommon-x11, XCB, fontconfig, the Wayland client library, the Vulkan loader, EGL, and GLES 2, the libraries the deb depends on. It runs iris with the environment it was started with and adds no `LD_LIBRARY_PATH`, `PATH`, or `XDG_DATA_DIRS` entry, so iris and the programs it starts load libraries from the system's library path. It mounts itself with FUSE through `fusermount3`, from the `fuse3` package. Without FUSE, run it with `--appimage-extract-and-run`.
 
 Set execution permissions and run:
 

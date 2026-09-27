@@ -55,6 +55,11 @@ missing from it.
   `/usr/share/icons/hicolor/*/apps/iris.png`; autostart via
   `/etc/xdg/autostart/iris-autostart.desktop` (XDG autostart,
   `Exec=iris --daemon`).
+- Linux (AppImage): one file, wherever it is kept. Its `AppRun` runs
+  `usr/bin/iris` from the mount with the environment it was given:
+  the AppImage bundles no libraries, programs or data, and sets no
+  `LD_LIBRARY_PATH`, `PATH` or `XDG_DATA_DIRS` entry. No desktop entry
+  and no autostart until Start at login writes one.
 - Start at login (Settings) reads and writes the account's entry:
   `$XDG_CONFIG_HOME/autostart/iris-autostart.desktop` (off over a
   package entry is `Hidden=true` there), the LaunchAgent, or the Run
