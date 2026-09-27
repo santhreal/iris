@@ -48,20 +48,22 @@
 //! A GPU context thread that starts before the X connection is set up
 //! loads the driver within those 2 s. The fourth starts a daemon on a
 //! headless sway with `DISPLAY` naming a socket that counts
-//! connections, and requires none once the daemon is idle; sway renders
-//! with pixman, so the device selection layer finds no device through
-//! Wayland. Its loader also loads the test driver, which records the
-//! `DISPLAY` it saw at each load and at each device enumeration. The case
-//! requires none at a load and the daemon's own at every enumeration: the
-//! variable is back before the GPUs are enumerated, for the processes the
-//! daemon starts and for its X11 clipboard. Not covered: startup work
-//! before the start line (the X connection, the hotkey grabs, the GPU
-//! device, the fonts), work that delays the bind without a request to the
-//! server, the tray, whose menu a private Xvfb has no panel to show, an X
-//! connection a Wayland daemon opens after its start, for a command, a
-//! driver that connects to `DISPLAY` after the instance exists, an X
-//! connection that closes after the bind, and a connection that passes a
-//! file descriptor through the forwarding display, which forwards none.
+//! connections, opens its settings window through a client, which
+//! creates the GPU context, and requires no connection once the daemon
+//! is idle; sway renders with pixman, so the device selection layer finds
+//! no device through Wayland. Its loader also loads the test driver,
+//! which records the `DISPLAY` it saw at each load and at each device
+//! enumeration. The case requires none at a load and the daemon's own at
+//! every enumeration: the variable is back before the GPUs are
+//! enumerated, for the processes the daemon starts and for its X11
+//! clipboard. Not covered: startup work before the start line (the X
+//! connection, the hotkey grabs, the GPU device, the fonts), work that
+//! delays the bind without a request to the server, the tray, whose menu
+//! a private Xvfb has no panel to show, an X connection a Wayland daemon
+//! opens for a command other than a window's, a driver that connects to
+//! `DISPLAY` after the instance exists, an X connection that closes after
+//! the bind, and a connection that passes a file descriptor through the
+//! forwarding display, which forwards none.
 //! The cases run only with `IRIS_X11_TEST_DISPLAY` set and need `Xvfb` or
 //! `sway`; without them a case prints that it did not run.
 
@@ -220,6 +222,15 @@ fn a_daemon_on_a_wayland_session_leaves_its_x_display_alone() {
     let daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("WAYLAND_DISPLAY", &socket).env("DISPLAY", &display);
         driver.add_to(cmd);
+    });
+    // The first window creates the GPU context, which enumerates the GPUs.
+    daemon.send(&["--settings"]);
+    daemon.until("the first window to enumerate the GPUs", || {
+        std::fs::read_to_string(&driver.log)
+            .ok()?
+            .lines()
+            .any(|line| line.starts_with("devices "))
+            .then_some(())
     });
     daemon.settle();
     let log = std::fs::read_to_string(&driver.log).unwrap_or_default();

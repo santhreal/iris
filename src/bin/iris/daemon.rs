@@ -167,7 +167,7 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
                 cx.background_executor()
                     .timer(Duration::from_secs(secs))
                     .await;
-                let _ = cx.update(|cx| run(cx, &Command::CaptureFullscreen));
+                cx.update(|cx| run(cx, &Command::CaptureFullscreen));
             })
             .detach();
             Ok(())
@@ -250,10 +250,10 @@ fn quit(_: &mut App) -> std::future::Ready<()> {
 /// pump are channel-driven; failures degrade to log lines. `claimed`
 /// proves this process is the one daemon, so the socket is its to bind.
 pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
-    // The daemon outlives every surface: GPUI's Linux and Windows run
-    // loops otherwise stop when the last window closes, and a parked
-    // stand-in window would keep a renderer and its frame timer live.
-    cx.set_quit_on_last_window_closed(false);
+    // The daemon outlives every surface: GPUI otherwise quits on Linux
+    // and Windows when the last window closes, and a parked stand-in
+    // window would keep a renderer and its frame timer live.
+    cx.set_quit_mode(QuitMode::Explicit);
     cx.on_app_quit(quit).detach();
     let (tx, rx) = unbounded::<Command>();
     let _ = COMMAND_TX.set(tx.clone());
@@ -278,7 +278,7 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
                     for e in &parsed.errors {
                         iris_lib::ilog!("iris: forwarded command line: {e}");
                     }
-                    let _ = cx.update(|cx| {
+                    cx.update(|cx| {
                         for cmd in parsed.cmds {
                             run(cx, &cmd);
                         }
@@ -306,7 +306,7 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
     cx.spawn(async move |cx| {
         let mut rx = rx;
         while let Some(cmd) = rx.next().await {
-            let _ = cx.update(|cx| run(cx, &cmd));
+            cx.update(|cx| run(cx, &cmd));
         }
     })
     .detach();

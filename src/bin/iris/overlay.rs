@@ -156,7 +156,7 @@ fn drag_region(anchor: (f32, f32), cursor: (f32, f32), size: (f32, f32), square:
 
 impl Render for Overlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         if self.finalize_failed {
             self.finalize_failed = false;
             self.cancel(window, cx);

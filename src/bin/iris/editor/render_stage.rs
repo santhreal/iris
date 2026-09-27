@@ -43,12 +43,14 @@ impl Editor {
                     offset: point(px(0.), px(10.)),
                     blur_radius: px(24.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0.0, 0.0, 0.0, 0.22 * chrome),
                     offset: point(px(0.), px(2.)),
                     blur_radius: px(6.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
             ])
             .child(

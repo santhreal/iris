@@ -99,7 +99,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(focus) = &self.focus {
-            focus.focus(window);
+            focus.focus(window, cx);
         }
         let mut form = div().flex().flex_col().gap(px(20.)).p(px(24.));
 

@@ -82,7 +82,7 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
                 Ok::<(Arc<gpui::RenderImage>, u32, u32), String>((img, width, height))
             })
             .await;
-        let _ = cx.update(|cx| match grabbed {
+        cx.update(|cx| match grabbed {
             Ok((img, width, height)) => {
                 iris_lib::ilog!("iris: capture: frame landed in {:?}", t0.elapsed());
                 let _ = handle.update(cx, |overlay, window, cx| {
@@ -126,7 +126,7 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
                     .background_executor()
                     .spawn(async move { pipeline::finalize(img) });
                 if Config::load().flash_on_capture {
-                    let _ = cx.update(|cx| {
+                    cx.update(|cx| {
                         if let Err(e) = flash::show(cx) {
                             iris_lib::ilog!("iris: capture flash: {e}");
                         }
@@ -136,7 +136,7 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
             }
             Err(e) => Err(e),
         };
-        let _ = cx.update(|cx| landed(cx, done));
+        cx.update(|cx| landed(cx, done));
     })
     .detach();
     Ok(())
@@ -162,7 +162,7 @@ pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
             .background_executor()
             .spawn(async move { grab_and_finish() })
             .await;
-        let _ = cx.update(|cx| landed(cx, done));
+        cx.update(|cx| landed(cx, done));
     })
     .detach();
     Ok(())

@@ -43,7 +43,7 @@ pub fn open(cx: &mut App, path: &std::path::Path) {
                     .ok_or_else(|| format!("decode {}: not a supported image", path.display()))
             })
             .await;
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             if let Err(e) = decoded.and_then(|img| open_with_image(cx, img)) {
                 iris_lib::ilog!("pin: {e}");
                 crate::notice::failed(cx, "Pin failed", &e);

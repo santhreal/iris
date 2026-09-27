@@ -119,7 +119,14 @@ impl Watch {
         };
         // SAFETY: registers one change and waits for no events.
         let added = unsafe {
-            libc::kevent(queue.as_raw_fd(), &change, 1, std::ptr::null_mut(), 0, std::ptr::null())
+            libc::kevent(
+                queue.as_raw_fd(),
+                &change,
+                1,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
         };
         if added < 0 {
             return Err(io::Error::last_os_error());
@@ -133,7 +140,16 @@ impl Watch {
         let mut event: libc::kevent = unsafe { std::mem::zeroed() };
         // SAFETY: room for one event. EV_CLEAR resets the filter once it
         // is reported, so the next wait blocks until a new write.
-        unsafe { libc::kevent(self.queue.as_raw_fd(), std::ptr::null(), 0, &mut event, 1, &ts) };
+        unsafe {
+            libc::kevent(
+                self.queue.as_raw_fd(),
+                std::ptr::null(),
+                0,
+                &mut event,
+                1,
+                &ts,
+            )
+        };
     }
 }
 

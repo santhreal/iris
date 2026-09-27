@@ -227,7 +227,7 @@ pub(super) fn close_other_overlays(cx: &mut App, keep: Option<AnyWindowHandle>) 
         cx.background_executor()
             .timer(Duration::from_millis(80))
             .await;
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             for h in handles {
                 let _ = h.update(cx, |_, window, _| window.remove_window());
             }

@@ -44,7 +44,7 @@ pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, S
     // A source that ends before a pick lands drops the sender unsent.
     cx.spawn(async move |cx| {
         if let Ok(rect) = landed.await {
-            let _ = cx.update(|cx| open_chip_over(cx, &output, rect, &monitors, &chip));
+            cx.update(|cx| open_chip_over(cx, &output, rect, &monitors, &chip));
         }
     })
     .detach();

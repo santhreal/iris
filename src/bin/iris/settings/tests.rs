@@ -121,6 +121,7 @@ fn format_keystroke_formats_keys_and_modifiers() {
                 key_char: None,
             },
             is_held: false,
+            prefer_character_input: false,
         };
 
     // Bare modifier is ignored

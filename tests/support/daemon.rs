@@ -259,7 +259,7 @@ impl Daemon {
     /// Run `iris <args>` as a client of this daemon, which hands them over
     /// the socket and exits. With no display variables, a client that
     /// found no daemon could not start one in its place.
-    pub fn send(&self, args: &[&str]) {
+    pub fn send<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(&self, args: &[S]) {
         let out = Command::new(env!("CARGO_BIN_EXE_iris"))
             .args(args)
             .env("IRIS_HOME", &self.dir)
@@ -319,6 +319,46 @@ impl Daemon {
                 let name = std::fs::read_to_string(path.join("comm")).ok()?;
                 let stat = std::fs::read_to_string(path.join("stat")).ok()?;
                 Some((tid, (name.trim().to_string(), cpu(&stat))))
+            })
+            .collect()
+    }
+
+    /// The process id of the daemon, which is also the id of its main
+    /// thread.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// The wakeups of each thread of the daemon over `span`, by thread
+    /// id, with the thread's name: the context switches it made. A thread
+    /// blocked the whole span makes none.
+    pub fn wakeups(&self, span: Duration) -> BTreeMap<u32, (String, u64)> {
+        let switches = || -> BTreeMap<u32, (String, u64)> {
+            let Ok(tasks) = std::fs::read_dir(format!("/proc/{}/task", self.child.id())) else {
+                return BTreeMap::new();
+            };
+            tasks
+                .filter_map(|task| {
+                    let path = task.ok()?.path();
+                    let tid = path.file_name()?.to_str()?.parse().ok()?;
+                    let name = std::fs::read_to_string(path.join("comm")).ok()?;
+                    let status = std::fs::read_to_string(path.join("status")).ok()?;
+                    let count = status
+                        .lines()
+                        .filter(|line| line.contains("ctxt_switches:"))
+                        .filter_map(|line| line.split_whitespace().nth(1)?.parse::<u64>().ok())
+                        .sum();
+                    Some((tid, (name.trim().to_string(), count)))
+                })
+                .collect()
+        };
+        let before = switches();
+        std::thread::sleep(span);
+        switches()
+            .into_iter()
+            .map(|(tid, (name, count))| {
+                let was = before.get(&tid).map_or(0, |t| t.1);
+                (tid, (name, count.saturating_sub(was)))
             })
             .collect()
     }

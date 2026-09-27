@@ -250,7 +250,7 @@ fn action_tile(
 
 impl Render for Home {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         let opened = *self.opened.get_or_insert_with(Instant::now);
         let start = if self.brand { 0.0 } else { REVEAL };
         let loading_t = loading_progress(start, opened.elapsed(), motion::tempo(LOADING));

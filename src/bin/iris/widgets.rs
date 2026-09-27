@@ -250,6 +250,7 @@ pub fn toggle(id: &'static str, on: bool) -> Stateful<Div> {
                     offset: gpui::point(px(0.), px(1.)),
                     blur_radius: px(2.),
                     spread_radius: px(0.),
+                    inset: false,
                 }])
                 .ml(if on { px(21.) } else { px(3.) })
                 .mt(px(3.)),

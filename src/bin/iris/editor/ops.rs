@@ -313,7 +313,7 @@ impl Editor {
             // left to show that the edit did not land.
             if let Err((what, e)) = result {
                 iris_lib::ilog!("iris: save: {e}");
-                let _ = cx.update(|cx| crate::notice::failed(cx, what, &e));
+                cx.update(|cx| crate::notice::failed(cx, what, &e));
             }
         })
         .detach();

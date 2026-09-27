@@ -37,7 +37,12 @@ ab_glyph = "0.2"
 # accept thread on every platform, not just Linux.
 futures = "0.3"
 x11rb = { version = "0.13", features = ["composite", "damage", "randr", "xfixes", "shape", "shm", "xinput"] }
-gpui = "0.2.2"
+# Santh GPUI: the framework crate and the platform crate that constructs
+# the application for the current OS (X11 and Wayland on Linux, AppKit
+# on macOS, Win32 on Windows). Pinned to a rev so a later push to
+# santh-gpui cannot move the dependency under the build.
+gpui = { git = "https://github.com/santhreal/santh-gpui.git", rev = "fe105aff6e607b70c3306351f454fa48dbcb2288" }
+gpui_platform = { git = "https://github.com/santhreal/santh-gpui.git", rev = "fe105aff6e607b70c3306351f454fa48dbcb2288", features = ["font-kit", "wayland", "x11"] }
 libc = "0.2"
 # Auto-update: HTTPS GET of the release manifest + asset download.
 # rustls (no system OpenSSL), blocking API — the updater runs on its own
@@ -117,70 +122,3 @@ tempfile = "3"
 serial_test = "3"
 # XTest: tests/exit.rs clicks the window a recording picks.
 x11rb = { version = "0.13", features = ["xtest"] }
-
-# The santhreal gpui fork's gpui-0.2.2-iris branch is crates.io 0.2.2
-# (the "Bump gpui to 0.2.2" commit) plus fixes: wl_keyboard Modifiers
-# and Key events that arrive before the first Keymap no longer panic on
-# a missing keymap_state. Without it a Wayland daemon restart crashes
-# when sway delivers early modifier state. It also sets the Wayland
-# xdg_toplevel app_id before the first commit, keeps the macOS
-# window constructor compiling with that field, and adds
-# App::set_quit_on_last_window_closed so the daemon runs with no window
-# open, and PlatformDisplay::scale_factor, which reports the X11
-# client's single scale before any window exists. Hover ends on
-# MouseExited, which Windows now reports on WM_MOUSELEAVE, so a control
-# the pointer leaves the window from does not stay hovered. An X11
-# window is unmapped before its renderer is torn down, so a closing
-# window does not blink black for a compositor frame, and its minimum
-# size hint is in device pixels, so a window manager holds the minimum
-# on a 2x display. An X11 move or resize anchors at the button press,
-# so pointer travel before the press is handled still moves the window.
-# A Wayland resize configure that arrives within a frame of the last one
-# applies on the next frame instead of being dropped, so an interactive
-# resize ends at the pointer. An X11 window requests frames only while
-# it has something to draw, instead of running a timer at the display
-# refresh rate, so an idle window costs no wakeups; a Wayland window
-# requests frame callbacks only while it has something to draw, for the
-# same reason. An X11 pop-up sets the ICCCM input hint to false, so a
-# window manager never gives the toast or a notice the keyboard focus,
-# and sets its position, no frame, and its window states before the
-# map, so it opens where iris put it without a frame drawn and removed.
-# An X11 window's renderer is created for the background it opens with,
-# so a transparent window neither rebuilds its swapchain after the open
-# nor shows black before its first frame. Every X11 window sets its
-# position before the map, and a window that draws its own frame turns
-# the window manager's frame off before the map, so each opens where
-# iris put it with no frame drawn and removed; a configure that changes
-# neither size nor origin lays out and draws nothing. A failed X11
-# connection ends the event loop, so the daemon exits when its X server
-# does instead of polling the closed socket at full CPU; an event that
-# fails to parse is skipped. Each client creates its GPU context with the
-# Vulkan surface extension of its own window system alone, so Mesa's
-# device selection layer connects a Wayland daemon to no X server, which
-# started an on-demand XWayland. The Wayland client creates its GPU
-# context before the dispatcher starts its threads, while the process
-# still has one thread. An X11 client creates its GPU context on a
-# thread of its own once its X connection is set up: the driver loads
-# while the client loads its fonts, and the X connection Mesa's device
-# selection layer opens and closes cannot leave a fresh X server with no
-# client, which resets it, while the client's own is in setup. The
-# windows of a GPU context share one set of render pipelines, compiled
-# on threads of their own. Pinned to a rev so a later fork push cannot
-# move the dependency under the build.
-#
-# The santhreal blade fork's blade-graphics-0.7.1-iris branch is
-# crates.io blade-graphics 0.7.1 plus ContextDesc::ray_tracing, off by
-# default, and ContextDesc::window_system. 0.7.1 enables the ray tracing
-# extensions on every capable adapter; on NVIDIA that maps the ray
-# tracing runtime into the daemon (+160 MB resident) and adds a driver
-# thread, for a renderer that never traces a ray. It also enables every
-# surface extension the driver lists; with the XCB one enabled and
-# DISPLAY set, Mesa's device selection layer connects to the X server
-# while it enumerates devices when it selects none through Wayland. A
-# Wayland context created while the process has one thread creates its
-# Vulkan instance with DISPLAY removed from the environment: the NVIDIA
-# driver connects to the X server DISPLAY names when the loader loads
-# it, which starts the same XWayland.
-[patch.crates-io]
-gpui = { git = "https://github.com/santhreal/gpui.git", rev = "f855e12dc7", version = "=0.2.2" }
-blade-graphics = { git = "https://github.com/santhreal/blade.git", rev = "fe729db003", version = "=0.7.1" }

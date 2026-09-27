@@ -75,7 +75,7 @@ fn finish(cx: &mut App, rec: ActiveRecording) {
     }
     cx.spawn(async move |cx| {
         if let Ok(result) = rx.await {
-            let _ = cx.update(|cx| report(cx, result));
+            cx.update(|cx| report(cx, result));
         }
     })
     .detach();
@@ -175,7 +175,7 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
                 Ok::<(Arc<gpui::RenderImage>, u32, u32), String>((img, width, height))
             })
             .await;
-        let _ = cx.update(|cx| match grabbed {
+        cx.update(|cx| match grabbed {
             Ok((img, width, height)) => {
                 let _ = handle.update(cx, |overlay, window, cx| {
                     overlay.set_frame(img, width, height, window, cx);

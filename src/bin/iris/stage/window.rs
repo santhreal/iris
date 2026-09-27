@@ -74,7 +74,7 @@ pub fn show_toast(cx: &mut App, path: &Path) {
     });
     cx.spawn(async move |cx| {
         let thumb = scaled.await;
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             if let Err(e) = thumb.and_then(|t| open_toast_window(cx, &path, t, false, None)) {
                 iris_lib::ilog!("toast: {e}");
                 crate::notice::failed(cx, "Toast did not open", &e);
@@ -137,7 +137,7 @@ fn hand_off_after_present(toast: WindowHandle<ToastStage>, cx: &mut App, handoff
             Some(presented) => cx
                 .spawn(async move |cx| {
                     let _ = presented.await;
-                    let _ = cx.update(|cx| run_handoff(&on_present, cx));
+                    cx.update(|cx| run_handoff(&on_present, cx));
                 })
                 .detach(),
             // The handoff parks another window; run it after this
@@ -153,7 +153,7 @@ fn hand_off_after_present(toast: WindowHandle<ToastStage>, cx: &mut App, handoff
     }
     cx.spawn(async move |cx| {
         cx.background_executor().timer(HANDOFF_DEADLINE).await;
-        let _ = cx.update(|cx| run_handoff(&slot, cx));
+        cx.update(|cx| run_handoff(&slot, cx));
     })
     .detach();
 }

@@ -25,50 +25,14 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt as _, InputFocus};
 
 // Other test files use the rest of the helpers.
+#[path = "support/options.rs"]
+mod options;
 #[allow(dead_code)]
 #[path = "support/x11.rs"]
 mod x11;
 
+use options::{open_args, single_png, Kind, EDITOR, OPTIONS};
 use x11::{focus, windows_of};
-
-/// How an `iris --help` option relates to windows with one subject.
-#[derive(Clone, Copy)]
-enum Kind {
-    /// Opens the iris window of this title; a second open focuses it.
-    /// Every iris window shares one WM_CLASS, so the title is what
-    /// tells the surfaces apart. The editor's is its file's name, here
-    /// `single.png`.
-    Single(&'static str),
-    /// Opens no window that has one subject: a capture, a recording, a
-    /// toast card, or a command the client runs itself.
-    Other,
-}
-
-/// Every option `iris --help` lists, in its order.
-const OPTIONS: &[(&str, Kind)] = &[
-    ("--capture", Kind::Other),
-    ("--capture-fullscreen", Kind::Other),
-    ("--capture-window", Kind::Other),
-    ("--delay", Kind::Other),
-    ("--record-window", Kind::Other),
-    ("--record-region", Kind::Other),
-    ("--record-pause", Kind::Other),
-    ("--record-mic", Kind::Other),
-    ("--library", Kind::Single("Library - iris")),
-    ("--settings", Kind::Single("Settings - iris")),
-    ("--home", Kind::Single("iris")),
-    ("--annotate", Kind::Single(EDITOR)),
-    ("--toast", Kind::Other),
-    ("--quit", Kind::Other),
-    ("--daemon", Kind::Other),
-    ("--version", Kind::Other),
-    ("--check-update", Kind::Other),
-    ("--update", Kind::Other),
-    ("--help", Kind::Other),
-];
-
-/// The title of the editor on the test's `single.png`.
-const EDITOR: &str = "single.png - iris";
 
 /// How long a window that should not exist has to map.
 const SETTLE: Duration = Duration::from_millis(800);
@@ -103,18 +67,12 @@ fn a_second_open_focuses_the_window_already_open() {
     let name = display.to_str().expect("IRIS_X11_TEST_DISPLAY is UTF-8");
     let (conn, screen) = x11rb::connect(Some(name)).unwrap();
     let root = conn.setup().roots[screen].root;
-    let shot = daemon.dir.path().join("shots").join("single.png");
-    image::RgbaImage::from_pixel(64, 48, image::Rgba([40, 90, 200, 255]))
-        .save(&shot)
-        .unwrap();
+    let shot = single_png(&daemon.dir.path().join("shots"));
     for &(option, kind) in OPTIONS {
         let Kind::Single(title) = kind else {
             continue;
         };
-        let mut args = vec![OsStr::new(option)];
-        if option == "--annotate" {
-            args.push(shot.as_os_str());
-        }
+        let args = open_args(option, &shot);
         daemon.forward(&args);
         let first = daemon.until(
             &format!("{option} to open a window titled {title:?}"),

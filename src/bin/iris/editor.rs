@@ -385,7 +385,7 @@ pub fn open(
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         if let Some(ready) = &self.morph_sync {
             self.morph_frames += 1;
             if self.morph_frames >= 2 {

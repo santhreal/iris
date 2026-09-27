@@ -101,6 +101,7 @@ pub fn shadow_rest() -> BoxShadow {
         offset: point(px(0.), px(2.)),
         blur_radius: px(10.),
         spread_radius: px(0.),
+        inset: false,
     }
 }
 
@@ -112,12 +113,14 @@ pub fn shadow_float() -> Vec<BoxShadow> {
             offset: point(px(0.), px(4.)),
             blur_radius: px(18.),
             spread_radius: px(0.),
+            inset: false,
         },
         BoxShadow {
             color: gpui::hsla(0.0, 0.0, 0.0, 0.18),
             offset: point(px(0.), px(1.)),
             blur_radius: px(4.),
             spread_radius: px(0.),
+            inset: false,
         },
     ]
 }
@@ -132,12 +135,14 @@ pub fn shadow_tight() -> Vec<BoxShadow> {
             offset: point(px(0.), px(2.)),
             blur_radius: px(4.5),
             spread_radius: px(0.),
+            inset: false,
         },
         BoxShadow {
             color: gpui::hsla(0.0, 0.0, 0.0, 0.20),
             offset: point(px(0.), px(1.)),
             blur_radius: px(1.5),
             spread_radius: px(0.),
+            inset: false,
         },
     ]
 }
@@ -156,12 +161,14 @@ pub fn card_shadow(visibility: f32) -> Vec<BoxShadow> {
             offset: point(px(0.), px(8.)),
             blur_radius: px(12.),
             spread_radius: px(0.),
+            inset: false,
         },
         BoxShadow {
             color: gpui::hsla(0.0, 0.0, 0.0, 0.20 * visibility),
             offset: point(px(0.), px(2.)),
             blur_radius: px(5.),
             spread_radius: px(0.),
+            inset: false,
         },
     ]
 }
@@ -212,6 +219,7 @@ mod tests {
             offset: point(px(x), px(y)),
             blur_radius: px(blur),
             spread_radius: px(spread),
+            inset: false,
         };
         assert_eq!(shadow_reach(&[]), 0.0);
         assert_eq!(shadow_reach(&[s(0.0, 8.0, 12.0, 0.0)]), 44.0);
