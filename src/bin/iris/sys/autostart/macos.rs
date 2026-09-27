@@ -15,7 +15,7 @@ fn agent() -> Result<PathBuf, String> {
 }
 
 fn this_iris() -> Result<PathBuf, String> {
-    std::env::current_exe().map_err(|e| format!("start at login: find this iris: {e}"))
+    crate::sys::exe::this().map_err(|e| format!("start at login: find this iris: {e}"))
 }
 
 /// Whether a LaunchAgent starts this iris at login.

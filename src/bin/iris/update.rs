@@ -243,7 +243,7 @@ pub fn apply(info: &UpdateInfo) -> Result<(), String> {
 pub fn hand_off(info: &UpdateInfo) -> Result<(), String> {
     crate::sys::install::ready()?;
     download(info)?;
-    let exe = std::env::current_exe().map_err(|e| format!("update: find this iris: {e}"))?;
+    let exe = crate::sys::exe::this().map_err(|e| format!("update: find this iris: {e}"))?;
     crate::sys::detach::spawn(&exe, &["--update"])
         .map_err(|e| format!("update: start {} --update: {e}", exe.display()))
 }

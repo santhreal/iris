@@ -11,15 +11,17 @@
 //! `ipc` is fully cross-platform (interprocess local sockets map to
 //! Unix domain sockets on Unix and named pipes on Windows); only the
 //! socket's name is per OS. `detach` starts the daemon so that it
-//! holds none of the caller's streams. `alloc` sets the glibc allocator
-//! policy and `console` attaches a Windows command line to its
-//! terminal; both are empty elsewhere. `autostart`, `hotkeys`,
-//! `install`, `record`, `reveal`, `sound`, `tray`, and `window` have a
-//! per-OS implementation each.
+//! holds none of the caller's streams. `exe` is the path of the running
+//! binary, the installed one after a package upgrade replaced it.
+//! `alloc` sets the glibc allocator policy and `console` attaches a
+//! Windows command line to its terminal; both are empty elsewhere.
+//! `autostart`, `hotkeys`, `install`, `record`, `reveal`, `sound`,
+//! `tray`, and `window` have a per-OS implementation each.
 
 pub mod alloc;
 pub mod console;
 pub mod detach;
+pub mod exe;
 pub mod ipc;
 
 pub mod autostart;

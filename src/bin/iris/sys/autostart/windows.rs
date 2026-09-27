@@ -34,7 +34,7 @@ const VALUE: &str = "iris";
 /// `"<this iris.exe>" --daemon`, the command line the installer writes.
 fn command() -> Result<OsString, String> {
     let exe =
-        std::env::current_exe().map_err(|e| format!("start at login: find this iris: {e}"))?;
+        crate::sys::exe::this().map_err(|e| format!("start at login: find this iris: {e}"))?;
     Ok(command_for(&exe))
 }
 

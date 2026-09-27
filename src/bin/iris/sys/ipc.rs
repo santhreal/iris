@@ -192,7 +192,7 @@ fn quit(name: Name<'_>, within: Duration) -> Quit {
 /// its streams. It takes the claim and becomes the daemon, or exits when
 /// another process holds the claim.
 pub fn start_daemon() -> bool {
-    match std::env::current_exe().and_then(|exe| crate::sys::detach::spawn(&exe, &["--daemon"])) {
+    match crate::sys::exe::this().and_then(|exe| crate::sys::detach::spawn(&exe, &["--daemon"])) {
         Ok(()) => true,
         Err(e) => {
             iris_lib::ilog!("iris: start the daemon: {e}");

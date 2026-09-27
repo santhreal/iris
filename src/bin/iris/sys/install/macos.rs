@@ -30,7 +30,7 @@ const ATTACH_WAIT: Duration = Duration::from_secs(1);
 /// The `.app` bundle this iris runs from. A binary outside a bundle,
 /// as a `cargo build` leaves it, has no bundle to replace.
 fn bundle() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe()
+    let exe = crate::sys::exe::this()
         .and_then(std::fs::canonicalize)
         .map_err(|e| format!("update: locate the running iris: {e}"))?;
     bundle_of(&exe).ok_or_else(|| {

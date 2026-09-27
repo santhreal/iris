@@ -26,7 +26,7 @@ pub fn ready() -> Result<(), String> {
 pub fn apply_file(file: &Path) -> Result<(), String> {
     let target = appimage()?;
     replace(file, &target)?;
-    // The new file, not current_exe(): that path is inside the old
+    // The AppImage, not sys::exe::this(): that path is inside the old
     // AppImage's mount, which still serves the old binary.
     super::relaunch(&target)
 }

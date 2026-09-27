@@ -25,7 +25,7 @@ const ZIP_DIR: &str = "iris";
 
 /// The iris.exe this process runs.
 fn exe() -> Result<PathBuf, String> {
-    std::env::current_exe().map_err(|e| format!("update: find this iris: {e}"))
+    crate::sys::exe::this().map_err(|e| format!("update: find this iris: {e}"))
 }
 
 /// Whether `exe` was installed by the installer, which writes

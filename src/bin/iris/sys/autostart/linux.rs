@@ -61,7 +61,7 @@ impl Iris {
         let (program, packaged) = match std::env::var_os("APPIMAGE") {
             Some(image) => (PathBuf::from(image), false),
             None => (
-                std::env::current_exe()
+                crate::sys::exe::this()
                     .map_err(|e| format!("start at login: find this iris: {e}"))?,
                 true,
             ),

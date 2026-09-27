@@ -138,7 +138,7 @@ fn a_portable_iris_is_ready_only_where_it_can_write() {
 
 #[test]
 fn tidy_deletes_the_iris_a_portable_update_moved_aside() {
-    let old = aside(&std::env::current_exe().expect("current_exe"));
+    let old = aside(&crate::sys::exe::this().expect("current_exe"));
     std::fs::write(&old, b"old").expect("write");
     tidy();
     assert!(!old.exists(), "{} stayed", old.display());
