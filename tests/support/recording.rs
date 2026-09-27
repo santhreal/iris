@@ -21,7 +21,8 @@ pub struct Recording {
     pub daemon: Daemon,
     pub xvfb: Server,
     /// Holds the recorded window: closing the connection destroys it.
-    _x: RustConnection,
+    x: RustConnection,
+    root: u32,
     dir: tempfile::TempDir,
 }
 
@@ -85,9 +86,15 @@ impl Recording {
         Some(Recording {
             daemon,
             xvfb,
-            _x: x,
+            x,
+            root,
             dir,
         })
+    }
+
+    /// The case's connection to the recording's server, and its root.
+    pub fn x(&self) -> (&RustConnection, u32) {
+        (&self.x, self.root)
     }
 
     /// Assert the recording is on disk: the recordings directory holds

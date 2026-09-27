@@ -50,7 +50,9 @@ mod daemon;
 #[allow(dead_code)]
 #[path = "support/driver.rs"]
 mod driver;
-#[path = "exit/recording.rs"]
+// The chip test uses the rest of the harness.
+#[allow(dead_code)]
+#[path = "support/recording.rs"]
 mod recording;
 // The other test files use the rest of the helpers.
 #[allow(dead_code)]

@@ -51,6 +51,7 @@ pub enum Icon {
     Counter,
     Record,
     Play,
+    Stop,
     Alert,
 }
 

@@ -303,6 +303,10 @@ fn icon_geometry(kind: Icon, mut path: &mut impl TriSink, s: f32) {
             // Right-pointing triangle.
             push_filled_triangle(&mut path, p(6.0, 4.0), p(6.0, 14.0), p(14.5, 9.0));
         }
+        Icon::Stop => {
+            // Filled square, the Play triangle's weight.
+            push_rect_fill(&mut path, p(5.0, 5.0), p(13.0, 13.0));
+        }
         Icon::Alert => {
             // Ring with an exclamation mark: stem over a dot.
             push_ring(&mut path, p(9.0, 9.0), 6.6 * s, 6.6 * s, w);

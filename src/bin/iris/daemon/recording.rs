@@ -46,6 +46,14 @@ pub(super) fn toggle_recording(cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
+/// Stop the live recording, and never start one: a click on the chip's
+/// stop button can land after the recording ended on its own.
+pub(super) fn stop(cx: &mut App) -> Result<(), String> {
+    let rec = RECORDING.lock().take().ok_or("no recording is active")?;
+    finish(cx, rec);
+    Ok(())
+}
+
 /// A source sent its end notice. One that ended on its own (it failed,
 /// lost its target, or its pick was cancelled) is still registered:
 /// collect and report it. The notice of a recording already stopped

@@ -64,6 +64,9 @@ pub enum Command {
     },
     RecordPause,
     RecordMic,
+    /// Stop the live recording: the chip's stop button. Unlike
+    /// RecordToggle it never starts one.
+    RecordStop,
     /// A recording source returned: the daemon collects the recording
     /// when it ended on its own, not by a stop.
     RecordingEnded,
@@ -91,6 +94,7 @@ impl Command {
             Command::RecordToggle
             | Command::RecordRegionPick
             | Command::RecordRegion { .. }
+            | Command::RecordStop
             | Command::RecordingEnded => "Recording failed",
             Command::LibraryChanged => "Library did not refresh",
             Command::RecordPause => "Pause failed",
@@ -116,14 +120,14 @@ pub(crate) fn report_failure(what: &'static str, err: String) {
 }
 
 /// True when every command acts on a running daemon's live state:
-/// quit, pause, and the mic toggle. A fresh daemon holds none of that
-/// state, so the client delivers these only to a daemon that is
+/// quit, pause, the mic toggle, and stop. A fresh daemon holds none of
+/// that state, so the client delivers these only to a daemon that is
 /// already up and never spawns one for them. The match is exhaustive
 /// so a new command fails to compile until it is classified.
 pub fn live_daemon_only(cmds: &[Command]) -> bool {
     !cmds.is_empty()
         && cmds.iter().all(|c| match c {
-            Command::Quit | Command::RecordPause | Command::RecordMic => true,
+            Command::Quit | Command::RecordPause | Command::RecordMic | Command::RecordStop => true,
             Command::Home
             | Command::Capture
             | Command::CaptureFullscreen
@@ -200,6 +204,7 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             chip::set_mic(cx, on);
             Ok(())
         }
+        Command::RecordStop => recording::stop(cx),
         Command::RecordingEnded => {
             recording::collect_ended(cx);
             Ok(())
@@ -334,6 +339,7 @@ mod tests {
             vec![Quit],
             vec![RecordPause],
             vec![RecordMic],
+            vec![RecordStop],
             vec![RecordPause, RecordMic],
             vec![Quit, RecordPause],
         ] {

@@ -19,6 +19,7 @@ Stop an active recording through any of the following triggers:
 - Run `iris --record-window`
 - Click **Record window** in the system tray menu
 - Click **Record Window** in the Home window
+- Click the stop button on the floating indicator chip (X11, Windows, and macOS)
 - Run `iris --quit` (saves the recording before process exit)
 
 A recording also ends automatically when its target window closes, its target window minimizes, or its compositor session ends.
@@ -86,6 +87,7 @@ Components:
 - **Status dot**: 9×9 logical pixel circular indicator, solid red (`theme::DANGER`) while recording and faint gray (`theme::FG_FAINT`) at 0.35 opacity while paused.
 - **Elapsed timer**: Renders elapsed duration as `MM:SS`. Time spent paused is not counted. The chip draws a frame when the timer reaches the next second and when the pause or microphone state changes; a paused chip draws no frames until its state changes.
 - **Pause button**: Clickable icon button. Displays the Pause icon while recording and the Play icon while paused. Clicking sends `Command::RecordPause` to the daemon.
+- **Stop button**: Clickable icon button. Displays the Stop icon, a filled square. Clicking sends `Command::RecordStop` to the daemon, which stops and saves the recording and closes the chip. With no recording active, it starts none.
 - **Microphone button**: Clickable icon button. Displays the Mic icon when microphone capture is active and the MicOff icon when muted. Clicking sends `Command::RecordMic` to the daemon. Rendered only when `recording_format` supports audio (`mp4` or `webm`). For `gif` recordings, the button is omitted.
 
 Window management and capture exclusion:

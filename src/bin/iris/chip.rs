@@ -1,14 +1,15 @@
 //! Recording chip: the frosted badge pinned above the recorded area.
 //!
 //! A small transparent popup with the record dot, a tabular elapsed
-//! timer, the pause button, and the mic button when the format records
-//! audio. It draws a frame when its clock reaches the next second and
-//! when the recording's state changes: a recording pays for one chip
-//! frame a second, and a paused one for none. On X11 the border thread
-//! in sys::record::x11 moves it by XID (x11rb configure_window), so it
-//! follows the target window without going through the app event
-//! loop. On Windows and macOS it opens above the recorded region and is
-//! excluded from screen capture, so it never appears in the recording.
+//! timer, the pause and stop buttons, and the mic button when the
+//! format records audio. It draws a frame when its clock reaches the
+//! next second and when the recording's state changes: a recording pays
+//! for one chip frame a second, and a paused one for none. On X11 the
+//! border thread in sys::record::x11 moves it by XID (x11rb
+//! configure_window), so it follows the target window without going
+//! through the app event loop. On Windows and macOS it opens above the
+//! recorded region and is excluded from screen capture, so it never
+//! appears in the recording.
 
 use std::time::{Duration, Instant};
 
@@ -32,21 +33,27 @@ static CHIP: parking_lot::Mutex<Option<WindowHandle<Chip>>> = parking_lot::Mutex
 /// Show the recording's pause state on the open chip: its clock stops
 /// while paused, since the file has no frames for that span.
 pub fn set_paused(cx: &mut App, paused: bool) {
-    update(cx, |chip| chip.set_paused(paused, Instant::now()));
+    let now = Instant::now();
+    update(cx, move |chip| chip.set_paused(paused, now));
 }
 
 /// Show the mic track's state on the open chip.
 pub fn set_mic(cx: &mut App, on: bool) {
-    update(cx, |chip| chip.mic = chip.mic.map(|_| on));
+    update(cx, move |chip| chip.mic = chip.mic.map(|_| on));
 }
 
-/// Apply `change` to the open chip and draw it.
-fn update(cx: &mut App, change: impl FnOnce(&mut Chip)) {
+/// Apply `change` to the open chip and draw it, once the current effect
+/// cycle ends. A chip button runs this inside the chip window's event
+/// dispatch, where GPUI holds the window and an update of it through
+/// its handle fails.
+fn update(cx: &mut App, change: impl FnOnce(&mut Chip) + 'static) {
     // Copied out: the update runs with the lock released.
     let Some(handle) = *CHIP.lock() else { return };
-    let _ = handle.update(cx, |chip, _, cx| {
-        change(chip);
-        cx.notify();
+    cx.defer(move |cx| {
+        let _ = handle.update(cx, |chip, _, cx| {
+            change(chip);
+            cx.notify();
+        });
     });
 }
 
@@ -185,11 +192,16 @@ pub(crate) fn origin(rect: Option<WinRect>, monitors: &[WinRect], scale: f32) ->
     (left, top)
 }
 
-/// Close the chip window, if open.
+/// Close the chip window, if open, once the current effect cycle ends:
+/// the stop button runs this inside the chip window's event dispatch,
+/// as `update` describes.
 pub fn close(cx: &mut App) {
-    if let Some(handle) = CHIP.lock().take() {
+    let Some(handle) = CHIP.lock().take() else {
+        return;
+    };
+    cx.defer(move |cx| {
         let _ = handle.update(cx, |_, window, _| window.remove_window());
-    }
+    });
 }
 
 /// The pill's shadow. GPUI paints a shadow over the pill grown by three
@@ -276,6 +288,19 @@ impl Render for Chip {
                         } else {
                             crate::icons::Icon::Pause
                         },
+                        theme::FG_DIM,
+                        14.0,
+                    )),
+            )
+            .child(
+                div()
+                    .id("chip-stop")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        crate::daemon::run(cx, &crate::daemon::Command::RecordStop);
+                    }))
+                    .child(crate::icons::icon(
+                        crate::icons::Icon::Stop,
                         theme::FG_DIM,
                         14.0,
                     )),
