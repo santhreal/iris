@@ -140,36 +140,33 @@ impl Config {
         crate::dirs::config_file()
     }
 
-    /// The shared parsed-config cache, keyed on the file's mtime+len.
-    /// `load` reads through it; `store` writes through it.
-    fn cache() -> &'static parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Config)> {
-        use std::sync::LazyLock;
-        static CACHE: LazyLock<parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Config)>> =
-            LazyLock::new(|| parking_lot::Mutex::new((None, 0, Config::default())));
+    /// The shared parsed-config cache: the config and the file it was
+    /// read from. `load` reads through it; `store` writes through it.
+    fn cache() -> &'static parking_lot::Mutex<Option<(Stamp, Config)>> {
+        static CACHE: parking_lot::Mutex<Option<(Stamp, Config)>> = parking_lot::Mutex::new(None);
         &CACHE
     }
 
     /// Load the config, re-reading the file only when it changed. The
-    /// parsed result is cached behind a mutex keyed on the file's
-    /// mtime+len, so the many per-action and per-frame callers share one
-    /// stat instead of one parse each.
+    /// parsed result is cached behind a mutex keyed on the file's path,
+    /// mtime, and length, so the many per-action and per-frame callers
+    /// share one stat instead of one parse each.
     pub fn load() -> Self {
-        let cache = Self::cache();
         let Some(path) = Self::path() else {
             return Self::default();
         };
-        let stamp = std::fs::metadata(&path)
-            .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
-            .unwrap_or((None, 0));
-        {
-            let guard = cache.lock();
-            if guard.0 == stamp.0 && guard.1 == stamp.1 && stamp.0.is_some() {
-                return guard.2.clone();
+        let stamp = Stamp::of(path);
+        if let Some(stamp) = &stamp {
+            if let Some((cached, cfg)) = &*Self::cache().lock() {
+                if cached == stamp {
+                    return cfg.clone();
+                }
             }
         }
         let cfg = Self::load_uncached();
-        let mut guard = cache.lock();
-        *guard = (stamp.0, stamp.1, cfg.clone());
+        // A file load_uncached wrote with defaults is read from disk
+        // on the next load.
+        *Self::cache().lock() = stamp.map(|stamp| (stamp, cfg.clone()));
         cfg
     }
 
@@ -247,13 +244,33 @@ impl Config {
         // next reader even when the mtime granularity misses the write.
         // Captures and recordings read their directories from it, so it
         // holds them expanded, as a load from the file would.
-        let stamp = std::fs::metadata(&path)
-            .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
-            .unwrap_or((None, 0));
         let mut live = self.clone();
         live.expand_dirs();
-        *Self::cache().lock() = (stamp.0, stamp.1, live);
+        *Self::cache().lock() = Stamp::of(path).map(|stamp| (stamp, live));
         Ok(())
+    }
+}
+
+/// Which config file a cached config was read from, and its version: a
+/// write changes the modification time or the length. The path keeps a
+/// config read from one file from answering for another written in the
+/// same timestamp tick with the same length.
+#[derive(PartialEq)]
+struct Stamp {
+    path: PathBuf,
+    modified: std::time::SystemTime,
+    len: u64,
+}
+
+impl Stamp {
+    /// The stamp of the file at `path`; `None` when it cannot be read.
+    fn of(path: PathBuf) -> Option<Self> {
+        let meta = std::fs::metadata(&path).ok()?;
+        Some(Stamp {
+            modified: meta.modified().ok()?,
+            len: meta.len(),
+            path,
+        })
     }
 }
 

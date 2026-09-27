@@ -205,3 +205,35 @@ fn invalid_toml_falls_back_to_defaults() {
         "this is not toml = = =\n"
     );
 }
+
+// WHY: the class closed here is "the load cache serves a config read
+// from another file": it was keyed on mtime and length alone, so a file
+// written in the same timestamp tick with the same length read back as
+// the first. Not covered: an edit in place that keeps both the mtime
+// tick and the length of the file, which the stamp cannot see.
+#[test]
+#[serial_test::serial]
+fn each_config_file_loads_its_own_values_whatever_its_stamp() {
+    let tick = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let homes: Vec<_> = [12, 60]
+        .into_iter()
+        .map(|fps| {
+            let home = isolated_home();
+            let path = Config::path().unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, format!("recording_fps = {fps}\n")).unwrap();
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(tick).unwrap();
+            (home, fps)
+        })
+        .collect();
+    for (home, fps) in homes.iter().chain(&homes) {
+        std::env::set_var(crate::dirs::HOME_ENV, home.path());
+        assert_eq!(
+            Config::load().recording_fps,
+            *fps,
+            "{}",
+            home.path().display()
+        );
+    }
+}
