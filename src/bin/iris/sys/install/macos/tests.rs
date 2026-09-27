@@ -102,8 +102,21 @@ fn exe_of(bundle: &Path) -> String {
     std::fs::read_to_string(bundle.join("Contents/MacOS/iris")).unwrap_or_default()
 }
 
+/// hdiutil fails an attach with BUSY while another disk image operation
+/// runs, and a create of a test's DMG is one: two tests that ran
+/// hdiutil at once failed each other's attach past its tries. The tests
+/// that run hdiutil take turns.
+static HDIUTIL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn hdiutil_turn() -> std::sync::MutexGuard<'static, ()> {
+    HDIUTIL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn install_swaps_the_new_bundle_in_whole() {
+    let _turn = hdiutil_turn();
     let tmp = tempfile::tempdir().expect("tempdir");
     let src = tmp.path().join("src");
     bundle_at(&src, "new", "fresh");
@@ -145,6 +158,7 @@ fn a_failed_install_leaves_the_installed_bundle_as_it_was() {
             dmg
         }),
     ];
+    let _turn = hdiutil_turn();
     for (case, source) in cases {
         let tmp = tempfile::tempdir().expect("tempdir");
         let apps = tmp.path().join("Applications");

@@ -28,8 +28,10 @@ const STAGED: &str = ".iris.app.update";
 /// holds the DiskImages framework, such as a scan of an image just
 /// written or another image being attached.
 const BUSY: &str = "Resource temporarily unavailable";
-/// Tries of an attach that fails with `BUSY`, `ATTACH_WAIT` apart.
-const ATTACH_TRIES: u32 = 5;
+/// Tries of an attach that fails with `BUSY`, `ATTACH_WAIT` apart. A
+/// running `hdiutil create` held the framework for over 5 s on a CI
+/// runner.
+const ATTACH_TRIES: u32 = 30;
 const ATTACH_WAIT: Duration = Duration::from_secs(1);
 
 /// The `.app` bundle this iris runs from. A binary outside a bundle,
