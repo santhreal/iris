@@ -41,6 +41,21 @@ jobs:
       - name: Verify the bundle and the DMG
         run: |
           set -euo pipefail
+          # hdiutil fails with EAGAIN while another disk image operation
+          # holds the DiskImages framework, such as a scan of the image
+          # make_dmg.sh just wrote. iris --update retries its attach the
+          # same way (sys::install::macos).
+          hdiutil_busy() {
+            local out
+            for _ in $(seq 30); do
+              if out=$(hdiutil "$@" 2>&1); then echo "$out"; return 0; fi
+              [[ "$out" == *"Resource temporarily unavailable"* ]] || break
+              echo "hdiutil $1: busy, retrying"
+              sleep 1
+            done
+            echo "$out" >&2
+            return 1
+          }
           version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           dmg="iris-${version}-macos-universal.dmg"
           codesign --verify --deep --strict dist/iris.app
@@ -48,13 +63,13 @@ jobs:
           [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "archs: $archs"; exit 1; }
           [ "$(plutil -extract CFBundleShortVersionString raw dist/iris.app/Contents/Info.plist)" = "$version" ]
           (cd dist && shasum -a 256 -c "$dmg.sha256")
-          hdiutil verify "dist/$dmg"
+          hdiutil_busy verify "dist/$dmg"
           mnt=$(mktemp -d)
-          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/$dmg"
+          hdiutil_busy attach -nobrowse -readonly -mountpoint "$mnt" "dist/$dmg"
           [ -L "$mnt/Applications" ]
           [ "$("$mnt/iris.app/Contents/MacOS/iris" --version)" = "iris $version" ]
           ditto "$mnt/iris.app" "$RUNNER_TEMP/installed/iris.app"
-          hdiutil detach "$mnt"
+          hdiutil_busy detach "$mnt"
       # The daemon starts from the DMG's iris.app copied out as an install
       # copies it, binds its socket, and exits on --quit.
       - name: Run the bundle's daemon
