@@ -211,16 +211,15 @@ fn saving_daemon(name: Name<'static>, saving: Duration) -> std::thread::JoinHand
     })
 }
 
-/// `quit(name, within)` on a thread of its own: whether no daemon
-/// answers at its end, and how long it took. Fails when the quit has
-/// not returned 5 s past `within`.
-fn timed_quit(name: &Name<'static>, within: Duration) -> (bool, Duration) {
+/// `quit(name, within)` on a thread of its own: what it found, and how
+/// long it took. Fails when the quit has not returned 5 s past `within`.
+fn timed_quit(name: &Name<'static>, within: Duration) -> (Quit, Duration) {
     let (tx, rx) = std::sync::mpsc::channel();
     let name = name.clone();
     std::thread::spawn(move || {
         let start = Instant::now();
-        let exited = quit(name.borrow(), within);
-        let _ = tx.send((exited, start.elapsed()));
+        let found = quit(name.borrow(), within);
+        let _ = tx.send((found, start.elapsed()));
     });
     let limit = within + Duration::from_secs(5);
     rx.recv_timeout(limit)
@@ -232,8 +231,8 @@ fn a_quit_waits_for_a_daemon_that_saves_before_it_exits() {
     let (name, _dir) = imp::scratch_name();
     let saving = Duration::from_millis(300);
     let daemon = saving_daemon(name.clone(), saving);
-    let (exited, waited) = timed_quit(&name, Duration::from_secs(10));
-    assert!(exited, "the daemon still answered {waited:?} after --quit");
+    let (found, waited) = timed_quit(&name, Duration::from_secs(10));
+    assert_eq!(found, Quit::Exited, "after {waited:?}");
     assert!(
         waited >= saving,
         "the quit ended {waited:?} after --quit, while the daemon still saved"
@@ -250,10 +249,11 @@ fn a_quit_gives_up_on_a_daemon_that_still_answers() {
     let (name, _dir) = imp::scratch_name();
     let mut rx = listen(name.clone(), LIMITS).unwrap();
     let within = Duration::from_millis(300);
-    let (exited, waited) = timed_quit(&name, within);
-    assert!(
-        !exited,
-        "a quit reported a daemon that still answers as exited"
+    let (found, waited) = timed_quit(&name, within);
+    assert_eq!(
+        found,
+        Quit::StillRunning,
+        "a quit reported a daemon that still answers as gone"
     );
     assert!(
         waited >= within && waited < within + Duration::from_secs(2),
@@ -262,6 +262,19 @@ fn a_quit_gives_up_on_a_daemon_that_still_answers() {
     assert_eq!(
         next_within(&mut rx, Duration::from_secs(5)),
         argv(&["--quit"])
+    );
+}
+
+/// A quit with no daemon to take it returns at once, and says none ran:
+/// the updater restarts only a daemon it stopped.
+#[test]
+fn a_quit_with_no_daemon_finds_none() {
+    let (name, _dir) = imp::scratch_name();
+    let (found, waited) = timed_quit(&name, Duration::from_secs(10));
+    assert_eq!(found, Quit::NoneRan);
+    assert!(
+        waited < Duration::from_secs(1),
+        "the quit waited {waited:?} for no daemon"
     );
 }
 

@@ -13,6 +13,7 @@ fn commit_edit_updates_fields_and_validates() {
         recording: None,
         open_dropdown: None,
         status: None,
+        release: Release::None,
         focus: None,
     };
 
@@ -85,6 +86,7 @@ fn field_text_covers_all_field_variants() {
         recording: None,
         open_dropdown: None,
         status: None,
+        release: Release::None,
         focus: None,
     };
 
@@ -191,6 +193,7 @@ fn all_twenty_config_fields_persist_and_reload() {
         recording: None,
         open_dropdown: None,
         status: None,
+        release: Release::None,
         focus: None,
     };
 
@@ -262,6 +265,7 @@ fn reset_defaults_restores_default_config_and_status() {
         recording: Some(Field::CaptureHotkey),
         open_dropdown: Some(DropdownField::ToastPosition),
         status: None,
+        release: Release::None,
         focus: None,
     };
 
@@ -285,4 +289,90 @@ fn reset_defaults_restores_default_config_and_status() {
         s.status,
         Some("Defaults restored; Save to apply".to_string())
     );
+}
+
+fn settings(release: Release) -> Settings {
+    Settings {
+        cfg: Config::default(),
+        editing: None,
+        recording: None,
+        open_dropdown: None,
+        status: None,
+        release,
+        focus: None,
+    }
+}
+
+fn update(patch: u64) -> crate::update::UpdateInfo {
+    crate::update::UpdateInfo {
+        version: semver::Version::new(9, 9, patch),
+        asset_url: String::new(),
+        asset_name: String::new(),
+        checksum_url: String::new(),
+    }
+}
+
+/// The version `release` offers to install, or its state's name.
+fn offered(release: &Release) -> String {
+    match release {
+        Release::None => "none".to_string(),
+        Release::Found(info) => info.version.to_string(),
+        Release::Installing => "installing".to_string(),
+    }
+}
+
+// WHY: the classes closed here are "Install shows for a release no
+// check found", "a second Install click, or a check that finishes
+// during the download, starts a second install or changes the one
+// running", and "a failed download leaves no Install to retry". Not
+// covered: the download and hand-off, which update::tests and the
+// Settings QA rig run.
+#[test]
+fn a_check_offers_install_only_for_a_newer_release() {
+    let cases: [(Result<Option<_>, String>, &str, &str); 3] = [
+        (Ok(Some(update(3))), "update available: 9.9.3", "9.9.3"),
+        (Ok(None), "up to date", "none"),
+        (
+            Err("update: GET x: dns".into()),
+            "update: GET x: dns",
+            "none",
+        ),
+    ];
+    for (result, status, want) in cases {
+        let mut s = settings(Release::Found(update(1)));
+        s.checked(result);
+        assert_eq!(s.status.as_deref(), Some(status));
+        assert_eq!(offered(&s.release), want, "{status}");
+    }
+    let mut s = settings(Release::None);
+    assert!(s.start_install().is_none());
+    assert_eq!(offered(&s.release), "none");
+    assert_eq!(s.status, None);
+}
+
+#[test]
+fn install_runs_once_and_offers_itself_again_when_it_fails() {
+    let mut s = settings(Release::Found(update(1)));
+    let info = s.start_install().expect("a release to install");
+    assert_eq!(info.version.to_string(), "9.9.1");
+    assert_eq!(s.status.as_deref(), Some("downloading 9.9.1…"));
+    assert_eq!(offered(&s.release), "installing");
+
+    assert!(s.start_install().is_none(), "a second click");
+    s.checked(Ok(Some(update(2))));
+    s.checked(Err("update: GET x: dns".into()));
+    assert_eq!(offered(&s.release), "installing");
+    assert_eq!(s.status.as_deref(), Some("downloading 9.9.1…"));
+
+    s.installed(info, Err("update: GET x: status code 404".into()));
+    assert_eq!(s.status.as_deref(), Some("update: GET x: status code 404"));
+    assert_eq!(offered(&s.release), "9.9.1");
+
+    let info = s.start_install().expect("offered again");
+    s.installed(info, Ok(()));
+    assert_eq!(
+        s.status.as_deref(),
+        Some("installing 9.9.1; iris restarts when it is done")
+    );
+    assert_eq!(offered(&s.release), "installing");
 }

@@ -5,8 +5,10 @@
 //! `v{semver}` and each platform has one asset name, published with a
 //! `.sha256` sidecar. `check` reads the latest-release JSON and picks
 //! the asset for this OS and its sidecar; `apply` downloads the asset,
-//! deletes it unless its SHA-256 is the sidecar's, and hands it to
-//! `sys::install`, which swaps it in.
+//! deletes it unless its SHA-256 is the sidecar's, stops the daemon,
+//! and hands the asset to `sys::install`, which swaps it in. An asset
+//! a failed install left behind is used again when its SHA-256 is the
+//! sidecar's. A swap that fails starts the stopped daemon again.
 //!
 //! Update strategy per OS:
 //!   Windows — start the NSIS installer with `/S /RUN`: it waits for
@@ -27,6 +29,8 @@ mod checksum;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use crate::sys::ipc::Quit;
 
 /// The GitHub repo that publishes releases.
 const REPO: &str = "santhreal/iris";
@@ -153,7 +157,8 @@ fn download(info: &UpdateInfo) -> Result<PathBuf, String> {
 /// Download `info.asset_url` into `dir` and return its path. The
 /// download's SHA-256 is the one its sidecar lists, or it is deleted
 /// and this fails: a truncated, corrupt, or substituted file never
-/// reaches the installer.
+/// reaches the installer. A file already there with that SHA-256 is
+/// the release asset, and is kept instead of downloaded again.
 fn download_into(info: &UpdateInfo, dir: &Path) -> Result<PathBuf, String> {
     // The name comes from the release JSON; a separator in it would
     // move the write out of the update directory.
@@ -164,6 +169,9 @@ fn download_into(info: &UpdateInfo, dir: &Path) -> Result<PathBuf, String> {
     let want = fetch_sidecar(info)?;
     std::fs::create_dir_all(dir).map_err(|e| format!("update: create {}: {e}", dir.display()))?;
     let path = dir.join(name);
+    if checksum::file_is(&path, &want) {
+        return Ok(path);
+    }
     // create_new never writes through a file or link already there.
     let _ = std::fs::remove_file(&path);
     let file = std::fs::OpenOptions::new()
@@ -212,35 +220,72 @@ fn fetch_sidecar(info: &UpdateInfo) -> Result<checksum::Digest, String> {
 /// daemon), then stop the daemon, then swap. The daemon holds the IPC
 /// socket and, on Windows, locks its own exe; on Linux a running
 /// AppImage cannot be overwritten (ETXTBSY). Stopping it before the swap
-/// clears all three.
+/// clears all three. A swap that fails leaves the installed iris as it
+/// was, and the daemon this stopped starts again from it.
 pub fn apply(info: &UpdateInfo) -> Result<(), String> {
     crate::sys::install::ready()?;
     let file = download(info)?;
-    stop_daemon()?;
-    crate::sys::install::apply_file(&file)
+    let stopped = stop_daemon()?;
+    let Err(e) = crate::sys::install::apply_file(&file) else {
+        return Ok(());
+    };
+    Err(after_failed_swap(e, stopped, crate::sys::ipc::start_daemon))
+}
+
+/// Download and verify the update `info` names, then start a detached
+/// `iris --update` to install it. The daemon, where the Settings window
+/// runs, cannot install an update itself: the install stops the daemon
+/// first. The `iris --update` finds the verified download in the update
+/// directory and does not fetch it again.
+pub fn hand_off(info: &UpdateInfo) -> Result<(), String> {
+    crate::sys::install::ready()?;
+    download(info)?;
+    let exe = std::env::current_exe().map_err(|e| format!("update: find this iris: {e}"))?;
+    crate::sys::detach::spawn(&exe, &["--update"])
+        .map_err(|e| format!("update: start {} --update: {e}", exe.display()))
 }
 
 /// Quit the running daemon and wait for it to exit. A missing daemon is
 /// a no-op. A daemon still running `QUIT_WAIT` after `--quit` fails the
 /// update before the swap: replacing the binary under it would fail, or
 /// leave no daemon running once it exits.
-fn stop_daemon() -> Result<(), String> {
-    if crate::sys::ipc::quit_daemon(QUIT_WAIT) {
-        return Ok(());
+fn stop_daemon() -> Result<Quit, String> {
+    match crate::sys::ipc::quit_daemon(QUIT_WAIT) {
+        Quit::StillRunning => Err(format!(
+            "update: the running iris still answers {} s after --quit; nothing was installed, \
+             run iris --update again once it exits",
+            QUIT_WAIT.as_secs()
+        )),
+        found => Ok(found),
     }
-    Err(format!(
-        "update: the running iris still answers {} s after --quit; nothing was installed, \
-         run iris --update again once it exits",
-        QUIT_WAIT.as_secs()
-    ))
+}
+
+/// The error of a swap that failed with `e`, after `restart` starts the
+/// daemon `stopped` found again. A daemon that did not run before the
+/// update is not started.
+fn after_failed_swap(e: String, stopped: Quit, restart: impl FnOnce() -> bool) -> String {
+    if stopped != Quit::Exited {
+        return e;
+    }
+    if restart() {
+        format!("{e}; the iris already installed runs again")
+    } else {
+        format!(
+            "{e}; the iris already installed did not start again, see {}",
+            iris_lib::dirs::log_file().display()
+        )
+    }
 }
 
 // WHY: the classes closed here are "a release asset name steers the
 // download's write outside the per-user update directory", "an install
-// that cannot replace itself stops the daemon before it says so", and
-// "a download that is not the released file reaches the installer":
-// `iris --update` installed whatever bytes arrived, so a dropped
-// connection or a corrupt body replaced a working install. Not covered:
-// the per-OS install that follows.
+// that cannot replace itself stops the daemon before it says so", "a
+// download that is not the released file reaches the installer" (a
+// dropped connection or a corrupt body replaced a working install),
+// "a stale file in the update directory is installed or kept", and "a
+// failed swap leaves no daemon running, or starts one that was not
+// running". Not covered: the per-OS install that follows, and the
+// `Quit::StillRunning` refusal, which needs a daemon that ignores
+// `--quit`.
 #[cfg(test)]
 mod tests;

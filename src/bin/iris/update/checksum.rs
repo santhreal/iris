@@ -2,6 +2,7 @@
 //! sidecar its release publishes beside it (`packaging/CONTRACT.md`).
 
 use std::io::{self, Write};
+use std::path::Path;
 
 /// A SHA-256 digest.
 pub(super) type Digest = [u8; 32];
@@ -50,6 +51,19 @@ pub(super) fn verify(asset: &str, got: &ring::digest::Digest, want: &Digest) -> 
         hex(got.as_ref()),
         hex(want)
     ))
+}
+
+/// Whether `path` is a regular file whose SHA-256 is `want`. A missing
+/// file, a link, or a read error is `false`.
+pub(super) fn file_is(path: &Path, want: &Digest) -> bool {
+    if !std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut sha = Sha256Writer::new(io::sink());
+    io::copy(&mut file, &mut sha).is_ok() && sha.finish().as_ref() == want
 }
 
 /// `bytes` as lowercase hex, the form `sha256sum` prints.

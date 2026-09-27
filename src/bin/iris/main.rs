@@ -148,8 +148,10 @@ fn run_local(local: cli::Local) {
             Err(e) => Err(e),
         },
     };
+    // stderr and the log file: an `iris --update` that Settings started
+    // has no terminal.
     if let Err(e) = result {
-        eprintln!("{e}");
+        iris_lib::ilog!("{e}");
         std::process::exit(1);
     }
 }

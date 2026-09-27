@@ -120,7 +120,7 @@ pub fn forward_if_running(args: &[String]) -> Result<Option<Claimed>, String> {
     }
     // A bare `iris` becomes the daemon itself, as does a flagged one
     // that could not start a detached daemon.
-    if args.is_empty() || !spawn_daemon() {
+    if args.is_empty() || !start_daemon() {
         if let Some(claimed) = claim()? {
             return Ok(Some(claimed));
         }
@@ -148,14 +148,24 @@ fn send(name: Name<'_>, args: &[String]) -> bool {
     imp::connect(name).is_ok_and(|mut stream| stream.write_all(args.join("\n").as_bytes()).is_ok())
 }
 
+/// What `quit_daemon` found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Quit {
+    /// No daemon took the `--quit`, and none answers.
+    NoneRan,
+    /// A daemon took the `--quit` and exited.
+    Exited,
+    /// A daemon still answered when the wait ran out.
+    StillRunning,
+}
+
 /// Send `--quit` to the running daemon and wait until it exits, for at
-/// most `within`. `true` once no daemon answers the socket: it exited,
-/// or none ran. A quitting daemon saves its recording first and
+/// most `within`. A quitting daemon saves its recording first and
 /// answers until it exits. The updater runs this before the file swap,
 /// so the binary is free to replace.
-pub fn quit_daemon(within: Duration) -> bool {
+pub fn quit_daemon(within: Duration) -> Quit {
     let Ok(name) = imp::socket_name() else {
-        return true;
+        return Quit::NoneRan;
     };
     quit(name.borrow(), within)
 }
@@ -163,15 +173,15 @@ pub fn quit_daemon(within: Duration) -> bool {
 /// Send `--quit` to `name`, then poll until nothing answers it, for at
 /// most `within`. A `--quit` that does not land leaves the daemon
 /// answering, and the wait fails.
-fn quit(name: Name<'_>, within: Duration) -> bool {
-    send(name.borrow(), &["--quit".to_string()]);
+fn quit(name: Name<'_>, within: Duration) -> Quit {
+    let took = send(name.borrow(), &["--quit".to_string()]);
     let deadline = Instant::now() + within;
     loop {
         if imp::connect(name.borrow()).is_err() {
-            return true;
+            return if took { Quit::Exited } else { Quit::NoneRan };
         }
         if Instant::now() >= deadline {
-            return false;
+            return Quit::StillRunning;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -181,7 +191,7 @@ fn quit(name: Name<'_>, within: Duration) -> bool {
 /// `sys::detach`), which survives this process's exit and holds none of
 /// its streams. It takes the claim and becomes the daemon, or exits when
 /// another process holds the claim.
-fn spawn_daemon() -> bool {
+pub fn start_daemon() -> bool {
     match std::env::current_exe().and_then(|exe| crate::sys::detach::spawn(&exe, &["--daemon"])) {
         Ok(()) => true,
         Err(e) => {

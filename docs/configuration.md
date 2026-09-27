@@ -161,7 +161,7 @@ The settings window contains six sections:
 3. **Toast**: Select click action, drag-to-export toggle, action buttons visibility, auto-dismiss duration (2s, 3s, 5s, 8s, 10s), and screen corner position.
 4. **Recording**: Configure frame rate, container format, MP4 encoder, and default microphone toggle.
 5. **Keyboard**: Record hotkeys for region capture, recording toggle, cancel action, and confirm action.
-6. **Updates**: Displays current version and provides a **Check for updates** button.
+6. **Updates**: Displays current version, a **Check for updates** button, and an **Install update** button once a check finds a newer release (see [Updates](install.md#updates)).
 
 Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×600.
 

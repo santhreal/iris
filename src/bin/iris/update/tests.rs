@@ -96,6 +96,46 @@ fn a_download_that_matches_its_sidecar_is_kept() {
     assert!(std::fs::read(&path).expect("read download") == body);
 }
 
+/// A file a failed install left in the update directory is the release
+/// asset when its SHA-256 is the one the sidecar lists: the update uses
+/// it and fetches only the sidecar. The server has no `/asset`, so a
+/// download would fail.
+#[test]
+fn a_verified_file_already_there_is_not_downloaded_again() {
+    let body = vec![b'a'; 1_000_000];
+    let base = serve(vec![route("/asset.sha256", sidecar(MILLION_A, ASSET))]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(ASSET), &body).expect("write");
+    let path = download_into(&info(&base, ASSET), dir.path()).expect("kept file");
+    assert_eq!(path, dir.path().join(ASSET));
+    assert!(std::fs::read(&path).expect("read") == body);
+}
+
+/// A file already there that is not the release asset is replaced by
+/// the download, or deleted when the download fails too.
+#[test]
+fn a_stale_file_already_there_is_replaced_or_deleted() {
+    let body = vec![b'a'; 1_000_000];
+    let base = serve(vec![
+        route("/asset", body.clone()),
+        route("/asset.sha256", sidecar(MILLION_A, ASSET)),
+    ]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(ASSET), b"abc").expect("write");
+    let path = download_into(&info(&base, ASSET), dir.path()).expect("download");
+    assert!(std::fs::read(&path).expect("read") == body);
+
+    let base = serve(vec![
+        route("/asset", "abc"),
+        route("/asset.sha256", sidecar(MILLION_A, ASSET)),
+    ]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(ASSET), &body[1..]).expect("write");
+    let err = download_into(&info(&base, ASSET), dir.path()).expect_err("not the release");
+    assert!(err.contains(&format!("has SHA-256 {ABC}")), "{err}");
+    assert!(is_empty(dir.path()), "the stale file stayed behind");
+}
+
 /// Each download fails, and the update directory holds no file of it
 /// that a later install could pick up.
 #[test]
@@ -313,4 +353,42 @@ fn a_refused_install_fails_before_the_download() {
         apply(&info("https://invalid.example", "../escape")).expect_err("refused"),
         refusal
     );
+}
+
+/// Whether a swap that failed after `stopped` starts the daemon again.
+/// The match has no wildcard: a new `Quit` fails to compile here until
+/// it has an answer.
+fn restarts(stopped: Quit) -> bool {
+    match stopped {
+        Quit::NoneRan | Quit::StillRunning => false,
+        Quit::Exited => true,
+    }
+}
+
+/// A failed swap starts the daemon the update stopped, and only that
+/// one, then reports whether it runs again beside the swap's error.
+#[test]
+fn a_failed_swap_restarts_the_daemon_it_stopped() {
+    for stopped in [Quit::NoneRan, Quit::Exited, Quit::StillRunning] {
+        for started in [true, false] {
+            let mut ran = false;
+            let got = after_failed_swap("update: replace x: EXDEV".into(), stopped, || {
+                ran = true;
+                started
+            });
+            assert_eq!(ran, restarts(stopped), "{stopped:?}");
+            let want = match (restarts(stopped), started) {
+                (false, _) => "update: replace x: EXDEV".to_string(),
+                (true, true) => {
+                    "update: replace x: EXDEV; the iris already installed runs again".to_string()
+                }
+                (true, false) => format!(
+                    "update: replace x: EXDEV; the iris already installed did not start again, \
+                     see {}",
+                    iris_lib::dirs::log_file().display()
+                ),
+            };
+            assert_eq!(got, want, "{stopped:?}, started {started}");
+        }
+    }
 }
