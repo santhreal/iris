@@ -340,20 +340,12 @@ impl Render for Library {
 
         if this_help {
             root = root.child(
-                crate::widgets::shortcuts_sheet(vec![
-                    ("Capture region", self.cfg.capture_hotkey.clone().into()),
-                    ("Record window", "Ctrl+Shift+R".into()),
-                    ("Open in editor", "Click".into()),
-                    ("Select all", "Ctrl+A".into()),
-                    ("Delete selection", "Delete".into()),
-                    ("Clear selection", "Esc".into()),
-                    ("Fullscreen", "Double-click title bar".into()),
-                    ("This sheet", "?".into()),
-                ])
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.help = false;
-                    cx.notify();
-                })),
+                crate::widgets::shortcuts_sheet(help_rows(&self.cfg)).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.help = false;
+                        cx.notify();
+                    },
+                )),
             );
         }
 
@@ -363,4 +355,19 @@ impl Render for Library {
 
         root.children(crate::widgets::resize_edges(window, MIN_SIZE))
     }
+}
+
+/// The shortcuts sheet's rows: the global hotkeys as configured, then
+/// the library's own keys.
+pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, SharedString)> {
+    vec![
+        ("Capture region", cfg.capture_hotkey.clone().into()),
+        ("Record window", cfg.record_hotkey.clone().into()),
+        ("Open in editor", "Click".into()),
+        ("Select all", "Ctrl+A".into()),
+        ("Delete selection", "Delete".into()),
+        ("Clear selection", "Esc".into()),
+        ("Fullscreen", "Double-click title bar".into()),
+        ("This sheet", "?".into()),
+    ]
 }

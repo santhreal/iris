@@ -5,6 +5,7 @@ use iris_lib::library::CaptureEntry;
 
 use super::entries::{fit_name, name_cols};
 use super::listing::{ListPass, Listing};
+use super::render::help_rows;
 use super::{
     cascade, visible_rows, Library, CARD_W, CASCADE_END, GAP, LABEL_GAP, LABEL_PAD, THUMB_H,
 };
@@ -257,4 +258,21 @@ fn a_write_during_a_list_pass_queues_exactly_one_more() {
     assert!(!pass.begin(false));
     assert!(!pass.land(), "a poll during a pass queues nothing");
     assert!(pass.begin(false), "a landed pass leaves the window idle");
+}
+
+// WHY: the class closed here is "the shortcuts sheet shows a global
+// hotkey the daemon does not register": the record row printed
+// Ctrl+Shift+R whatever `record_hotkey` held. Both global hotkey rows
+// read the config; defaults would hide a hard-coded row, so the config
+// here holds none. Not covered: the sheet's paint.
+#[test]
+fn the_shortcuts_sheet_shows_the_configured_global_hotkeys() {
+    let cfg = iris_lib::config::Config {
+        capture_hotkey: "Super+P".into(),
+        record_hotkey: "Ctrl+Shift+5".into(),
+        ..Default::default()
+    };
+    let rows = help_rows(&cfg);
+    assert_eq!(rows[0], ("Capture region", "Super+P".into()));
+    assert_eq!(rows[1], ("Record window", "Ctrl+Shift+5".into()));
 }
