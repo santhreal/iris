@@ -10,8 +10,8 @@ fn zip_of(dir: &Path, name: &str, top: &str, body: &[u8]) -> PathBuf {
     std::fs::create_dir_all(src.join(top)).expect("mkdir");
     std::fs::write(src.join(top).join("iris.exe"), body).expect("write");
     let zip = dir.join(name);
-    let tar = Path::new(&std::env::var_os("SystemRoot").expect("SystemRoot"))
-        .join(r"System32\tar.exe");
+    let tar =
+        Path::new(&std::env::var_os("SystemRoot").expect("SystemRoot")).join(r"System32\tar.exe");
     let status = Command::new(tar)
         .arg("-a")
         .arg("-cf")
@@ -76,8 +76,8 @@ fn a_portable_swap_puts_the_new_iris_in_place() {
 #[test]
 fn a_portable_swap_replaces_a_running_iris() {
     let (dir, exe) = install(b"");
-    let ping = Path::new(&std::env::var_os("SystemRoot").expect("SystemRoot"))
-        .join(r"System32\PING.EXE");
+    let ping =
+        Path::new(&std::env::var_os("SystemRoot").expect("SystemRoot")).join(r"System32\PING.EXE");
     std::fs::copy(&ping, &exe).expect("copy PING.EXE");
     let mut running = Command::new(&exe)
         .args(["-n", "30", "127.0.0.1"])
@@ -103,7 +103,10 @@ fn a_swap_that_fails_leaves_the_iris_alone() {
     std::fs::write(&corrupt, b"PK\x03\x04 not a zip").expect("write");
     for (zip, want) in [
         (wrong_dir, "holds no iris\\iris.exe".to_string()),
-        (corrupt.clone(), format!("update: unpack {}", corrupt.display())),
+        (
+            corrupt.clone(),
+            format!("update: unpack {}", corrupt.display()),
+        ),
         (dir.path().join("missing.zip"), "update: unpack".to_string()),
     ] {
         let e = swap_portable(&zip, &exe).expect_err(&zip.display().to_string());

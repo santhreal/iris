@@ -147,8 +147,7 @@ fn unpack(zip: &Path, into: &Path) -> Result<PathBuf, String> {
 fn replace(new: &Path, exe: &Path) -> Result<(), String> {
     let old = aside(exe);
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(exe, &old)
-        .map_err(|e| format!("update: move {} aside: {e}", exe.display()))?;
+    std::fs::rename(exe, &old).map_err(|e| format!("update: move {} aside: {e}", exe.display()))?;
     if let Err(e) = std::fs::rename(new, exe) {
         let _ = std::fs::rename(&old, exe);
         return Err(format!("update: replace {}: {e}", exe.display()));
