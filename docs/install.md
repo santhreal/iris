@@ -13,7 +13,7 @@ Download release binaries and installers from repository releases:
 | macOS (Universal) | `iris-<ver>-macos-universal.dmg` | Disk image containing `iris.app` (x86_64 and aarch64) |
 | Linux (x86_64) | `iris-<ver>-linux-x86_64.deb` | Debian / Ubuntu package |
 | Linux (x86_64) | `iris-<ver>-linux-x86_64.rpm` | Fedora / RHEL package |
-| Linux (x86_64) | `iris-<ver>-linux-x86_64.AppImage` | Standalone AppImage executable |
+| Linux (x86_64) | `iris-<ver>-linux-x86_64.AppImage` | AppImage executable using the system's libraries |
 
 ## Windows
 
@@ -134,6 +134,8 @@ sudo dnf remove iris
 ### AppImage
 
 Download `iris-<ver>-linux-x86_64.AppImage`.
+
+The AppImage holds the iris executable and uses the system's libraries: PipeWire (`libpipewire-0.3`), xkbcommon and xkbcommon-x11, XCB, fontconfig, the Wayland client library, the Vulkan loader, EGL, and GLES 2, the libraries the deb depends on. It mounts itself with FUSE through `fusermount3`, from the `fuse3` package. Without FUSE, run it with `--appimage-extract-and-run`.
 
 Set execution permissions and run:
 

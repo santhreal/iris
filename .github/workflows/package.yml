@@ -235,16 +235,21 @@ jobs:
       # Vulkan driver and waits for the home window. The package from
       # dist/next then upgrades the running install: the daemon runs on
       # the replaced binary, exits on --quit from the upgraded one, and
-      # the upgraded iris starts. The AppImage runs without FUSE.
+      # the upgraded iris starts. The AppImage mounts itself with FUSE on
+      # ubuntu:24.04 with the libraries the deb depends on and no more,
+      # and check_installed.sh runs its daemon.
       - name: Install, run, and remove each package
         run: |
           set -euo pipefail
           version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           (cd dist && sha256sum -c ./*.sha256)
           files="/usr/bin/iris /usr/share/applications/dev.iris.app.desktop /etc/xdg/autostart/iris-autostart.desktop"
+          # in_container IMAGE SCRIPT [docker run option...]
           in_container() {
-            docker run --rm -v "$PWD/dist:/pkg:ro" -v "$PWD/packaging/linux:/linux:ro" \
-              -e version="$version" -e files="$files" "$1" bash -euo pipefail -c "$2"
+            local image=$1 script=$2
+            shift 2
+            docker run --rm "$@" -v "$PWD/dist:/pkg:ro" -v "$PWD/packaging/linux:/linux:ro" \
+              -e version="$version" -e files="$files" "$image" bash -euo pipefail -c "$script"
           }
           in_container ubuntu:24.04 '
             export DEBIAN_FRONTEND=noninteractive
@@ -270,7 +275,14 @@ jobs:
             dnf remove -y -q iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '
-          [ "$(./dist/iris-${version}-linux-x86_64.AppImage --appimage-extract-and-run --version)" = "iris $version" ]
+          in_container ubuntu:24.04 '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            libs=$(dpkg-deb -f "/pkg/iris-${version}-linux-x86_64.deb" Depends | sed -E "s/ \([^)]*\)//g; s/, /\n/g")
+            apt-get install -y -qq --no-install-recommends $libs fuse3 xvfb x11-utils mesa-vulkan-drivers >/dev/null
+            [ "$(/pkg/iris-${version}-linux-x86_64.AppImage --version)" = "iris $version" ]
+            bash /linux/check_installed.sh "/pkg/iris-${version}-linux-x86_64.AppImage"
+          ' --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: iris-linux-packages
