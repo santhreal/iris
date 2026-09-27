@@ -247,7 +247,7 @@ Maintainer: Santh <64453045+santhreal@users.noreply.github.com>
 Installed-Size: ${INSTALLED_SIZE}
 Homepage: https://github.com/santhreal/iris
 Depends: libc6 (>= ${GLIBC_MIN}), libpipewire-0.3-0 (>= 0.3.0), libxkbcommon0, libxkbcommon-x11-0, libxcb1, libfontconfig1, libwayland-client0, libvulkan1, libegl1, libgles2
-Recommends: ffmpeg
+Recommends: ffmpeg, pkexec | policykit-1
 Suggests: tesseract-ocr
 Description: Screenshot and screen-recording utility
  iris is a screenshot and screen-recording tool for X11 and Wayland. A

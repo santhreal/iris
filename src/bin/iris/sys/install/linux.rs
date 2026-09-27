@@ -1,33 +1,86 @@
-//! Linux: the AppImage, renamed over `$APPIMAGE`. A deb/rpm install
-//! defers to the package manager.
+//! Linux: the AppImage, renamed over `$APPIMAGE`, and the deb and the
+//! rpm, each installed over the installed package by its package
+//! manager (`package`).
+
+mod package;
 
 use std::path::{Path, PathBuf};
 
-/// Release asset suffix for this platform: the AppImage is the only
-/// self-updatable Linux artifact.
-pub const ASSET: &str = "linux-x86_64.AppImage";
+use package::Package;
 
-/// The AppImage this iris runs from; the AppImage runtime sets
-/// `$APPIMAGE`. A deb or rpm install has none.
-fn appimage() -> Result<PathBuf, String> {
-    std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .ok_or_else(|| "update: not an AppImage install; update via apt/dnf".to_string())
+/// Release asset suffix for an AppImage install.
+pub const APPIMAGE_ASSET: &str = "linux-x86_64.AppImage";
+
+/// Release asset suffix for a deb install.
+pub const DEB_ASSET: &str = "linux-x86_64.deb";
+
+/// Release asset suffix for an rpm install.
+pub const RPM_ASSET: &str = "linux-x86_64.rpm";
+
+/// How this iris was installed.
+enum Install {
+    /// The AppImage at this path.
+    AppImage(PathBuf),
+    Package(Package),
 }
 
-/// Ok when this install can replace itself: an AppImage can. A deb or
-/// rpm install cannot: the package manager owns its files.
+/// This iris's install: the AppImage the AppImage runtime sets
+/// `$APPIMAGE` to, else the package that installed this binary.
+fn install() -> Result<Install, String> {
+    if let Some(path) = std::env::var_os("APPIMAGE") {
+        return Ok(Install::AppImage(path.into()));
+    }
+    let exe = crate::sys::exe::this().map_err(|e| format!("update: find this iris: {e}"))?;
+    Package::of(&exe).map(Install::Package).ok_or_else(|| {
+        format!(
+            "update: {} is not from an AppImage, deb or rpm; install the release by hand",
+            exe.display()
+        )
+    })
+}
+
+/// The release asset that updates this iris. An install that cannot
+/// update gets the AppImage's, and `ready` refuses it.
+pub fn asset() -> &'static str {
+    match install() {
+        Ok(Install::Package(package)) => asset_of(package),
+        Ok(Install::AppImage(_)) | Err(_) => APPIMAGE_ASSET,
+    }
+}
+
+/// The release asset that holds `package`.
+fn asset_of(package: Package) -> &'static str {
+    match package {
+        Package::Deb => DEB_ASSET,
+        Package::Rpm => RPM_ASSET,
+    }
+}
+
+/// Ok when this install can replace itself: an AppImage can, and so
+/// can a package whose package manager this process can run as root.
 pub fn ready() -> Result<(), String> {
-    appimage().map(drop)
+    match install()? {
+        Install::AppImage(_) => Ok(()),
+        Install::Package(package) => package.ready(),
+    }
 }
 
 /// Replace the installed iris with the downloaded asset `file` and
 /// restart; returns only on failure.
 pub fn apply_file(file: &Path) -> Result<(), String> {
-    let target = appimage()?;
-    replace(file, &target)?;
-    // The AppImage, not sys::exe::this(): that path is inside the old
-    // AppImage's mount, which still serves the old binary.
+    let target = match install()? {
+        Install::AppImage(target) => {
+            replace(file, &target)?;
+            target
+        }
+        Install::Package(package) => {
+            package.install(file)?;
+            PathBuf::from(package::BINARY)
+        }
+    };
+    // An AppImage restarts from the AppImage, not sys::exe::this(): that
+    // path is inside the old AppImage's mount, which serves the old
+    // binary.
     super::relaunch(&target)
 }
 
@@ -54,26 +107,42 @@ fn replace(file: &Path, target: &Path) -> Result<(), String> {
     staged
 }
 
-// WHY: docs/install.md prints this refusal for a deb or rpm install;
-// the test process, like a package install, has no $APPIMAGE. The
-// class closed by the `replace` cases is "a failed swap leaves the
-// AppImage changed, or a half-written copy beside it": the updater
-// then restarts the old AppImage. Not covered: ETXTBSY on the running
-// file, which a rename does not hit.
+// WHY: docs/install.md prints the refusal of an iris that is neither
+// an AppImage nor a package's binary; the test process, run from the
+// target directory with no $APPIMAGE, is one. The asset cases close
+// "a package install downloads the AppImage, and its package manager
+// fails on it". The class closed by the `replace` cases is "a failed
+// swap leaves the AppImage changed, or a half-written copy beside it":
+// the updater then restarts the old AppImage. Not covered: ETXTBSY on
+// the running file, which a rename does not hit.
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
-    use super::replace;
+    use super::package::Package;
+    use super::{asset_of, replace, APPIMAGE_ASSET};
 
     #[test]
-    fn an_install_outside_an_appimage_refuses_to_update() {
+    fn an_install_from_no_appimage_and_no_package_refuses_to_update() {
         assert!(std::env::var_os("APPIMAGE").is_none());
+        let exe = crate::sys::exe::this().expect("this iris");
         assert_eq!(
             super::ready(),
-            Err("update: not an AppImage install; update via apt/dnf".to_string())
+            Err(format!(
+                "update: {} is not from an AppImage, deb or rpm; install the release by hand",
+                exe.display()
+            ))
         );
+        assert_eq!(super::asset(), APPIMAGE_ASSET);
+    }
+
+    /// Each package downloads the release asset of its own kind: the
+    /// deb's package manager installs no rpm, and neither an AppImage.
+    #[test]
+    fn a_package_downloads_the_asset_its_package_manager_installs() {
+        assert_eq!(asset_of(Package::Deb), "linux-x86_64.deb");
+        assert_eq!(asset_of(Package::Rpm), "linux-x86_64.rpm");
     }
 
     /// Every name in `dir`, sorted.

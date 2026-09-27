@@ -14,6 +14,11 @@ mod tests;
 /// Release asset suffix for this platform.
 pub const ASSET: &str = "macos-universal.dmg";
 
+/// The release asset that updates this iris.
+pub fn asset() -> &'static str {
+    ASSET
+}
+
 /// Where `install` copies the new bundle before the swap: a sibling of
 /// the installed one, so the two share a volume and one rename swaps
 /// them. The dot keeps it out of Finder and Launchpad.

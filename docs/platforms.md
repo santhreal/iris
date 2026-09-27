@@ -22,7 +22,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 | **Shutter Sound** | `pw-play` / `paplay` / `canberra-gtk-play` | `pw-play` / `paplay` / `canberra-gtk-play` | Win32 `PlaySoundW` (synthesized WAV) | Command `/usr/bin/afplay` |
 | **Window Move and Resize** | Title bar and edge strips; `_NET_WM_MOVERESIZE`, or the window follows the pointer on XInput 2.1 raw events | Title bar and edge strips; `xdg_toplevel.move` / `xdg_toplevel.resize` | `WM_NCLBUTTONDOWN(HTCAPTION)` move; frame hit test (`WM_NCHITTEST`) resize | `performWindowDragWithEvent:` move; AppKit frame resize |
 | **Window Activation** | `_NET_ACTIVE_WINDOW` request and `SetInputFocus` | `xdg_activation_v1` token; the compositor's focus policy applies | `ShowWindowAsync(SW_RESTORE)` when minimized, then `SetForegroundWindow` | `makeKeyAndOrderFront:` |
-| **Update / Install** | AppImage overwrite via `$APPIMAGE` rename | AppImage overwrite via `$APPIMAGE` rename | Detached NSIS installer (`/S /RUN`); portable: `iris.exe` rename | DMG mount via `hdiutil`, replace `.app` |
+| **Update / Install** | AppImage overwrite via `$APPIMAGE` rename; deb/rpm: `apt-get` / `dnf` through `pkexec` | AppImage overwrite via `$APPIMAGE` rename; deb/rpm: `apt-get` / `dnf` through `pkexec` | Detached NSIS installer (`/S /RUN`); portable: `iris.exe` rename | DMG mount via `hdiutil`, replace `.app` |
 
 ## Linux (X11)
 
@@ -37,7 +37,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Shutter Sound**: Executes `pw-play /usr/share/sounds/freedesktop/stereo/camera-shutter.oga`, falling back to `paplay`, then `canberra-gtk-play -i camera-shutter`.
 - **Window Identity**: Every iris window sets `WM_CLASS` to `dev.iris.app` for both the instance and the class. The desktop entry `dev.iris.app.desktop` has the same id and sets `StartupWMClass=dev.iris.app`, and taskbars and docks list iris windows under its name and icon. Titles distinguish the windows: `iris` (home), `Library - iris`, `Settings - iris`, `<file> - iris` (editor), `Capture - iris` (selection overlay), `Screenshot - iris` (toast), `Pin - iris`, `Recording - iris` (indicator chip), `Notice - iris`, and `Flash - iris`.
 - **Window Move and Resize**: The library, editor, and settings windows draw their own frame. A title bar drag begins once the pointer is more than 4 pixels from the press; a click leaves the window in place. Resize strips run along the inside of the window border: 6 pixels on each side and 16-pixel squares at the corners. Maximized and fullscreen windows have no strips, and a side tiled against a screen edge or another window has none. When the running window manager lists `_NET_WM_MOVERESIZE` in `_NET_SUPPORTED` and its `_NET_SUPPORTING_WM_CHECK` window names itself, a title bar drag or a press on a strip sends `_NET_WM_MOVERESIZE` from the press position, and the window manager moves or resizes the window and holds the minimum size from `WM_NORMAL_HINTS`. Under any other window manager the window follows the pointer: iris selects XInput 2.1 raw motion and raw button release events on the root window, reads the pointer on each one, and moves or resizes the window with `configure_window` until button 1 is released. A resize keeps the opposite edges in place, stops at the window's minimum size, and changes the size at most once every 16 ms. On a server without XInput 2.1 the pointer is read every 8 ms.
-- **Update**: Copies the downloaded AppImage over `$APPIMAGE` using an atomic file rename.
+- **Update**: Copies the downloaded AppImage over `$APPIMAGE` using an atomic file rename. A deb or rpm install runs `apt-get install -y` or `dnf install -y` on the release's package, through `pkexec` unless iris runs as root, and starts `/usr/bin/iris`. See [Updates](install.md#updates).
 
 ## Linux (Wayland)
 
@@ -54,7 +54,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Reveal in Folder**: Calls DBus method `org.freedesktop.FileManager1.ShowItems` via `dbus-send`, falling back to `xdg-open`.
 - **Shutter Sound**: Executes `pw-play /usr/share/sounds/freedesktop/stereo/camera-shutter.oga`, `paplay`, or `canberra-gtk-play`.
 - **Window Move and Resize**: A title bar drag calls `xdg_toplevel.move` with the press's serial once the pointer is more than 4 pixels from the press. The resize strips are the same as on X11; a press on one calls `xdg_toplevel.resize` with its edge, and the compositor enforces the minimum size from `xdg_toplevel.set_min_size`.
-- **Update**: Copies the downloaded AppImage over `$APPIMAGE` using an atomic file rename.
+- **Update**: The same as on X11.
 
 ## Windows
 

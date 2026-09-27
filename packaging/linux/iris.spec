@@ -33,6 +33,8 @@ Requires:       libglvnd-gles
 # Recording runs ffmpeg, which Fedora ships as ffmpeg-free and RPM
 # Fusion as ffmpeg: the path dependency accepts either.
 Recommends:     /usr/bin/ffmpeg
+# iris --update runs dnf through pkexec.
+Recommends:     /usr/bin/pkexec
 Suggests:       tesseract
 
 # Disable automatic debuginfo generation when packaging pre-stripped binary

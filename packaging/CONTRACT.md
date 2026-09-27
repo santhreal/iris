@@ -85,8 +85,11 @@ missing from it.
   iris.exe.old, moves the new one in, and starts it; the daemon deletes
   iris.exe.old at its next start. macOS mounts the DMG and swaps its
   iris.app for the bundle iris runs from in one rename; Linux replaces
-  the AppImage. A deb or rpm install, a macOS iris outside an .app
-  bundle, or a portable iris in a folder it cannot write fails before
-  the download and leaves the daemon running: the package manager
-  updates a deb or rpm.
+  the AppImage. A deb or rpm install downloads the release's deb or
+  rpm and installs it with `apt-get install -y` or `dnf install -y`,
+  run through pkexec unless iris runs as root, then starts
+  `/usr/bin/iris`. A Linux iris from none of the three, a macOS iris
+  outside an .app bundle, a deb or rpm install without its package
+  manager or pkexec, or a portable iris in a folder it cannot write
+  fails before the download and leaves the daemon running.
 - Settings UI gets a "Check for updates" row + current version label.

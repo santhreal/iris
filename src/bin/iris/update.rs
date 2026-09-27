@@ -19,9 +19,9 @@
 //!   macOS   — mount the DMG, swap its iris.app for the bundle iris
 //!             runs from, relaunch.
 //!   Linux   — AppImage: overwrite the file `$APPIMAGE` points at and
-//!             relaunch. A deb/rpm install is owned by the package
-//!             manager, so `--update` reports that path instead of
-//!             fighting it.
+//!             relaunch. A deb or rpm install runs apt-get or dnf as
+//!             root, through pkexec unless it is root, on the release's
+//!             deb or rpm, and relaunches /usr/bin/iris.
 //!
 //! `main` handles `--check-update`/`--update` client-side before the
 //! forward probe; the Settings window calls `check` on a background

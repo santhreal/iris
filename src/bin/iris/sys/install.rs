@@ -11,17 +11,11 @@ mod macos;
 mod windows;
 
 #[cfg(target_os = "linux")]
-pub use linux::{apply_file, ready, ASSET};
+pub use linux::{apply_file, asset, ready};
 #[cfg(target_os = "macos")]
-pub use macos::{apply_file, ready, ASSET};
+pub use macos::{apply_file, asset, ready};
 #[cfg(windows)]
 pub use windows::{apply_file, asset, ready};
-
-/// The release asset suffix that updates this iris.
-#[cfg(not(windows))]
-pub fn asset() -> &'static str {
-    ASSET
-}
 
 /// Delete what the last update left beside this iris: the iris.exe a
 /// portable Windows update renamed aside. The daemon runs this once it
