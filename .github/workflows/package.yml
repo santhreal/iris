@@ -76,11 +76,32 @@ jobs:
         run: |
           choco install nsis -y --no-progress
           Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\NSIS"
-      - name: Build iris.exe and the installer
+      - name: Build iris.exe, the installer, and the portable zip
         shell: bash
         run: |
           cargo build --locked --release --bin iris
           bash packaging/windows/build_installer.sh --binary target/release/iris.exe --out dist
+          bash packaging/windows/build_portable.sh --binary target/release/iris.exe --out dist
+      # The updater unpacks the portable zip with the tar.exe Windows
+      # ships and runs the iris\iris.exe in it (sys/install/windows.rs).
+      - name: Unpack and run the portable zip
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $zip = "dist\iris-$version-windows-x86_64-portable.zip"
+          $sidecar = (Get-Content "$zip.sha256" -Raw).Split(' ')[0].Trim()
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $sidecar) { throw "sha256 $hash, sidecar $sidecar" }
+          $dir = Join-Path $env:RUNNER_TEMP 'portable'
+          New-Item -ItemType Directory $dir | Out-Null
+          & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $dir
+          if ($LASTEXITCODE -ne 0) { throw "tar.exe -xf exited $LASTEXITCODE" }
+          $held = @(Get-ChildItem -Recurse -File $dir | ForEach-Object { $_.FullName.Substring($dir.Length + 1) } | Sort-Object)
+          if (($held -join ',') -ne 'iris\iris.exe,iris\LICENSE-APACHE,iris\LICENSE-MIT') { throw "the zip holds $($held -join ', ')" }
+          $exe = "$dir\iris\iris.exe"
+          if ((Get-FileHash $exe).Hash -ne (Get-FileHash target\release\iris.exe).Hash) { throw 'the zip holds another iris.exe' }
+          $printed = & $exe --version | Write-Output
+          if ($printed -ne "iris $version") { throw "--version printed '$printed'" }
       - name: Install, upgrade over a running daemon, and uninstall
         run: |
           $ErrorActionPreference = 'Stop'
@@ -159,6 +180,11 @@ jobs:
         with:
           name: iris-windows-setup
           path: dist/iris-*-windows-x86_64-setup.exe*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iris-windows-portable
+          path: dist/iris-*-windows-x86_64-portable.zip*
           if-no-files-found: error
 
   linux:

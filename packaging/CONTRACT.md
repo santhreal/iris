@@ -26,6 +26,7 @@ deviate without updating this file and every consumer.
 
 ## Release asset names (CI produces these names and no others)
 - `iris-{ver}-windows-x86_64-setup.exe`   NSIS installer
+- `iris-{ver}-windows-x86_64-portable.zip` zip holding `iris\iris.exe`
 - `iris-{ver}-macos-universal.dmg`        DMG holding iris.app
 - `iris-{ver}-linux-x86_64.AppImage`      AppImage
 - `iris-{ver}-linux-x86_64.deb`           Debian package
@@ -34,13 +35,17 @@ deviate without updating this file and every consumer.
 
 The release workflow reads this list: its publish job fails when the
 built files differ from it, when a sidecar does not match its asset,
-or when an updater asset (`sys::install::ASSET`) is missing from it.
+or when an updater asset (a `pub const *ASSET` in `sys::install`) is
+missing from it.
 
 ## Install layout
 - Windows: per-user, `%LOCALAPPDATA%\Programs\iris\iris.exe`; Start
   Menu shortcut; autostart via `HKCU\...\Run` value `iris` =
   `"...\iris.exe" --daemon`. Uninstaller removes files, shortcuts, the
   Run value.
+- Windows portable: `iris\iris.exe` wherever the zip is unpacked; no
+  shortcut, no Run value, no Uninstall key. Delete the folder to remove
+  it.
 - macOS: `/Applications/iris.app`; autostart via a LaunchAgent
   `~/Library/LaunchAgents/dev.iris.app.plist` running
   `iris --daemon`, installed by hand (`docs/install.md`).
@@ -68,11 +73,15 @@ or when an updater asset (`sys::install::ASSET`) is missing from it.
   against the asset's `.sha256` sidecar, apply it, restart the
   daemon. A release without the sidecar, or a download that differs
   from it, fails the update before the daemon stops; the download is
-  deleted. Windows starts the NSIS installer with `/S /RUN`: it waits
-  for iris.exe to be free, replaces it, and starts iris; macOS mounts
-  the DMG and swaps its iris.app for the bundle iris runs from in one
-  rename; Linux replaces the AppImage. A deb or rpm install, or a
-  macOS iris outside an .app bundle, fails before the download and
-  leaves the daemon running: the package manager updates a deb or
-  rpm.
+  deleted. An installed Windows iris (uninstall.exe beside iris.exe)
+  starts the NSIS installer with `/S /RUN`: it waits for iris.exe to be
+  free, replaces it, and starts iris. A portable Windows iris unpacks
+  the portable zip beside itself, renames the running iris.exe to
+  iris.exe.old, moves the new one in, and starts it; the daemon deletes
+  iris.exe.old at its next start. macOS mounts the DMG and swaps its
+  iris.app for the bundle iris runs from in one rename; Linux replaces
+  the AppImage. A deb or rpm install, a macOS iris outside an .app
+  bundle, or a portable iris in a folder it cannot write fails before
+  the download and leaves the daemon running: the package manager
+  updates a deb or rpm.
 - Settings UI gets a "Check for updates" row + current version label.

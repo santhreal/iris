@@ -19,7 +19,7 @@ iris is a screenshot and screen-recording tool for Linux (X11 and Wayland), Wind
 
 Download installers and binaries from [Releases](https://github.com/santhreal/iris/releases). See the [Installation Guide](docs/install.md) for full instructions and checksums.
 
-- **Windows**: Run `iris-<ver>-windows-x86_64-setup.exe` (per-user installation, autostart registered).
+- **Windows**: Run `iris-<ver>-windows-x86_64-setup.exe` (per-user installation, autostart registered), or unpack `iris-<ver>-windows-x86_64-portable.zip` and run `iris\iris.exe`.
 - **macOS**: Drag `iris.app` from `iris-<ver>-macos-universal.dmg` to Applications (status-bar menu item).
 - **Linux**: Install `iris-<ver>-linux-x86_64.deb` on Debian/Ubuntu, `iris-<ver>-linux-x86_64.rpm` on Fedora/RHEL, or run `iris-<ver>-linux-x86_64.AppImage`.
 - **Source**: `cargo build --release --bin iris`. Build dependencies per platform are in the [Installation Guide](docs/install.md#build-requirements-and-compilation).

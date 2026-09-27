@@ -300,6 +300,10 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
     // Warm the overlay pool: the first capture reuses a live window
     // instead of paying GPUI's ~130ms renderer init on the hotkey.
     overlay::warmup(cx);
+    // After the warmup: the `iris --update` that started this daemon
+    // exits right after the start, and Windows deletes no file a
+    // process still runs. One still running keeps it to the next start.
+    crate::sys::install::tidy();
     // Command pump: tray + hotkey threads -> app dispatch. The
     // receiver is a stream, so a press dispatches the instant it
     // arrives instead of up to a poll interval late.

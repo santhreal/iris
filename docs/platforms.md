@@ -22,7 +22,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 | **Shutter Sound** | `pw-play` / `paplay` / `canberra-gtk-play` | `pw-play` / `paplay` / `canberra-gtk-play` | Win32 `PlaySoundW` (synthesized WAV) | Command `/usr/bin/afplay` |
 | **Window Move and Resize** | Title bar and edge strips; `_NET_WM_MOVERESIZE`, or the window follows the pointer on XInput 2.1 raw events | Title bar and edge strips; `xdg_toplevel.move` / `xdg_toplevel.resize` | `WM_NCLBUTTONDOWN(HTCAPTION)` move; frame hit test (`WM_NCHITTEST`) resize | `performWindowDragWithEvent:` move; AppKit frame resize |
 | **Window Activation** | `_NET_ACTIVE_WINDOW` request and `SetInputFocus` | `xdg_activation_v1` token; the compositor's focus policy applies | `ShowWindowAsync(SW_RESTORE)` when minimized, then `SetForegroundWindow` | `makeKeyAndOrderFront:` |
-| **Update / Install** | AppImage overwrite via `$APPIMAGE` rename | AppImage overwrite via `$APPIMAGE` rename | Detached NSIS installer (`/S /RUN`) | DMG mount via `hdiutil`, replace `.app` |
+| **Update / Install** | AppImage overwrite via `$APPIMAGE` rename | AppImage overwrite via `$APPIMAGE` rename | Detached NSIS installer (`/S /RUN`); portable: `iris.exe` rename | DMG mount via `hdiutil`, replace `.app` |
 
 ## Linux (X11)
 
@@ -69,7 +69,7 @@ iris implements native platform backends across Linux (X11 and Wayland), Windows
 - **Drag-Out and Clipboard**: File drag-out executes on an STA thread. `SHCreateShellItemArrayFromIDLists` and `IShellItemArray::BindToHandler(BHID_DataObject)` build the shell's data object for the files, which holds `CF_HDROP`, the shell ID list array, and file descriptors, and `SHDoDragDrop` (`DROPEFFECT_COPY`) runs the drag. File-path clipboard copy writes `CF_HDROP` payloads (`DROPFILES`) via `OpenClipboard` and `SetClipboardData`. Image clipboard operations run through `arboard`.
 - **Reveal in Folder**: Calls Win32 Shell API `SHOpenFolderAndSelectItems` with `ILCreateFromPathW`, falling back to `explorer.exe`.
 - **Shutter Sound**: Plays an in-memory synthesized WAV buffer using Win32 `PlaySoundW` (`SND_MEMORY | SND_ASYNC | SND_NODEFAULT | SND_SYSTEM`).
-- **Update**: Starts the NSIS installer `windows-x86_64-setup.exe` with `/S /RUN` through `CreateProcessW` with `DETACHED_PROCESS` and `bInheritHandles` FALSE, then exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris.
+- **Update**: Starts the NSIS installer `windows-x86_64-setup.exe` with `/S /RUN` through `CreateProcessW` with `DETACHED_PROCESS` and `bInheritHandles` FALSE, then exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris. A portable `iris.exe` (no `uninstall.exe` beside it) unpacks the portable zip with `%SystemRoot%\System32\tar.exe`, renames itself to `iris.exe.old`, which Windows allows for a running program's file, moves the new `iris.exe` into place, and starts it.
 
 ## macOS
 

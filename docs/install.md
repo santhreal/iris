@@ -9,6 +9,7 @@ Download release binaries and installers from repository releases:
 | Platform | Asset Filename | Description |
 | --- | --- | --- |
 | Windows (x86_64) | `iris-<ver>-windows-x86_64-setup.exe` | NSIS installer |
+| Windows (x86_64) | `iris-<ver>-windows-x86_64-portable.zip` | Portable zip holding `iris\iris.exe` |
 | macOS (Universal) | `iris-<ver>-macos-universal.dmg` | Disk image containing `iris.app` (x86_64 and aarch64) |
 | Linux (x86_64) | `iris-<ver>-linux-x86_64.deb` | Debian / Ubuntu package |
 | Linux (x86_64) | `iris-<ver>-linux-x86_64.rpm` | Fedora / RHEL package |
@@ -51,6 +52,14 @@ To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
 ```
 
 The uninstaller sends `--quit` to a running iris daemon and waits for `iris.exe` in the same way, then removes installed files and shortcuts, deletes the autostart registry value, and removes application registry entries.
+
+### Portable zip
+
+Download `iris-<ver>-windows-x86_64-portable.zip`, unpack it to a folder your account can write, and run `iris\iris.exe`. The zip holds `iris\iris.exe`, `iris\LICENSE-APACHE`, and `iris\LICENSE-MIT`.
+
+The portable iris creates no shortcut, no autostart registry value, and no uninstall entry. It keeps settings, captures, and logs in the same directories as an installed iris ([paths](configuration.md#iris_home-directory-override)). To start it at login, place a shortcut to `iris.exe --daemon` in the folder `shell:startup` opens. To remove it, quit iris (`iris.exe --quit`) and delete the folder.
+
+An `iris.exe` with `uninstall.exe` beside it updates through the installer; any other `iris.exe` is portable and updates from the portable zip ([Updates](#updates)).
 
 ## macOS
 
@@ -249,7 +258,8 @@ Downloads are kept in the `update` directory under the iris cache directory ([pa
 When the swap fails after `--update` stopped the daemon, it starts the installed iris again as the daemon and appends `; the iris already installed runs again` to the error. When that start fails, it appends `; the iris already installed did not start again, see <log file>`. A daemon that was not running before the update is not started. `iris --update` writes its error to standard error and to the log file ([paths](configuration.md#iris_home-directory-override)).
 
 Platform update mechanisms:
-- Windows: Downloads `windows-x86_64-setup.exe`, starts it with `/S /RUN` as a detached process that receives no handle of the `iris --update` process, and exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris. When the installation fails, it starts the `iris.exe` already in place.
+- Windows (installed): An `iris.exe` with `uninstall.exe` beside it downloads `windows-x86_64-setup.exe`, starts it with `/S /RUN` as a detached process that receives no handle of the `iris --update` process, and exits. The installer waits until no process runs the installed `iris.exe`, replaces it, and starts iris. When the installation fails, it starts the `iris.exe` already in place.
+- Windows (portable): Any other `iris.exe` downloads `windows-x86_64-portable.zip` and unpacks it with the `tar.exe` Windows ships into `.iris-update` beside `iris.exe`. It renames the running `iris.exe` to `iris.exe.old`, moves the new `iris.exe` into its place, deletes `.iris-update`, and starts the new `iris.exe`. The daemon deletes `iris.exe.old` when it starts. A failed unpack or move deletes `.iris-update` and leaves `iris.exe` as it was. When iris cannot create `.iris-update`, `iris --update` prints `update: cannot write <folder>\.iris-update: <error>; move the portable iris to a folder this account can write, or install it with the setup` and exits with status 1 before downloading anything.
 - macOS: Downloads `macos-universal.dmg` and attaches it at a mount point of its own with `hdiutil attach -nobrowse -readonly`. It copies the disk image's `iris.app` with `ditto` to `.iris.app.update` beside the bundle iris runs from, detaches the disk image, and swaps the two bundles in one `renamex_np(RENAME_SWAP)` rename, then deletes the old bundle and relaunches the new one. A failure before the swap leaves the installed bundle as it was. An iris outside an `.app` bundle prints `update: <path> is not inside an iris.app bundle; install the release DMG by hand` and exits with status 1 before downloading anything.
 - Linux (AppImage): Copies the download to a temporary sibling of the file in `$APPIMAGE`, renames it over that file, and launches the new file. A failed copy or rename deletes the temporary file and leaves the AppImage as it was.
 - Linux (deb/rpm): When a newer release exists, `iris --update` outside an AppImage prints `update: not an AppImage install; update via apt/dnf` and exits with status 1 before downloading anything. The running daemon keeps running.

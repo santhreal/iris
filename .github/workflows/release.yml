@@ -72,16 +72,16 @@ jobs:
           merge-multiple: true
       # The release holds the assets packaging/CONTRACT.md lists, each
       # with its .sha256 sidecar, and nothing else. Every asset the
-      # updater downloads (sys::install::ASSET on each platform) is one
-      # of them.
+      # updater downloads (each `pub const *ASSET` in sys::install) is
+      # one of them.
       - name: The contract's asset set, every checksum
         run: |
           set -euo pipefail
           version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           contract=$(sed -nE 's/^- `iris-\{ver\}-([^`]+)`.*/\1/p' packaging/CONTRACT.md | sort)
-          updater=$(sed -nE 's/^pub const ASSET: &str = "([^"]+)";/\1/p' src/bin/iris/sys/install/*.rs | sort)
+          updater=$(sed -nE 's/^pub const [A-Z_]*ASSET: &str = "([^"]+)";/\1/p' src/bin/iris/sys/install/*.rs | sort)
           [ -n "$contract" ] || { echo "packaging/CONTRACT.md lists no assets"; exit 1; }
-          defs=$(grep -l 'const ASSET' src/bin/iris/sys/install/*.rs | wc -l)
+          defs=$(grep -hE 'const [A-Z_]*ASSET\b' src/bin/iris/sys/install/*.rs | wc -l)
           if [ "$defs" -eq 0 ] || [ "$(echo "$updater" | grep -c .)" -ne "$defs" ]; then
             echo "parsed updater assets [$updater] from $defs ASSET definitions"
             exit 1

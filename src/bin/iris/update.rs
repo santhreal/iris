@@ -2,17 +2,20 @@
 //! platform asset, apply it, restart the daemon.
 //!
 //! The release contract lives in `packaging/CONTRACT.md`: tags are
-//! `v{semver}` and each platform has one asset name, published with a
-//! `.sha256` sidecar. `check` reads the latest-release JSON and picks
-//! the asset for this OS and its sidecar; `apply` downloads the asset,
-//! deletes it unless its SHA-256 is the sidecar's, stops the daemon,
-//! and hands the asset to `sys::install`, which swaps it in. An asset
-//! a failed install left behind is used again when its SHA-256 is the
-//! sidecar's. A swap that fails starts the stopped daemon again.
+//! `v{semver}` and each kind of install updates from one asset,
+//! published with a `.sha256` sidecar. `check` reads the latest-release
+//! JSON and picks the asset for this install and its sidecar; `apply`
+//! downloads the asset, deletes it unless its SHA-256 is the sidecar's,
+//! stops the daemon, and hands the asset to `sys::install`, which swaps
+//! it in. An asset a failed install left behind is used again when its
+//! SHA-256 is the sidecar's. A swap that fails starts the stopped daemon
+//! again.
 //!
 //! Update strategy per OS:
-//!   Windows — start the NSIS installer with `/S /RUN`: it waits for
-//!             iris.exe to be free, replaces it, and starts iris.
+//!   Windows — an installed iris starts the NSIS installer with
+//!             `/S /RUN`: it waits for iris.exe to be free, replaces
+//!             it, and starts iris. A portable iris swaps its iris.exe
+//!             for the one in the portable zip and relaunches.
 //!   macOS   — mount the DMG, swap its iris.app for the bundle iris
 //!             runs from, relaunch.
 //!   Linux   — AppImage: overwrite the file `$APPIMAGE` points at and
@@ -86,7 +89,7 @@ pub fn check() -> Result<Option<UpdateInfo>, String> {
         .map_err(|e| format!("update: read release body: {e}"))?;
     let json: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("update: parse release JSON: {e}"))?;
-    select(&json, &current_version(), crate::sys::install::ASSET)
+    select(&json, &current_version(), crate::sys::install::asset())
 }
 
 /// The update `release`, a latest-release JSON object, offers over
