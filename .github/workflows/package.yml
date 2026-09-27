@@ -53,7 +53,24 @@ jobs:
           hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/$dmg"
           [ -L "$mnt/Applications" ]
           [ "$("$mnt/iris.app/Contents/MacOS/iris" --version)" = "iris $version" ]
+          ditto "$mnt/iris.app" "$RUNNER_TEMP/installed/iris.app"
           hdiutil detach "$mnt"
+      # The daemon starts from the DMG's iris.app copied out as an install
+      # copies it, binds its socket, and exits on --quit.
+      - name: Run the bundle's daemon
+        run: |
+          set -euo pipefail
+          exe="$RUNNER_TEMP/installed/iris.app/Contents/MacOS/iris"
+          export IRIS_HOME="$RUNNER_TEMP/iris-home" XDG_RUNTIME_DIR="$RUNNER_TEMP/iris-run"
+          mkdir -m 0700 "$XDG_RUNTIME_DIR"
+          log="$IRIS_HOME/state/iris.log"
+          fail() { echo "$1"; cat "$log" 2>/dev/null || true; exit 1; }
+          "$exe" --home || fail "iris --home exited with $?"
+          pid=$(pgrep -f "installed/iris.app/Contents/MacOS/iris --daemon") || fail "no daemon runs from the bundle"
+          grep -q "iris: daemon start" "$log" || fail "the daemon logged no start line"
+          "$exe" --quit || fail "iris --quit exited with $?"
+          for _ in $(seq 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+          ! kill -0 "$pid" 2>/dev/null || fail "the daemon runs 10 s after --quit"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: iris-macos-dmg
