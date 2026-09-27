@@ -76,7 +76,9 @@ fn the_kernel_s_path_for_a_replaced_binary_resolves_to_the_new_file() {
         std::fs::rename(&staged, &bin).expect("rename over the running copy");
         std::fs::read_link(&link)
     } else {
-        Err(std::io::Error::other("the child's exe link never named the copy within 5 s"))
+        Err(std::io::Error::other(
+            "the child's exe link never named the copy within 5 s",
+        ))
     };
     let _ = child.kill();
     let _ = child.wait();

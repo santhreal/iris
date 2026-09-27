@@ -223,11 +223,19 @@ fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
         .spawn()
         .unwrap();
     let status = within(dir, "iris --home to exit", || {
-        client.try_wait().unwrap().ok_or("it still runs".to_string())
+        client
+            .try_wait()
+            .unwrap()
+            .ok_or("it still runs".to_string())
     });
     mode(0o700).unwrap();
     let mut stderr = String::new();
-    client.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
+    client
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
     assert!(status.success(), "iris --home exited {status}: {stderr}");
     assert_eq!(stderr, "", "iris --home wrote to stderr");
     let log = std::fs::read_to_string(dir.join("state").join("iris.log")).unwrap();
