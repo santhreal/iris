@@ -6,9 +6,17 @@
 //! names no file: an autostart entry written with it starts nothing,
 //! and a spawn of it fails. The file at the path without the suffix is
 //! the installed iris, the one an entry or a spawn has to run.
+//!
+//! On Linux, `appimage` is the AppImage file this binary runs from:
+//! the file to replace on update and to start at login.
 
 use std::io;
 use std::path::PathBuf;
+
+#[cfg(target_os = "linux")]
+mod appimage;
+#[cfg(target_os = "linux")]
+pub use appimage::appimage;
 
 /// The suffix Linux appends to the path of a running binary whose file
 /// was deleted or replaced (proc(5), /proc/pid/exe).

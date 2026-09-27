@@ -187,7 +187,7 @@ Clicking **Reset to defaults** restores default configuration values in the form
 
 | Platform | Entry | On | Off |
 | --- | --- | --- | --- |
-| Linux | `$XDG_CONFIG_HOME/autostart/iris-autostart.desktop` | Writes an entry that runs this binary, or `$APPIMAGE` for an AppImage, with `--daemon` | Deletes the entry. When `/etc/xdg/autostart/iris-autostart.desktop` (any `$XDG_CONFIG_DIRS` directory) exists, writes an entry with `Hidden=true` that overrides it |
+| Linux | `$XDG_CONFIG_HOME/autostart/iris-autostart.desktop` | Writes an entry that runs this binary with `--daemon`. When this binary is inside `$APPDIR`, the AppImage's mount, the entry runs the AppImage `$APPIMAGE` names instead | Deletes the entry. When `/etc/xdg/autostart/iris-autostart.desktop` (any `$XDG_CONFIG_DIRS` directory) exists, writes an entry with `Hidden=true` that overrides it |
 | macOS | `~/Library/LaunchAgents/dev.iris.app.plist` | Writes a LaunchAgent that runs this binary with `--daemon` at load, in the GUI session | Deletes the LaunchAgent |
 | Windows | Value `iris` of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | Writes `"<path of iris.exe>" --daemon` | Deletes the value |
 

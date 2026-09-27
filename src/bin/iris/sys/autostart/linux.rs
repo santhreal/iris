@@ -58,13 +58,11 @@ struct Iris {
 
 impl Iris {
     fn this() -> Result<Self, String> {
-        let (program, packaged) = match std::env::var_os("APPIMAGE") {
-            Some(image) => (PathBuf::from(image), false),
-            None => (
-                crate::sys::exe::this()
-                    .map_err(|e| format!("start at login: find this iris: {e}"))?,
-                true,
-            ),
+        let exe =
+            crate::sys::exe::this().map_err(|e| format!("start at login: find this iris: {e}"))?;
+        let (program, packaged) = match crate::sys::exe::appimage(&exe) {
+            Some(image) => (image, false),
+            None => (exe, true),
         };
         Ok(Self {
             exec: format!("{} --daemon", exec_arg(&program)?),
