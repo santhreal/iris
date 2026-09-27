@@ -1,9 +1,12 @@
 // WHY: the class closed here is "a macOS update that fails part way
 // leaves no iris.app": the updater deleted /Applications/iris.app and
 // then copied the new bundle over, so a failed copy left no app, and it
-// replaced /Applications/iris.app whichever bundle ran. Not covered:
-// the relaunch that follows a swap, and a target on a volume without
-// RENAME_SWAP.
+// replaced /Applications/iris.app whichever bundle ran. Also "an update
+// fails because hdiutil was busy": an attach failed with BUSY while
+// another image operation ran, and the update ended there. Not covered:
+// the relaunch that follows a swap, a target on a volume without
+// RENAME_SWAP, and a macOS release that reports a busy framework with
+// other text.
 
 use super::*;
 
@@ -155,5 +158,59 @@ fn a_failed_install_leaves_the_installed_bundle_as_it_was() {
         assert!(target.join("Contents/Resources/stale").is_file(), "{case}");
         assert_eq!(names(&apps), ["iris.app"], "{case}");
         assert!(!dmg.with_extension("mount").exists(), "{case}");
+    }
+}
+
+#[test]
+fn a_busy_attach_is_tried_again_and_other_failures_are_not() {
+    let busy = || {
+        Err(format!(
+            "update: hdiutil exit status: 1: hdiutil: attach failed - {BUSY}"
+        ))
+    };
+    let other = || {
+        Err(
+            "update: hdiutil exit status: 1: hdiutil: attach failed - image not recognized"
+                .to_string(),
+        )
+    };
+    // Outcomes of successive attaches, the tries allowed, then the
+    // attaches run and the result.
+    let cases = [
+        ("attached at once", vec![Ok(())], 5, 1, Ok(())),
+        (
+            "attached after two busy tries",
+            vec![busy(), busy(), Ok(())],
+            5,
+            3,
+            Ok(()),
+        ),
+        (
+            "attached on the last try",
+            vec![busy(), busy(), Ok(())],
+            3,
+            3,
+            Ok(()),
+        ),
+        ("busy on every try", vec![busy(); 5], 5, 5, busy()),
+        ("busy with one try", vec![busy()], 1, 1, busy()),
+        ("zero tries still runs once", vec![busy()], 0, 1, busy()),
+        ("a failure other than busy", vec![other()], 5, 1, other()),
+        (
+            "busy, then another failure",
+            vec![busy(), other()],
+            5,
+            2,
+            other(),
+        ),
+    ];
+    for (case, outcomes, tries, runs, want) in cases {
+        let mut outcomes = outcomes.into_iter();
+        let mut ran = 0;
+        let got = retry_busy(tries, Duration::ZERO, || {
+            ran += 1;
+            outcomes.next().expect("an attach past its tries")
+        });
+        assert_eq!((ran, got), (runs, want), "{case}");
     }
 }

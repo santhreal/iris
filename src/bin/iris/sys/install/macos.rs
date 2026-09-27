@@ -6,6 +6,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +18,14 @@ pub const ASSET: &str = "macos-universal.dmg";
 /// the installed one, so the two share a volume and one rename swaps
 /// them. The dot keeps it out of Finder and Launchpad.
 const STAGED: &str = ".iris.app.update";
+
+/// `hdiutil attach` fails with this while another disk image operation
+/// holds the DiskImages framework, such as a scan of an image just
+/// written or another image being attached.
+const BUSY: &str = "Resource temporarily unavailable";
+/// Tries of an attach that fails with `BUSY`, `ATTACH_WAIT` apart.
+const ATTACH_TRIES: u32 = 5;
+const ATTACH_WAIT: Duration = Duration::from_secs(1);
 
 /// The `.app` bundle this iris runs from. A binary outside a bundle,
 /// as a `cargo build` leaves it, has no bundle to replace.
@@ -73,16 +82,18 @@ fn install(file: &Path, target: &Path) -> Result<(), String> {
     let mount = file.with_extension("mount");
     std::fs::create_dir_all(&mount)
         .map_err(|e| format!("update: create {}: {e}", mount.display()))?;
-    let attached = run(Command::new("hdiutil")
-        .args([
-            "attach",
-            "-nobrowse",
-            "-readonly",
-            "-noautoopen",
-            "-mountpoint",
-        ])
-        .arg(&mount)
-        .arg(file));
+    let attached = retry_busy(ATTACH_TRIES, ATTACH_WAIT, || {
+        run(Command::new("hdiutil")
+            .args([
+                "attach",
+                "-nobrowse",
+                "-readonly",
+                "-noautoopen",
+                "-mountpoint",
+            ])
+            .arg(&mount)
+            .arg(file))
+    });
     let installed = attached.and_then(|()| {
         // ditto copies a bundle whole: symlinks, extended attributes,
         // and the code signature.
@@ -116,6 +127,23 @@ fn install(file: &Path, target: &Path) -> Result<(), String> {
     // failure, the partial copy.
     let _ = std::fs::remove_dir_all(&staged);
     installed
+}
+
+/// Run `op` until it succeeds, fails with an error other than `BUSY`,
+/// or has run `tries` times, `wait` apart. Returns its last result.
+fn retry_busy(
+    tries: u32,
+    wait: Duration,
+    mut op: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    let mut left = tries.max(1);
+    loop {
+        left -= 1;
+        match op() {
+            Err(e) if left > 0 && e.contains(BUSY) => std::thread::sleep(wait),
+            done => return done,
+        }
+    }
 }
 
 /// Run `cmd`. An exit status other than 0 is an error with its stderr.
