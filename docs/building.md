@@ -56,6 +56,8 @@ bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
 
 `build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version the executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` runs `appimagetool` from `PATH`, from `--appimagetool <path>`, or downloads it to `.build-staging/`.
 
+The release workflow (`.github/workflows/package.yml`) builds the Linux executable in the `rust:1-bookworm` container (Debian 12). That executable uses no glibc symbol version newer than 2.35, so the packages install on glibc 2.35 and later. An executable built on a newer system requires that system's glibc.
+
 `packaging/linux/check_installed.sh` starts an installed iris on a private Xvfb display, waits for the home window, and quits it. With `--upgrade <command>`, it runs the command while the daemon runs, checks that the daemon still runs on the replaced binary, quits it with the upgraded iris, and starts the upgraded iris. To check an upgrade of an installed deb to a package of the same binary at a higher version:
 
 ```sh

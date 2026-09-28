@@ -84,6 +84,8 @@ To uninstall, turn off **Start at login**, quit iris (`/Applications/iris.app/Co
 
 ## Linux
 
+The deb, the rpm, and the AppImage require glibc 2.35 or newer, as in Ubuntu 22.04, Debian 12, and later releases. On an older system, build iris from source ([Building](building.md)).
+
 ### Debian and Ubuntu
 
 Download `iris-<ver>-linux-x86_64.deb`.

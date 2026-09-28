@@ -229,31 +229,37 @@ jobs:
 
   linux:
     name: Package (Linux)
-    # Pinned: the build host's glibc is the packages' glibc floor
-    # (build_deb.sh reads it from the binary), so it moves only here.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
-        with:
-          toolchain: stable
-      - name: Install build + packaging deps
+      - name: Install packaging deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config cmake clang \
-            libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
-            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
-            libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
-            libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal \
-            rpm desktop-file-utils
+          sudo apt-get install -y rpm desktop-file-utils
+      # The binary builds on Debian 12, so it links no glibc symbol
+      # version newer than that release has, and the packages run on
+      # the oldest glibc that holds every version it uses: 2.35 (Ubuntu
+      # 22.04). A binary built on the runner requires the runner's glibc.
+      # build_deb.sh reads the floor from the binary.
+      - name: Build iris on Debian 12
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e owner="$(id -u):$(id -g)" rust:1-bookworm \
+            bash -euo pipefail -c '
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends build-essential pkg-config cmake clang \
+                libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
+                libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
+                libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
+                libpipewire-0.3-dev libspa-0.2-dev >/dev/null
+              cargo build --locked --release --bin iris
+              chown -R "$owner" target
+            '
       # The packages in dist/next hold the same binary at a higher
       # version, so installing one over the first is a package upgrade.
-      - name: Build iris, the deb, the rpm, and the AppImage
+      - name: Build the deb, the rpm, and the AppImage
         run: |
-          cargo build --locked --release --bin iris
           bash packaging/linux/build_deb.sh --bin target/release/iris --out dist
           bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
           bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
@@ -262,13 +268,14 @@ jobs:
           bash packaging/linux/build_rpm.sh --bin target/release/iris --version "$next" --out dist/next --skip-sha
       # Each package installs in a clean container without the packages
       # it recommends, so a library it does not depend on is missing
-      # there: the deb on ubuntu:24.04, the rpm on fedora:42. In each,
+      # there: the deb on ubuntu:22.04, the oldest release it supports,
+      # and on ubuntu:24.04; the rpm on fedora:42. In each,
       # check_installed.sh starts the daemon on Xvfb with the lavapipe
       # Vulkan driver and waits for the home window. The package from
       # dist/next then upgrades the running install: the daemon runs on
       # the replaced binary, exits on --quit from the upgraded one, and
       # the upgraded iris starts. The AppImage mounts itself with FUSE on
-      # ubuntu:24.04 with the libraries the deb depends on and no more,
+      # ubuntu:22.04 with the libraries the deb depends on and no more,
       # and check_installed.sh runs its daemon.
       - name: Install, run, and remove each package
         run: |
@@ -283,7 +290,7 @@ jobs:
             docker run --rm "$@" -v "$PWD/dist:/pkg:ro" -v "$PWD/packaging/linux:/linux:ro" \
               -e version="$version" -e files="$files" "$image" bash -euo pipefail -c "$script"
           }
-          in_container ubuntu:24.04 '
+          deb='
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends "/pkg/iris-${version}-linux-x86_64.deb" >/dev/null
@@ -296,6 +303,8 @@ jobs:
             apt-get remove -y -qq iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '
+          in_container ubuntu:22.04 "$deb"
+          in_container ubuntu:24.04 "$deb"
           in_container fedora:42 '
             dnf install -y -q --setopt=install_weak_deps=False "/pkg/iris-${version}-linux-x86_64.rpm" >/dev/null
             [ "$(iris --version)" = "iris $version" ]
@@ -307,7 +316,7 @@ jobs:
             dnf remove -y -q iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '
-          in_container ubuntu:24.04 '
+          in_container ubuntu:22.04 '
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
             libs=$(dpkg-deb -f "/pkg/iris-${version}-linux-x86_64.deb" Depends | sed -E "s/ \([^)]*\)//g; s/, /\n/g")
