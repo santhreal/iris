@@ -9,12 +9,11 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::sync::mpsc::RecvTimeoutError;
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::capture::WinRect;
 use crate::config::RecordingFormat;
-use crate::record::child::{drain, wait_until, written, Closing};
+use crate::record::child::{settle, written, Closing, Done, Stderr, REPORT_END};
 use crate::record::codec::{audio_args, even, VideoCodec};
 use crate::record::join::{self, segment_path, Segment};
 use crate::record::{RecControl, RecordingSpec};
@@ -166,22 +165,19 @@ fn input_args(screen: &Screen, mic: Option<&str>) -> Vec<String> {
 struct Open {
     child: Child,
     segment: Segment,
-    stderr: Option<JoinHandle<String>>,
+    stderr: Option<Stderr>,
 }
 
 impl Open {
     /// `q` on stdin: ffmpeg stops capturing, writes the trailer, and
-    /// exits.
-    fn finish(mut self) -> Result<Segment, String> {
+    /// exits; `settle` sends the segment once it is written.
+    fn finish(mut self, done: Done) {
         if let Some(mut stdin) = self.child.stdin.take() {
             let _ = stdin.write_all(b"q");
         }
-        let status = wait_until(&mut self.child, Instant::now() + FLUSH_LIMIT);
-        let text = self.stderr.take().and_then(|e| e.join().ok());
-        match status? {
-            s if s.success() => written(self.segment.clone()),
-            s => Err(format!("ffmpeg exited {s}: {}", text.unwrap_or_default())),
-        }
+        let (stderr, segment) = (self.stderr.take(), self.segment.clone());
+        let deadline = Instant::now() + FLUSH_LIMIT;
+        settle(&mut self.child, stderr, Ok(()), segment, deadline, done);
     }
 }
 
@@ -215,6 +211,7 @@ impl Desktop {
         let path = segment_path(&self.output, self.closing.len());
         let mut c = Tool::Ffmpeg.command();
         c.args(["-hide_banner", "-loglevel", "error", "-nostats", "-y"])
+            .args(REPORT_END)
             .args(input_args(&self.screen, mic))
             .args(["-vf", self.screen.crop.as_str()])
             .args(self.codec.args());
@@ -238,8 +235,8 @@ impl Desktop {
             stderr: None,
         };
         if let Some(err) = stderr {
-            // A failed drain drops `open`, which kills ffmpeg.
-            open.stderr = Some(drain(err).map_err(|e| format!("read ffmpeg errors: {e}"))?);
+            // A failed read drops `open`, which kills ffmpeg.
+            open.stderr = Some(Stderr::read(err).map_err(|e| format!("read ffmpeg errors: {e}"))?);
         }
         self.open = Some(open);
         Ok(())
@@ -248,7 +245,8 @@ impl Desktop {
     /// End the open segment; ffmpeg finishes it on its own thread.
     fn close(&mut self) {
         if let Some(open) = self.open.take() {
-            self.closing.push(Closing::spawn(move || open.finish()));
+            self.closing
+                .push(Closing::spawn(move |done| open.finish(done)));
         }
     }
 
@@ -287,9 +285,10 @@ impl Desktop {
             Err(e) => return Err(format!("wait on ffmpeg: {e}")),
         };
         let mut open = self.open.take().expect("open segment");
-        let text = open.stderr.take().and_then(|e| e.join().ok());
+        let text = open.stderr.take().map(Stderr::text);
         let segment = open.segment.clone();
-        self.closing.push(Closing::spawn(move || written(segment)));
+        self.closing
+            .push(Closing::spawn(move |done| done.send(written(segment))));
         Err(format!(
             "ffmpeg exited {status} during capture: {}",
             text.unwrap_or_default()

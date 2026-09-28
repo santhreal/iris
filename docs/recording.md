@@ -67,7 +67,7 @@ If no recording is active, `iris --record-pause` and `iris --record-mic` return 
 ### Pause and Resume
 
 - **Linux (X11 and Wayland)**: Pausing closes the current recording segment. Frames captured while paused are dropped. The elapsed timer suspends advancing. Resuming opens a new recording segment, writing the last frame of the previous segment at the resume timestamp so a static screen remains visible.
-- **Windows and macOS**: Pausing writes `q` to standard input of `ffmpeg` and waits up to 10 seconds for process exit. Resuming spawns a new `ffmpeg` segment process writing `<output>.part<N>.mkv`.
+- **Windows and macOS**: Pausing writes `q` to standard input of `ffmpeg`, which writes the segment and exits (see [Segment Completion](#segment-completion)). Resuming spawns a new `ffmpeg` segment process writing `<output>.part<N>.mkv`.
 
 ### Microphone Toggle
 
@@ -109,7 +109,7 @@ On Linux (X11 and Wayland), captured frames are streamed to `ffmpeg` standard in
 - Frame reads on X11: A frame is read only after XDamage reports a change inside the recorded window or region, at most `recording_fps` times a second. A paused recording releases its damage subscription and reads no frames.
 - Segment input arguments:
   ```sh
-  ffmpeg -hide_banner -loglevel error -y -copyts -probesize 32 -analyzeduration 0 -f matroska -i pipe:0
+  ffmpeg -hide_banner -loglevel error -y -copyts -progress pipe:2 -probesize 32 -analyzeduration 0 -f matroska -i pipe:0
   ```
 - Microphone capture on Linux: Records the default PulseAudio source via `-f pulse -name iris -i default`. Wallclock timestamps are synchronized to the video timeline via `-thread_queue_size 512 -itsoffset -<seconds>.<microseconds>`.
 
@@ -121,6 +121,17 @@ The first captured frame sets the recording canvas:
   - Crop odd edges: `crop={ew}:{eh}:0:0`
   - Scale to fit: `scale={sw}:{sh}:flags=bicubic`
   - Pad to canvas centered on black: `pad={cw}:{ch}:{x}:{y}:black`
+
+### Segment Completion
+
+Every segment `ffmpeg` runs with `-progress pipe:2`, and prints `progress=end` on standard error after it writes the segment file. A segment is complete at that line when all of these hold:
+- Every frame reached `ffmpeg` standard input.
+- `ffmpeg` logged no error before `progress=end`.
+- No other process holds the segment file open. `ffmpeg` 6.0 and later close the file before `progress=end`; earlier versions close it at exit, which on Windows keeps the file from being deleted after the join.
+
+The join starts at `progress=end`, and `ffmpeg` exits in the background: `h264_nvenc` takes 160 to 300 ms to release its CUDA context after the file is written. A nonzero exit after `progress=end` is logged and the segment is kept.
+
+Otherwise the segment is complete when `ffmpeg` exits. A nonzero exit fails the segment with the `ffmpeg` log as the error. An `ffmpeg` that has not finished 10 seconds after its segment closes is killed, and the segment fails.
 
 ### Segment Joining
 

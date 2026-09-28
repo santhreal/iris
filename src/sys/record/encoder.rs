@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::mkv::{self, PixFmt};
 use crate::config::RecordingFormat;
-use crate::record::child::{drain, wait_until, written, Closing};
+use crate::record::child::{settle, wait_until, Closing, Done, Stderr, REPORT_END};
 use crate::record::codec::{audio_args, fit_filter, vfr_args, VideoCodec};
 use crate::record::join::Segment;
 use crate::tools::Tool;
@@ -71,7 +71,7 @@ pub struct Encoder {
     writer: Option<Writer>,
     /// The writer's last frame, sent when it exits.
     held: Option<Receiver<Vec<u8>>>,
-    stderr: Option<JoinHandle<String>>,
+    stderr: Option<Stderr>,
     dropped: u64,
 }
 
@@ -135,7 +135,7 @@ impl Encoder {
                 }
                 result
             })
-            .and_then(|thread| drain(stderr).map(|err| (Writer { thread, exited }, err)));
+            .and_then(|thread| Stderr::read(stderr).map(|err| (Writer { thread, exited }, err)));
         let (writer, stderr) = match spawned {
             Ok(pair) => pair,
             Err(e) => {
@@ -239,10 +239,14 @@ impl Encoder {
         let (child, writer) = (self.child.take(), self.writer.take());
         let stderr = self.stderr.take();
         let held = self.held.take().expect("held receiver taken once");
-        let (path, audio, dropped) = (self.path.clone(), self.audio, self.dropped);
-        let closing = Closing::spawn(move || {
+        let segment = Segment {
+            path: self.path.clone(),
+            audio: self.audio,
+        };
+        let dropped = self.dropped;
+        let closing = Closing::spawn(move |done| {
             let deadline = Instant::now() + FLUSH_LIMIT;
-            close(child, writer, stderr, path, audio, dropped, deadline)
+            close(child, writer, stderr, segment, dropped, deadline, done)
         });
         // Without a finisher the queue still closes: the writer drains,
         // ffmpeg reads EOF and exits on its own.
@@ -259,11 +263,7 @@ impl Encoder {
             .child
             .as_mut()
             .and_then(|c| wait_until(c, deadline).ok());
-        let text = self
-            .stderr
-            .take()
-            .and_then(|e| e.join().ok())
-            .unwrap_or_default();
+        let text = self.stderr.take().map(Stderr::text).unwrap_or_default();
         match (status, wrote) {
             (Some(s), _) if !s.success() && !text.is_empty() => {
                 format!("ffmpeg exited {s}: {text}")
@@ -294,6 +294,7 @@ fn ffmpeg_args(spec: &SegmentSpec, audio: Option<&[&str]>) -> Vec<String> {
     let mut a: Vec<String> = Vec::with_capacity(48);
     let mut push = |args: &[&str]| a.extend(args.iter().map(|s| s.to_string()));
     push(&["-hide_banner", "-loglevel", "error", "-y", "-copyts"]);
+    push(&REPORT_END);
     // The header states every stream parameter: nothing to probe.
     push(&["-probesize", "32", "-analyzeduration", "0"]);
     push(&["-f", "matroska", "-i", "pipe:0"]);
@@ -344,38 +345,35 @@ fn grow_pipe(stdin: &ChildStdin, frame_bytes: usize) {
     }
 }
 
-/// The finisher: the writer drains its queue and closes stdin, ffmpeg
-/// flushes and exits, and the segment file must hold something. An
-/// ffmpeg that stops reading is killed at `deadline`, which also frees
-/// a writer blocked on the full pipe.
+/// The finisher: the writer drains its queue and closes stdin, then
+/// `settle` sends the segment once ffmpeg has written it. An ffmpeg
+/// that stops reading is killed at `deadline`, which also frees a
+/// writer blocked on the full pipe.
 fn close(
     child: Option<Child>,
     writer: Option<Writer>,
-    stderr: Option<JoinHandle<String>>,
-    path: PathBuf,
-    audio: bool,
+    stderr: Option<Stderr>,
+    segment: Segment,
     dropped: u64,
     deadline: Instant,
-) -> Result<Segment, String> {
-    let mut child = child.ok_or("segment has no ffmpeg")?;
+    done: Done,
+) {
+    let Some(mut child) = child else {
+        return done.send(Err("segment has no ffmpeg".to_string()));
+    };
     if let Some(w) = &writer {
         let left = deadline.saturating_duration_since(Instant::now());
         if matches!(w.exited.recv_timeout(left), Err(RecvTimeoutError::Timeout)) {
             let _ = child.kill();
         }
     }
-    let wrote = writer.map(|w| w.thread.join());
-    let status = wait_until(&mut child, deadline);
-    let text = stderr.and_then(|e| e.join().ok()).unwrap_or_default();
-    let status = status?;
-    if !status.success() {
-        return Err(format!("ffmpeg exited {status}: {text}"));
+    let fed = match writer.map(|w| w.thread.join()) {
+        Some(Ok(Ok(()))) => Ok(()),
+        Some(Ok(Err(e))) => Err(format!("write frame to ffmpeg: {e}")),
+        _ => Err("segment writer panicked".to_string()),
+    };
+    if fed.is_ok() {
+        crate::ilog!("iris: record: segment fed, {dropped} frame(s) dropped");
     }
-    match wrote {
-        Some(Ok(Ok(()))) => {}
-        Some(Ok(Err(e))) => return Err(format!("write frame to ffmpeg: {e}")),
-        _ => return Err("segment writer panicked".to_string()),
-    }
-    crate::ilog!("iris: record: segment done, {dropped} frame(s) dropped");
-    written(Segment { path, audio })
+    settle(&mut child, stderr, fed, segment, deadline, done);
 }
