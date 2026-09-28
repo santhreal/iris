@@ -4,7 +4,9 @@
 //!
 //! WHY: the classes closed here are "the socket waits on the display",
 //! "an input source starts after the warmup", "the daemon's X connection
-//! races the X server's reset", and "a Wayland daemon uses XWayland". A
+//! races the X server's reset", "a Wayland daemon uses XWayland", and "a
+//! Wayland daemon creates its GPU context with its first window", which
+//! then waits for the device the whole time the driver creates it. A
 //! client that finds no daemon starts one, forwards its command once the
 //! socket accepts, and fails after 8 s; every other client that finds no
 //! socket meanwhile waits for the same bind. The daemon bound its socket
@@ -48,8 +50,9 @@
 //! A GPU context thread that starts before the X connection is set up
 //! loads the driver within those 2 s. The fourth starts a daemon on a
 //! headless sway with `DISPLAY` naming a socket that counts
-//! connections, opens its settings window through a client, which
-//! creates the GPU context, and requires no connection once the daemon
+//! connections, requires its GPU context thread to enumerate the GPUs
+//! before any window opens, opens its settings window through a client,
+//! which takes that context, and requires no connection once the daemon
 //! is idle; sway renders with pixman, so the device selection layer finds
 //! no device through Wayland. Its loader also loads the test driver,
 //! which records the `DISPLAY` it saw at each load and at each device
@@ -223,15 +226,18 @@ fn a_daemon_on_a_wayland_session_leaves_its_x_display_alone() {
         cmd.env("WAYLAND_DISPLAY", &socket).env("DISPLAY", &display);
         driver.add_to(cmd);
     });
-    // The first window creates the GPU context, which enumerates the GPUs.
-    daemon.send(&["--settings"]);
-    daemon.until("the first window to enumerate the GPUs", || {
+    // The GPU context thread enumerates the GPUs as the daemon starts, with
+    // no window open: a daemon that creates the context with its first
+    // window never enumerates here.
+    daemon.until("the GPU context thread to enumerate the GPUs", || {
         std::fs::read_to_string(&driver.log)
             .ok()?
             .lines()
             .any(|line| line.starts_with("devices "))
             .then_some(())
     });
+    // The first window takes the thread's context.
+    daemon.send(&["--settings"]);
     daemon.settle();
     let log = std::fs::read_to_string(&driver.log).unwrap_or_default();
     // The DISPLAY the driver saw at each `event`.
