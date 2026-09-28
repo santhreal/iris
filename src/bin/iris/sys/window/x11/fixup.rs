@@ -64,10 +64,33 @@ pub fn span_after_map(xid: u32, x: i32, y: i32, w: u32, h: u32) {
     enqueue(xid, Fixup::Span { x, y, w, h });
 }
 
+/// Unmap window `xid` when no window manager runs, and return whether
+/// it did. A minimize is a request to the window manager (ICCCM
+/// WM_CHANGE_STATE), and with none to act on it the window stays on
+/// screen. A window manager is the one client that selects
+/// SubstructureRedirect on the root.
+pub fn park_unmanaged(xid: u32) -> bool {
+    let Ok((conn, screen)) = iris_lib::sys::capture::x11::shared_conn() else {
+        return false;
+    };
+    let root = conn.setup().roots[screen].root;
+    let managed = conn
+        .get_window_attributes(root)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_none_or(|a| a.all_event_masks.contains(EventMask::SUBSTRUCTURE_REDIRECT));
+    if managed {
+        return false;
+    }
+    let _ = conn.unmap_window(xid);
+    let _ = conn.flush();
+    true
+}
+
 /// Bring the parked window `xid` back over the virtual screen: the
-/// union rect, mapped, raised, above, focused. The window stays
-/// managed while parked, so the requests go out at once, from the
-/// calling thread.
+/// union rect, mapped, raised, above, focused. A window manager keeps
+/// the window managed while it is minimized, and with none a map shows
+/// it at once, so the requests go out at once, from the calling thread.
 pub fn unpark_span(xid: u32, x: i32, y: i32, w: u32, h: u32) {
     let Ok((conn, screen)) = iris_lib::sys::capture::x11::shared_conn() else {
         return;

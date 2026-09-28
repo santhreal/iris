@@ -1,12 +1,15 @@
-//! Window queries and XTest input on a test's X server.
+//! Window queries, XTest input, and a stand-in compositing manager on a
+//! test's X server.
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{self, AtomEnum, ConnectionExt as _, MapState};
+use x11rb::protocol::xproto::{
+    self, AtomEnum, ConnectionExt as _, CreateWindowAux, MapState, WindowClass,
+};
 use x11rb::protocol::xtest::ConnectionExt as _;
 
-/// The mapped top-level iris windows titled `title`: WM_CLASS instance
-/// and class both `APP_ID`, and WM_NAME `title`.
-pub fn windows_of(conn: &impl Connection, root: u32, title: &str) -> Vec<u32> {
+/// The top-level iris windows titled `title`, mapped or not: WM_CLASS
+/// instance and class both `APP_ID`, and WM_NAME `title`.
+pub fn all_windows_of(conn: &impl Connection, root: u32, title: &str) -> Vec<u32> {
     let id = iris_lib::APP_ID.as_bytes();
     // A window destroyed since the tree was read answers with an error,
     // and counts as gone.
@@ -20,17 +23,23 @@ pub fn windows_of(conn: &impl Connection, root: u32, title: &str) -> Vec<u32> {
     children
         .into_iter()
         .filter(|&window| {
-            let mapped = conn
-                .get_window_attributes(window)
+            property(window, AtomEnum::WM_CLASS).is_ok_and(|class| {
+                let mut parts = class.split(|&b| b == 0);
+                parts.next() == Some(id) && parts.next() == Some(id)
+            }) && property(window, AtomEnum::WM_NAME).is_ok_and(|name| name == title.as_bytes())
+        })
+        .collect()
+}
+
+/// The mapped top-level iris windows titled `title` (`all_windows_of`).
+pub fn windows_of(conn: &impl Connection, root: u32, title: &str) -> Vec<u32> {
+    all_windows_of(conn, root, title)
+        .into_iter()
+        .filter(|&window| {
+            conn.get_window_attributes(window)
                 .unwrap()
                 .reply()
-                .is_ok_and(|a| a.map_state == MapState::VIEWABLE);
-            mapped
-                && property(window, AtomEnum::WM_CLASS).is_ok_and(|class| {
-                    let mut parts = class.split(|&b| b == 0);
-                    parts.next() == Some(id) && parts.next() == Some(id)
-                })
-                && property(window, AtomEnum::WM_NAME).is_ok_and(|name| name == title.as_bytes())
+                .is_ok_and(|a| a.map_state == MapState::VIEWABLE)
         })
         .collect()
 }
@@ -79,4 +88,55 @@ pub fn tap(conn: &impl Connection, root: u32, keysym: u32) {
             .unwrap();
     }
     conn.flush().unwrap();
+}
+
+/// A compositing manager: a window that owns the screen's
+/// `_NET_WM_CM_S<n>` selection, and that selection.
+pub struct Compositor {
+    window: u32,
+    selection: u32,
+}
+
+impl Compositor {
+    pub fn start(conn: &impl Connection, root: u32, selection: u32) -> Compositor {
+        let window = conn.generate_id().unwrap();
+        conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            -1,
+            -1,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_ONLY,
+            x11rb::COPY_FROM_PARENT,
+            &CreateWindowAux::new(),
+        )
+        .unwrap();
+        conn.set_selection_owner(window, selection, x11rb::CURRENT_TIME)
+            .unwrap();
+        let owner = conn
+            .get_selection_owner(selection)
+            .unwrap()
+            .reply()
+            .unwrap();
+        assert_eq!(owner.owner, window, "the compositor owns its selection");
+        Compositor { window, selection }
+    }
+
+    /// Exit: the selection of a destroyed window has no owner.
+    pub fn exit(self, conn: &impl Connection) {
+        conn.destroy_window(self.window).unwrap();
+        let owner = conn
+            .get_selection_owner(self.selection)
+            .unwrap()
+            .reply()
+            .unwrap();
+        assert_eq!(
+            owner.owner,
+            x11rb::NONE,
+            "the compositor released its selection"
+        );
+    }
 }

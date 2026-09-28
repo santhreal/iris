@@ -2,7 +2,10 @@
 //!
 //! A fullscreen transparent popup with a white fill that peaks at 0.38
 //! and eases out over 180ms. It never takes focus, and it opens after
-//! the frame is grabbed, so it never appears in a capture.
+//! the frame is grabbed, so it never appears in a capture. A screen
+//! that does not blend a window's transparent pixels
+//! (`sys::window::blends`) would show the fill over black on every
+//! monitor, so there the flash does not open.
 
 use std::time::Instant;
 
@@ -17,10 +20,15 @@ struct Flash {
     started: Instant,
 }
 
-/// Blink every screen once: one window per monitor, each placed
-/// and fullscreened by the post-map helper so no monitor is left
-/// out. Returns after the windows open; they dismiss themselves.
+/// Blink every screen once: one window over the union of the monitors,
+/// spanned by the post-map helper so no monitor is left out. Returns
+/// after the window opens; it dismisses itself. A screen that does not
+/// blend a transparent window (`sys::window::blends`) would show the
+/// flash black over every monitor, and gets no flash.
 pub fn show(cx: &mut App) -> Result<(), String> {
+    if !crate::sys::window::blends() {
+        return Ok(());
+    }
     let mut monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
     if monitors.is_empty() {
         monitors.push(iris_lib::capture::WinRect {

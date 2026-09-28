@@ -173,7 +173,7 @@ fn open_shell_opts(
         },
     )
     .map_err(|e| format!("open overlay window: {e}"))?;
-    // Pooling needs minimize+restore; elsewhere the window is destroyed
+    // Pooling needs park and restore; elsewhere the window is destroyed
     // on park instead.
     if poolable() {
         *POOL.lock() = Some(handle);
@@ -181,7 +181,7 @@ fn open_shell_opts(
     Ok(handle)
 }
 
-/// True where a parked (minimized) overlay can be restored: X11, where
+/// True where a parked overlay can be restored: X11, where
 /// `sys::window::unpark_span` maps and re-spans it. Wayland has no
 /// unminimize, and Windows and macOS have no restore step.
 pub(super) fn poolable() -> bool {
@@ -191,7 +191,7 @@ pub(super) fn poolable() -> bool {
 /// Pre-create the overlay at daemon start and park it into the pool,
 /// so the first capture reuses a live window instead of paying GPUI's
 /// ~130ms renderer init on the hotkey press. The shell maps unfocused
-/// and transparent, then minimizes in the same tick: invisible, and it
+/// and transparent, then parks in the same tick: invisible, and it
 /// never takes input focus. Only where [`poolable`].
 pub fn warmup(cx: &mut App) {
     if !poolable() {

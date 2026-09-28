@@ -68,8 +68,8 @@ fn hint(cfg: &iris_lib::config::Config, mode: OverlayMode) -> SharedString {
 }
 
 pub struct Overlay {
-    /// Parked (minimized): the window stays alive with its renderer,
-    /// and the next capture reuses it.
+    /// Parked (`sys::window::park`): the window stays alive with its
+    /// renderer, and the next capture reuses it.
     pub hidden: bool,
     /// What finish() does with the committed selection. Set through
     /// set_mode(), which rebuilds `hint` to match.
@@ -148,7 +148,7 @@ pub struct Overlay {
 }
 
 /// The pooled overlay window: created on the first capture, parked
-/// (minimized, never destroyed) afterwards. GPUI window init is the
+/// (`sys::window::park`, never destroyed) afterwards. GPUI window init is the
 /// largest single chunk of keypress-to-overlay latency (~130ms), and a
 /// parked window skips all of it.
 pub static POOL: parking_lot::Mutex<Option<WindowHandle<Overlay>>> = parking_lot::Mutex::new(None);

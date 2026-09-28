@@ -37,7 +37,7 @@ iris --capture-fullscreen
 
 Grabs the union of all connected monitors into a single image frame without displaying the region overlay.
 
-If `flash_on_capture` is true in [configuration.md#capture](configuration.md#capture) (default: `true`), displays a white flash window spanning the monitor union peaking at 0.38 opacity and easing out over 180 milliseconds. The flash opens after the frame is read, so it does not appear in the image.
+If `flash_on_capture` is true in [configuration.md#capture](configuration.md#capture) (default: `true`), displays a white flash window spanning the monitor union peaking at 0.38 opacity and easing out over 180 milliseconds. The flash opens after the frame is read, so it does not appear in the image. On X11 with no compositing manager, no flash opens ([Pop-up Windows](platforms.md#linux-x11)).
 
 ### Window Capture
 

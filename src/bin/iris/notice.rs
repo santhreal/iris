@@ -115,6 +115,8 @@ pub struct Notice {
     /// Dismiss-arm generation: a timer that wakes on an older one is
     /// a no-op, so the last hover-out's deadline is the one that holds.
     armed: u64,
+    /// The card, where a screen that does not blend the window shows it.
+    cutout: crate::sys::window::Cutout,
 }
 
 /// Width of the detail text beside the glyph and `buttons` buttons.
@@ -249,6 +251,7 @@ fn open(
         closing: None,
         hovered: false,
         armed: 0,
+        cutout: Default::default(),
     };
     let handle = crate::widgets::open_window(
         cx,
@@ -324,10 +327,16 @@ impl Notice {
 
 impl Render for Notice {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A screen that does not blend the window shows the card still,
+        // in its cut-out area: it arrives and leaves at once.
+        let still = !crate::sys::window::blended(window);
         // Entrance: decelerating hard into the corner, as the toast.
         let opened = *self.opened.get_or_insert_with(Instant::now);
-        let enter_t =
-            (opened.elapsed().as_secs_f32() / motion::tempo(motion::ENTER).as_secs_f32()).min(1.0);
+        let enter_t = if still {
+            1.0
+        } else {
+            (opened.elapsed().as_secs_f32() / motion::tempo(motion::ENTER).as_secs_f32()).min(1.0)
+        };
         let ease = 1.0 - (1.0 - enter_t).powi(4);
         let mut offset = MARGIN - (1.0 - ease) * (W + 2.0 * MARGIN);
         let mut opacity = 1.0f32;
@@ -341,7 +350,7 @@ impl Render for Notice {
             } else {
                 opacity = 1.0 - t;
             }
-            if t >= 1.0 {
+            if still || t >= 1.0 {
                 window.remove_window();
             } else {
                 animating = true;
@@ -350,7 +359,21 @@ impl Render for Notice {
         if animating {
             window.request_animation_frame();
         }
-
+        let card_x = if self.left {
+            offset
+        } else {
+            f32::from(window.viewport_size().width) - offset - W
+        };
+        self.cutout.set(
+            window,
+            &[crate::sys::window::Rounded {
+                x: card_x,
+                y: self.inset,
+                w: W,
+                h: self.height,
+                r: theme::RADIUS_GROUP,
+            }],
+        );
         let (glyph, tint) = if self.failure {
             (Icon::Alert, theme::DANGER)
         } else {

@@ -38,6 +38,7 @@ impl ToastStage {
             status: None,
             busy: false,
             bar: Bar::Shown,
+            cutout: Default::default(),
         }
     }
 
@@ -239,24 +240,37 @@ impl ToastStage {
     }
 
     /// Right-click context menu, macOS style: Markup, Copy, Copy text,
-    /// Pin, Delete, Close. Fades in over 120ms rising 3px; shares the
-    /// exit opacity so it never outlives the card it belongs to.
+    /// Pin, Delete, Close. Fades in over 120ms rising 3px, or shows at
+    /// once on a screen that does not blend the window; shares the exit
+    /// opacity so it never outlives the card it belongs to. Returns the
+    /// menu and the area it paints in the window.
     pub(super) fn render_menu(
         &mut self,
         opacity: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Div> {
+    ) -> Option<(Div, crate::sys::window::Rounded)> {
         let (menu_x, menu_y) = self.menu_at?;
         let opened = *self.menu_opened.get_or_insert_with(Instant::now);
-        let mt = (opened.elapsed().as_secs_f32() / motion::tempo(MENU_FADE).as_secs_f32()).min(1.0);
+        let mt = if crate::sys::window::blended(window) {
+            (opened.elapsed().as_secs_f32() / motion::tempo(MENU_FADE).as_secs_f32()).min(1.0)
+        } else {
+            1.0
+        };
         if mt < 1.0 {
             window.request_animation_frame();
         }
+        let area = crate::sys::window::Rounded {
+            x: menu_x,
+            y: menu_y + 3.0 * (1.0 - motion::ease_out_cubic(mt)),
+            w: crate::widgets::MENU_W,
+            h: 6.0 * crate::widgets::MENU_ROW_H + 10.0,
+            r: crate::widgets::MENU_RADIUS,
+        };
         let mut menu = crate::widgets::menu()
             .absolute()
-            .left(px(menu_x))
-            .top(px(menu_y + 3.0 * (1.0 - motion::ease_out_cubic(mt))))
+            .left(px(area.x))
+            .top(px(area.y))
             .opacity(mt * opacity);
         menu = menu.child(crate::widgets::menu_row("toast-markup", "Markup").on_click(
             cx.listener(|stage, _, window, cx| {
@@ -309,7 +323,7 @@ impl ToastStage {
                 },
             )),
         );
-        Some(menu)
+        Some((menu, area))
     }
 
     pub(super) fn render_action_bar(&self, cx: &mut Context<Self>) -> Option<Div> {

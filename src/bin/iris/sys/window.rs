@@ -106,7 +106,20 @@ pub fn span_after_map(window: &gpui::Window, x: i32, y: i32, w: u32, h: u32) {
     let _ = (window, x, y, w, h);
 }
 
-/// Bring the parked (minimized) X11 `window` back over the virtual
+/// Take `window` off the screen and keep it for `unpark_span`: minimized
+/// through the window manager, or, on an X11 screen with no window
+/// manager to act on a minimize, unmapped.
+pub fn park(window: &mut gpui::Window) {
+    #[cfg(target_os = "linux")]
+    if let Some(xid) = x11::xid(window) {
+        if x11::park_unmanaged(xid) {
+            return;
+        }
+    }
+    window.minimize_window();
+}
+
+/// Bring the parked (`park`) X11 `window` back over the virtual
 /// screen: the union rect (root pixels), mapped, above, focused.
 pub fn unpark_span(window: &gpui::Window, x: i32, y: i32, w: u32, h: u32) {
     #[cfg(target_os = "linux")]
@@ -269,6 +282,79 @@ pub fn prepare_chip(cx: &mut gpui::App, handle: gpui::AnyWindowHandle) -> u32 {
         0
     };
     handle.update(cx, |_, window, _| setup(window)).unwrap_or(0)
+}
+
+// ---- transparency -----------------------------------------------------
+
+/// Whether the screen blends a window's transparent pixels over what
+/// lies beneath it. An X11 screen blends only while a compositing
+/// manager runs; without one a transparent pixel shows black. Wayland,
+/// Windows, and macOS always blend.
+pub fn blends() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        iris_lib::sys::session::wayland() || x11::compositor()
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
+}
+
+/// Whether the screen blends `window`'s transparent pixels (`blends`),
+/// as it did when the window opened. A pop-up on a screen that does not
+/// shows only its `Cutout` areas and holds them still: an area moved
+/// out of the window leaves it no pixel to show, and the X server then
+/// stops its frames.
+pub fn blended(window: &gpui::Window) -> bool {
+    // A pop-up asks for a frame of its own; GPUI's X11 backend reports
+    // the window manager's instead when no compositing manager ran as
+    // the window opened.
+    #[cfg(target_os = "linux")]
+    {
+        x11::xid(window).is_none()
+            || !matches!(window.window_decorations(), gpui::Decorations::Server)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = window;
+        true
+    }
+}
+
+/// A rounded rect in a window's logical pixels: origin `x`, `y`, size
+/// `w`, `h`, and corner radius `r`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rounded {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub r: f32,
+}
+
+/// The areas a transparent pop-up window paints, for a screen that does
+/// not blend it (`blended`). There the window is cut to those areas, so
+/// the screen beneath shows through the rest of it in place of black:
+/// a card keeps its corners, stepped to whole pixels, and loses its
+/// shadow. A screen that blends leaves the window whole. Hold one per
+/// window; a frame that paints the areas of the last one sends nothing.
+#[derive(Default)]
+pub struct Cutout(CutoutImpl);
+
+#[cfg(target_os = "linux")]
+type CutoutImpl = x11::Cutout;
+#[cfg(not(target_os = "linux"))]
+type CutoutImpl = ();
+
+impl Cutout {
+    /// Show `window` only in `areas`, when its screen does not blend it.
+    pub fn set(&mut self, window: &gpui::Window, areas: &[Rounded]) {
+        #[cfg(target_os = "linux")]
+        if let (false, Some(xid)) = (blended(window), x11::xid(window)) {
+            self.0.set(xid, window.scale_factor(), areas);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (&self.0, window, areas);
+    }
 }
 
 // ---- present report ---------------------------------------------------

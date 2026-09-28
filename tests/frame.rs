@@ -46,15 +46,13 @@ mod daemon;
 mod x11;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{
-    self, AtomEnum, ConnectionExt as _, CreateWindowAux, PropMode, WindowClass,
-};
+use x11rb::protocol::xproto::{self, AtomEnum, ConnectionExt as _, PropMode};
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::windows_of;
+use x11::{windows_of, Compositor};
 
 /// A server's compositing manager and window manager, before the daemon
 /// connects and when the window opens.
@@ -329,55 +327,4 @@ fn drag(conn: &RustConnection, root: u32, from: (i16, i16), dx: i16, daemon: &Da
     daemon.settle();
     button(xproto::BUTTON_RELEASE_EVENT);
     daemon.settle();
-}
-
-/// A compositing manager: a window that owns the screen's
-/// `_NET_WM_CM_S<n>` selection, and that selection.
-struct Compositor {
-    window: u32,
-    selection: u32,
-}
-
-impl Compositor {
-    fn start(conn: &RustConnection, root: u32, selection: u32) -> Compositor {
-        let window = conn.generate_id().unwrap();
-        conn.create_window(
-            x11rb::COPY_DEPTH_FROM_PARENT,
-            window,
-            root,
-            -1,
-            -1,
-            1,
-            1,
-            0,
-            WindowClass::INPUT_ONLY,
-            x11rb::COPY_FROM_PARENT,
-            &CreateWindowAux::new(),
-        )
-        .unwrap();
-        conn.set_selection_owner(window, selection, x11rb::CURRENT_TIME)
-            .unwrap();
-        let owner = conn
-            .get_selection_owner(selection)
-            .unwrap()
-            .reply()
-            .unwrap();
-        assert_eq!(owner.owner, window, "the compositor owns its selection");
-        Compositor { window, selection }
-    }
-
-    /// Exit: the selection of a destroyed window has no owner.
-    fn exit(self, conn: &RustConnection) {
-        conn.destroy_window(self.window).unwrap();
-        let owner = conn
-            .get_selection_owner(self.selection)
-            .unwrap()
-            .reply()
-            .unwrap();
-        assert_eq!(
-            owner.owner,
-            x11rb::NONE,
-            "the compositor released its selection"
-        );
-    }
 }

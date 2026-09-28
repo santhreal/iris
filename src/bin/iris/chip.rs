@@ -26,6 +26,15 @@ const CHIP_BLEED: f32 = 16.0;
 /// The chip window: the pill plus its bleed on every side.
 const WIN_W: f32 = CHIP_W + 2.0 * CHIP_BLEED;
 const WIN_H: f32 = CHIP_H + 2.0 * CHIP_BLEED;
+/// The pill in the chip window, where a screen that does not blend the
+/// window shows it (`sys::window::Cutout`).
+const PILL: crate::sys::window::Rounded = crate::sys::window::Rounded {
+    x: CHIP_BLEED,
+    y: CHIP_BLEED,
+    w: CHIP_W,
+    h: CHIP_H,
+    r: CHIP_H / 2.0,
+};
 
 /// The open chip window, for the state setters and `close`.
 static CHIP: parking_lot::Mutex<Option<WindowHandle<Chip>>> = parking_lot::Mutex::new(None);
@@ -142,7 +151,10 @@ pub fn open(
             tabbing_identifier: None,
             ..Default::default()
         },
-        |_, cx| cx.new(|_| Chip::new(mic, Instant::now())),
+        |window, cx| {
+            crate::sys::window::Cutout::default().set(window, &[PILL]);
+            cx.new(|_| Chip::new(mic, Instant::now()))
+        },
     )
     .map_err(|e| format!("open chip window: {e}"))?;
 

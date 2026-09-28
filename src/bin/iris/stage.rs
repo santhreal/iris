@@ -127,6 +127,9 @@ pub struct ToastStage {
     pub(super) busy: bool,
     /// The action bar's visibility: a landed toast opens without it.
     pub(super) bar: Bar,
+    /// The card and its menu, where a screen that does not blend the
+    /// window shows it.
+    pub(super) cutout: crate::sys::window::Cutout,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -174,10 +177,17 @@ impl Render for ToastStage {
             iris_lib::config::ToastPosition::TopLeft | iris_lib::config::ToastPosition::TopRight
         );
 
+        // A screen that does not blend the window shows the card still,
+        // in its cut-out area: it arrives and leaves at once.
+        let still = !crate::sys::window::blended(window);
+
         // Entrance: decelerating hard into the corner.
         let opened = *self.opened.get_or_insert_with(Instant::now);
-        let enter_t =
-            (opened.elapsed().as_secs_f32() / motion::tempo(ENTER).as_secs_f32()).min(1.0);
+        let enter_t = if still {
+            1.0
+        } else {
+            (opened.elapsed().as_secs_f32() / motion::tempo(ENTER).as_secs_f32()).min(1.0)
+        };
         let ease = 1.0 - (1.0 - enter_t).powi(4);
         let mut offset = MARGIN - (1.0 - ease) * (w + 2.0 * MARGIN);
         let mut opacity = 1.0f32;
@@ -195,17 +205,17 @@ impl Render for ToastStage {
         };
 
         // Dismiss swipe: the card tracks the pointer toward the screen edge.
-        if let Some(s) = &self.swipe {
+        if let Some(s) = self.swipe.as_ref().filter(|_| !still) {
             offset -= s.dx;
         }
         // A short swipe released: spring back to the corner.
         if let Some((started, dx0)) = self.swipe_return {
             let t = (started.elapsed().as_secs_f32() / motion::tempo(SWIPE_RETURN).as_secs_f32())
                 .min(1.0);
-            offset -= dx0 * (1.0 - motion::spring(t));
-            if t >= 1.0 {
+            if still || t >= 1.0 {
                 self.swipe_return = None;
             } else {
+                offset -= dx0 * (1.0 - motion::spring(t));
                 animating = true;
             }
         }
@@ -221,7 +231,7 @@ impl Render for ToastStage {
             } else {
                 opacity = 1.0 - t;
             }
-            if t >= 1.0 {
+            if still || t >= 1.0 {
                 crate::widgets::release_render(&self.thumb.render, cx);
                 window.remove_window();
             } else {
@@ -253,7 +263,27 @@ impl Render for ToastStage {
         publish_rest(window.window_handle(), resting.then_some(self.card_screen));
 
         let thumb = self.thumb.render.clone();
-        let menu_el = self.render_menu(opacity, window, cx);
+        let menu = self.render_menu(opacity, window, cx);
+        let viewport = window.viewport_size();
+        let card = crate::sys::window::Rounded {
+            x: if is_left {
+                offset
+            } else {
+                f32::from(viewport.width) - offset - w
+            },
+            y: if is_top {
+                MARGIN
+            } else {
+                f32::from(viewport.height) - MARGIN - h
+            },
+            w,
+            h,
+            r: RADIUS,
+        };
+        let (menu_el, menu_area) = menu.unzip();
+        let areas = [card, menu_area.unwrap_or(card)];
+        self.cutout
+            .set(window, &areas[..1 + usize::from(menu_area.is_some())]);
 
         div()
             .size_full()

@@ -16,6 +16,7 @@ Dimensions and styling:
 - Edge margin is 12.0 logical pixels from display boundaries.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.
 - Entrance: Slides in from beyond the display edge over 380 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
+- On X11 with no compositing manager, the window shows only the card, with its corners cut to whole pixels and no shadow. The card appears at rest, stays in place during a dismiss swipe, and closes at once when dismissed or replaced. See [Pop-up Windows](platforms.md#linux-x11).
 
 ## Interaction and Actions
 
@@ -89,7 +90,7 @@ Trigger OCR text extraction via the **Copy text (OCR)** item in the right-click 
 
 ## Context Menu
 
-Right-clicking the toast card opens a context menu that fades in over 120 milliseconds while rising 3 logical pixels.
+Right-clicking the toast card opens a context menu that fades in over 120 milliseconds while rising 3 logical pixels. On X11 with no compositing manager, the menu appears at once.
 
 Menu choices in order:
 1. **Markup**: Opens the annotation editor over the capture.
@@ -143,7 +144,7 @@ Failure titles:
 | `Quit failed` | `--quit` |
 
 Timing and placement:
-- The card slides in from beyond the screen edge and stays for `toast_duration_ms` (default: 5000 milliseconds). A failure stays for at least 8000 milliseconds.
+- The card slides in from beyond the screen edge and stays for `toast_duration_ms` (default: 5000 milliseconds). A failure stays for at least 8000 milliseconds. On X11 with no compositing manager, the card has no shadow, appears at rest, and closes at once, as the toast's.
 - Hovering the pointer over the card pauses auto-dismissal. Moving the pointer off restarts the full duration.
 - A newer notice replaces the card, and so does a toast that lands on it.
 - A notice that would cover a toast resting in the same corner stacks beyond the toast card: above it in a bottom corner, below it in a top corner.

@@ -334,16 +334,17 @@ impl Overlay {
         }
     }
 
-    /// Park the window (minimized) instead of destroying it: the next
-    /// capture reuses the live window and skips GPUI's ~130ms init.
-    /// Minimize goes through the WM, so no placement constraint can
-    /// fight it, and the GPU surface is freed while iconic. Where a
-    /// minimized window cannot be restored it is destroyed instead.
+    /// Park the window instead of destroying it: the next capture reuses
+    /// the live window and skips GPUI's ~130ms init. Parking minimizes
+    /// through the WM, so no placement constraint can fight it, and the
+    /// GPU surface is freed while iconic; with no WM it unmaps
+    /// (`sys::window::park`). Where a parked window cannot be restored
+    /// it is destroyed instead.
     pub(super) fn park(&mut self, window: &mut Window, cx: &mut App) {
         self.release_assets(cx);
         self.hidden = true;
         if poolable() {
-            window.minimize_window();
+            crate::sys::window::park(window);
         } else {
             window.remove_window();
         }
