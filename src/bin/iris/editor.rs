@@ -398,6 +398,12 @@ impl Render for Editor {
         let vw = self.base.width() as f32 * scale;
         let vh = self.base.height() as f32 * scale;
 
+        // A screen that does not blend the window shows its transparent
+        // pixels dark: there the editor opens at rest and closes at once.
+        let still = !crate::sys::window::blended(window);
+        if still {
+            self.morph = None;
+        }
         let mut stage_rect = (ox, oy, vw, vh);
         let mut chrome = 1.0f32;
         let mut topbar = 1.0f32;
@@ -427,7 +433,11 @@ impl Render for Editor {
 
         let mut outro = 1.0f32;
         if let Some(started) = self.closing {
-            let t = (started.elapsed().as_secs_f32() / motion::tempo(OUTRO).as_secs_f32()).min(1.0);
+            let t = if still {
+                1.0
+            } else {
+                (started.elapsed().as_secs_f32() / motion::tempo(OUTRO).as_secs_f32()).min(1.0)
+            };
             outro = 1.0 - t;
             if t >= 1.0 {
                 crate::widgets::release_render(&self.base_img, cx);

@@ -12,6 +12,8 @@ Open the editor via:
 
 One editor is open per file. Opening a file that an editor already shows raises and focuses that editor, unless the editor is closing after **Done** or **Discard**.
 
+Opened from a toast or a Library card, the editor grows out of the card's image over 380 ms while its background and controls fade in. On X11 with no compositing manager, the editor opens at rest and closes without its fade ([Pop-up Windows](platforms.md#linux-x11)).
+
 ## Tools and Hotkeys
 
 Select tools from the left sidebar or using single-letter hotkeys without modifiers:
@@ -83,7 +85,7 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
   6. Initiates a 160 ms fade outro and closes the editor window.
 - **Discard changes (`Escape` or "Discard" button)**:
   - Pressing `Escape` when the shortcut sheet, copy dropdown menu, active crop rectangle, or selected action is open dismisses that overlay or selection.
-  - Pressing `Escape` with no active overlay or selection, or clicking **Discard**, closes the window immediately without writing changes to disk and without prompting for confirmation.
+  - Pressing `Escape` with no active overlay or selection, or clicking **Discard**, fades out the window over 160 ms and closes it without writing changes to disk and without prompting for confirmation.
 
 ## Top Bar Copy Controls
 
