@@ -103,11 +103,19 @@ jobs:
         with:
           toolchain: stable
       # Later steps start with the job's PATH, not the machine PATH an
-      # installer edits: GITHUB_PATH adds the NSIS directory to it.
+      # installer edits: GITHUB_PATH adds the NSIS directory to it. choco
+      # exits 0 having installed nothing when the community feed answers
+      # 503, so the step checks for makensis.exe itself and retries.
       - name: Install NSIS
         run: |
-          choco install nsis -y --no-progress
-          Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\NSIS"
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          foreach ($try in 1..5) {
+            choco install nsis -y --no-progress
+            if (Test-Path $makensis) { break }
+            if ($try -lt 5) { Start-Sleep -Seconds (20 * $try) }
+          }
+          if (-not (Test-Path $makensis)) { throw "5 choco installs left no $makensis" }
+          Add-Content $env:GITHUB_PATH (Split-Path $makensis)
       - name: Build iris.exe, the installer, and the portable zip
         shell: bash
         run: |
