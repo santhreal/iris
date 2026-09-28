@@ -425,6 +425,7 @@ impl Render for Settings {
                 cx.listener(|this, ev: &KeyDownEvent, window, cx| this.on_key(ev, window, cx)),
             )
             .child(crate::widgets::window_frame(
+                window,
                 "Settings",
                 true,
                 vec![save],

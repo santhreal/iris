@@ -70,7 +70,7 @@ Hovering the cursor over a card lifts the card preview and displays an overlay a
 | `?` or `/` | Toggle keyboard shortcuts reference sheet |
 | Title bar double-click | Trigger platform window action: toggle maximize on Linux and Windows, or invoke the system Desktop & Dock preference on macOS |
 
-Window traffic light controls in the top-left corner offer standard actions: close (red), minimize (yellow), and zoom/maximize (green, which toggles fullscreen on macOS and toggles maximize on Linux and Windows).
+Window traffic light controls in the top-left corner offer standard actions: close (red), minimize (yellow), and zoom/maximize (green, which toggles fullscreen on macOS and toggles maximize on Linux and Windows). On X11 with no compositing manager, the window manager frames the window and the header has no traffic lights ([Window Frame](platforms.md)).
 
 Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×480.
 

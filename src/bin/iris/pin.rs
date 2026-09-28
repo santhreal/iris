@@ -98,14 +98,14 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
 }
 
 impl Render for PinStage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // No shadow: the window is the image's own size, so a shadow
         // would show only in the transparent rounded corners, as dark
         // wedges that square them off.
         div()
             .size_full()
             .font_family(theme::FONT)
-            .rounded(px(8.))
+            .rounded(crate::widgets::window_corner(window, 8.))
             .overflow_hidden()
             .bg(theme::BG_ELEV)
             .cursor_pointer()

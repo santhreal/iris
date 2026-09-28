@@ -109,7 +109,7 @@ Platform implementations for folder reveal:
 ## Pinned Windows
 
 Triggered via the toast context menu (**Pin to screen**), the annotation editor, or the capture library (see [library.md#capture-library](library.md#capture-library)):
-- Displays the capture in a borderless window with 8.0 logical pixel rounded corners and floating shadow.
+- Displays the capture in a borderless window with 8.0 logical pixel rounded corners and no shadow. On X11 with no compositing manager, the window manager frames the window and its corners are square.
 - Scales the image aspect-true to fit within 720×540 logical pixels.
 - Always-on-top status: On X11, assigns `_NET_WM_STATE_ABOVE` via a client message.
 - Window movement: Click and drag anywhere on the image delegates movement to the window manager:

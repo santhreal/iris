@@ -2,8 +2,8 @@
 //! along the inside of the window's border, each handing a left press
 //! to `sys::window::begin_wm_resize` from its edge or corner. Where the
 //! platform frame resizes the window (`sys::window::CLIENT_RESIZE`
-//! false), and while the window is maximized or fullscreen, there are
-//! none.
+//! false, or `sys::window::platform_frame`), and while the window is
+//! maximized or fullscreen, there are none.
 
 use gpui::*;
 
@@ -69,9 +69,9 @@ pub fn resize_edges(window: &Window, min: Size<Pixels>) -> Option<Div> {
     if !crate::sys::window::CLIENT_RESIZE || window.is_maximized() || window.is_fullscreen() {
         return None;
     }
-    let tiling = match window.window_decorations() {
-        Decorations::Client { tiling } => tiling,
-        Decorations::Server => Tiling::default(),
+    // A platform frame resizes the window from its own border.
+    let Decorations::Client { tiling } = window.window_decorations() else {
+        return None;
     };
     let size = window.viewport_size();
     let mut layer = div().absolute().top_0().left_0().size_full();

@@ -93,8 +93,10 @@ pub fn keep_above(window: &gpui::Window) {
 
 /// Span the X11 virtual screen with `window` once the window manager
 /// manages it: the union rect (`x`, `y`, `w`, `h`, root pixels), above
-/// other windows. A window manager maps a window within one monitor;
-/// _NET_WM_STATE_FULLSCREEN also pins it to one.
+/// other windows, with no window manager frame, so that a point on the
+/// window is the same point on the screen. A window manager maps a
+/// window within one monitor; _NET_WM_STATE_FULLSCREEN also pins it to
+/// one.
 pub fn span_after_map(window: &gpui::Window, x: i32, y: i32, w: u32, h: u32) {
     #[cfg(target_os = "linux")]
     if let Some(xid) = x11::xid(window) {
@@ -148,10 +150,30 @@ pub fn begin_wm_move(window: &gpui::Window, grab: gpui::Point<gpui::Pixels>) {
     }
 }
 
-/// Whether a resizable window draws its own resize edges. Linux windows
-/// use client-side decorations and have no frame to grab; Windows
-/// resizes through the frame's hit test and macOS through AppKit.
+/// Whether a resizable window draws its own resize edges. A Linux
+/// window without a platform frame (`platform_frame`) has no frame to
+/// grab; Windows resizes through the frame's hit test and macOS through
+/// AppKit.
 pub const CLIENT_RESIZE: bool = cfg!(target_os = "linux");
+
+/// Whether the platform frames `window`: its title bar, window controls,
+/// border, and resize edges are the window manager's or compositor's,
+/// and its corners are square. An X11 window manager frames a window
+/// that opens while no compositor runs to blend a drawn frame's
+/// transparent corners, and a Wayland compositor may decline to leave
+/// the frame to the window. The macOS and Windows windows of iris draw
+/// their own frames.
+pub fn platform_frame(window: &gpui::Window) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        matches!(window.window_decorations(), gpui::Decorations::Server)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = window;
+        false
+    }
+}
 
 /// Hand a left-button press on a window edge to a resize from `edge`.
 /// `grab` is the press's window-local position; `min` is the window's

@@ -387,7 +387,7 @@ impl Render for Home {
         }
 
         // No frame title: the wordmark below the toolbar names the window.
-        let mut frame = widgets::window_frame("", false, vec![], content);
+        let mut frame = widgets::window_frame(window, "", false, vec![], content);
         // Settings: a small gear resting in the bottom-right corner,
         // appearing with the content.
         if loading_t >= REVEAL {

@@ -11,9 +11,10 @@ use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
-    ConnectionExt, EventMask, InputFocus, StackMode, CLIENT_MESSAGE_EVENT,
+    ConnectionExt, EventMask, InputFocus, PropMode, StackMode, CLIENT_MESSAGE_EVENT,
 };
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 /// What a fixup asserts on its window.
 #[derive(Clone, Copy)]
@@ -52,8 +53,14 @@ pub fn always_on_top_after_map(xid: u32) {
 }
 
 /// Span the virtual screen with window `xid` once it is managed: the
-/// union rect (`x`, `y`, `w`, `h`, root pixels), raised and above.
+/// union rect (`x`, `y`, `w`, `h`, root pixels), raised and above, with
+/// no window manager frame. The frame goes at once, from the calling
+/// thread; the rest waits until the window is managed.
 pub fn span_after_map(xid: u32, x: i32, y: i32, w: u32, h: u32) {
+    if let Ok((conn, _)) = iris_lib::sys::capture::x11::shared_conn() {
+        unframe(conn, xid);
+        let _ = conn.flush();
+    }
     enqueue(xid, Fixup::Span { x, y, w, h });
 }
 
@@ -260,6 +267,20 @@ fn request_above(conn: &impl Connection, root: u32, win: u32) {
     ) {
         // _NET_WM_STATE_ADD, one state, source: application.
         send_to_wm(conn, root, win, state, [1, above, 0, 1, 0]);
+    }
+}
+
+/// _MOTIF_WM_HINTS decorations 0 on `win`: no window manager frame. GPUI
+/// asks for a frame for a window that opens while no compositor runs,
+/// and a frame would move a span's client area off the union rect, so a
+/// point on the window would not be the same point on the screen. A
+/// window manager reads the hints as it manages the window, and drops a
+/// frame it drew when they change. Unflushed.
+fn unframe(conn: &impl Connection, win: u32) {
+    if let Some(hints) = atom_cached(conn, b"_MOTIF_WM_HINTS") {
+        // Flags: decorations; functions; decorations: none; input mode;
+        // status.
+        let _ = conn.change_property32(PropMode::REPLACE, win, hints, hints, &[2, 0, 0, 0, 0]);
     }
 }
 

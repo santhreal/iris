@@ -349,58 +349,77 @@ fn traffic_lights(resizable: bool) -> Div {
 /// caller's right-side cluster, then the content. The toolbar is the
 /// window's title bar (`move_handle`): a drag moves the window, and a
 /// double click on a resizable one runs the platform's title bar action.
+/// Under a platform frame (`sys::window::platform_frame`), which has the
+/// window controls and the shape, the root is square and the toolbar has
+/// no traffic lights; a toolbar left with nothing in it is dropped.
 pub fn window_frame(
+    window: &Window,
     title: &'static str,
     resizable: bool,
     right: Vec<AnyElement>,
     content: impl IntoElement,
 ) -> Div {
+    let framed = crate::sys::window::platform_frame(window);
+    let root = div()
+        .size_full()
+        .font_family(theme::FONT)
+        .rounded(window_corner(window, 12.))
+        .overflow_hidden()
+        .bg(theme::BG)
+        .flex()
+        .flex_col();
+    if framed && title.is_empty() && right.is_empty() {
+        return root.child(content);
+    }
     let mut cluster = div().flex().items_center().gap(px(8.));
     for el in right {
         cluster = cluster.child(el);
     }
     // Buttons and fields in the cluster handle their own presses.
     cluster = cluster.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-    div()
-        .size_full()
-        .font_family(theme::FONT)
-        .rounded(px(12.))
-        .overflow_hidden()
-        .bg(theme::BG)
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .id("frame-toolbar")
-                .h(px(56.))
-                .flex()
-                .items_center()
-                .justify_between()
-                .px(px(20.))
-                .border_b_1()
-                .border_color(theme::HAIRLINE)
-                .child(move_handle(if resizable {
-                    Double::TitleBar
-                } else {
-                    Double::Nothing
-                }))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(14.))
-                        .child(traffic_lights(resizable))
-                        .child(
-                            div()
-                                .text_size(px(theme::TEXT_TITLE))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme::FG)
-                                .child(title),
-                        ),
-                )
-                .child(cluster),
-        )
-        .child(content)
+    root.child(
+        div()
+            .id("frame-toolbar")
+            .h(px(56.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(20.))
+            .border_b_1()
+            .border_color(theme::HAIRLINE)
+            .child(move_handle(if resizable {
+                Double::TitleBar
+            } else {
+                Double::Nothing
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(14.))
+                    .children((!framed).then(|| traffic_lights(resizable)))
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_TITLE))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::FG)
+                            .child(title),
+                    ),
+            )
+            .child(cluster),
+    )
+    .child(content)
+}
+
+/// The corner radius of a window root that draws the window's shape:
+/// `radius` logical px, or square under a platform frame, where the
+/// window has no transparent corners to show the desktop through.
+pub fn window_corner(window: &Window, radius: f32) -> Pixels {
+    if crate::sys::window::platform_frame(window) {
+        px(0.)
+    } else {
+        px(radius)
+    }
 }
 
 /// Raise and focus the open window whose root view is a `V` that

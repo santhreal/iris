@@ -320,7 +320,9 @@ impl Render for Library {
                     }
                 }),
             )
-            .child(crate::widgets::window_frame("Library", true, cluster, grid));
+            .child(crate::widgets::window_frame(
+                window, "Library", true, cluster, grid,
+            ));
 
         if let Some((x0, y0, x1, y1)) = self.band {
             let (bx, by) = (x0.min(x1), y0.min(y1));

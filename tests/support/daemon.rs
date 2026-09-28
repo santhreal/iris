@@ -62,6 +62,11 @@ impl Drop for Server {
 /// Xvfb on PATH. -displayfd: Xvfb takes the first free display number
 /// and writes it to stdout once it accepts clients.
 pub fn xvfb(case: &str) -> Option<(Server, String)> {
+    xvfb_sized(case, "640x480x24")
+}
+
+/// `xvfb` with the screen `geometry`, `<width>x<height>x<depth>`.
+pub fn xvfb_sized(case: &str, geometry: &str) -> Option<(Server, String)> {
     let Some(mut xvfb) = Server::spawn(
         Command::new("Xvfb")
             .args([
@@ -69,7 +74,7 @@ pub fn xvfb(case: &str) -> Option<(Server, String)> {
                 "1",
                 "-screen",
                 "0",
-                "640x480x24",
+                geometry,
                 "-nolisten",
                 "tcp",
             ])
