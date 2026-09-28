@@ -81,8 +81,7 @@ The release DMG holds a universal executable:
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-cargo build --locked --release --target aarch64-apple-darwin
-cargo build --locked --release --target x86_64-apple-darwin
+cargo build --locked --release --target aarch64-apple-darwin --target x86_64-apple-darwin
 mkdir -p target/universal-apple-darwin/release
 lipo -create -output target/universal-apple-darwin/release/iris \
   target/aarch64-apple-darwin/release/iris \

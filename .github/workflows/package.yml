@@ -26,10 +26,11 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      # One cargo run for both targets: it compiles the two concurrently,
+      # overlapping each target's single-threaded final crate and link.
       - name: Build the universal binary
         run: |
-          cargo build --locked --release --target aarch64-apple-darwin
-          cargo build --locked --release --target x86_64-apple-darwin
+          cargo build --locked --release --target aarch64-apple-darwin --target x86_64-apple-darwin
           mkdir -p target/universal-apple-darwin/release
           lipo -create -output target/universal-apple-darwin/release/iris \
             target/aarch64-apple-darwin/release/iris \
