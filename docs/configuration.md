@@ -40,6 +40,10 @@ When `IRIS_HOME` is unset, default persistent directories resolve as follows:
 | Cache | `$XDG_CACHE_HOME/dev.iris.app` (`~/.cache/dev.iris.app`) | `%LOCALAPPDATA%\dev.iris.app\cache` | `~/Library/Caches/dev.iris.app` |
 | Log | `$XDG_STATE_HOME/iris/iris.log` (`~/.local/state/iris/iris.log`) | `%APPDATA%\iris\iris.log` | `~/Library/Application Support/iris/iris.log` |
 
+### Log File
+
+The log file holds iris's diagnostic lines and the warnings and errors of the libraries iris runs on (GPUI, wgpu, zbus). Each line starts with the local time. On a library's line the time is followed by the library's module path and the record's level, as in `[14:02:11.482] wgpu_hal::vulkan: ERROR: ...`. Past 256 KiB the file restarts from empty.
+
 ### Tilde Expansion
 
 A leading `~` in `screenshots_dir` and `recordings_dir` expands to the home directory (`directories::UserDirs::new().home_dir()`) on every platform. iris writes a directory under the home directory in `~` form, both when it generates `config.toml` and when the settings window saves, so the file stays valid on a machine with a different home directory. The settings window shows the directories in the same form.

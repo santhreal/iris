@@ -2892,6 +2892,7 @@ dependencies = [
  "ksni",
  "libc",
  "libloading",
+ "log",
  "parking_lot",
  "pipewire",
  "raw-window-handle",

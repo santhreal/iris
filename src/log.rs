@@ -2,6 +2,10 @@
 //! file under the state dir, so a daemon detached from a terminal
 //! still leaves a trail. The file is truncated at 256 KiB on open so
 //! a long-lived daemon cannot grow it without bound.
+//!
+//! The libraries' records (the `log` crate's: GPUI's GPU and windowing
+//! failures, wgpu's, zbus's) at warning level and above are written as
+//! lines of their own, prefixed with the record's target.
 
 use parking_lot::Mutex;
 use std::io::{Seek, Write};
@@ -15,8 +19,9 @@ pub fn path() -> PathBuf {
     crate::dirs::log_file()
 }
 
-/// Open (and bound) the log file. Idempotent; called once at daemon
-/// start. Failure is silent: stderr still carries every line.
+/// Open (and bound) the log file, and route the libraries' warnings and
+/// errors to it. Idempotent; called once at start. Failure is silent:
+/// stderr still carries every line.
 pub fn init() {
     let p = path();
     if let Some(dir) = p.parent() {
@@ -37,6 +42,9 @@ pub fn init() {
         .open(&p)
     {
         *LOG_FILE.lock() = Some((f, len));
+    }
+    if log::set_logger(&RECORDS).is_ok() {
+        log::set_max_level(RECORDS_LEVEL);
     }
 }
 
@@ -66,6 +74,34 @@ pub fn file_line(msg: &str) {
             *len += line.len() as u64;
         }
     }
+}
+
+/// The least severe library record that is written.
+const RECORDS_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
+
+static RECORDS: Records = Records;
+
+/// The `log` crate's logger: a library record at [`RECORDS_LEVEL`] or
+/// above becomes one [`line`].
+struct Records;
+
+impl log::Log for Records {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= RECORDS_LEVEL
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            line(&format!(
+                "{}: {}: {}",
+                record.target(),
+                record.level(),
+                record.args()
+            ));
+        }
+    }
+
+    fn flush(&self) {}
 }
 
 /// `ilog!("iris: ...")` — stderr plus the log file.
