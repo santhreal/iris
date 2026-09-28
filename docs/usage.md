@@ -8,7 +8,7 @@ The application menu entry on Linux and the Start menu shortcut on Windows run `
 
 The home window has three tiles, **New Screenshot**, **Record Window**, and **Library**, and a gear that opens the settings window. `Escape` closes it.
 
-The tray menu holds the same actions. A primary or secondary click on the tray icon opens it:
+The tray menu holds the same actions:
 
 | Item | Action |
 | --- | --- |
@@ -17,6 +17,8 @@ The tray menu holds the same actions. A primary or secondary click on the tray i
 | **Library** | Open the capture library |
 | **Settings** | Open the settings window |
 | **Quit** | Stop the daemon |
+
+A primary or secondary click on the tray icon opens the tray menu.
 
 To start the daemon at login, turn on **Start at login** in the settings window ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
 
