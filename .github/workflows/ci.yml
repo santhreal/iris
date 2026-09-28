@@ -46,8 +46,6 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked
-      - name: Build release
-        run: cargo build --locked --release
 
   package:
     name: Package
