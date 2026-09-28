@@ -85,6 +85,26 @@ pub fn xvfb(case: &str) -> Option<(Server, String)> {
     Some((xvfb, format!(":{}", number.trim())))
 }
 
+/// A private session bus listening in `dir` and its address, or `None`,
+/// printed, without dbus-daemon on PATH. --print-address: the daemon
+/// writes its address to stdout once it accepts clients.
+pub fn session_bus(case: &str, dir: &Path) -> Option<(Server, String)> {
+    let Some(mut bus) = Server::spawn(
+        Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+            .arg(format!("--address=unix:path={}", dir.join("bus").display()))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    ) else {
+        eprintln!("{case} did not run: no dbus-daemon on PATH");
+        return None;
+    };
+    let mut announced = BufReader::new(bus.0.stdout.take().unwrap());
+    let mut address = String::new();
+    announced.read_line(&mut address).unwrap();
+    Some((bus, address.trim().to_string()))
+}
+
 /// A headless sway whose socket is in `run`, and the socket's name for
 /// `WAYLAND_DISPLAY`, or `None`, printed, without sway on PATH. sway runs
 /// with no XWayland.

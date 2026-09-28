@@ -108,3 +108,5 @@ xvfb-run -a -s '-screen 0 1600x1000x24' \
 ```
 
 On a machine without a GPU, set `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json` to render with lavapipe (`mesa-vulkan-drivers`).
+
+The tray test starts a private session bus with `dbus-daemon` from `PATH`.

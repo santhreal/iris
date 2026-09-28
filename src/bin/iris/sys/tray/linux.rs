@@ -3,6 +3,11 @@ use super::Row;
 pub(super) struct IrisTray;
 
 impl ksni::Tray for IrisTray {
+    // A primary click opens the menu, as on Windows and macOS. The item
+    // reports ItemIsMenu and answers Activate with the error that
+    // GNOME's AppIndicator extension and Plasma read as "show the menu".
+    const MENU_ON_ACTIVATE: bool = true;
+
     fn id(&self) -> String {
         "iris".into()
     }

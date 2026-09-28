@@ -2906,6 +2906,7 @@ dependencies = [
  "widestring",
  "windows-sys 0.59.0",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]

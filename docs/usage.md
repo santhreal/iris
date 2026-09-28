@@ -8,7 +8,7 @@ The application menu entry on Linux and the Start menu shortcut on Windows run `
 
 The home window has three tiles, **New Screenshot**, **Record Window**, and **Library**, and a gear that opens the settings window. `Escape` closes it.
 
-The tray menu holds the same actions:
+The tray menu holds the same actions. A primary or secondary click on the tray icon opens it:
 
 | Item | Action |
 | --- | --- |
