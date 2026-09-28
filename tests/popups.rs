@@ -6,7 +6,8 @@
 //! the screen beneath shows through the rest; under a compositing
 //! manager the window stays whole, shadow and all. A toast card that
 //! slid in from past its window's edge, or out past it, left the window
-//! no pixel to show, and the X server stopped its frames: the card never
+//! no pixel to show; the X server then reported the window fully
+//! obscured, and GPUI draws no frame for such a window: the card never
 //! arrived, and the window never closed. With no compositing manager a
 //! card, the toast's or a notice's, arrives and leaves at once. The
 //! capture flash, a fill over every monitor, has no card to cut to, and

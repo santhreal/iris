@@ -302,8 +302,8 @@ pub fn blends() -> bool {
 /// Whether the screen blends `window`'s transparent pixels (`blends`),
 /// as it did when the window opened. A pop-up on a screen that does not
 /// shows only its `Cutout` areas and holds them still: an area moved
-/// out of the window leaves it no pixel to show, and the X server then
-/// stops its frames.
+/// out of the window leaves it no pixel to show, the X server reports
+/// the window fully obscured, and GPUI then draws it no frame.
 pub fn blended(window: &gpui::Window) -> bool {
     // A pop-up asks for a frame of its own; GPUI's X11 backend reports
     // the window manager's instead when no compositing manager ran as
