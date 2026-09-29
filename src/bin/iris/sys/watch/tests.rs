@@ -28,6 +28,11 @@ const LONG: Duration = Duration::from_secs(5);
 /// A limit for a wait that no change should end.
 const QUIET: Duration = Duration::from_millis(200);
 
+/// How far short of a limit the OS timer may end a wait: Windows'
+/// WaitForMultipleObjects honors its timer resolution (as coarse as
+/// 15.6 ms under the default tick), not a wall clock.
+const SLACK: Duration = Duration::from_millis(25);
+
 fn file(dir: &Path, name: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, b"x").unwrap();
@@ -70,7 +75,7 @@ fn stays_quiet(watch: &DirWatch) {
     let took = start.elapsed();
     assert_eq!(woke, Woke::Limit, "a quiet wait ended after {took:?}");
     assert!(
-        (QUIET..QUIET + PROMPT).contains(&took),
+        (QUIET - SLACK..QUIET + PROMPT).contains(&took),
         "a {QUIET:?} wait ended after {took:?}"
     );
 }
