@@ -247,6 +247,28 @@ pub fn open(
     let base_img = crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0]);
     let focus = cx.focus_handle();
     let (origin, win) = resolve_window_placement(cx, from);
+    // The decode starts before the window opens: opening it and drawing
+    // its first frames holds this thread about as long as a decode takes,
+    // and a decode queued behind them put the capture on screen one
+    // display frame later.
+    let decode_path = path.to_path_buf();
+    let decoded = cx.background_executor().spawn(async move {
+        let base = match crate::pipeline::take_decoded(&decode_path) {
+            Some(img) => img,
+            None => {
+                let png = std::fs::read(&decode_path)
+                    .map_err(|e| format!("read {}: {e}", decode_path.display()))?;
+                let img = image::load_from_memory(&png)
+                    .map_err(|e| format!("decode {}: {e}", decode_path.display()))?;
+                // into, not to: an RGBA capture moves its pixels instead
+                // of copying them.
+                Arc::new(img.into_rgba8())
+            }
+        };
+        let render =
+            crate::widgets::render_image_from_rgba(base.width(), base.height(), base.as_raw());
+        Ok::<(Arc<image::RgbaImage>, Arc<gpui::RenderImage>), String>((base, render))
+    });
 
     let filename = path
         .file_name()
@@ -321,44 +343,13 @@ pub fn open(
         },
     )
     .map_err(|e| format!("open editor window: {e}"))?;
-    let decode_path = path.to_path_buf();
     handle
         .update(cx, |_, _, cx| {
             cx.spawn(async move |this, cx| {
-                let decoded = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let img = match crate::pipeline::take_decoded(&decode_path) {
-                            Some(img) => img,
-                            None => {
-                                let png = std::fs::read(&decode_path)
-                                    .map_err(|e| format!("read {}: {e}", decode_path.display()))?;
-                                let i = image::load_from_memory(&png).map_err(|e| {
-                                    format!("decode {}: {e}", decode_path.display())
-                                })?;
-                                Arc::new(i.to_rgba8())
-                            }
-                        };
-                        let base = img;
-                        let composite = base.clone();
-                        let render = crate::widgets::render_image_from_rgba(
-                            composite.width(),
-                            composite.height(),
-                            composite.as_raw(),
-                        );
-                        Ok::<
-                            (
-                                Arc<image::RgbaImage>,
-                                Arc<image::RgbaImage>,
-                                Arc<gpui::RenderImage>,
-                            ),
-                            String,
-                        >((base, composite, render))
-                    })
-                    .await;
+                let decoded = decoded.await;
                 let _ = this.update(cx, |this, cx| {
                     match decoded {
-                        Ok((base, composite, render)) => {
+                        Ok((base, render)) => {
                             let old = std::mem::replace(&mut this.base_img, render);
                             crate::widgets::release_render(&old, cx);
                             this.base = base;
@@ -367,7 +358,7 @@ pub fn open(
                                 "{} · {}×{}",
                                 this.filename, this.base_dims.0, this.base_dims.1
                             ));
-                            this.composite = composite;
+                            this.composite = this.base.clone();
                             this.base_ready = true;
                             if !this.actions.borrow().is_empty() {
                                 this.rebuild_all();
