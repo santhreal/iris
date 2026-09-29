@@ -14,6 +14,9 @@ use crate::theme;
 /// A pinned reference window: the image.
 pub struct PinStage {
     img: Arc<RenderImage>,
+    /// The window's focus: without it no key event reaches this window,
+    /// so Escape would be dead code on a plain div.
+    focus: FocusHandle,
 }
 
 /// Open a pinned window showing `path`'s image at native scale. The
@@ -90,7 +93,15 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
         },
         move |window, cx| {
             crate::sys::window::keep_above(window);
-            cx.new(|_| PinStage { img })
+            cx.new(|cx| {
+                let focus = cx.focus_handle();
+                // The window takes OS focus at open; key events reach
+                // the root only once its dispatch path is the focused
+                // one, so the handle takes GPUI focus here and on a
+                // click inside (track_focus).
+                window.focus(&focus, cx);
+                PinStage { img, focus }
+            })
         },
     )
     .map_err(|e| format!("open pin window: {e}"))?;
@@ -109,6 +120,7 @@ impl Render for PinStage {
             .overflow_hidden()
             .bg(theme::BG_ELEV)
             .cursor_pointer()
+            .track_focus(&self.focus)
             .on_key_down(cx.listener(|_, ev: &KeyDownEvent, window, _| {
                 if ev.keystroke.key == "escape" {
                     window.remove_window();
