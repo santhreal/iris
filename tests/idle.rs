@@ -12,6 +12,10 @@
 //!   window opens it here, each in a daemon of its own, and `ALLOWED`
 //!   requires a decision on the main-thread wakeups of each, so a window
 //!   added to `iris --help` fails the case until one is recorded.
+//! - A window that polls the disk. The library read its capture store
+//!   every 1.5 s, which woke the main thread twice in each `WATCH` span.
+//!   Each daemon here holds a capture in its store, so the library
+//!   watches the capture's folder.
 //! - A watch that starts before the window's start ends. The start (the
 //!   first frames, the editor's image decode, the driver's shader
 //!   compiles) ends about a second after the map on an unloaded host and
@@ -82,7 +86,7 @@ fn an_idle_blocking_pool_thread_exits() {
 fn an_idle_window_does_not_wake_the_main_thread() {
     use std::time::{Duration, Instant};
 
-    use daemon::{enabled, xvfb, Daemon};
+    use daemon::{enabled, store, xvfb, Daemon};
     use options::{open_args, single_png, Kind, EDITOR, OPTIONS};
     use x11::windows_of;
     use x11rb::connection::Connection as _;
@@ -97,10 +101,7 @@ fn an_idle_window_does_not_wake_the_main_thread() {
     /// The main-thread wakeups each window is allowed in `WATCH` at idle,
     /// by title. A frame timer at the display refresh rate makes 120.
     const ALLOWED: &[(&str, u64)] = &[
-        // The library polls the capture store every 1.5 s (`REFRESH` in
-        // src/bin/iris/library.rs): the timer and the scan's result each
-        // wake the main thread, twice in a watch.
-        ("Library - iris", 4),
+        ("Library - iris", 0),
         ("Settings - iris", 0),
         ("iris", 0),
         (EDITOR, 0),
@@ -130,6 +131,7 @@ fn an_idle_window_does_not_wake_the_main_thread() {
             cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
         });
         let shot = single_png(&dir.path().join("shots"));
+        store(dir.path(), std::slice::from_ref(&shot));
         daemon.send(&open_args(option, &shot));
         daemon.until(
             &format!("{option} to map a window titled {title:?}"),

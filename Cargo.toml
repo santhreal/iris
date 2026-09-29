@@ -94,15 +94,17 @@ blocking = "~1.6"
 # Win32 for monitor enumeration, the foreground-window rect, region
 # grabs, CF_HDROP file copy, the shutter sound, the registry PATH
 # searched for ffmpeg and tesseract, the parent console a command line
-# prints to, the process starts that pass the child no handle, and the
-# account SID that names and secures the daemon's pipe. windows-sys is
-# already in the tree through gpui.
+# prints to, the process starts that pass the child no handle, the
+# account SID that names and secures the daemon's pipe, and the folder
+# change notifications the library watches its captures with. windows-sys
+# is already in the tree through gpui.
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_DataExchange",
     "Win32_System_Environment",

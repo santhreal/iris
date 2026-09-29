@@ -16,7 +16,7 @@
 //! `alloc` sets the glibc allocator policy and `console` attaches a
 //! Windows command line to its terminal; both are empty elsewhere.
 //! `autostart`, `hotkeys`, `install`, `record`, `reveal`, `sound`,
-//! `tray`, and `window` have a per-OS implementation each.
+//! `tray`, `watch`, and `window` have a per-OS implementation each.
 
 pub mod alloc;
 pub mod console;
@@ -31,4 +31,5 @@ pub mod record;
 pub mod reveal;
 pub mod sound;
 pub mod tray;
+pub mod watch;
 pub mod window;

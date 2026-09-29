@@ -224,6 +224,42 @@ pub fn iris(dir: &Path) -> Command {
     cmd
 }
 
+/// The capture store of an [`iris`] of `dir`.
+fn store_path(dir: &Path) -> PathBuf {
+    dir.join("data").join("library.json")
+}
+
+/// Write the capture store of an [`iris`] of `dir`: `shots`, newest
+/// first. No thumbnail exists, so a window that shows a capture builds
+/// its thumbnail from the capture.
+pub fn store(dir: &Path, shots: &[PathBuf]) {
+    let entries: Vec<iris_lib::library::CaptureEntry> = shots
+        .iter()
+        .zip(0..)
+        .map(|(shot, i)| {
+            let (width, height) = image::image_dimensions(shot).unwrap();
+            iris_lib::library::CaptureEntry {
+                path: shot.clone(),
+                thumb: dir.join("cache").join("thumbs").join(format!("{i}.png")),
+                width,
+                height,
+                created_ms: 1_000 - i,
+            }
+        })
+        .collect();
+    let path = store_path(dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, serde_json::to_string(&entries).unwrap()).unwrap();
+}
+
+/// The captures the store of an [`iris`] of `dir` lists, or `None` while
+/// it cannot be read whole, as mid-write.
+pub fn stored(dir: &Path) -> Option<Vec<PathBuf>> {
+    let text = std::fs::read_to_string(store_path(dir)).ok()?;
+    let entries: Vec<iris_lib::library::CaptureEntry> = serde_json::from_str(&text).ok()?;
+    Some(entries.into_iter().map(|e| e.path).collect())
+}
+
 /// A daemon with every iris location, its socket, and its captures under
 /// one directory (see [`iris`]). Killed on drop.
 pub struct Daemon {

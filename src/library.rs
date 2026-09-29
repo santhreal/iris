@@ -56,7 +56,8 @@ fn path_key(path: &Path) -> String {
 type StoreCache = parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)>;
 
 /// The parsed store behind an mtime+len check: the library window
-/// polls list() every 1.5s, and an unchanged file should not re-parse.
+/// calls list() on every change it learns of, and an unchanged file
+/// should not re-parse.
 fn store_cache() -> &'static StoreCache {
     use std::sync::LazyLock;
     static CACHE: LazyLock<StoreCache> =
@@ -74,8 +75,7 @@ fn store_lock() -> &'static parking_lot::Mutex<()> {
 }
 
 /// Runs after every store write in this process. The process that shows
-/// the library sets it, so an open library window reads a write at once
-/// instead of on its next poll.
+/// the library sets it, so an open library window reads a write at once.
 static ON_WRITE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 
 /// Run `hook` after each store write in this process. The first call
@@ -241,8 +241,8 @@ fn rebuild_thumb(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
 /// Parent-directory mtimes from the last full stat pass. A file
 /// cannot appear, vanish, or be replaced without bumping its
 /// directory's mtime, so an unchanged stamp set means the per-entry
-/// exists() sweep would find nothing: the 1.5s library poll then
-/// costs one stat per parent dir instead of one per capture.
+/// exists() sweep would find nothing: a library pass then costs one
+/// stat per parent dir instead of one per capture.
 type DirStamps = parking_lot::Mutex<Vec<(PathBuf, Option<std::time::SystemTime>)>>;
 
 fn dir_stamps() -> &'static DirStamps {

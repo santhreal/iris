@@ -252,6 +252,34 @@ fn a_new_listing_prunes_the_selection_and_names_resaved_captures() {
     assert_eq!(selected, [shot("c.png"), shot("a.png")]);
 }
 
+// WHY: a capture another program removes leaves the grid because the
+// window watches every folder that holds a listed capture. Closed here:
+// a listed capture whose folder goes unwatched, a folder watched twice,
+// and a folder still watched after its last capture left the listing.
+// Not covered: the watch itself (sys::watch's tests) and the window's
+// re-watch as the folders change (tests/library.rs).
+#[test]
+fn the_watched_folders_are_those_of_the_listed_captures() {
+    let at = |dir: &str, file: &str, created_ms| CaptureEntry {
+        path: PathBuf::from(dir).join(file),
+        ..saved(file, created_ms)
+    };
+    let mut listing = Listing::default();
+    assert!(listing.folders().is_empty());
+    let fresh = vec![
+        at("b", "4.png", 4),
+        at("a", "3.png", 3),
+        at("b", "2.png", 2),
+        at("a/sub", "1.png", 1),
+    ];
+    listing.set(fresh, &mut Vec::new());
+    assert_eq!(listing.folders(), ["a", "a/sub", "b"].map(PathBuf::from));
+    listing.set(vec![at("b", "4.png", 4)], &mut Vec::new());
+    assert_eq!(listing.folders(), [PathBuf::from("b")]);
+    listing.set(Vec::new(), &mut Vec::new());
+    assert!(listing.folders().is_empty());
+}
+
 // WHY: the open cascade hides each card until its turn in the wave.
 // Closed here: a card still hidden or lowered when the wave ends, which
 // jumps into place when the cascade stops animating (every card past

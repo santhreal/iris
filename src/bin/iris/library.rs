@@ -2,9 +2,9 @@
 //!
 //! Click opens the canvas editor, Ctrl/Shift-click multi-selects, and
 //! hover reveals per-card annotate/copy/delete actions. The toolbar
-//! starts a region capture or opens settings. The grid re-reads
-//! library.json on a slow timer so captures taken while the panel is
-//! open appear without a restart.
+//! starts a region capture or opens settings. The grid lists a capture
+//! this process saves at once, and a watch on the capture folders drops
+//! a capture another program deletes or moves away.
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ use gpui::*;
 
 mod card;
 mod entries;
+mod folders;
 mod listing;
 mod render;
 #[cfg(test)]
@@ -24,6 +25,8 @@ pub(super) const GAP: f32 = 16.0;
 /// the space between the name and the dimensions.
 pub(super) const LABEL_PAD: f32 = 2.0;
 pub(super) const LABEL_GAP: f32 = 6.0;
+/// How often a window whose capture folders the OS refused to watch
+/// reads the store.
 pub(super) const REFRESH: Duration = Duration::from_millis(1500);
 /// Rows of thumbnail slack kept decoded beyond the rendered range:
 /// scroll-back inside the window hits warm tiles, outside it pays a
@@ -185,6 +188,8 @@ pub struct Library {
     pub(super) band: Option<(f32, f32, f32, f32)>,
     /// The store read in flight, and whether a write queued another.
     list_pass: listing::ListPass,
+    /// The watch on the listed captures' folders.
+    folders: folders::Folders,
     /// Scroll offset of the card grid, so band math stays in
     /// document space during a band drag.
     pub(super) scroll: gpui::ScrollHandle,
@@ -227,7 +232,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             cx.new(|cx| {
                 // Listing the shots dir here would stall the open on a
                 // slow or network dir: open empty and populate from the
-                // background, the same path the refresh poll takes.
+                // background, the same path every later read takes.
                 let cfg = iris_lib::config::Config::load();
                 let mut this = Library {
                     listing: listing::Listing::default(),
@@ -238,6 +243,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     )),
                     selected: Vec::new(),
                     list_pass: listing::ListPass::default(),
+                    folders: folders::Folders::Unwatched,
                     sel_set: std::collections::HashSet::new(),
                     sel_dirty: false,
                     anchor: None,
@@ -261,7 +267,6 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     band: None,
                     scroll: gpui::ScrollHandle::new(),
                 };
-                this.arm_refresh(cx);
                 this.refresh(false, cx);
                 this
             })
@@ -282,7 +287,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
 }
 
 /// The store changed in this process: the open library window lists it
-/// now instead of on its next poll.
+/// now.
 pub fn store_changed(cx: &mut App) {
     for window in cx.windows() {
         if let Some(library) = window.downcast::<Library>() {

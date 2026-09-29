@@ -31,7 +31,7 @@ The window header uses the client-side decorated frame (56 pixels high) containi
 The body contains a responsive multi-column grid of capture cards with 16-pixel padding and gaps:
 
 - **Ordering**: Sorted by creation timestamp in descending order (newest captures first).
-- **Auto-refresh**: A capture that the daemon saves, re-saves from the editor, or deletes shows in the grid at once. Changes that another process makes to `library.json` or to the capture files show on the next poll, which runs every 1.5 seconds.
+- **Auto-refresh**: A capture that the daemon saves, re-saves from the editor, or deletes shows in the grid at once. A capture file that another program deletes, or moves out of its folder, leaves the grid at once: the library watches the folders that hold its captures. Where the system refuses the watch, the library reads `library.json` every 1.5 seconds and writes the reason to the log. A watch does not report a change that another computer makes to a folder on a network filesystem.
 - **Empty library**: With no captures, the grid shows the capture hotkey in place of cards.
 - **Scrolling**: A mouse wheel tick scrolls the grid over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once.
 - **Card layout**: Each card is 216 pixels wide and contains:

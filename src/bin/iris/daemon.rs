@@ -71,7 +71,7 @@ pub enum Command {
     /// when it ended on its own, not by a stop.
     RecordingEnded,
     /// The capture store changed in this process: an open library
-    /// window shows the change now instead of on its next poll.
+    /// window shows the change now.
     LibraryChanged,
     /// A thread with no window of its own failed at `what`: the daemon
     /// shows `err` in a notice.

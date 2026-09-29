@@ -46,6 +46,18 @@ impl Listing {
         self.listed
     }
 
+    /// The folders that hold the shown captures, sorted, each once.
+    pub(super) fn folders(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter_map(|e| e.path.parent().map(Path::to_path_buf))
+            .collect();
+        dirs.sort_unstable();
+        dirs.dedup();
+        dirs
+    }
+
     /// Show `fresh` and drop from `selected` each path it does not
     /// list. Returns the paths whose capture changed in place (an
     /// editor re-save keeps the path and moves `created_ms`), whose
@@ -92,8 +104,9 @@ impl Listing {
 }
 
 /// When a library window reads the store again: one pass at a time, and
-/// a store write during a pass runs one more pass after it, because the
-/// pass in flight may have read the store before the write.
+/// a store write or a folder change during a pass runs one more pass
+/// after it, because the pass in flight may have read the store, or
+/// checked a capture's file, before the change.
 #[derive(Default)]
 pub(super) struct ListPass {
     in_flight: bool,
@@ -102,19 +115,20 @@ pub(super) struct ListPass {
 
 impl ListPass {
     /// Requests a pass; true when one starts now. A poll while a pass is
-    /// in flight is dropped: on a slow store the 1.5s timer would
-    /// otherwise stack overlapping scans. A write while a pass is in
-    /// flight queues one pass after it.
-    pub(super) fn begin(&mut self, after_write: bool) -> bool {
+    /// in flight is dropped: on a slow store the `REFRESH` timer of a
+    /// window with no folder watch would otherwise stack overlapping
+    /// scans. A change while a pass is in flight queues one pass after
+    /// it.
+    pub(super) fn begin(&mut self, after_change: bool) -> bool {
         if self.in_flight {
-            self.again |= after_write;
+            self.again |= after_change;
             return false;
         }
         self.in_flight = true;
         true
     }
 
-    /// Ends the pass in flight; true when a write landed during it and
+    /// Ends the pass in flight; true when a change landed during it and
     /// another pass is due.
     pub(super) fn land(&mut self) -> bool {
         self.in_flight = false;

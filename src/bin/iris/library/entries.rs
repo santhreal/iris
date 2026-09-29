@@ -118,12 +118,13 @@ impl Library {
         .detach();
     }
 
-    /// One background list + apply: the open path, the poll, and a
-    /// store write in this process share it so none stats the store on
-    /// the UI thread. [`ListPass`](super::listing::ListPass) sets which
-    /// requests start a pass.
-    pub(super) fn refresh(&mut self, after_write: bool, cx: &mut Context<Self>) {
-        if !self.list_pass.begin(after_write) {
+    /// One background list + apply: the open path, a folder change, a
+    /// store write in this process, and the poll of a window with no
+    /// folder watch share it, so none stats the store on the UI thread.
+    /// [`ListPass`](super::listing::ListPass) sets which requests start
+    /// a pass.
+    pub(super) fn refresh(&mut self, after_change: bool, cx: &mut Context<Self>) {
+        if !self.list_pass.begin(after_change) {
             return;
         }
         cx.spawn(async move |this, cx| {
@@ -159,11 +160,13 @@ impl Library {
         // there is no window yet; decode the top of the list.
         let keep = self.thumb_keep;
         self.prefetch_thumbs(if keep.0 < keep.1 { keep } else { (0, 48) }, cx);
+        self.follow_folders(cx);
         cx.notify();
     }
 
-    /// Poll the store so captures from any process surface here. The
-    /// directory scan runs off the main thread.
+    /// Read the store every `REFRESH`, for the life of the window: the
+    /// fallback of a window whose capture folders the OS refused to
+    /// watch. The directory scan runs off the main thread.
     pub(super) fn arm_refresh(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(REFRESH).await;

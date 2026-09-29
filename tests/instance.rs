@@ -240,7 +240,7 @@ fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
     assert_eq!(stderr, "", "iris --home wrote to stderr");
     let log = std::fs::read_to_string(dir.join("state").join("iris.log")).unwrap();
     let line = format!(
-        "iris: watch {} for the daemon's socket: Permission denied (os error 13); \
+        "iris: watch the daemon's socket directory: {}: Permission denied (os error 13); \
          retrying the connect every 2 ms",
         run.display()
     );

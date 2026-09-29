@@ -268,9 +268,10 @@ fn hooked<T>(op: impl FnOnce() -> T) -> usize {
 // WHY: an open library window lists a capture the moment this process
 // stores it, through the hook every store write runs. Closed here: a
 // writer that changes the store without running the hook (the window
-// shows the change only on its next poll), and a read that runs it
-// (each list pass would queue another). Not covered: writes by another
-// process, which the window's poll reads.
+// shows the change only when something else makes it read the store),
+// and a read that runs it (each list pass would queue another). Not
+// covered: writes by another process, which a window shows at its next
+// read of the store.
 #[test]
 #[serial_test::serial]
 fn every_store_write_runs_the_write_hook_once() {
