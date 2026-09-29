@@ -99,3 +99,5 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 
 Drag the top bar to move the window. Double-click it to run the platform's title bar action: maximize on Linux and Windows, the Desktop & Dock setting on macOS. Drag an edge or corner to resize the window; it stops at 640×480. The top bar and the tool sidebar stay over a zoomed or panned image. See [Platform Backends](platforms.md#platform-capabilities-matrix) for the move and resize mechanism on each platform.
 
+In a window shorter than the tool sidebar, the sidebar scrolls. A mouse wheel tick over it scrolls over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once.
+

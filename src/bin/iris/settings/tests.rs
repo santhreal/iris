@@ -16,6 +16,7 @@ fn commit_edit_updates_fields_and_validates() {
         release: Release::None,
         login: false,
         focus: None,
+        scroll: ScrollHandle::new(),
     };
 
     // Storage paths: kept as typed, absolute or under `~`.
@@ -90,6 +91,7 @@ fn field_text_covers_all_field_variants() {
         release: Release::None,
         login: false,
         focus: None,
+        scroll: ScrollHandle::new(),
     };
 
     assert_eq!(s.field_text(Field::ScreenshotsDir), "/custom/shots");
@@ -198,6 +200,7 @@ fn all_twenty_config_fields_persist_and_reload() {
         release: Release::None,
         login: false,
         focus: None,
+        scroll: ScrollHandle::new(),
     };
 
     // Edit Storage
@@ -271,6 +274,7 @@ fn reset_defaults_restores_default_config_and_status() {
         release: Release::None,
         login: false,
         focus: None,
+        scroll: ScrollHandle::new(),
     };
 
     // Modify some cfg fields
@@ -305,6 +309,7 @@ fn settings(release: Release) -> Settings {
         release,
         login: false,
         focus: None,
+        scroll: ScrollHandle::new(),
     }
 }
 

@@ -7,7 +7,8 @@ use super::entries::{fit_name, name_cols};
 use super::listing::{ListPass, Listing};
 use super::render::help_rows;
 use super::{
-    cascade, visible_rows, Library, CARD_W, CASCADE_END, GAP, LABEL_GAP, LABEL_PAD, THUMB_H,
+    cascade, motion_rows, visible_rows, Library, CARD_W, CASCADE_END, GAP, LABEL_GAP, LABEL_PAD,
+    THUMB_H,
 };
 use crate::theme::SMALL_ADVANCE;
 
@@ -57,6 +58,47 @@ fn visible_rows_preserves_card_offsets_and_scroll_height() {
 
     // Empty library: no rows, no spacers.
     assert_eq!(visible_rows(0, cols, 0.0, 500.0), (0, 0, 0.0, 0.0));
+}
+
+// WHY: closes "a wheel motion shows an empty grid". The offset moves
+// toward the wheel target during prepaint, after the grid renders, and
+// one frame of a long motion moves it past the one buffer row
+// visible_rows adds. Every scroll amount between the offset and the
+// target, either way, lies inside the rows rendered for the motion. Not
+// caught: a wrong target_offset, which santh-gpui's smooth wheel tests
+// cover.
+#[test]
+fn motion_rows_cover_every_scroll_amount_between_offset_and_target() {
+    let row_pitch = THUMB_H + 8.0 + 18.0 + GAP;
+    let (n, cols, viewport) = (400usize, 4usize, 3.0 * row_pitch);
+    let spans = [
+        (0.0, 20.0 * row_pitch),
+        (40.0 * row_pitch, 3.0),
+        (10.0 * row_pitch + 40.0, 9.0 * row_pitch),
+        (0.0, 1.0),
+    ];
+    for (from, to) in spans {
+        let (first, last, _, _) = motion_rows(n, cols, from, to, viewport);
+        for step in 0..=200 {
+            let at = from + (to - from) * step as f32 / 200.0;
+            let (f, l, _, _) = visible_rows(n, cols, at, viewport);
+            assert!(
+                first <= f && l <= last,
+                "{from} -> {to}: at {at} rows {f}..={l} show, {first}..={last} render"
+            );
+        }
+    }
+    let at = 7.0 * row_pitch + 30.0;
+    assert_eq!(
+        motion_rows(n, cols, at, at, viewport),
+        visible_rows(n, cols, at, viewport),
+        "at rest the visible rows render"
+    );
+    assert_eq!(
+        motion_rows(n, cols, 0.0, 500.0, 0.0),
+        (0, n / cols - 1, 0.0, 0.0),
+        "before layout every row renders"
+    );
 }
 
 // WHY: a card's label is fitted to its row before layout, because GPUI

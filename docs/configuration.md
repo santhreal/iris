@@ -168,7 +168,7 @@ The settings window contains seven sections:
 6. **Startup**: Toggle **Start at login** (see [Start at Login](#start-at-login)).
 7. **Updates**: Displays current version, a **Check for updates** button, and an **Install update** button once a check finds a newer release (see [Updates](install.md#updates)).
 
-Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×600.
+Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×600. A mouse wheel tick scrolls the sections over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once.
 
 ### Save Behavior
 

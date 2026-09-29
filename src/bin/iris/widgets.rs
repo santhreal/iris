@@ -6,12 +6,14 @@
 
 mod image;
 mod resize;
+mod scroll;
 mod window_frame;
 mod window_move;
 mod window_open;
 
 pub use self::image::*;
 pub use self::resize::resize_edges;
+pub use self::scroll::scroll_y;
 pub use self::window_frame::{window_corner, window_frame};
 pub use self::window_move::{move_handle, Double};
 pub use self::window_open::open_window;

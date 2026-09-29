@@ -33,6 +33,7 @@ The body contains a responsive multi-column grid of capture cards with 16-pixel 
 - **Ordering**: Sorted by creation timestamp in descending order (newest captures first).
 - **Auto-refresh**: A capture that the daemon saves, re-saves from the editor, or deletes shows in the grid at once. Changes that another process makes to `library.json` or to the capture files show on the next poll, which runs every 1.5 seconds.
 - **Empty library**: With no captures, the grid shows the capture hotkey in place of cards.
+- **Scrolling**: A mouse wheel tick scrolls the grid over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once.
 - **Card layout**: Each card is 216 pixels wide and contains:
   - Top thumbnail container (132 pixels high) displaying the cached thumbnail image.
   - Top-left selection circle checkbox.

@@ -143,6 +143,8 @@ pub struct Editor {
     pub(crate) space_pan: bool,
     /// Rect/Ellipse fill toggle for new shapes.
     pub(crate) fill: bool,
+    /// The tool sidebar's scroll state.
+    pub(crate) tools_scroll: ScrollHandle,
 }
 
 /// The editor window's minimum logical size, where its resize stops.
@@ -314,6 +316,7 @@ pub fn open(
                 pan_drag: None,
                 space_pan: false,
                 fill: false,
+                tools_scroll: ScrollHandle::new(),
             })
         },
     )

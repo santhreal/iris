@@ -154,8 +154,7 @@ impl Editor {
     }
 
     pub(super) fn render_sidebar(&self, sidebar: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut bar = div()
-            .id("sidebar")
+        let mut bar = crate::widgets::scroll_y(div().id("sidebar"), &self.tools_scroll)
             .absolute()
             .left(px(12.))
             .top(px(72.))
@@ -167,7 +166,6 @@ impl Editor {
             .items_center()
             .gap(px(2.))
             .py(px(10.))
-            .overflow_y_scroll()
             .rounded(px(12.))
             .bg(theme::BG_ELEV)
             .shadow(theme::shadow_float())

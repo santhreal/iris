@@ -1,9 +1,14 @@
 # Every iris window opens through widgets::open_window, which sets the
-# app id of the desktop entry and the window's title. The running
-# binary's path comes from sys::exe::this, which resolves a binary a
-# package upgrade replaced to the file installed in its place.
+# app id of the desktop entry and the window's title. Every scroll
+# container scrolls through widgets::scroll_y, which eases mouse wheel
+# ticks. The running binary's path comes from sys::exe::this, which
+# resolves a binary a package upgrade replaced to the file installed in
+# its place.
 disallowed-methods = [
     { path = "gpui::App::open_window", reason = "open windows through widgets::open_window, which sets the app id and the title" },
     { path = "gpui::AsyncApp::open_window", reason = "open windows through widgets::open_window, which sets the app id and the title" },
+    { path = "gpui::StatefulInteractiveElement::overflow_scroll", reason = "scroll through widgets::scroll_y, which eases mouse wheel ticks" },
+    { path = "gpui::StatefulInteractiveElement::overflow_x_scroll", reason = "scroll through widgets::scroll_y, which eases mouse wheel ticks" },
+    { path = "gpui::StatefulInteractiveElement::overflow_y_scroll", reason = "scroll through widgets::scroll_y, which eases mouse wheel ticks" },
     { path = "std::env::current_exe", reason = "use sys::exe::this, which resolves a binary a package upgrade replaced" },
 ]

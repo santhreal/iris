@@ -91,6 +91,29 @@ pub(super) fn visible_rows(
     (first_row, last_row, top_h, bottom_h)
 }
 
+/// The rows `visible_rows` returns for every scroll amount from
+/// `scroll_y` to `target_y`. A wheel motion moves the offset toward its
+/// target during prepaint, after the grid renders; rendering the whole
+/// span keeps every frame of the motion filled however far one frame
+/// moves.
+pub(super) fn motion_rows(
+    n: usize,
+    cols: usize,
+    scroll_y: f32,
+    target_y: f32,
+    viewport_h: f32,
+) -> (usize, usize, f32, f32) {
+    if viewport_h <= 0.0 {
+        return visible_rows(n, cols, scroll_y, viewport_h);
+    }
+    visible_rows(
+        n,
+        cols,
+        scroll_y.min(target_y),
+        viewport_h + (scroll_y - target_y).abs(),
+    )
+}
+
 /// The open cascade: each card rises and fades in over CASCADE_RISE
 /// seconds, CASCADE_STAGGER after the card before it. The stagger stops
 /// growing after CASCADE_CARDS cards, so every card is in place by

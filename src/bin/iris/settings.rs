@@ -50,6 +50,7 @@ pub struct Settings {
     /// opened, then the toggle. Save writes it.
     pub(super) login: bool,
     pub(super) focus: Option<FocusHandle>,
+    pub(super) scroll: ScrollHandle,
 }
 
 /// The settings window's minimum logical size, where its resize stops.
@@ -97,6 +98,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 release: Release::None,
                 login: crate::sys::autostart::enabled(),
                 focus,
+                scroll: ScrollHandle::new(),
             })
         },
     )
@@ -411,11 +413,10 @@ impl Render for Settings {
         let save = crate::widgets::button("save", "Save", true)
             .on_click(cx.listener(|this, _, _, cx| this.save(cx)))
             .into_any_element();
-        let content = div()
-            .id("settings-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .child(form);
+        let content =
+            crate::widgets::scroll_y(div().id("settings-scroll"), &self.scroll)
+                .flex_1()
+                .child(form);
         let mut root = div().size_full().font_family(theme::FONT);
         if let Some(focus) = &self.focus {
             root = root.track_focus(focus);

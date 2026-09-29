@@ -4,7 +4,7 @@ use gpui::*;
 
 use crate::theme;
 
-use super::{cascade, evict_thumbs, visible_rows, Library, CARD_W, CASCADE_END, GAP, MIN_SIZE};
+use super::{cascade, evict_thumbs, motion_rows, Library, CARD_W, CASCADE_END, GAP, MIN_SIZE};
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -73,11 +73,8 @@ impl Render for Library {
             );
         }
 
-        let mut grid = div()
-            .id("grid")
+        let mut grid = crate::widgets::scroll_y(div().id("grid"), &self.scroll)
             .flex_1()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
             .p(px(GAP))
             .flex()
             .flex_wrap()
@@ -223,10 +220,13 @@ impl Render for Library {
         let width: f32 = window.bounds().size.width.into();
         let cols = ((width - GAP) / (CARD_W + GAP)).floor().max(1.0) as usize;
         // ScrollHandle::offset is <= 0 (negative when scrolled down);
-        // the positive scroll amount is -offset.y.
+        // the positive scroll amount is -offset.y. A wheel motion moves
+        // the offset toward target_offset after this render.
         let scroll_top: f32 = -f32::from(self.scroll.offset().y);
+        let target_top: f32 = -f32::from(self.scroll.target_offset().y);
         let viewport_h: f32 = self.scroll.bounds().size.height.into();
-        let (first_row, last_row, top_h, bottom_h) = visible_rows(n, cols, scroll_top, viewport_h);
+        let (first_row, last_row, top_h, bottom_h) =
+            motion_rows(n, cols, scroll_top, target_top, viewport_h);
         // A full-width spacer occupies a whole wrap line, standing in
         // for the rows above and below so the rendered cards land at
         // their un-virtualized offsets and the scroll range is kept.
