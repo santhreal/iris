@@ -35,7 +35,7 @@ pub(crate) fn prepare_thumb(path: &Path, scale: f32) -> Result<Thumb, String> {
     } else {
         owned = image::open(path)
             .map_err(|e| format!("cannot open {}: {e}", path.display()))?
-            .to_rgba8();
+            .into_rgba8();
         &owned
     };
     let (iw, ih) = img.dimensions();
