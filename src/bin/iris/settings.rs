@@ -413,10 +413,9 @@ impl Render for Settings {
         let save = crate::widgets::button("save", "Save", true)
             .on_click(cx.listener(|this, _, _, cx| this.save(cx)))
             .into_any_element();
-        let content =
-            crate::widgets::scroll_y(div().id("settings-scroll"), &self.scroll)
-                .flex_1()
-                .child(form);
+        let content = crate::widgets::scroll_y(div().id("settings-scroll"), &self.scroll)
+            .flex_1()
+            .child(form);
         let mut root = div().size_full().font_family(theme::FONT);
         if let Some(focus) = &self.focus {
             root = root.track_focus(focus);
