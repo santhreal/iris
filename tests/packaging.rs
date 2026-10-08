@@ -856,7 +856,11 @@ fn appimage_tool_downloads_are_pinned() {
         b"#!/bin/sh\nexit 0\n",
     );
     let (stderr, fetched) = run("cached appimagetool", &x86, None, false);
-    assert_eq!(fetched, [url.clone()], "cached appimagetool: {stderr}");
+    assert_eq!(
+        fetched,
+        std::slice::from_ref(url),
+        "cached appimagetool: {stderr}"
+    );
     rejected("cached appimagetool", &stderr, url);
 
     let (stderr, fetched) = run("riscv64 host", &x86, None, true);
