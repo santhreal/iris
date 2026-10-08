@@ -67,14 +67,14 @@ Buttons render in the following order:
 3. **Copy file** (grid icon): Copies the file path in platform file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
 4. **Open folder** (viewfinder icon): Reveals the file in the desktop file manager.
 5. **Annotate** (pen icon): Opens the image in the annotation editor.
-6. **Delete** (trash icon): Deletes the PNG file from disk, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast.
+6. **Delete** (trash icon): Moves the PNG file to the system trash (the freedesktop Trash on Linux, the Trash on macOS, the Recycle Bin on Windows), deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast.
 
 ## Status Band
 
 When an action produces feedback, the action bar is replaced by a status band across the lower edge of the card:
 - Renders white text on a dark background at 86% opacity.
 - Re-arms the auto-dismiss timer for `toast_duration_ms` so the message remains readable.
-- Displays completion feedback (such as `"Copied image"` or `"Copied file"`) or error descriptions (such as `"Delete failed: <error>"`).
+- Displays completion feedback (such as `"Copied image"` or `"Copied file"`) or error descriptions (such as `"Could not move <file> to the Trash: <reason>"`).
 
 ## OCR Text Extraction
 
@@ -97,7 +97,7 @@ Menu choices in order:
 2. **Copy**: Copies raw image pixels to the system clipboard.
 3. **Copy text (OCR)**: Extracts text using Tesseract and copies it to the clipboard.
 4. **Pin to screen**: Spawns an independent always-on-top reference window and dismisses the toast.
-5. **Delete**: Deletes the PNG file, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
+5. **Delete**: Moves the PNG file to the system trash, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
 6. **Close**: Dismisses the toast card immediately.
 
 ## Reveal in Folder

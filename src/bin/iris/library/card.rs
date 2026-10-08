@@ -185,7 +185,7 @@ impl Library {
                             cx.stop_propagation();
                             let path = delete_path.path.clone();
                             let task = cx.background_executor().spawn(async move {
-                                let err = library::delete(&path).err();
+                                let err = library::trash(&path).err();
                                 (err, library::list())
                             });
                             cx.spawn(async move |this, cx| {

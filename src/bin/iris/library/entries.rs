@@ -7,6 +7,17 @@ use crate::{editor, pipeline, theme};
 
 use super::{Library, CARD_W, GAP, LABEL_GAP, LABEL_PAD, REFRESH, THUMB_H};
 
+/// The status line after a trash of `asked` captures that left `errors`
+/// behind: None when every capture moved, else the count that stayed
+/// and the first reason.
+fn trash_status(asked: usize, errors: &[String]) -> Option<String> {
+    let first = errors.first()?;
+    Some(match errors.len() {
+        1 if asked == 1 => first.clone(),
+        n => format!("{n} of {asked} captures stayed. {first}"),
+    })
+}
+
 /// Name columns that fit beside `dims` on a card's label row. The font
 /// is monospace, so a width is a column count.
 pub(super) fn name_cols(dims: &str) -> usize {
@@ -276,16 +287,17 @@ impl Library {
     pub(super) fn delete_selection(&mut self, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = std::mem::take(&mut self.selected);
         self.sel_dirty = true;
-        // delete_many + the follow-up list() stat every file; keep the
+        // The trash move + the follow-up list() stat every file; keep the
         // disk work off the UI thread.
+        let asked = paths.len();
         let task = cx.background_executor().spawn(async move {
-            let errors = library::delete_many(&paths);
+            let errors = library::trash_many(&paths);
             (errors, library::list())
         });
         cx.spawn(async move |this, cx| {
             let (errors, entries) = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.status = (errors > 0).then(|| format!("{errors} delete(s) failed"));
+                this.status = trash_status(asked, &errors);
                 this.show(entries, cx);
                 cx.notify();
             });

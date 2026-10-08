@@ -320,44 +320,131 @@ pub fn list() -> Vec<CaptureEntry> {
     alive
 }
 
-/// Remove a capture everywhere: entry, thumbnail, and the image file.
-pub fn delete(path: &Path) -> Result<(), String> {
-    let _write = store_lock().lock();
-    let mut entries = read_store();
-    let before = entries.len();
-    entries.retain(|e| e.path != path);
-    if entries.len() == before {
-        return Err(format!("{} is not in the library", path.display()));
+/// What the platform calls its trash, for messages and menu items.
+pub const TRASH_NAME: &str = if cfg!(windows) {
+    "Recycle Bin"
+} else {
+    "Trash"
+};
+
+/// Move a capture to the system trash, then drop its library entry and
+/// thumbnail. A path the library does not list is trashed all the same
+/// (the editor opens any PNG). A file that is already gone drops its
+/// entry. A failed move leaves the file and its entry in place and
+/// returns the reason.
+pub fn trash(path: &Path) -> Result<(), String> {
+    match trash_many(std::slice::from_ref(&path.to_path_buf())).pop() {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
-    write_store(&entries)?;
-    let _ = std::fs::remove_file(thumbs_dir()?.join(format!("{}.png", path_key(path))));
-    if path.exists() {
-        std::fs::remove_file(path).map_err(|e| format!("delete {}: {e}", path.display()))?;
-    }
-    Ok(())
 }
 
-/// Remove several captures with one store write. A per-file delete()
-/// serializes and rewrites library.json for every selection member.
-/// Returns the number of files that failed to delete.
-pub fn delete_many(paths: &[PathBuf]) -> usize {
-    let _write = store_lock().lock();
-    let mut entries = read_store();
-    let set: std::collections::HashSet<&Path> = paths.iter().map(|p| p.as_path()).collect();
-    entries.retain(|e| !set.contains(e.path.as_path()));
-    let _ = write_store(&entries);
-    let mut errors = 0;
-    for path in paths {
-        let _ = std::fs::remove_file(
-            thumbs_dir()
-                .unwrap_or_default()
-                .join(format!("{}.png", path_key(path))),
-        );
-        if path.exists() && std::fs::remove_file(path).is_err() {
-            errors += 1;
+/// [`trash`] for several captures with one store write. Returns one
+/// message per capture that stayed, in `paths` order; the rest left the
+/// folder and the library.
+pub fn trash_many(paths: &[PathBuf]) -> Vec<String> {
+    // The system move runs outside the store lock: a cross-device copy
+    // into the trash can take seconds, and list() must not wait on it.
+    let moved = move_to_trash(paths);
+    let mut errors = Vec::new();
+    let mut gone = std::collections::HashSet::new();
+    for (path, outcome) in paths.iter().zip(moved) {
+        match outcome {
+            Ok(()) => {
+                gone.insert(path.as_path());
+            }
+            Err(e) => errors.push(e),
         }
     }
+    if gone.is_empty() {
+        return errors;
+    }
+    let _write = store_lock().lock();
+    let (dropped, kept): (Vec<CaptureEntry>, Vec<CaptureEntry>) = read_store()
+        .into_iter()
+        .partition(|e| gone.contains(e.path.as_path()));
+    if dropped.is_empty() {
+        return errors;
+    }
+    if let Err(e) = write_store(&kept) {
+        errors.push(e);
+    }
+    for entry in dropped {
+        let _ = std::fs::remove_file(&entry.thumb);
+    }
     errors
+}
+
+/// The system trash move of each of `paths`, in order. A path that no
+/// longer exists counts as moved.
+fn move_to_trash(paths: &[PathBuf]) -> Vec<Result<(), String>> {
+    let each = || -> Vec<Result<(), String>> { paths.iter().map(|p| move_one(p)).collect() };
+    // The Recycle Bin call initializes COM on its thread for the life of
+    // the thread and panics when the thread already runs another COM
+    // apartment model: a scoped thread of its own contains both.
+    if !cfg!(windows) {
+        return each();
+    }
+    std::thread::scope(|s| s.spawn(each).join()).unwrap_or_else(|_| {
+        paths
+            .iter()
+            .map(|p| Err(trash_error(p, "the shell file operation failed")))
+            .collect()
+    })
+}
+
+fn move_one(path: &Path) -> Result<(), String> {
+    match path.try_exists() {
+        Ok(false) => return Ok(()),
+        Ok(true) => {}
+        Err(e) => return Err(trash_error(path, &e.to_string())),
+    }
+    trash_context()
+        .delete(path)
+        .map_err(|e| trash_error(path, &trash_reason(e)))
+}
+
+/// The OS trash call. On macOS it runs through NSFileManager: the
+/// crate's default Finder route drives Finder over AppleScript, which
+/// prompts for Automation access on the first move and plays the Finder
+/// sound on every one.
+fn trash_context() -> ::trash::TrashContext {
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut ctx = ::trash::TrashContext::new();
+    #[cfg(target_os = "macos")]
+    {
+        use ::trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx
+}
+
+fn trash_error(path: &Path, reason: &str) -> String {
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    format!("Could not move {name} to the {TRASH_NAME}: {reason}")
+}
+
+/// A `trash` crate error as a sentence; its Display is a Debug dump.
+fn trash_reason(e: ::trash::Error) -> String {
+    use ::trash::Error;
+    match e {
+        Error::Unknown { description } => description,
+        Error::Os { code, description } => format!("{description} (code {code})"),
+        #[cfg(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        Error::FileSystem { path, source } => format!("{source}: {}", path.display()),
+        Error::TargetedRoot => "the path is a root folder".to_owned(),
+        Error::CouldNotAccess { target } => format!("cannot access {target}"),
+        Error::CanonicalizePath { original } => format!("cannot resolve {}", original.display()),
+        other => format!("{other:?}"),
+    }
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@ The window header uses the client-side decorated frame (56 pixels high) containi
 - **When one or more cards are selected**:
   - Selection count label (for example, `3 selected`).
   - **Copy**: Copies the selection to the system clipboard. A single selection copies the decoded image pixels; multiple items copy file paths in platform file-list format.
-  - **Delete**: Deletes selected image files and their cached thumbnails from disk, removes entries from `library.json`, and clears the selection.
+  - **Delete**: Moves the selected image files to the system trash (the freedesktop Trash on Linux, the Trash on macOS, the Recycle Bin on Windows), deletes their cached thumbnails, removes their entries from `library.json`, and clears the selection. A file the system cannot move stays in its folder and in the library, and the status line shows the reason.
   - **Clear**: Clears the current selection.
 
 ## Thumbnail Grid and Cards
@@ -59,14 +59,14 @@ Hovering the cursor over a card lifts the card preview and displays an overlay a
    - macOS: Runs `/usr/bin/open -R <path>`. If the file does not exist, opens the parent directory.
    - Windows: Calls the Win32 Shell API `SHOpenFolderAndSelectItems`. If unavailable, falls back to launching `explorer.exe <folder>`.
    Right-clicking anywhere on a card also invokes this reveal action.
-3. **Delete** (close icon): Removes the image file and its thumbnail from disk and deletes the entry from `library.json`.
+3. **Delete** (close icon): Moves the image file to the system trash, deletes its thumbnail, and deletes the entry from `library.json`.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+A` / `Cmd+A` | Select all captures in the library |
-| `Delete` / `Backspace` | Delete selected captures from disk and library |
+| `Delete` / `Backspace` | Move selected captures to the system trash and remove them from the library |
 | `Escape` | Dismiss shortcut sheet, clear active selection, or close library window |
 | `?` or `/` | Toggle keyboard shortcuts reference sheet |
 | Title bar double-click | Trigger platform window action: toggle maximize on Linux and Windows, or invoke the system Desktop & Dock preference on macOS |

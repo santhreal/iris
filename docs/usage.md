@@ -47,7 +47,7 @@ A thumbnail card, the toast, slides in at a corner of the screen ([Toast Notific
 - Click it to open the annotation editor.
 - Drag it into another application to drop the PNG file there.
 - Swipe it away to dismiss it. It also dismisses itself after its countdown.
-- Its action bar pins it, copies the image or the file, shows the file in its folder, opens the editor, or deletes the capture.
+- Its action bar pins it, copies the image or the file, shows the file in its folder, opens the editor, or moves the capture to the trash.
 - Right-click it to copy the text in the image (OCR, with Tesseract installed) or to pin the capture in a window of its own.
 
 The editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops. **Done** (`Ctrl+S`, `Cmd+S` on macOS) writes the image back to its file and copies it to the clipboard. `Escape` discards the changes ([Annotation Editor](editor.md)).
@@ -63,7 +63,7 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 
 ## Find Past Captures
 
-Click **Library**, or run `iris --library`. The library shows the captures as thumbnails, newest first. Click a thumbnail to open it in the editor, drag thumbnails out to drop their files, and select several to copy or delete them at once ([Capture Library](library.md)).
+Click **Library**, or run `iris --library`. The library shows the captures as thumbnails, newest first. Click a thumbnail to open it in the editor, drag thumbnails out to drop their files, and select several to copy or move them to the trash at once ([Capture Library](library.md)).
 
 ## Change Settings
 
