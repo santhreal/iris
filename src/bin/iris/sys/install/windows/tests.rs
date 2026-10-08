@@ -51,8 +51,17 @@ fn an_iris_with_an_uninstaller_beside_it_is_installed() {
     assert!(!installed(&exe));
     std::fs::write(exe.with_file_name("uninstall.exe"), b"").expect("write");
     assert!(installed(&exe));
-    // The test binary has no uninstall.exe beside it: a portable iris.
-    assert_eq!(asset(), PORTABLE_ASSET);
+    // The test binary has no uninstall.exe beside it: a portable iris,
+    // which downloads the portable zip built for its architecture.
+    let arch = std::env::consts::ARCH;
+    assert_eq!(asset(), format!("windows-{arch}-portable.zip"));
+    for kind in [SETUP_ASSET, PORTABLE_ASSET] {
+        let name = crate::sys::install::for_this_arch(kind);
+        assert!(
+            crate::sys::install::in_contract(&name),
+            "packaging/CONTRACT.md lists no iris-{{ver}}-{name}"
+        );
+    }
 }
 
 #[test]

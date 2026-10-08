@@ -48,6 +48,7 @@ fail() {
   exit 1
 }
 
+# shellcheck disable=SC2016 # wait_for evaluates the condition itself.
 wait_for 'xdpyinfo -display ":$n" >/dev/null 2>&1' 10 || fail "Xvfb :$n did not start"
 mkdir -m 0700 "$home/run"
 export DISPLAY=":$n" IRIS_HOME="$home" XDG_RUNTIME_DIR="$home/run"

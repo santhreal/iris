@@ -8,14 +8,15 @@ use std::path::{Path, PathBuf};
 
 use package::Package;
 
-/// Release asset suffix for an AppImage install.
-pub const APPIMAGE_ASSET: &str = "linux-x86_64.AppImage";
+/// Release asset suffix for an AppImage install. `{arch}` is this
+/// build's architecture (`super::for_this_arch`).
+pub const APPIMAGE_ASSET: &str = "linux-{arch}.AppImage";
 
 /// Release asset suffix for a deb install.
-pub const DEB_ASSET: &str = "linux-x86_64.deb";
+pub const DEB_ASSET: &str = "linux-{arch}.deb";
 
 /// Release asset suffix for an rpm install.
-pub const RPM_ASSET: &str = "linux-x86_64.rpm";
+pub const RPM_ASSET: &str = "linux-{arch}.rpm";
 
 /// How this iris was installed.
 enum Install {
@@ -41,19 +42,19 @@ fn install() -> Result<Install, String> {
 
 /// The release asset that updates this iris. An install that cannot
 /// update gets the AppImage's, and `ready` refuses it.
-pub fn asset() -> &'static str {
+pub fn asset() -> String {
     match install() {
         Ok(Install::Package(package)) => asset_of(package),
-        Ok(Install::AppImage(_)) | Err(_) => APPIMAGE_ASSET,
+        Ok(Install::AppImage(_)) | Err(_) => super::for_this_arch(APPIMAGE_ASSET),
     }
 }
 
 /// The release asset that holds `package`.
-fn asset_of(package: Package) -> &'static str {
-    match package {
+fn asset_of(package: Package) -> String {
+    super::for_this_arch(match package {
         Package::Deb => DEB_ASSET,
         Package::Rpm => RPM_ASSET,
-    }
+    })
 }
 
 /// Ok when this install can replace itself: an AppImage in a directory

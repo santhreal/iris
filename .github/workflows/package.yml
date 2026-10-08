@@ -3,7 +3,8 @@ name: Package
 # Builds every installer from the checked-out commit, installs and
 # checks each one, and uploads it as an artifact. CI runs it on every
 # push; the release workflow publishes the artifacts it uploads, so a
-# release ships the files these checks ran on.
+# release ships the files these checks ran on. Each platform builds
+# and checks its installers natively, on a runner of its architecture.
 on:
   workflow_call:
 
@@ -16,16 +17,31 @@ env:
 
 jobs:
   macos:
-    name: Package (macOS)
+    name: Package (macos-universal)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+      # With no toolchain argument, rustup installs the toolchain and
+      # components rust-toolchain.toml pins; the targets go to that
+      # toolchain.
+      - name: Install the pinned toolchain and both macOS targets
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          toolchain: stable
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          key: package-macos-universal
+      # Version forms (packaging/lib.sh): the cargo version names the
+      # assets and `iris --version` prints it; the bundle versions hold
+      # its numeric core.
+      - name: Read the version
+        run: |
+          . packaging/lib.sh
+          version=$(iris_cargo_version .)
+          core=$(iris_core_version "$version")
+          { echo "VERSION=$version"; echo "CORE_VERSION=$core"; } >> "$GITHUB_ENV"
       # One cargo run for both targets: it compiles the two concurrently,
       # overlapping each target's single-threaded final crate and link.
       - name: Build the universal binary
@@ -57,18 +73,21 @@ jobs:
             echo "$out" >&2
             return 1
           }
-          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
-          dmg="iris-${version}-macos-universal.dmg"
+          plist() { plutil -extract "$1" raw dist/iris.app/Contents/Info.plist; }
+          dmg="iris-${VERSION}-macos-universal.dmg"
           codesign --verify --deep --strict dist/iris.app
           archs=$(lipo -archs dist/iris.app/Contents/MacOS/iris)
           [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "archs: $archs"; exit 1; }
-          [ "$(plutil -extract CFBundleShortVersionString raw dist/iris.app/Contents/Info.plist)" = "$version" ]
+          for key in CFBundleShortVersionString CFBundleVersion; do
+            [ "$(plist "$key")" = "$CORE_VERSION" ] || { echo "$key $(plist "$key"), not $CORE_VERSION"; exit 1; }
+          done
+          [ "$(plist IrisVersion)" = "$VERSION" ] || { echo "IrisVersion $(plist IrisVersion), not $VERSION"; exit 1; }
           (cd dist && shasum -a 256 -c "$dmg.sha256")
           hdiutil_busy verify "dist/$dmg"
           mnt=$(mktemp -d)
           hdiutil_busy attach -nobrowse -readonly -mountpoint "$mnt" "dist/$dmg"
           [ -L "$mnt/Applications" ]
-          [ "$("$mnt/iris.app/Contents/MacOS/iris" --version)" = "iris $version" ]
+          [ "$("$mnt/iris.app/Contents/MacOS/iris" --version)" = "iris $VERSION" ]
           ditto "$mnt/iris.app" "$RUNNER_TEMP/installed/iris.app"
           hdiutil_busy detach "$mnt"
       # The daemon starts from the DMG's iris.app copied out as an install
@@ -89,20 +108,43 @@ jobs:
           ! kill -0 "$pid" 2>/dev/null || fail "the daemon runs 10 s after --quit"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: iris-macos-dmg
+          name: iris-macos-universal
           path: dist/iris-*-macos-universal.dmg*
           if-no-files-found: error
 
   windows:
-    name: Package (Windows)
-    runs-on: windows-latest
+    name: Package (windows-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: windows-latest }
+          - { arch: aarch64, runner: windows-11-arm }
+    env:
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          toolchain: stable
+          key: package-windows-${{ matrix.arch }}
+      # Version forms (packaging/lib.sh): the cargo version names the
+      # assets and fills the string versions; the numeric VERSIONINFO
+      # holds its core plus .0.
+      - name: Read the version
+        shell: bash
+        run: |
+          . packaging/lib.sh
+          version=$(iris_cargo_version .)
+          core=$(iris_core_version "$version")
+          { echo "VERSION=$version"; echo "CORE_VERSION=$core"; } >> "$GITHUB_ENV"
       # Later steps start with the job's PATH, not the machine PATH an
       # installer edits: GITHUB_PATH adds the NSIS directory to it. choco
       # exits 0 having installed nothing when the community feed answers
@@ -117,19 +159,21 @@ jobs:
           }
           if (-not (Test-Path $makensis)) { throw "5 choco installs left no $makensis" }
           Add-Content $env:GITHUB_PATH (Split-Path $makensis)
+      # --arch fails the scripts when iris.exe is built for another
+      # architecture than the runner's.
       - name: Build iris.exe, the installer, and the portable zip
         shell: bash
         run: |
           cargo build --locked --release --bin iris
-          bash packaging/windows/build_installer.sh --binary target/release/iris.exe --out dist
-          bash packaging/windows/build_portable.sh --binary target/release/iris.exe --out dist
+          bash packaging/windows/build_installer.sh --bin target/release/iris.exe --out dist --arch "$ARCH"
+          bash packaging/windows/build_portable.sh --bin target/release/iris.exe --out dist --arch "$ARCH"
       # The updater unpacks the portable zip with the tar.exe Windows
       # ships and runs the iris\iris.exe in it (sys/install/windows.rs).
       - name: Unpack and run the portable zip
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
-          $zip = "dist\iris-$version-windows-x86_64-portable.zip"
+          $version = $env:VERSION
+          $zip = "dist\iris-$version-windows-$env:ARCH-portable.zip"
           $sidecar = (Get-Content "$zip.sha256" -Raw).Split(' ')[0].Trim()
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           if ($hash -ne $sidecar) { throw "sha256 $hash, sidecar $sidecar" }
@@ -138,7 +182,7 @@ jobs:
           & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $dir
           if ($LASTEXITCODE -ne 0) { throw "tar.exe -xf exited $LASTEXITCODE" }
           $held = @(Get-ChildItem -Recurse -File $dir | ForEach-Object { $_.FullName.Substring($dir.Length + 1) } | Sort-Object)
-          if (($held -join ',') -ne 'iris\iris.exe,iris\LICENSE-APACHE,iris\LICENSE-MIT') { throw "the zip holds $($held -join ', ')" }
+          if (($held -join ',') -ne 'iris\Inter-OFL.txt,iris\iris.exe,iris\LICENSE-APACHE,iris\LICENSE-MIT') { throw "the zip holds $($held -join ', ')" }
           $exe = "$dir\iris\iris.exe"
           if ((Get-FileHash $exe).Hash -ne (Get-FileHash target\release\iris.exe).Hash) { throw 'the zip holds another iris.exe' }
           $printed = & $exe --version | Write-Output
@@ -146,21 +190,29 @@ jobs:
       - name: Install, upgrade over a running daemon, and uninstall
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
-          $setup = "dist\iris-$version-windows-x86_64-setup.exe"
+          $version = $env:VERSION
+          $setup = "dist\iris-$version-windows-$env:ARCH-setup.exe"
           $sidecar = (Get-Content "$setup.sha256" -Raw).Split(' ')[0].Trim()
           $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
           if ($hash -ne $sidecar) { throw "sha256 $hash, sidecar $sidecar" }
           $dir = Join-Path $env:RUNNER_TEMP 'iris'
           Start-Process -Wait -FilePath $setup -ArgumentList '/S', "/D=$dir"
-          foreach ($f in 'iris.exe', 'iris.ico', 'uninstall.exe') {
+          foreach ($f in 'iris.exe', 'iris.ico', 'uninstall.exe', 'LICENSE-MIT', 'LICENSE-APACHE', 'Inter-OFL.txt') {
             if (-not (Test-Path "$dir\$f")) { throw "setup did not install $f" }
           }
           $exe = Get-Item "$dir\iris.exe"
-          if ($exe.VersionInfo.ProductVersion -ne $version) { throw "ProductVersion $($exe.VersionInfo.ProductVersion)" }
-          # PE optional header Subsystem: 2 is a GUI program, 3 a console one.
+          $info = $exe.VersionInfo
+          if ($info.ProductVersion -ne $version) { throw "ProductVersion $($info.ProductVersion)" }
+          $numeric = "$($info.ProductMajorPart).$($info.ProductMinorPart).$($info.ProductBuildPart).$($info.ProductPrivatePart)"
+          if ($numeric -ne "$env:CORE_VERSION.0") { throw "numeric product version $numeric, not $env:CORE_VERSION.0" }
+          # PE header: Machine is 0x8664 on x86_64 and 0xAA64 on aarch64;
+          # optional header Subsystem 2 is a GUI program, 3 a console one.
           $pe = [IO.File]::ReadAllBytes($exe.FullName)
-          $subsystem = [BitConverter]::ToUInt16($pe, [BitConverter]::ToInt32($pe, 0x3C) + 0x5C)
+          $header = [BitConverter]::ToInt32($pe, 0x3C)
+          $machine = [BitConverter]::ToUInt16($pe, $header + 4)
+          $want = @{ x86_64 = 0x8664; aarch64 = 0xAA64 }[$env:ARCH]
+          if ($machine -ne $want) { throw ('iris.exe machine 0x{0:X4}, not 0x{1:X4}' -f $machine, $want) }
+          $subsystem = [BitConverter]::ToUInt16($pe, $header + 0x5C)
           if ($subsystem -ne 2) { throw "iris.exe subsystem $subsystem, not GUI (2)" }
           # PowerShell waits for a GUI-subsystem program only when its
           # output feeds a pipeline (docs/platforms.md, Windows).
@@ -227,34 +279,71 @@ jobs:
           if (& $pipe) { throw 'the daemon pipe remains after uninstall' }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: iris-windows-setup
-          path: dist/iris-*-windows-x86_64-setup.exe*
-          if-no-files-found: error
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: iris-windows-portable
-          path: dist/iris-*-windows-x86_64-portable.zip*
+          name: iris-windows-${{ matrix.arch }}
+          path: dist/iris-*-windows-${{ matrix.arch }}-*
           if-no-files-found: error
 
   linux:
-    name: Package (Linux)
-    runs-on: ubuntu-24.04
+    name: Package (linux-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Version forms (packaging/lib.sh): the cargo version names the
+      # assets and `iris --version` prints it; the deb and rpm Version
+      # hold its tilde form. The packages in dist/next are the same
+      # binary at NEXT_VERSION, so installing one over the first is a
+      # package upgrade.
+      - name: Read the versions
+        run: |
+          . packaging/lib.sh
+          version=$(iris_cargo_version .)
+          tilde=$(iris_tilde_version "$version")
+          next_tilde=$(iris_tilde_version "$version.1")
+          channel=$(sed -nE 's/^channel = "([^"]+)"/\1/p' rust-toolchain.toml)
+          [ -n "$channel" ] || { echo "rust-toolchain.toml pins no channel"; exit 1; }
+          {
+            echo "VERSION=$version"
+            echo "TILDE_VERSION=$tilde"
+            echo "NEXT_VERSION=$version.1"
+            echo "NEXT_TILDE_VERSION=$next_tilde"
+            echo "RUST_CHANNEL=$channel"
+          } >> "$GITHUB_ENV"
       - name: Install packaging deps
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm desktop-file-utils
+      # The runner's toolchain keys the cache to the pinned version the
+      # Debian container builds with.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: package-linux-${{ matrix.arch }}-bookworm
       # The binary builds on Debian 12, so it links no glibc symbol
       # version newer than that release has, and the packages run on
       # the oldest glibc that holds every version it uses: 2.35 (Ubuntu
       # 22.04). A binary built on the runner requires the runner's glibc.
-      # build_deb.sh reads the floor from the binary.
+      # build_deb.sh reads the floor from the binary. The container's
+      # image holds the pinned toolchain, and it reads and writes the
+      # runner's cargo registry, so the cache holds both.
       - name: Build iris on Debian 12
         run: |
-          docker run --rm -v "$PWD:/src" -w /src -e owner="$(id -u):$(id -g)" rust:1-bookworm \
+          cargo_home=${CARGO_HOME:-$HOME/.cargo}
+          mkdir -p "$cargo_home/registry" "$cargo_home/git"
+          docker run --rm -v "$PWD:/src" -w /src \
+            -v "$cargo_home/registry:/usr/local/cargo/registry" -v "$cargo_home/git:/usr/local/cargo/git" \
+            -e owner="$(id -u):$(id -g)" -e RUSTFLAGS -e CARGO_TERM_COLOR \
+            "rust:$RUST_CHANNEL-bookworm" \
             bash -euo pipefail -c '
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends build-essential pkg-config cmake clang \
@@ -263,18 +352,18 @@ jobs:
                 libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
                 libpipewire-0.3-dev libspa-0.2-dev >/dev/null
               cargo build --locked --release --bin iris
-              chown -R "$owner" target
+              chown -R "$owner" target /usr/local/cargo/registry /usr/local/cargo/git
             '
-      # The packages in dist/next hold the same binary at a higher
-      # version, so installing one over the first is a package upgrade.
+      # --arch fails the scripts when the binary is built for another
+      # architecture than the runner's.
       - name: Build the deb, the rpm, and the AppImage
         run: |
-          bash packaging/linux/build_deb.sh --bin target/release/iris --out dist
-          bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
-          bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
-          next=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1).1
-          bash packaging/linux/build_deb.sh --bin target/release/iris --version "$next" --out dist/next --skip-sha
-          bash packaging/linux/build_rpm.sh --bin target/release/iris --version "$next" --out dist/next --skip-sha
+          bin=target/release/iris
+          bash packaging/linux/build_deb.sh --bin "$bin" --out dist --arch "$ARCH"
+          bash packaging/linux/build_rpm.sh --bin "$bin" --out dist --arch "$ARCH"
+          bash packaging/linux/build_appimage.sh --bin "$bin" --out dist --arch "$ARCH"
+          bash packaging/linux/build_deb.sh --bin "$bin" --version "$NEXT_VERSION" --out dist/next --skip-sha --arch "$ARCH"
+          bash packaging/linux/build_rpm.sh --bin "$bin" --version "$NEXT_VERSION" --out dist/next --skip-sha --arch "$ARCH"
       # Each package installs in a clean container without the packages
       # it recommends, so a library it does not depend on is missing
       # there: the deb on ubuntu:22.04, the oldest release it supports,
@@ -289,7 +378,6 @@ jobs:
       - name: Install, run, and remove each package
         run: |
           set -euo pipefail
-          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           (cd dist && sha256sum -c ./*.sha256)
           files="/usr/bin/iris /usr/share/applications/dev.iris.app.desktop /etc/xdg/autostart/iris-autostart.desktop"
           # in_container IMAGE SCRIPT [docker run option...]
@@ -297,44 +385,52 @@ jobs:
             local image=$1 script=$2
             shift 2
             docker run --rm "$@" -v "$PWD/dist:/pkg:ro" -v "$PWD/packaging/linux:/linux:ro" \
-              -e version="$version" -e files="$files" "$image" bash -euo pipefail -c "$script"
+              -e version="$VERSION" -e tilde="$TILDE_VERSION" -e next="$NEXT_VERSION" \
+              -e next_tilde="$NEXT_TILDE_VERSION" -e arch="$ARCH" -e files="$files" \
+              "$image" bash -euo pipefail -c "$script"
           }
+          # The single-quoted scripts expand their variables in the container.
+          # shellcheck disable=SC2016
           deb='
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
-            apt-get install -y -qq --no-install-recommends "/pkg/iris-${version}-linux-x86_64.deb" >/dev/null
+            apt-get install -y -qq --no-install-recommends "/pkg/iris-${version}-linux-${arch}.deb" >/dev/null
             [ "$(iris --version)" = "iris $version" ]
+            [ "$(dpkg-query -W -f="\${Version}" iris)" = "$tilde" ]
             for f in $files; do dpkg -L iris | grep -qx "$f" || { echo "deb lacks $f"; exit 1; }; done
             apt-get install -y -qq --no-install-recommends xvfb x11-utils mesa-vulkan-drivers >/dev/null
             bash /linux/check_installed.sh --upgrade \
-              "apt-get install -y -qq --no-install-recommends /pkg/next/iris-${version}.1-linux-x86_64.deb >/dev/null"
-            [ "$(dpkg-query -W -f="\${Version}" iris)" = "${version}.1" ]
+              "apt-get install -y -qq --no-install-recommends /pkg/next/iris-${next}-linux-${arch}.deb >/dev/null"
+            [ "$(dpkg-query -W -f="\${Version}" iris)" = "$next_tilde" ]
             apt-get remove -y -qq iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '
           in_container ubuntu:22.04 "$deb"
           in_container ubuntu:24.04 "$deb"
+          # shellcheck disable=SC2016
           in_container fedora:42 '
-            dnf install -y -q --setopt=install_weak_deps=False "/pkg/iris-${version}-linux-x86_64.rpm" >/dev/null
+            dnf install -y -q --setopt=install_weak_deps=False "/pkg/iris-${version}-linux-${arch}.rpm" >/dev/null
             [ "$(iris --version)" = "iris $version" ]
+            [ "$(rpm -q --qf "%{VERSION}" iris)" = "$tilde" ]
             for f in $files; do rpm -ql iris | grep -qx "$f" || { echo "rpm lacks $f"; exit 1; }; done
             dnf install -y -q --setopt=install_weak_deps=False xorg-x11-server-Xvfb xdpyinfo xwininfo mesa-vulkan-drivers >/dev/null
             bash /linux/check_installed.sh --upgrade \
-              "dnf install -y -q --setopt=install_weak_deps=False /pkg/next/iris-${version}.1-linux-x86_64.rpm >/dev/null"
-            [ "$(rpm -q --qf "%{VERSION}" iris)" = "${version}.1" ]
+              "dnf install -y -q --setopt=install_weak_deps=False /pkg/next/iris-${next}-linux-${arch}.rpm >/dev/null"
+            [ "$(rpm -q --qf "%{VERSION}" iris)" = "$next_tilde" ]
             dnf remove -y -q iris >/dev/null
             for f in $files; do [ ! -e "$f" ] || { echo "$f remains after remove"; exit 1; }; done
           '
+          # shellcheck disable=SC2016
           in_container ubuntu:22.04 '
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
-            libs=$(dpkg-deb -f "/pkg/iris-${version}-linux-x86_64.deb" Depends | sed -E "s/ \([^)]*\)//g; s/, /\n/g")
+            libs=$(dpkg-deb -f "/pkg/iris-${version}-linux-${arch}.deb" Depends | sed -E "s/ \([^)]*\)//g; s/, /\n/g")
             apt-get install -y -qq --no-install-recommends $libs fuse3 xvfb x11-utils mesa-vulkan-drivers >/dev/null
-            [ "$(/pkg/iris-${version}-linux-x86_64.AppImage --version)" = "iris $version" ]
-            bash /linux/check_installed.sh "/pkg/iris-${version}-linux-x86_64.AppImage"
+            [ "$(/pkg/iris-${version}-linux-${arch}.AppImage --version)" = "iris $version" ]
+            bash /linux/check_installed.sh "/pkg/iris-${version}-linux-${arch}.AppImage"
           ' --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: iris-linux-packages
-          path: dist/iris-*-linux-x86_64.*
+          name: iris-linux-${{ matrix.arch }}
+          path: dist/iris-*-linux-${{ matrix.arch }}.*
           if-no-files-found: error

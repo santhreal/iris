@@ -19,9 +19,11 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>@IRIS_CORE_VERSION@</string>
 	<key>CFBundleVersion</key>
-	<string>0.1.0</string>
+	<string>@IRIS_CORE_VERSION@</string>
+	<key>IrisVersion</key>
+	<string>@IRIS_VERSION@</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>10.15</string>
 	<key>LSUIElement</key>

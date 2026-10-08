@@ -11,12 +11,13 @@ use std::time::Duration;
 #[cfg(test)]
 mod tests;
 
-/// Release asset suffix for this platform.
+/// Release asset suffix for this platform: one universal DMG holds the
+/// x86_64 and the aarch64 binary.
 pub const ASSET: &str = "macos-universal.dmg";
 
 /// The release asset that updates this iris.
-pub fn asset() -> &'static str {
-    ASSET
+pub fn asset() -> String {
+    ASSET.to_string()
 }
 
 /// Where `install` copies the new bundle before the swap: a sibling of

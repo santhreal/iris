@@ -4,52 +4,97 @@ on:
   push:
     tags:
       - 'v*'
-  # A dry run: runs the gate, builds and checks every installer, and
-  # checks the release's asset set. Only a tag publishes.
+  # A dry run: runs every job a tag runs, the gate, the tests, the
+  # packages, signing and the signature checks included, and publishes
+  # nothing: no tag, no release, no draft. Only a tag publishes.
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
-
 jobs:
   gate:
     name: Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
+      # Full history and every branch: the reachability check reads
+      # origin/main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # A semver prerelease (a `-` after major.minor.patch) publishes as
+      # a GitHub prerelease, which only the beta update channel reads.
+      - name: Read the version
+        id: version
+        run: |
+          . packaging/lib.sh
+          version=$(iris_cargo_version .)
+          iris_core_version "$version" >/dev/null
+          prerelease=false
+          [[ "${version%%+*}" != *-* ]] || prerelease=true
+          echo "version $version, prerelease $prerelease"
+          { echo "version=$version"; echo "prerelease=$prerelease"; } >> "$GITHUB_OUTPUT"
       # The updater compares the release tag with the version the
       # installed binary reports (CARGO_PKG_VERSION): a tag naming any
       # other version would offer the same release again after it is
       # installed.
       - name: The tag names the Cargo.toml version
         if: github.ref_type == 'tag'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "tag $GITHUB_REF_NAME does not name the Cargo.toml version $version (v$version)"
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not name the Cargo.toml version $VERSION (v$VERSION)"
             exit 1
           fi
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
-        with:
-          toolchain: stable
-      # ffmpeg: the recorder tests encode, join, and ffprobe real files.
-      - name: Install Linux build deps and ffmpeg
+      - name: The tag's commit is on main
+        if: github.ref_type == 'tag'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config cmake clang \
-            libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
-            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
-            libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
-            libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal ffmpeg
-      - name: Test
-        run: cargo test --locked
+          commit=$(git rev-parse HEAD)
+          git rev-parse --verify -q origin/main >/dev/null || { echo "::error::the checkout has no origin/main"; exit 1; }
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME points at $commit, which origin/main does not contain"
+            exit 1
+          fi
+      # The release body is the text between the version's heading and
+      # the next `## ` heading. A tag fails without the heading; a dry
+      # run warns.
+      - name: The CHANGELOG section of the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_type == 'tag' }}
+        run: |
+          heading="## [$VERSION] - YYYY-MM-DD"
+          notes="$RUNNER_TEMP/notes/notes.md"
+          mkdir -p "$(dirname "$notes")"
+          if awk -v prefix="## [$VERSION] - " '
+            index($0, prefix) == 1 && substr($0, length(prefix) + 1) ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ { found = 1; inside = 1; next }
+            inside && /^## / { inside = 0 }
+            inside { print }
+            END { exit !found }
+          ' CHANGELOG.md > "$notes"; then
+            echo "release body (CHANGELOG.md, $heading):"
+            cat "$notes"
+          elif [ "$TAG" = true ]; then
+            echo "::error file=CHANGELOG.md::CHANGELOG.md has no '$heading' heading for the release body"
+            exit 1
+          else
+            echo "::warning file=CHANGELOG.md::CHANGELOG.md has no '$heading' heading; a tag of this commit fails"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes/notes.md
+          if-no-files-found: error
+
+  test:
+    name: Test
+    needs: gate
+    uses: ./.github/workflows/test.yml
 
   package:
     name: Package
@@ -58,48 +103,125 @@ jobs:
 
   publish:
     name: Publish
-    needs: package
-    runs-on: ubuntu-latest
+    needs: [gate, test, package]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: iris-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes
       # The release holds the assets packaging/CONTRACT.md lists, each
       # with its .sha256 sidecar, and nothing else. Every asset the
-      # updater downloads (each `pub const *ASSET` in sys::install) is
-      # one of them.
+      # updater downloads (each `pub const *ASSET` in sys::install, with
+      # `{arch}` as each architecture) is one of them. The list goes to
+      # $RUNNER_TEMP/assets for the signing steps.
       - name: The contract's asset set, every checksum
         run: |
           set -euo pipefail
-          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          # shellcheck disable=SC2016
           contract=$(sed -nE 's/^- `iris-\{ver\}-([^`]+)`.*/\1/p' packaging/CONTRACT.md | sort)
-          updater=$(sed -nE 's/^pub const [A-Z_]*ASSET: &str = "([^"]+)";/\1/p' src/bin/iris/sys/install/*.rs | sort)
           [ -n "$contract" ] || { echo "packaging/CONTRACT.md lists no assets"; exit 1; }
-          defs=$(grep -hE 'const [A-Z_]*ASSET\b' src/bin/iris/sys/install/*.rs | wc -l)
-          if [ "$defs" -eq 0 ] || [ "$(echo "$updater" | grep -c .)" -ne "$defs" ]; then
-            echo "parsed updater assets [$updater] from $defs ASSET definitions"
+          echo "packaging/CONTRACT.md lists $(grep -c . <<<"$contract") assets"
+          [ -z "$(uniq -d <<<"$contract")" ] || { echo "packaging/CONTRACT.md lists an asset twice: $(uniq -d <<<"$contract")"; exit 1; }
+          literals=$(sed -nE 's/^pub const [A-Z_]*ASSET: &str = "([^"]+)";/\1/p' src/bin/iris/sys/install/*.rs)
+          defs=$(awk '/const [A-Z_]*ASSET[^A-Za-z0-9_]/ { n++ } END { print n + 0 }' src/bin/iris/sys/install/*.rs)
+          if [ "$defs" -eq 0 ] || [ "$(grep -c . <<<"$literals")" -ne "$defs" ]; then
+            echo "parsed updater assets [$literals] from $defs ASSET definitions"
             exit 1
           fi
+          updater=$(while read -r asset; do
+            for arch in x86_64 aarch64; do echo "${asset//"{arch}"/$arch}"; done
+          done <<<"$literals" | sort -u)
           unlisted=$(comm -13 <(echo "$contract") <(echo "$updater"))
           [ -z "$unlisted" ] || { echo "the updater downloads assets the contract lacks: $unlisted"; exit 1; }
-          want=$(for a in $contract; do echo "iris-$version-$a"; echo "iris-$version-$a.sha256"; done | sort)
-          have=$(ls dist | sort)
+          awk -v prefix="iris-$VERSION-" '{ print prefix $0 }' <<<"$contract" > "$RUNNER_TEMP/assets"
+          want=$(sed 'p; s/$/.sha256/' "$RUNNER_TEMP/assets" | sort)
+          have=$(find dist -mindepth 1 -printf '%P\n' | sort)
           if [ "$want" != "$have" ]; then
             echo "release assets differ from the contract (< contract, > built):"
             diff <(echo "$want") <(echo "$have") || true
             exit 1
           fi
           (cd dist && sha256sum -c ./*.sha256)
+      # minisign from its release archive, checked against the SHA-256
+      # of the archive jedisct1 signed for 0.12.
+      - name: Install minisign 0.12
+        run: |
+          set -euo pipefail
+          archive=minisign-0.12-linux.tar.gz
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://github.com/jedisct1/minisign/releases/download/0.12/$archive"
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $archive" | sha256sum -c -
+          tar --warning=no-unknown-keyword -xzf "$archive" minisign-linux/x86_64/minisign
+          mkdir -p bin
+          install -m 0755 minisign-linux/x86_64/minisign bin/minisign
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # The secret is the base64 of the unencrypted minisign secret key
+      # file. The key file exists, mode 600, only while this step runs.
+      # The updater verifies a stream and accepts only prehashed
+      # signatures: the signature line (the .minisig's second line)
+      # decodes to the algorithm `ED` (45 44), never the legacy `Ed`.
+      - name: Sign every asset
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          [ -n "$MINISIGN_SECRET_KEY" ] || { echo "::error::the MINISIGN_SECRET_KEY secret is empty or unset"; exit 1; }
+          (umask 077 && base64 -d <<<"$MINISIGN_SECRET_KEY" > "$key")
+          chmod 600 "$key"
+          while read -r asset; do
+            minisign -S -s "$key" -m "dist/$asset" -t "file:$asset version:$VERSION" </dev/null
+            algorithm=$(sed -n 2p "dist/$asset.minisig" | base64 -d | od -An -tx1 | tr -d ' \n' | cut -c1-4)
+            if [ "$algorithm" != 4544 ]; then
+              echo "::error::$asset.minisig has signature algorithm bytes $algorithm, not 4544 (ED, prehashed)"
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/assets"
+          rm -f "$key"
+      # Each signature verifies against the committed public key the
+      # updater embeds, with the trusted comment the updater requires.
+      # The release then holds each asset, its .sha256, and its
+      # .minisig, and nothing else.
+      - name: Verify every signature
+        run: |
+          set -euo pipefail
+          while read -r asset; do
+            out=$(minisign -V -p packaging/minisign.pub -m "dist/$asset" -x "dist/$asset.minisig")
+            comment=$(sed -n 's/^Trusted comment: //p' <<<"$out")
+            echo "$asset.minisig: $(head -n1 <<<"$out"); trusted comment: $comment"
+            if [ "$comment" != "file:$asset version:$VERSION" ]; then
+              echo "::error::$asset.minisig has the trusted comment '$comment', not 'file:$asset version:$VERSION'"
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/assets"
+          want=$(sed 'p; s/$/.sha256/p; s/\.sha256$/.minisig/' "$RUNNER_TEMP/assets" | sort)
+          have=$(find dist -mindepth 1 -printf '%P\n' | sort)
+          if [ "$want" != "$have" ]; then
+            echo "signed release assets differ from the contract (< contract, > built):"
+            diff <(echo "$want") <(echo "$have") || true
+            exit 1
+          fi
+          ls -l dist
       - name: Publish the release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          name: iris ${{ needs.gate.outputs.version }}
+          body_path: ${{ runner.temp }}/notes/notes.md
+          prerelease: ${{ needs.gate.outputs.prerelease == 'true' }}
           files: dist/*
           fail_on_unmatched_files: true
-          generate_release_notes: true

@@ -10,59 +10,14 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
-
 jobs:
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
-        with:
-          toolchain: stable
-          components: clippy
-      # ffmpeg: the recorder tests encode, join, and ffprobe real files.
-      - name: Install Linux build deps (gpui + pipewire + X11) and ffmpeg
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config cmake clang \
-            libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
-            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
-            libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
-            libpipewire-0.3-dev libspa-0.2-dev \
-            xdg-desktop-portal ffmpeg
-      - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Test
-        run: cargo test --locked
+    name: Test
+    uses: ./.github/workflows/test.yml
 
   package:
     name: Package
     uses: ./.github/workflows/package.yml
-
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
-        with:
-          toolchain: stable
-          components: rustfmt
-      - run: cargo fmt --all -- --check
 
   security-audit:
     name: Security Audit
@@ -73,6 +28,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # `cargo audit` runs through the toolchain rust-toolchain.toml pins.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-audit@0.22.2

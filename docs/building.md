@@ -1,10 +1,13 @@
 # Building
 
 ```sh
+rustup toolchain install
 cargo build --release --bin iris
 ```
 
-The executable is written to `target/release/iris` (`target\release\iris.exe` on Windows). Building requires Rust 1.90 or newer.
+`rust-toolchain.toml` pins the Rust toolchain to 1.98.0 with the `clippy` and `rustfmt` components. In the checkout, `rustup toolchain install` installs it and `cargo` uses it. CI and the release builds use the same toolchain; other toolchains are not tested.
+
+The executable is written to `target/release/iris` (`target\release\iris.exe` on Windows), unless the Cargo configuration sets another target directory. It is built for the host's architecture: `x86_64` or `aarch64`.
 
 ## Build Dependencies
 
@@ -19,6 +22,8 @@ sudo apt-get install -y \
   libpipewire-0.3-dev libspa-0.2-dev xdg-desktop-portal
 ```
 
+The same packages build iris on `amd64` and `arm64`.
+
 ### Fedora and RHEL
 
 ```sh
@@ -32,7 +37,7 @@ sudo dnf install -y \
 
 ### Windows
 
-Install the `x86_64-pc-windows-msvc` Rust toolchain and the Visual Studio Build Tools with the Windows SDK. `build.rs` compiles `packaging/windows/iris.rc`, the icon and version resource, with the SDK's resource compiler.
+Install the Visual Studio Build Tools with the Windows SDK and the MSVC C++ build tools for the host's architecture: x64, or ARM64 on Windows on Arm. rustup installs the pinned toolchain for the host: `x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc`. `build.rs` compiles `packaging/windows/iris.rc`, the icon and version resource, with the SDK's resource compiler.
 
 ### macOS
 
@@ -44,7 +49,7 @@ xcode-select --install
 
 ## Packages
 
-Each packaging script takes the executable with `--bin` (`--binary` on Windows) and writes the package and its `.sha256` sidecar to the directory given with `--out`. The version is read from `Cargo.toml`. `packaging/CONTRACT.md` lists the asset names and the install layout.
+Each packaging script takes the executable with `--bin` and writes the package and its `.sha256` sidecar to the directory given with `--out`. `--version` sets the version, which defaults to the one in `Cargo.toml`. `--arch x86_64` or `--arch aarch64` sets the architecture in the asset name, which defaults to the executable's; a script fails when `--arch` differs from the executable's architecture. The scripts do not sign: the release workflow signs every asset with minisign ([Releasing](../RELEASING.md)). `packaging/CONTRACT.md` lists the asset names, the version forms each package format uses, and the install layout.
 
 ### Linux
 
@@ -54,15 +59,17 @@ bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
 bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
 ```
 
-`build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version the executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` runs `appimagetool` from `PATH`, from `--appimagetool <path>`, or downloads it to `.build-staging/`.
+On an x86_64 host this writes `iris-<ver>-linux-x86_64.deb`, `.rpm`, and `.AppImage`; on an aarch64 host, `iris-<ver>-linux-aarch64.deb`, `.rpm`, and `.AppImage`.
 
-The release workflow (`.github/workflows/package.yml`) builds the Linux executable in the `rust:1-bookworm` container (Debian 12). That executable uses no glibc symbol version newer than 2.35, so the packages install on glibc 2.35 and later. An executable built on a newer system requires that system's glibc.
+`build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version the executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` downloads appimagetool 1.9.1 for the build host to `.build-staging/` and the type2-runtime release 20251108 for the target architecture, and fails unless each download has the SHA-256 recorded in the script. `--appimagetool <path>` runs another appimagetool.
+
+The release workflow (`.github/workflows/package.yml`) builds the Linux executable in the `rust:1.98.0-bookworm` container (Debian 12, the pinned toolchain), on an x86_64 runner and on an aarch64 runner (`ubuntu-24.04-arm`). That executable uses no glibc symbol version newer than 2.35, so the packages install on glibc 2.35 and later. An executable built on a newer system requires that system's glibc.
 
 `packaging/linux/check_installed.sh` starts an installed iris on a private Xvfb display, waits for the home window, and quits it. With `--upgrade <command>`, it runs the command while the daemon runs, checks that the daemon still runs on the replaced binary, quits it with the upgraded iris, and starts the upgraded iris. To check an upgrade of an installed deb to a package of the same binary at a higher version:
 
 ```sh
 bash packaging/linux/build_deb.sh --bin target/release/iris --version 0.1.0.1 --out dist/next
-bash packaging/linux/check_installed.sh --upgrade "sudo apt-get install -y ./dist/next/iris-0.1.0.1-linux-x86_64.deb"
+bash packaging/linux/check_installed.sh --upgrade "sudo apt-get install -y ./dist/next/iris-0.1.0.1-linux-$(uname -m).deb"
 ```
 
 ### Windows
@@ -71,9 +78,11 @@ In Git Bash, with NSIS's `makensis` on `PATH`:
 
 ```sh
 cargo build --locked --release --bin iris
-bash packaging/windows/build_installer.sh --binary target/release/iris.exe --out dist
-bash packaging/windows/build_portable.sh --binary target/release/iris.exe --out dist
+bash packaging/windows/build_installer.sh --bin target/release/iris.exe --out dist
+bash packaging/windows/build_portable.sh --bin target/release/iris.exe --out dist
 ```
+
+On an x64 PC this writes `iris-<ver>-windows-x86_64-setup.exe` and `iris-<ver>-windows-x86_64-portable.zip`; on Windows on Arm, the `windows-aarch64` pair.
 
 ### macOS
 
@@ -94,12 +103,13 @@ packaging/macos/make_dmg.sh --app dist/iris.app --out dist
 
 ```sh
 cargo test --locked
+cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
 The recorder tests encode and probe files with `ffmpeg` and `ffprobe` from `PATH`.
 
-The window tests on Linux open windows on the X server named by `IRIS_X11_TEST_DISPLAY` and are skipped when it is unset. Run them on a private Xvfb server:
+The window tests on Linux open windows on the X display set in `IRIS_X11_TEST_DISPLAY` and are skipped when it is unset. Run them on a private Xvfb server:
 
 ```sh
 xvfb-run -a -s '-screen 0 1600x1000x24' \

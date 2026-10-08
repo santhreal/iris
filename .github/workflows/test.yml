@@ -1,0 +1,67 @@
+name: Test
+
+# The formatting check, clippy, and the test suite on every platform
+# iris ships for. CI runs it on every push and pull request; the
+# release workflow runs it before it publishes.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # With no toolchain argument, rustup installs the toolchain and
+      # components rust-toolchain.toml pins.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  test:
+    name: Test (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-24.04 }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { platform: windows-x86_64, runner: windows-latest }
+          - { platform: windows-aarch64, runner: windows-11-arm }
+          - { platform: macos-aarch64, runner: macos-latest }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: test-${{ matrix.platform }}
+      # ffmpeg: the recorder tests encode, join, and ffprobe real files.
+      - name: Install Linux build deps (gpui + pipewire + X11) and ffmpeg
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake clang \
+            libasound2-dev libfontconfig-dev libglib2.0-dev libssl-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxcb1-dev \
+            libvulkan1 libegl1-mesa-dev libgl1-mesa-dev \
+            libpipewire-0.3-dev libspa-0.2-dev \
+            xdg-desktop-portal ffmpeg
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked

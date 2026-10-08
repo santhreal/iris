@@ -1,172 +1,79 @@
 #!/usr/bin/env bash
+# make_app.sh: assembles the iris.app bundle for macOS.
+#
+#   packaging/macos/make_app.sh --bin <path> --out <dir> [--version <ver>]
+#
+#   --bin <path>      the iris executable (universal: x86_64 and arm64)
+#   --out <dir>       the directory iris.app is written to
+#   --version <ver>   the iris version (default: Cargo.toml)
+#
+# Bundle layout:
+#   iris.app/Contents/Info.plist      packaging/macos/Info.plist with
+#                                     CFBundleShortVersionString and
+#                                     CFBundleVersion set to the
+#                                     major.minor.patch of {ver}, and
+#                                     IrisVersion set to {ver}
+#   iris.app/Contents/PkgInfo
+#   iris.app/Contents/MacOS/iris
+#   iris.app/Contents/Resources/iris.icns
+#   iris.app/Contents/Resources/{LICENSE-MIT,LICENSE-APACHE,Inter-OFL.txt}
+#
+# On macOS the bundle gets an ad-hoc code signature.
 set -euo pipefail
-
-# make_app.sh — Assembles the iris.app macOS application bundle
-#
-# References:
-#   packaging/CONTRACT.md
-#
-# Bundle Structure:
-#   iris.app/
-#     Contents/
-#       Info.plist
-#       PkgInfo
-#       MacOS/
-#         iris (executable)
-#       Resources/
-#         iris.icns (application icon)
-#
-# Usage:
-#   ./make_app.sh [options] [binary-path] [output-dir]
-#
-# Options:
-#   -b, --bin <path>      Path to iris executable binary
-#   -o, --out <dir>       Output directory where iris.app will be created (default: dist)
-#   -v, --version <ver>   App version (default: from Cargo.toml)
-#   -h, --help            Show this help message
+# Bundle directories are 0755 and files 0644 whatever the caller's umask.
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
-show_help() {
-  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; seen = 1; next } seen { exit }' "$0"
-  exit 0
-}
+# shellcheck source=packaging/lib.sh
+. "$REPO_ROOT/packaging/lib.sh"
 
 IRIS_BIN=""
 OUT_DIR=""
 VERSION=""
-
-# Parse flags and arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -b|--bin)
-      IRIS_BIN="$2"
-      shift 2
-      ;;
-    -o|--out)
-      OUT_DIR="$2"
-      shift 2
-      ;;
-    -v|--version)
-      VERSION="$2"
-      shift 2
-      ;;
-    -h|--help)
-      show_help
-      ;;
-    -*)
-      echo "Error: Unknown option $1" >&2
-      exit 1
-      ;;
-    *)
-      if [[ -z "$IRIS_BIN" ]]; then
-        IRIS_BIN="$1"
-      elif [[ -z "$OUT_DIR" ]]; then
-        OUT_DIR="$1"
-      else
-        echo "Error: Unexpected argument $1" >&2
-        exit 1
-      fi
-      shift
-      ;;
+    --bin) IRIS_BIN=${2:?--bin needs a path}; shift 2 ;;
+    --out) OUT_DIR=${2:?--out needs a directory}; shift 2 ;;
+    --version) VERSION=${2:?--version needs a version}; shift 2 ;;
+    -h|--help) iris_help "$0"; exit 0 ;;
+    *) echo "Error: unknown argument $1 (see --help)" >&2; exit 2 ;;
   esac
 done
-
-OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist}"
-
-# 1. Locate iris binary if not explicitly provided
-if [[ -z "$IRIS_BIN" ]]; then
-  SEARCH_PATHS=(
-    "$REPO_ROOT/target/universal-apple-darwin/release/iris"
-    "$REPO_ROOT/target/aarch64-apple-darwin/release/iris"
-    "$REPO_ROOT/target/x86_64-apple-darwin/release/iris"
-    "$REPO_ROOT/target/release/iris"
-    "$REPO_ROOT/target/debug/iris"
-  )
-  for candidate in "${SEARCH_PATHS[@]}"; do
-    if [[ -f "$candidate" && -x "$candidate" ]]; then
-      IRIS_BIN="$candidate"
-      break
-    fi
-  done
+if [[ -z "$IRIS_BIN" || -z "$OUT_DIR" ]]; then
+  echo "Error: --bin and --out are required (see --help)" >&2
+  exit 2
 fi
-
-if [[ -z "$IRIS_BIN" || ! -f "$IRIS_BIN" ]]; then
-  echo "Error: iris executable binary not found." >&2
-  if [[ -n "$IRIS_BIN" ]]; then
-    echo "  Specified path does not exist: $IRIS_BIN" >&2
-  else
-    echo "  Looked in:" >&2
-    for candidate in "${SEARCH_PATHS[@]}"; do
-      echo "    - $candidate" >&2
-    done
-  fi
-  echo "" >&2
-  echo "Please build the binary first or specify its location:" >&2
-  echo "  $0 --bin <path-to-iris-binary> [--out <output-dir>]" >&2
+if [[ ! -f "$IRIS_BIN" ]]; then
+  echo "Error: $IRIS_BIN does not exist" >&2
   exit 1
 fi
 
-# 2. Determine version
-if [[ -z "$VERSION" ]]; then
-  if [[ -f "$REPO_ROOT/Cargo.toml" ]]; then
-    VERSION=$(grep -m1 '^version = ' "$REPO_ROOT/Cargo.toml" | sed -E 's/version = "([^"]+)"/\1/')
-  fi
-fi
-VERSION="${VERSION:-0.1.0}"
+VERSION=${VERSION:-$(iris_cargo_version "$REPO_ROOT")}
+CORE_VERSION=$(iris_core_version "$VERSION")
 
-# 3. Prepare target bundle structure
 APP_DIR="$OUT_DIR/iris.app"
 CONTENTS_DIR="$APP_DIR/Contents"
-MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-
-echo "==> Assembling iris.app"
-echo "    Binary:  $IRIS_BIN"
-echo "    Version: $VERSION"
-echo "    Target:  $APP_DIR"
+echo "Assembling $APP_DIR from $IRIS_BIN (version $VERSION, bundle version $CORE_VERSION)"
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-
-# 4. Copy binary
-cp "$IRIS_BIN" "$MACOS_DIR/iris"
-chmod +x "$MACOS_DIR/iris"
-
-# 5. Copy application icon
-ICON_SRC="$REPO_ROOT/packaging/icons/iris.icns"
-if [[ ! -f "$ICON_SRC" ]]; then
-  echo "Error: Icon file missing at $ICON_SRC" >&2
+mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR"
+install -m 0755 "$IRIS_BIN" "$CONTENTS_DIR/MacOS/iris"
+cp "$REPO_ROOT/packaging/icons/iris.icns" "$RESOURCES_DIR/iris.icns"
+iris_license_files "$REPO_ROOT" "$RESOURCES_DIR"
+sed -e "s/@IRIS_CORE_VERSION@/$CORE_VERSION/g" -e "s/@IRIS_VERSION@/$VERSION/g" \
+  "$SCRIPT_DIR/Info.plist" >"$CONTENTS_DIR/Info.plist"
+if grep -q '@IRIS_' "$CONTENTS_DIR/Info.plist"; then
+  echo "Error: $CONTENTS_DIR/Info.plist holds a placeholder make_app.sh does not set" >&2
   exit 1
 fi
-cp "$ICON_SRC" "$RESOURCES_DIR/iris.icns"
-
-# 6. Generate Info.plist with injected version
-PLIST_SRC="$SCRIPT_DIR/Info.plist"
-if [[ ! -f "$PLIST_SRC" ]]; then
-  echo "Error: Info.plist template missing at $PLIST_SRC" >&2
-  exit 1
-fi
-
-sed -E \
-  -e "/<key>CFBundleShortVersionString<\/key>/ { n; s|<string>[^<]*</string>|<string>${VERSION}</string>|; }" \
-  -e "/<key>CFBundleVersion<\/key>/ { n; s|<string>[^<]*</string>|<string>${VERSION}</string>|; }" \
-  "$PLIST_SRC" > "$CONTENTS_DIR/Info.plist"
-
 if command -v plutil >/dev/null 2>&1; then
-  plutil -replace CFBundleShortVersionString -string "$VERSION" "$CONTENTS_DIR/Info.plist"
-  plutil -replace CFBundleVersion -string "$VERSION" "$CONTENTS_DIR/Info.plist"
   plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 fi
+printf 'APPL????' >"$CONTENTS_DIR/PkgInfo"
 
-# 7. Write PkgInfo
-printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
-
-# 8. Ad-hoc codesign if running on macOS with codesign available
 if command -v codesign >/dev/null 2>&1; then
-  echo "==> Applying ad-hoc code signature..."
   codesign --force --deep --sign - "$APP_DIR"
 fi
-
-echo "==> Created successfully: $APP_DIR"
+echo "Built $APP_DIR"
