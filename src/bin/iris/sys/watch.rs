@@ -11,7 +11,7 @@
 
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -51,7 +51,7 @@ pub enum Woke {
     Changed,
     /// The watch's [`Waker`] was called.
     Woken,
-    /// The limit passed, or a signal interrupted the wait.
+    /// The limit passed, or a signal interrupted a wait with no limit.
     Limit,
 }
 
@@ -81,9 +81,11 @@ impl DirWatch {
 
     /// Block until a watched entry changes, the waker is called, or
     /// `limit` passes; `None` waits with no limit. Changes reported
-    /// before the wait that no wait has returned end it at once.
+    /// before the wait that no wait has returned end it at once. A wait
+    /// with a limit returns [`Woke::Limit`] only once `limit` has passed
+    /// on the monotonic clock.
     pub fn wait(&self, limit: Option<Duration>) -> Woke {
-        self.0.wait(limit)
+        wait_out(limit, |left| self.0.wait(left))
     }
 }
 
@@ -91,5 +93,23 @@ impl Waker {
     /// End the wait in progress on the watch, and every later one.
     pub fn wake(&self) {
         self.0.wake();
+    }
+}
+
+/// Call `once` with what is left of `limit` until it returns other than
+/// [`Woke::Limit`] or `limit` has passed on the monotonic clock. An OS
+/// wait can end short of its timeout: Windows times it on a clock that
+/// advances once per timer tick, and a signal ends a Unix wait. With no
+/// limit, `once` runs once.
+fn wait_out(limit: Option<Duration>, mut once: impl FnMut(Option<Duration>) -> Woke) -> Woke {
+    let Some(deadline) = limit.and_then(|limit| Instant::now().checked_add(limit)) else {
+        return once(limit);
+    };
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match once(Some(left)) {
+            Woke::Limit if Instant::now() < deadline => {}
+            woke => return woke,
+        }
     }
 }

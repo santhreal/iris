@@ -24,7 +24,7 @@ Dimensions and styling:
 
 A single left click runs the action configured by `toast_click_action` in [configuration.md#toast](configuration.md#toast):
 - `markup` (default): Opens the annotation editor over the capture (see [editor.md#annotation-editor](editor.md#annotation-editor)).
-- `copy`: Copies raw image pixels to the system clipboard on a background thread and reports `"Copied image"` on the status band.
+- `copy`: Copies raw image pixels to the system clipboard on a background thread and reports `"Copied image"` on the status line.
 - `open-folder`: Reveals the saved file in the desktop file manager.
 - `none`: Leaves the toast visible without action.
 
@@ -55,38 +55,39 @@ The card remains visible for `toast_duration_ms` (default: `5000` ms):
   - An active OCR task holds the countdown open.
   - Pinning the toast card suspends auto-dismissal indefinitely.
 
-## Toast Action Bar
+## Hover Actions
 
-When `toast_show_actions` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), an action bar renders across the lower edge of the card.
+When `toast_show_actions` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), moving the pointer over the card fades in a capsule of action buttons centered 6 logical pixels above the card's lower edge; moving the pointer off fades it out. The fade runs 120 milliseconds and continues from its current opacity when the pointer crosses the card's edge mid-fade. On X11 with no compositing manager, the capsule appears and disappears at once. At rest the card shows only the capture.
 
-The bar contains a centered row of 26×26 logical pixel icon buttons (3px gap, 6px bottom margin). The buttons do not display text tooltips.
+The capsule holds 24×24 logical pixel icon buttons with 14 pixel glyphs, in groups separated by hairlines. Resting the pointer on a button for 500 milliseconds shows its name in a tooltip:
+1. **Keep Open** (pin icon): Toggles the pinned state of the toast notification card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). The button fills with the accent color while pinned, and its tooltip reads **Allow to Close**.
+2. **Copy Image** (copy icon): Encodes and copies image pixels to the system clipboard on a background thread.
+3. **Copy File** (share icon): Copies the file path in platform file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
+4. **Show in Folder** (folder icon; **Show in Finder** on macOS, **Show in File Explorer** on Windows): Reveals the file in the desktop file manager.
+5. **Markup** (pen icon): Opens the image in the annotation editor.
+6. **Move to Trash** (trash icon): Moves the PNG file to the system trash, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast ([library.md#move-to-trash](library.md#move-to-trash)).
 
-Buttons render in the following order:
-1. **Pin** (pin icon): Toggles the pinned state of the toast notification card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). Displays an active highlight fill while pinned.
-2. **Copy image** (copy icon): Encodes and copies image pixels to the system clipboard on a background thread.
-3. **Copy file** (grid icon): Copies the file path in platform file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
-4. **Open folder** (viewfinder icon): Reveals the file in the desktop file manager.
-5. **Annotate** (pen icon): Opens the image in the annotation editor.
-6. **Delete** (trash icon): Deletes the PNG file from disk, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast.
+A pinned card shows a 20 logical pixel accent disc with a pin glyph in its top-right corner while the capsule is hidden.
 
-## Status Band
+## Status Line
 
-When an action produces feedback, the action bar is replaced by a status band across the lower edge of the card:
-- Renders white text on a dark background at 86% opacity.
+When an action produces feedback, a status line takes the capsule's place over the card's lower edge:
+- Renders 11 pixel medium-weight text, centered, on the capsule's frosted fill.
+- Shows while the pointer is off the card, while OCR runs, and for 1.6 seconds after it was set; after that, the pointer over the card brings the capsule back.
 - Re-arms the auto-dismiss timer for `toast_duration_ms` so the message remains readable.
-- Displays completion feedback (such as `"Copied image"` or `"Copied file"`) or error descriptions (such as `"Delete failed: <error>"`).
+- Displays completion feedback (such as `"Copied image"` or `"Copied file"`) or error descriptions (such as `"Could not move <file> to the Trash: <reason>"`).
 
 ## OCR Text Extraction
 
 Trigger OCR text extraction via the **Copy text (OCR)** item in the right-click context menu:
-- Sets the status band to `"Reading text…"` and holds the auto-dismiss timer open.
+- Sets the status line to `"Reading text…"` and holds the auto-dismiss timer open.
 - Executes `tesseract <source> stdout` as a background process.
 - Requires Tesseract installed on the host system. Missing binary errors report platform installation instructions:
   - **Linux**: `tesseract is not installed: install the tesseract package (tesseract-ocr on Debian and Ubuntu)`
   - **macOS**: `tesseract is not installed: run `brew install tesseract``
   - **Windows**: `tesseract is not installed: run `winget install UB-Mannheim.TesseractOCR``
 - If the image contains no recognized characters, reports `"no text recognized in this image"`.
-- On completion, copies extracted text to the system clipboard as UTF-8 text and displays `"Copied <count> characters"` on the status band.
+- On completion, copies extracted text to the system clipboard as UTF-8 text and displays `"Copied <count> characters"` on the status line.
 
 ## Context Menu
 
@@ -97,7 +98,7 @@ Menu choices in order:
 2. **Copy**: Copies raw image pixels to the system clipboard.
 3. **Copy text (OCR)**: Extracts text using Tesseract and copies it to the clipboard.
 4. **Pin to screen**: Spawns an independent always-on-top reference window and dismisses the toast.
-5. **Delete**: Deletes the PNG file, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
+5. **Move to Trash**: Moves the PNG file to the system trash, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
 6. **Close**: Dismisses the toast card immediately.
 
 ## Reveal in Folder
@@ -120,6 +121,7 @@ Triggered via the toast context menu (**Pin to screen**):
 - Closing gestures:
   - Double-click anywhere on the image.
   - Press `Escape`.
+  - Click the close button. It shows as a 22 logical pixel disc with an × glyph 8 logical pixels from the top-left corner while the pointer is over the window.
 
 ## Notices
 
@@ -127,7 +129,7 @@ A notice is a 380 logical pixel wide card in the toast corner of the primary dis
 - A saved recording: a check mark, the title, the file name, and a folder button that reveals the file in the system file manager (see [Reveal in Folder](#reveal-in-folder) and [recording.md](recording.md#completion-and-failure-notices)).
 - A failed command: an alert mark in red, the title, and the error on up to three lines, ending in an ellipsis when longer.
 
-The **×** button at the card's right edge dismisses it.
+The title is 13 pixel semibold text on a 24 logical pixel line, centered on the 24×24 logical pixel buttons and the 18 pixel glyph beside it; the detail is 11 pixel text in the secondary color on 15 pixel lines. The **×** button at the card's right edge dismisses it. Resting the pointer on a button shows its name in a tooltip.
 
 Failure titles:
 

@@ -1,6 +1,7 @@
 # Summary
 
 - [Installation](install.md)
+- [Updates](updates.md)
 - [Usage](usage.md)
 - [Command-Line Interface](cli.md)
 - [Configuration](configuration.md)

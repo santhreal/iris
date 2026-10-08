@@ -15,15 +15,28 @@ fn an_install_from_no_appimage_and_no_package_refuses_to_update() {
             exe.display()
         ))
     );
-    assert_eq!(asset(), APPIMAGE_ASSET);
+    assert_eq!(
+        asset(),
+        format!("linux-{}.AppImage", std::env::consts::ARCH)
+    );
 }
 
-/// Each package downloads the release asset of its own kind: the deb's
-/// package manager installs no rpm, and neither an AppImage.
+/// Each package downloads the release asset of its own kind built for
+/// this architecture: the deb's package manager installs no rpm, and
+/// neither an AppImage, and an aarch64 iris installs no x86_64 build.
+/// Every name is one packaging/CONTRACT.md lists, so a release holds
+/// it.
 #[test]
 fn a_package_downloads_the_asset_its_package_manager_installs() {
-    assert_eq!(asset_of(Package::Deb), "linux-x86_64.deb");
-    assert_eq!(asset_of(Package::Rpm), "linux-x86_64.rpm");
+    let arch = std::env::consts::ARCH;
+    assert_eq!(asset_of(Package::Deb), format!("linux-{arch}.deb"));
+    assert_eq!(asset_of(Package::Rpm), format!("linux-{arch}.rpm"));
+    for name in [asset_of(Package::Deb), asset_of(Package::Rpm), asset()] {
+        assert!(
+            crate::sys::install::in_contract(&name),
+            "packaging/CONTRACT.md lists no iris-{{ver}}-{name}"
+        );
+    }
 }
 
 /// Every name in `dir`, sorted.

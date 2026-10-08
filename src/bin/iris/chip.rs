@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use gpui::*;
 use iris_lib::capture::WinRect;
 
-use crate::theme;
+use crate::{icons::Icon, theme};
 
 const CHIP_W: f32 = 208.0;
 const CHIP_H: f32 = 36.0;
@@ -226,6 +226,12 @@ fn pill_shadow() -> Vec<gpui::BoxShadow> {
     theme::shadow_tight()
 }
 
+/// One chip control: the shared ghost icon button, 24px with a 14px
+/// glyph and a hover wash.
+fn control(id: &'static str, glyph: Icon) -> Stateful<Div> {
+    crate::widgets::icon_button(id, glyph, false, 24.0)
+}
+
 impl Render for Chip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let elapsed = self.elapsed(Instant::now());
@@ -267,7 +273,7 @@ impl Render for Chip {
             .flex()
             .items_center()
             .justify_center()
-            .gap(px(8.))
+            .gap(px(6.))
             .child(
                 div()
                     .w(px(9.))
@@ -282,57 +288,31 @@ impl Render for Chip {
             )
             .child(
                 div()
+                    .mr(px(2.))
                     .text_size(px(theme::TEXT_BODY))
+                    .font_weight(FontWeight::MEDIUM)
+                    .font_features(theme::tabular())
                     .text_color(theme::FG)
-                    .font_family(theme::FONT)
                     .child(timer),
             )
             .child(
-                div()
-                    .id("chip-pause")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|_, _, _, cx| {
+                control("chip-pause", if paused { Icon::Play } else { Icon::Pause }).on_click(
+                    cx.listener(|_, _, _, cx| {
                         crate::daemon::run(cx, &crate::daemon::Command::RecordPause);
-                    }))
-                    .child(crate::icons::icon(
-                        if paused {
-                            crate::icons::Icon::Play
-                        } else {
-                            crate::icons::Icon::Pause
-                        },
-                        theme::FG_DIM,
-                        14.0,
-                    )),
+                    }),
+                ),
             )
             .child(
-                div()
-                    .id("chip-stop")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        crate::daemon::run(cx, &crate::daemon::Command::RecordStop);
-                    }))
-                    .child(crate::icons::icon(
-                        crate::icons::Icon::Stop,
-                        theme::FG_DIM,
-                        14.0,
-                    )),
+                control("chip-stop", Icon::Stop).on_click(cx.listener(|_, _, _, cx| {
+                    crate::daemon::run(cx, &crate::daemon::Command::RecordStop);
+                })),
             )
             .children(mic.map(|on| {
-                div()
-                    .id("chip-mic")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|_, _, _, cx| {
+                control("chip-mic", if on { Icon::Mic } else { Icon::MicOff }).on_click(
+                    cx.listener(|_, _, _, cx| {
                         crate::daemon::run(cx, &crate::daemon::Command::RecordMic);
-                    }))
-                    .child(crate::icons::icon(
-                        if on {
-                            crate::icons::Icon::Mic
-                        } else {
-                            crate::icons::Icon::MicOff
-                        },
-                        theme::FG_DIM,
-                        14.0,
-                    ))
+                    }),
+                )
             }));
         div().size_full().child(pill)
     }

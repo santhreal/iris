@@ -1,20 +1,25 @@
-//! WHY: the classes closed here are "a watch that misses a change" and
-//! "a watch that does not block". The first leaves a capture that
-//! another program deleted on the library grid, or a client waiting
-//! out its retry interval after the daemon bound: a removal, a move out,
-//! a made entry, a change in a directory past the first, a change that
-//! lands before the wait starts, and a watched directory removed. The
-//! second turns a thread that waits with no limit into a spin: a wait
-//! that returns again for a change it already reported, and a waker
-//! whose wake ends only one wait. Every case asserts its wait ends, and
-//! within what bound. Not covered: a change on a network filesystem
-//! made by another host, which no local watch reports, and a watch the
-//! OS refuses for want of inotify instances or watches.
+//! WHY: the classes closed here are "a watch that misses a change", "a
+//! watch that does not block", and "a timed wait that ends before its
+//! limit". The first leaves a capture that another program deleted on
+//! the library grid, or a client waiting out its retry interval after
+//! the daemon bound: a removal, a move out, a made entry, a change in a
+//! directory past the first, a change that lands before the wait
+//! starts, and a watched directory removed. The second turns a thread
+//! that waits with no limit into a spin: a wait that returns again for
+//! a change it already reported, and a waker whose wake ends only one
+//! wait. The third ends a quiet wait early wherever the OS wait ends
+//! short of its timeout: a Windows wait can end a timer tick short, and
+//! a signal ends a Unix wait. Stand-ins for the OS wait cover that
+//! class on every OS, along with a change or a wake ending a timed wait
+//! at once. Every case asserts its wait ends, and within what bound.
+//! Not covered: a change on a network filesystem made by another host,
+//! which no local watch reports, and a watch the OS refuses for want of
+//! inotify instances or watches.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::{DirWatch, Entries, Woke};
+use super::{wait_out, DirWatch, Entries, Woke};
 
 /// When a helper thread acts after a wait starts.
 const ACT_AFTER: Duration = Duration::from_millis(30);
@@ -27,11 +32,6 @@ const LONG: Duration = Duration::from_secs(5);
 
 /// A limit for a wait that no change should end.
 const QUIET: Duration = Duration::from_millis(200);
-
-/// How far short of a limit the OS timer may end a wait: Windows'
-/// WaitForMultipleObjects honors its timer resolution (as coarse as
-/// 15.6 ms under the default tick), not a wall clock.
-const SLACK: Duration = Duration::from_millis(25);
 
 fn file(dir: &Path, name: &str) -> PathBuf {
     let path = dir.join(name);
@@ -75,7 +75,7 @@ fn stays_quiet(watch: &DirWatch) {
     let took = start.elapsed();
     assert_eq!(woke, Woke::Limit, "a quiet wait ended after {took:?}");
     assert!(
-        (QUIET - SLACK..QUIET + PROMPT).contains(&took),
+        (QUIET..QUIET + PROMPT).contains(&took),
         "a {QUIET:?} wait ended after {took:?}"
     );
 }
@@ -221,25 +221,32 @@ fn a_waker_ends_a_wait_with_no_limit_and_every_later_one() {
     // fails the case at LONG instead of hanging the test binary.
     let (tx, rx) = std::sync::mpsc::channel();
     let waiter = std::thread::spawn(move || {
-        let start = Instant::now();
         let first = watch.wait(None);
-        let took = start.elapsed();
+        let ended = Instant::now();
         let later = [watch.wait(None), watch.wait(Some(LONG))];
-        tx.send((first, took, later, start.elapsed())).unwrap();
+        tx.send((first, ended, later, Instant::now())).unwrap();
     });
     std::thread::sleep(ACT_AFTER);
+    // Read before the wake, so a wait that the wake ended ends after it
+    // however late the waiter's thread started.
+    let woken = Instant::now();
     waker.wake();
-    let (first, took, later, total) = rx
+    let (first, ended, later, done) = rx
         .recv_timeout(LONG)
         .expect("a woken wait with no limit never ended");
     waiter.join().unwrap();
     assert_eq!(first, Woke::Woken);
     assert!(
-        took >= ACT_AFTER,
-        "the wait ended {took:?} in, before the wake"
+        ended >= woken,
+        "the wait ended {:?} before the wake",
+        woken - ended
     );
     assert_eq!(later, [Woke::Woken; 2], "a wake ends every later wait");
-    assert!(total < ACT_AFTER + PROMPT, "the woken waits took {total:?}");
+    assert!(
+        done - woken < PROMPT,
+        "the woken waits took {:?}",
+        done - woken
+    );
 }
 
 #[test]
@@ -249,4 +256,85 @@ fn an_empty_watch_waits_for_its_waker() {
     let waker = watch.waker();
     let (woke, took) = wait_while(&watch, Some(LONG), move || waker.wake());
     assert_eq!(woke, Woke::Woken, "ended after {took:?}");
+}
+
+/// How far short of its timeout a Windows wait can end: one timer tick
+/// at the default resolution.
+const TICK: Duration = Duration::from_millis(16);
+
+/// How long a stand-in for an OS wait blocks, given what is left of its
+/// limit.
+type Nap = fn(Duration) -> Duration;
+
+#[test]
+fn a_timed_wait_lasts_its_limit_when_the_os_wait_ends_short() {
+    let short: [(&str, Nap); 3] = [
+        ("a tick short", |left| left.saturating_sub(TICK)),
+        ("at half its timeout", |left| left / 2),
+        ("at once", |_| Duration::ZERO),
+    ];
+    for (how, nap) in short {
+        let mut slept = Duration::ZERO;
+        let start = Instant::now();
+        let woke = wait_out(Some(QUIET), |left| {
+            let left = left.expect("a timed wait passes what is left of its limit");
+            assert!(
+                left + slept <= QUIET,
+                "{how}: {left:?} passed after {slept:?} of waits"
+            );
+            let at = Instant::now();
+            std::thread::sleep(nap(left));
+            slept += at.elapsed();
+            Woke::Limit
+        });
+        let took = start.elapsed();
+        assert_eq!(woke, Woke::Limit, "{how}");
+        assert!(
+            (QUIET..QUIET + PROMPT).contains(&took),
+            "{how}: a {QUIET:?} wait ended after {took:?}"
+        );
+    }
+}
+
+#[test]
+fn a_change_or_a_wake_ends_a_timed_wait_at_once() {
+    for end in [Woke::Changed, Woke::Woken] {
+        let mut calls = 0;
+        let start = Instant::now();
+        let woke = wait_out(Some(LONG), |_| {
+            calls += 1;
+            std::thread::sleep(ACT_AFTER);
+            end
+        });
+        let took = start.elapsed();
+        assert_eq!((woke, calls), (end, 1), "after {took:?}");
+        assert!(
+            took < ACT_AFTER + PROMPT,
+            "{end:?} ended a wait after {took:?}"
+        );
+    }
+}
+
+/// A wait with no limit, or with one past what the clock holds, is one
+/// OS wait. A zero limit still makes one, which reports changes made
+/// before it.
+#[test]
+fn a_wait_with_no_deadline_or_a_zero_limit_is_one_os_wait() {
+    for limit in [None, Some(Duration::MAX), Some(Duration::ZERO)] {
+        let mut passed = Vec::new();
+        // A second call returns Woken, so a loop ends instead of hanging.
+        let woke = wait_out(limit, |left| {
+            passed.push(left);
+            if passed.len() == 1 {
+                Woke::Limit
+            } else {
+                Woke::Woken
+            }
+        });
+        assert_eq!(
+            (woke, passed),
+            (Woke::Limit, vec![limit]),
+            "limit {limit:?}"
+        );
+    }
 }

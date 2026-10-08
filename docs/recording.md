@@ -85,10 +85,10 @@ Geometry and layout:
 
 Components:
 - **Status dot**: 9×9 logical pixel circular indicator, solid red (`theme::DANGER`) while recording and faint gray (`theme::FG_FAINT`) at 0.35 opacity while paused.
-- **Elapsed timer**: Renders elapsed duration as `MM:SS`. Time spent paused is not counted. The chip draws a frame when the timer reaches the next second and when the pause or microphone state changes; a paused chip draws no frames until its state changes.
-- **Pause button**: Clickable icon button. Displays the Pause icon while recording and the Play icon while paused. Clicking sends `Command::RecordPause` to the daemon.
-- **Stop button**: Clickable icon button. Displays the Stop icon, a filled square. Clicking sends `Command::RecordStop` to the daemon, which stops and saves the recording and closes the chip. With no recording active, it starts none.
-- **Microphone button**: Clickable icon button. Displays the Mic icon when microphone capture is active and the MicOff icon when muted. Clicking sends `Command::RecordMic` to the daemon. Rendered only when `recording_format` supports audio (`mp4` or `webm`). For `gif` recordings, the button is omitted.
+- **Elapsed timer**: Renders elapsed duration as `MM:SS` in 13 pixel medium-weight text with tabular digits, so the timer holds its width as it counts. Time spent paused is not counted. The chip draws a frame when the timer reaches the next second and when the pause or microphone state changes; a paused chip draws no frames until its state changes.
+- **Pause button**: 24×24 logical pixel icon button with a hover wash. Displays the Pause icon while recording and the Play icon while paused. Clicking sends `Command::RecordPause` to the daemon.
+- **Stop button**: 24×24 logical pixel icon button with a hover wash. Displays the Stop icon, a filled square. Clicking sends `Command::RecordStop` to the daemon, which stops and saves the recording and closes the chip. With no recording active, it starts none.
+- **Microphone button**: 24×24 logical pixel icon button with a hover wash. Displays the Mic icon when microphone capture is active and the MicOff icon when muted. Clicking sends `Command::RecordMic` to the daemon. Rendered only when `recording_format` supports audio (`mp4` or `webm`). For `gif` recordings, the button is omitted.
 
 Window management and capture exclusion:
 - **Linux (X11)**: Border strips and the indicator chip window sit outside the recorded window pixmap. The border thread repositions the chip window via `configure_window` by XID. Window decorations are removed via `_MOTIF_WM_HINTS`. A region recording reads the screen, so a chip placed inside the area (when the monitor has no room above or below it) appears in the recording.

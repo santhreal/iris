@@ -8,24 +8,41 @@ use std::time::Instant;
 use gpui::SharedString;
 use iris_lib::library::CaptureEntry;
 
-use super::Library;
+use super::layout::{self, Day, Section};
 
-/// The shown captures, newest first, with each card's label pair and
-/// the toolbar count. The fields are private: a listing is shown only
-/// through [`Listing::set`], so no label, count, or selection outlives
-/// the listing it describes.
+/// A card's caption: the local time it was taken ("14:02"), its pixel
+/// size ("1920 × 1080"), and its file name for the caption's tooltip.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Caption {
+    pub time: SharedString,
+    pub dims: SharedString,
+    pub name: SharedString,
+}
+
+/// The shown captures, newest first, with each card's caption, the day
+/// sections, and the toolbar count. The fields are private: a listing is
+/// shown only through [`Listing::set`], so no caption, section, count, or
+/// selection outlives the listing it describes.
 #[derive(Default)]
 pub(super) struct Listing {
     /// Cards share their entry: render closures capture an Rc bump
     /// instead of cloning the path strings per card per frame.
     entries: Vec<Rc<CaptureEntry>>,
-    /// Each entry's fitted name and dimensions, parallel to `entries`:
-    /// built once per listing, not per card per frame.
-    names: Vec<(SharedString, SharedString)>,
+    /// Each entry's caption, parallel to `entries`: built once per
+    /// listing, not per card per frame.
+    captions: Vec<Caption>,
+    /// Each entry's local day, parallel to `entries`.
+    days: Vec<Day>,
+    sections: Vec<Section>,
+    /// The day the section titles were written against.
+    today: Day,
     count: SharedString,
     /// When the first listing landed. None until the store answers:
     /// until then the window shows no count and no empty state.
     listed: Option<Instant>,
+    /// Bumped whenever entries or section titles change, so a layout
+    /// built from an older listing is rebuilt.
+    generation: u64,
 }
 
 impl Listing {
@@ -33,8 +50,12 @@ impl Listing {
         &self.entries
     }
 
-    pub(super) fn names(&self) -> &[(SharedString, SharedString)] {
-        &self.names
+    pub(super) fn captions(&self) -> &[Caption] {
+        &self.captions
+    }
+
+    pub(super) fn sections(&self) -> &[Section] {
+        &self.sections
     }
 
     /// The toolbar count; empty until the first listing lands.
@@ -44,6 +65,10 @@ impl Listing {
 
     pub(super) fn listed(&self) -> Option<Instant> {
         self.listed
+    }
+
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// The folders that hold the shown captures, sorted, each once.
@@ -62,11 +87,17 @@ impl Listing {
     /// list. Returns the paths whose capture changed in place (an
     /// editor re-save keeps the path and moves `created_ms`), whose
     /// thumbnails are stale, or None when `fresh` is what is shown.
+    /// The listing is ordered newest first by `created_ms`, so each day
+    /// is one section; captures with equal times keep the store's order.
     pub(super) fn set(
         &mut self,
-        fresh: Vec<CaptureEntry>,
+        mut fresh: Vec<CaptureEntry>,
         selected: &mut Vec<PathBuf>,
+        today: Day,
     ) -> Option<Vec<PathBuf>> {
+        if !fresh.is_sorted_by(|a, b| a.created_ms >= b.created_ms) {
+            fresh.sort_by_key(|e| std::cmp::Reverse(e.created_ms));
+        }
         let unchanged = self.listed.is_some()
             && fresh.len() == self.entries.len()
             && fresh
@@ -74,6 +105,7 @@ impl Listing {
                 .zip(&self.entries)
                 .all(|(f, e)| f.path == e.path && f.created_ms == e.created_ms);
         if unchanged {
+            self.relabel(today);
             return None;
         }
         let shown: HashMap<&Path, i64> = self
@@ -92,14 +124,49 @@ impl Listing {
             .collect();
         let paths: HashSet<&Path> = fresh.iter().map(|e| e.path.as_path()).collect();
         selected.retain(|p| paths.contains(p.as_path()));
-        self.names = fresh.iter().map(Library::entry_name).collect();
+        (self.days, self.captions) = fresh
+            .iter()
+            .map(|e| {
+                let (day, time) = layout::day_and_time(e.created_ms);
+                (day, caption(e, time))
+            })
+            .unzip();
+        self.today = today;
+        self.sections = layout::sections(&self.days, today);
         self.count = SharedString::from(match fresh.len() {
             1 => "1 capture".to_owned(),
             n => format!("{n} captures"),
         });
         self.entries = fresh.into_iter().map(Rc::new).collect();
         self.listed.get_or_insert_with(Instant::now);
+        self.generation += 1;
         Some(stale)
+    }
+
+    /// Rewrite the section titles against `today`: past midnight,
+    /// "Today" becomes "Yesterday". True when a title changed.
+    pub(super) fn relabel(&mut self, today: Day) -> bool {
+        if today == self.today {
+            return false;
+        }
+        self.today = today;
+        self.sections = layout::sections(&self.days, today);
+        self.generation += 1;
+        true
+    }
+}
+
+/// `e`'s caption with its local time already formatted.
+pub(super) fn caption(e: &CaptureEntry, time: SharedString) -> Caption {
+    Caption {
+        time,
+        dims: SharedString::from(format!("{} × {}", e.width, e.height)),
+        name: SharedString::from(
+            e.path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ),
     }
 }
 

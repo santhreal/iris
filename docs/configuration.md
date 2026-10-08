@@ -46,7 +46,7 @@ The log file holds iris's diagnostic lines and the warnings and errors of the li
 
 ### Tilde Expansion
 
-A leading `~` in `screenshots_dir` and `recordings_dir` expands to the home directory (`directories::UserDirs::new().home_dir()`) on every platform. iris writes a directory under the home directory in `~` form, both when it generates `config.toml` and when the settings window saves, so the file stays valid on a machine with a different home directory. The settings window shows the directories in the same form.
+A leading `~` in `screenshots_dir` and `recordings_dir` expands to the home directory (`directories::UserDirs::new().home_dir()`) on every platform. iris writes a directory under the home directory in `~` form, both when it generates `config.toml` and when the settings window writes a change, so the file stays valid on a machine with a different home directory. The settings window shows the directories in the same form.
 
 ## Default Configuration
 
@@ -72,6 +72,8 @@ toast_position = "bottom-right"
 copy_to_clipboard = true
 cancel_keybind = "Escape"
 confirm_keybind = "Enter"
+check_for_updates = true
+update_channel = "stable"
 ```
 
 Missing fields in an existing `config.toml` fall back to default values upon loading. If parsing fails due to invalid TOML syntax, iris logs an error, uses default values in memory, and leaves the file unchanged.
@@ -110,9 +112,9 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 - `toast_drag_enabled` (Boolean, default: `true`):
   Enables dragging the thumbnail directly into external file managers, browsers, or applications.
 - `toast_pin_enabled` (Boolean, default: `true`):
-  Controls display of the pin button on the toast action bar (see [Pinned Windows](toast.md#pinned-windows)). Configured in `config.toml`; not exposed in the settings window.
+  Controls display of the **Keep Open** button in the toast's hover actions (see [Hover Actions](toast.md#hover-actions)). Configured in `config.toml`; not exposed in the settings window.
 - `toast_show_actions` (Boolean, default: `true`):
-  Displays action buttons under the toast thumbnail.
+  Shows the action buttons when the pointer is over the toast thumbnail.
 - `toast_duration_ms` (Integer, default: `5000`):
   Auto-dismiss countdown interval in milliseconds.
 - `toast_position` (String enum, default: `"bottom-right"`):
@@ -153,41 +155,49 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 - `confirm_keybind` (String, default: `"Enter"`):
   Key to confirm selection in the overlay or apply changes in the editor.
 
+### Updates
+
+- `check_for_updates` (Boolean, default: `true`):
+  Checks GitHub for a newer release in the background, about a minute after the daemon starts and then once a day. **Check Now** in the settings window checks regardless of this setting.
+- `update_channel` (String enum, default: `"stable"`):
+  Releases an update check offers (see [Channels](updates.md#channels)).
+  Allowed values:
+  - `"stable"`: The latest release. A draft or prerelease offers nothing.
+  - `"beta"`: The newest release by version, prerelease or not.
+
 ## Settings Window
 
 ![Settings Window](images/settings.png)
 
-Open the settings window by executing `iris --settings`, selecting **Settings** from the system tray menu, or clicking the gear button in the bottom-right corner of the home window. One settings window is open at a time: each of these raises and focuses the settings window when it is already open.
+Open the settings window by executing `iris --settings`, selecting **Settings** from the system tray menu, or clicking the gear button in the home window's toolbar. One settings window is open at a time: each of these raises and focuses the settings window when it is already open.
 
-The settings window contains seven sections:
-1. **Storage**: Configure screenshots directory, recordings directory, and filename template.
-2. **Capture**: Toggle screen flash, shutter sound, post-capture toast display, and automatic clipboard copy.
-3. **Toast**: Select click action, drag-to-export toggle, action buttons visibility, auto-dismiss duration (2s, 3s, 5s, 8s, 10s), and screen corner position.
-4. **Recording**: Configure frame rate, container format, MP4 encoder, and default microphone toggle.
-5. **Keyboard**: Record hotkeys for region capture, recording toggle, cancel action, and confirm action.
-6. **Startup**: Toggle **Start at login** (see [Start at Login](#start-at-login)).
-7. **Updates**: Displays current version, a **Check for updates** button, and an **Install update** button once a check finds a newer release (see [Updates](install.md#updates)).
+The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`Cmd+1` through `Cmd+5` on macOS), to show its pane. The window resizes to the height of the pane.
 
-Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×600. A mouse wheel tick scrolls the sections over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once.
+| Tab | Settings |
+| --- | --- |
+| **General** | **Start iris at login** (see [Start at Login](#start-at-login)); the screenshots and recordings folders and the file name template; **Restore Defaults** |
+| **Capture** | Screen flash, shutter sound, clipboard copy; the floating thumbnail ([toast](toast.md#toast-notifications)): show after capture, click action, dismiss delay (2, 3, 5, 8, or 10 seconds), screen corner, drag to export, action buttons |
+| **Recording** | Format, MP4 encoder, frames per second, record microphone by default |
+| **Shortcuts** | Global hotkeys for a new screenshot and recording; the selection overlay's cancel and confirm keys |
+| **Updates** | Automatic update checks, update channel, the running version, the time of the last check, **Check Now**, and **Install** once a check finds a newer release (see [Updates](updates.md#settings)) |
 
-### Save Behavior
+Press `Ctrl+W` (`Cmd+W` on macOS) or `Escape` to close the window. Drag the toolbar to move it.
 
-Pressing `Enter` in a text field commits the edit. A directory must be an absolute path or start with `~`, the filename template must include `{date}` or `{time}`, and frame rate must parse to an integer from 1 to 120. A rejected edit stays open with the typed text, and the error shows in the status line.
+### Applying Changes
 
-Clicking **Save**:
-1. Commits an open text edit under the same rules. A rejected edit stops the save.
-2. Serializes the updated configuration and writes to `config.toml` via `Config::store`.
-3. Updates the in-memory configuration cache with the directories expanded.
-4. Re-registers global hotkeys in the running daemon.
-5. Writes or deletes the start-at-login entry when it differs from the **Start at login** toggle.
+Each change writes `config.toml` through `Config::store` at once, and the in-memory configuration cache updates with the directories expanded. The window has no Save button.
 
-When the configuration or the start-at-login entry fails to save, the other still saves, and the status line shows the first error.
+- A switch or pop-up button applies on click.
+- A text field applies on `Enter`, on a click elsewhere in the window, on a tab change, and when the window loses focus. `Escape` discards the typed text. A directory must be an absolute path or start with `~`, the file name template must include `{date}` or `{time}`, and frames per second must be an integer from 1 to 120. A rejected value stays in the field with the reason beside it, and the window keeps the current tab until the value is corrected or discarded.
+- **Choose…** opens the system folder picker. When the picker cannot open, the path field opens for typing and the error shows in the window.
+- A shortcut field records the next key combination pressed while it is selected, `Escape` included. A combination that the other global hotkey, or the other overlay key, already holds is rejected with the name of the shortcut that holds it, and recording continues. A changed global hotkey re-registers in the running daemon at once.
+- **Restore Defaults** writes the default value of every `config.toml` setting and re-registers the global hotkeys. **Start iris at login** is not a `config.toml` setting and keeps its state.
 
-Clicking **Reset to defaults** restores default configuration values in the form. Restored values do not overwrite `config.toml` until **Save** is clicked.
+When `config.toml` cannot be written, the error shows in the window and the value on screen is not saved.
 
 ### Start at Login
 
-**Start at login** reads and writes this account's operating system entry that runs `iris --daemon` at login. `config.toml` holds no start-at-login setting. The toggle reads on only for an entry that starts the running iris; an entry that starts another copy of iris reads off, and **Save** points it at the running one.
+**Start iris at login** reads and writes this account's operating system entry that runs `iris --daemon` at login. `config.toml` holds no start-at-login setting. The switch reads on only for an entry that starts the running iris; an entry that starts another copy of iris reads off, and turning the switch on points it at the running one. The entry is written or deleted on click. When that fails, the switch returns to its previous state and the error shows in the window.
 
 | Platform | Entry | On | Off |
 | --- | --- | --- | --- |
@@ -195,6 +205,6 @@ Clicking **Reset to defaults** restores default configuration values in the form
 | macOS | `~/Library/LaunchAgents/dev.iris.app.plist` | Writes a LaunchAgent that runs this binary with `--daemon` at load, in the GUI session | Deletes the LaunchAgent |
 | Windows | Value `iris` of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | Writes `"<path of iris.exe>" --daemon` | Deletes the value |
 
-On Linux, a package's `/etc/xdg/autostart` entry reads on for a deb or rpm install and off for an AppImage, which the package entry does not start. An entry with `Hidden=true` or `X-GNOME-Autostart-enabled=false` reads off. On Windows, a Run value that Task Manager's **Startup apps** list turned off reads off, and **Save** deletes Task Manager's setting when it writes or deletes the Run value.
+On Linux, a package's `/etc/xdg/autostart` entry reads on for a deb or rpm install and off for an AppImage, which the package entry does not start. An entry with `Hidden=true` or `X-GNOME-Autostart-enabled=false` reads off. On Windows, a Run value that Task Manager's **Startup apps** list turned off reads off, and writing or deleting the Run value deletes Task Manager's setting.
 
-Changes apply at the next login. The toggle does not start or stop the running daemon.
+Changes apply at the next login. The switch does not start or stop the running daemon.

@@ -1,140 +1,83 @@
+//! One card of the library grid: the thumbnail with its hover actions
+//! and selection ring, and the caption under it.
+
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::*;
-use iris_lib::library::{self, CaptureEntry};
+use iris_lib::library::CaptureEntry;
 
-use crate::{pipeline, theme};
+use crate::icons::Icon;
+use crate::theme;
+use crate::widgets::tip;
 
-use super::{Library, CARD_W, LABEL_GAP, LABEL_PAD, THUMB_H};
+use super::listing::Caption;
+use super::{Library, CAPTION_GAP, CAPTION_H, CARD_W, THUMB_H};
+
+/// Thumbnail corner radius.
+pub(super) const THUMB_RADIUS: f32 = 8.0;
+/// The selection ring: RING wide, RING_GAP outside the thumbnail.
+pub(super) const RING: f32 = 2.0;
+pub(super) const RING_GAP: f32 = 2.0;
+
+/// One shared transparent tile for a card whose thumbnail has not
+/// decoded: minting a RenderImage per missing thumb per frame allocates
+/// an atlas slot on every paint.
+fn blank() -> Arc<RenderImage> {
+    static BLANK: std::sync::LazyLock<Arc<RenderImage>> =
+        std::sync::LazyLock::new(|| crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0]));
+    BLANK.clone()
+}
 
 impl Library {
+    /// Entry `index`'s card at document position (`x`, `y`): `hover_amt`
+    /// is its hover spring, 0 at rest and 1 under the pointer.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn card(
         &self,
         index: usize,
         entry: &Rc<CaptureEntry>,
+        caption: &Caption,
+        (x, y): (f32, f32),
         hover_amt: f32,
-        enter: f32,
-        sel_set: &std::collections::HashSet<PathBuf>,
+        selected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let selected = sel_set.contains(&entry.path);
         let hovered = self.hovered == Some(index);
-        let sel_amt = self.sel_springs.get(&index).map(|s| s.value).unwrap_or(0.0);
-        let squish = if self.pressed == Some(index) {
-            self.press_spring.value
-        } else {
-            0.0
-        };
         // One Rc bump feeds every closure below; the alternative is a
         // PathBuf clone per closure per render.
         let entry = entry.clone();
 
         let mut thumb = div()
-            .w_full()
-            .h(px(THUMB_H))
-            .rounded(px(10.))
+            .size_full()
+            .rounded(px(THUMB_RADIUS))
             .overflow_hidden()
             .bg(theme::SURFACE)
-            .shadow(vec![{
-                let mut s = theme::shadow_rest();
-                s.color.a *= 0.6 + 0.9 * hover_amt;
-                s.blur_radius = px((10. + 8.0 * hover_amt) * (1.0 - 0.3 * squish));
-                s.offset.y = px(2. + 4.0 * hover_amt + 1.0 * squish);
-                s
-            }])
-            .border_1()
-            .border_color(if selected {
-                theme::FG
-            } else {
-                theme::alpha(theme::FG, 0.0)
-            });
-        thumb = thumb.child(
-            div().absolute().top_0().left_0().size_full().child(
+            .child(
                 img(ImageSource::Render(
                     self.thumb_cache
                         .get(&entry.path)
                         .cloned()
-                        .unwrap_or_else(|| {
-                            // One shared transparent tile: minting a
-                            // RenderImage per missing thumb per frame
-                            // allocates an atlas slot on every paint.
-                            static BLANK: std::sync::LazyLock<Arc<RenderImage>> =
-                                std::sync::LazyLock::new(|| {
-                                    crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0])
-                                });
-                            BLANK.clone()
-                        }),
+                        .unwrap_or_else(blank),
                 ))
                 .size_full()
                 .object_fit(ObjectFit::Cover),
-            ),
-        );
+            )
+            // The hairline sits over the image: a border on the clipping
+            // box paints under its children.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(THUMB_RADIUS))
+                    .border_1()
+                    .border_color(theme::HAIRLINE),
+            );
 
-        // Selection circle, Photos-style: solid with a check when
-        // selected. Its pop is spring-driven; otherwise it rides
-        // the hover lift (or stays faintly up while selecting).
-        let selecting = !self.selected.is_empty();
-        let circle_vis =
-            sel_amt
-                .max(hover_amt)
-                .max(if selecting && !selected { 0.85 } else { 0.0 });
-        let circle = div()
-            .id(ElementId::NamedInteger("sel".into(), index as u64))
-            .absolute()
-            .top(px(6.))
-            .left(px(6.))
-            .w(px(18.))
-            .h(px(18.))
-            .rounded_full()
-            .border_1()
-            .opacity(circle_vis)
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer();
-        let circle = if selected {
-            let p = entry.clone();
-            circle
-                .bg(theme::ACCENT)
-                .border_color(theme::ACCENT)
-                .child(crate::icons::icon(
-                    crate::icons::Icon::Check,
-                    theme::ACCENT_INK,
-                    11.0,
-                ))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_select(p.path.clone());
-                    this.anchor = Some(index);
-                    cx.notify();
-                }))
-        } else {
-            let p = entry.clone();
-            let c = circle
-                .bg(theme::alpha(theme::BG, 0.35))
-                .border_color(theme::alpha(theme::FG, 0.45 + 0.55 * hover_amt));
-            // An invisible circle must not eat clicks meant for the card.
-            if circle_vis > 0.0 {
-                c.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_select(p.path.clone());
-                    this.anchor = Some(index);
-                    cx.notify();
-                }))
-            } else {
-                c
-            }
-        };
-        thumb = thumb.child(circle);
-
-        // Hover actions: annotate / copy / delete, bottom-right.
-        // They exist only while hovered, fading in with the lift.
+        // Quick actions, bottom-right, only while the pointer is on the
+        // card: they cover the image, so they do not rest on it.
         if hovered {
-            let copy_path = entry.clone();
-            let folder_path = entry.clone();
-            let delete_path = entry.clone();
             thumb = thumb.child(
                 div()
                     .absolute()
@@ -144,82 +87,105 @@ impl Library {
                     .gap(px(4.))
                     .opacity(hover_amt)
                     .child(
-                        crate::widgets::overlay_icon_button(
-                            ElementId::NamedInteger("cpy".into(), index as u64),
-                            crate::icons::Icon::Copy,
-                        )
-                        .on_click(cx.listener(move |_this, _, _, cx| {
-                            cx.stop_propagation();
-                            let path = copy_path.path.clone();
-                            let task = cx
-                                .background_executor()
-                                .spawn(async move { pipeline::copy_image_file(&path) });
-                            cx.spawn(async move |this, cx| {
-                                let result = task.await;
-                                let _ = this.update(cx, |this, cx| {
-                                    this.status = Some(
-                                        result.map(|_| "copied".to_string()).unwrap_or_else(|e| e),
-                                    );
-                                    cx.notify();
-                                });
-                            })
-                            .detach();
-                        })),
+                        crate::widgets::overlay_icon_button(("copy", index), Icon::Copy)
+                            .tooltip(tip("Copy", Some("Ctrl+C".into())))
+                            .on_click(cx.listener({
+                                let entry = entry.clone();
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.copy_paths(vec![entry.path.clone()], cx);
+                                }
+                            })),
                     )
                     .child(
-                        crate::widgets::overlay_icon_button(
-                            ElementId::NamedInteger("fld".into(), index as u64),
-                            crate::icons::Icon::Folder,
-                        )
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.stop_propagation();
-                            crate::sys::reveal::reveal(&folder_path.path);
-                        })),
+                        crate::widgets::overlay_icon_button(("reveal", index), Icon::Folder)
+                            .tooltip(tip(crate::sys::reveal::LABEL, None))
+                            .on_click({
+                                let entry = entry.clone();
+                                move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    crate::sys::reveal::reveal(&entry.path);
+                                }
+                            }),
                     )
                     .child(
-                        crate::widgets::overlay_icon_button(
-                            ElementId::NamedInteger("del".into(), index as u64),
-                            crate::icons::Icon::Close,
-                        )
-                        .on_click(cx.listener(move |_this, _, _, cx| {
-                            cx.stop_propagation();
-                            let path = delete_path.path.clone();
-                            let task = cx.background_executor().spawn(async move {
-                                let err = library::delete(&path).err();
-                                (err, library::list())
-                            });
-                            cx.spawn(async move |this, cx| {
-                                let (err, entries) = task.await;
-                                let _ = this.update(cx, |this, cx| {
-                                    if let Some(e) = err {
-                                        this.status = Some(e);
-                                    }
-                                    this.show(entries, cx);
-                                    cx.notify();
-                                });
-                            })
-                            .detach();
-                        })),
+                        crate::widgets::overlay_icon_button(("trash", index), Icon::Trash)
+                            .tooltip(tip("Move to Trash", Some("Delete".into())))
+                            .on_click(cx.listener({
+                                let entry = entry.clone();
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.trash_paths(vec![entry.path.clone()], cx);
+                                }
+                            })),
                     ),
             );
         }
 
-        let card_path = entry.clone();
+        let lift = {
+            let mut s = theme::shadow_rest();
+            s.color.a *= 0.6 + 0.9 * hover_amt;
+            s.blur_radius = px(10. + 8.0 * hover_amt);
+            s.offset.y = px(2. + 3.0 * hover_amt);
+            s
+        };
+        let frame = div()
+            .relative()
+            .w(px(CARD_W))
+            .h(px(THUMB_H))
+            .rounded(px(THUMB_RADIUS))
+            .shadow(vec![lift])
+            .child(thumb)
+            .children(selected.then(|| {
+                let out = RING + RING_GAP;
+                div()
+                    .absolute()
+                    .top(px(-out))
+                    .left(px(-out))
+                    .w(px(CARD_W + 2.0 * out))
+                    .h(px(THUMB_H + 2.0 * out))
+                    .rounded(px(THUMB_RADIUS + out))
+                    .border(px(RING))
+                    .border_color(theme::ACCENT)
+            }));
+
+        let caption_row = div()
+            .id(("caption", index))
+            .mt(px(CAPTION_GAP))
+            .h(px(CAPTION_H))
+            .px(px(2.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(8.))
+            .whitespace_nowrap()
+            .text_size(px(theme::TEXT_SMALL))
+            .line_height(px(CAPTION_H))
+            .font_features(theme::tabular())
+            .child(
+                div()
+                    .text_color(theme::FG)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(caption.time.clone()),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_color(theme::FG_DIM)
+                    .child(caption.dims.clone()),
+            )
+            .tooltip(tip(caption.name.clone(), None));
 
         div()
-            .id(ElementId::NamedInteger("card".into(), index as u64))
+            .id(("card", index))
+            .absolute()
+            .left(px(x))
+            .top(px(y))
             .w(px(CARD_W))
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .opacity(enter)
-            // Offsets the drawn card only: as a margin, the rise and the
-            // press sink would resize the card's row and move every row
-            // below it.
-            .relative()
-            .top(px(
-                (1.0 - crate::motion::ease_out_cubic(enter)) * 10.0 + 1.0 * squish
-            ))
             .cursor_pointer()
             .on_hover(cx.listener(move |this, hovering: &bool, _, cx| {
                 if *hovering {
@@ -234,33 +200,19 @@ impl Library {
             }))
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |_, _, _, _| {
-                    crate::sys::reveal::reveal(&card_path.path);
+                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(index, ev.position, cx);
                 }),
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                cx.listener(move |this, ev: &MouseDownEvent, _, _| {
                     this.drag_start = Some((index, ev.position.x.into(), ev.position.y.into()));
                     this.drag_fired = false;
-                    this.pressed = Some(index);
-                    cx.notify();
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    if this.pressed.is_some() {
-                        this.pressed = None;
-                        cx.notify();
-                    }
                 }),
             )
             .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
-                if ev.pressed_button != Some(MouseButton::Left) && this.pressed.is_some() {
-                    this.pressed = None;
-                    cx.notify();
-                }
                 if this.drag_fired || ev.pressed_button != Some(MouseButton::Left) {
                     return;
                 }
@@ -295,49 +247,14 @@ impl Library {
                     Some(iris_lib::sys::dragcopy::DragIcon {
                         width: size.width.0 as u32,
                         height: size.height.0 as u32,
-                        rgba: std::sync::Arc::new(rgba),
+                        rgba: Arc::new(rgba),
                     })
                 });
                 if let Err(e) = crate::sys::window::start_file_drag(window, paths, icon) {
-                    this.status = Some(e);
+                    this.set_status(e, cx);
                 }
             }))
-            .child(thumb)
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .gap(px(LABEL_GAP))
-                    .px(px(LABEL_PAD))
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_size(px(theme::TEXT_SMALL))
-                            .text_color(theme::FG)
-                            .child(
-                                self.listing
-                                    .names()
-                                    .get(index)
-                                    .map(|n| n.0.clone())
-                                    .unwrap_or_default(),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(theme::TEXT_SMALL))
-                            .text_color(theme::FG_FAINT)
-                            .child(
-                                self.listing
-                                    .names()
-                                    .get(index)
-                                    .map(|n| n.1.clone())
-                                    .unwrap_or_default(),
-                            ),
-                    ),
-            )
+            .child(frame)
+            .child(caption_row)
     }
 }

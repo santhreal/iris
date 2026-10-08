@@ -92,7 +92,7 @@ pub type Handoff = Box<dyn FnOnce(&mut App)>;
 /// is the committing monitor's rect in screen coordinates, so the card
 /// lands where the flight ended, not on another display. `handoff` runs
 /// exactly once: after the toast's first frame is on screen, or at once
-/// if the toast cannot open. The action bar fades in after it.
+/// if the toast cannot open.
 pub fn show_toast_landed(
     cx: &mut App,
     path: &Path,
@@ -101,13 +101,7 @@ pub fn show_toast_landed(
     handoff: Handoff,
 ) {
     match thumb.and_then(|t| open_toast_window(cx, path, t, true, anchor)) {
-        Ok(toast) => {
-            let reveal = Box::new(move |cx: &mut App| {
-                handoff(cx);
-                let _ = toast.update(cx, |stage, _, cx| stage.reveal_bar(cx));
-            });
-            hand_off_after_present(toast, cx, reveal);
-        }
+        Ok(toast) => hand_off_after_present(toast, cx, handoff),
         Err(e) => {
             iris_lib::ilog!("toast: {e}");
             crate::notice::failed(cx, "Toast did not open", &e);
@@ -173,10 +167,9 @@ fn open_toast_window(
 ) -> Result<WindowHandle<ToastStage>, String> {
     let mut stage = ToastStage::from_parts(path, thumb);
     if landed {
-        // Pretend the entrance finished long ago. The flight card it
-        // replaces has no action bar; the handoff fades it in.
+        // Pretend the entrance finished long ago: the card appears at
+        // rest, where the flight card it replaces ended.
         stage.opened = Some(Instant::now() - motion::tempo(ENTER));
-        stage.bar = Bar::Hidden;
     }
     let (w, h) = stage.thumb.dims;
 

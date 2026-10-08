@@ -3,7 +3,7 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Screenshot and screen-recording utility
 
-License:        MIT OR Apache-2.0
+License:        (MIT OR Apache-2.0) AND OFL-1.1
 URL:            https://github.com/santhreal/iris
 Source0:        %{name}-%{version}.tar.gz
 
@@ -39,6 +39,9 @@ Suggests:       tesseract
 
 # Disable automatic debuginfo generation when packaging pre-stripped binary
 %global debug_package %{nil}
+# The license files go to /usr/share/licenses/iris on every rpm build
+# host (some default to iris-{version}).
+%global _docdir_fmt %{name}
 
 %description
 iris is a screenshot and screen-recording tool for X11 and Wayland. A
@@ -86,21 +89,8 @@ fi
 
 # Install icons in hicolor theme
 for size in 16 24 32 48 64 128 256 512 1024; do
-    if [ -f packaging/icons/iris-${size}.png ]; then
-        install -d %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps
-        install -m 0644 packaging/icons/iris-${size}.png %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps/%{name}.png
-    fi
+    install -D -m 0644 packaging/icons/iris-${size}.png %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps/%{name}.png
 done
-
-# Ensure standard 256 and 512 are installed
-if [ -f packaging/icons/iris-256.png ]; then
-    install -d %{buildroot}%{_datadir}/icons/hicolor/256x256/apps
-    install -m 0644 packaging/icons/iris-256.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/%{name}.png
-fi
-if [ -f packaging/icons/iris-512.png ]; then
-    install -d %{buildroot}%{_datadir}/icons/hicolor/512x512/apps
-    install -m 0644 packaging/icons/iris-512.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/%{name}.png
-fi
 
 %post
 touch --no-create %{_datadir}/icons/hicolor &>/dev/null || :
@@ -122,6 +112,7 @@ gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 %{_sysconfdir}/xdg/autostart/%{name}-autostart.desktop
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 %{_datadir}/metainfo/dev.iris.app.metainfo.xml
+%license LICENSE-MIT LICENSE-APACHE assets/fonts/Inter-OFL.txt
 
 %changelog
 * Mon Sep 21 2026 Santh <64453045+santhreal@users.noreply.github.com> - 0.1.0-1

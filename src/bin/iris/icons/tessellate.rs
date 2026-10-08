@@ -313,6 +313,90 @@ fn icon_geometry(kind: Icon, mut path: &mut impl TriSink, s: f32) {
             push_segment(&mut path, p(9.0, 5.2), p(9.0, 10.0), 1.8 * s);
             push_disc(&mut path, p(9.0, 12.9), 1.15 * s);
         }
+        Icon::ChevronUpDown => {
+            // Pop-up button indicator: a small chevron up over one down.
+            push_segment(&mut path, p(6.2, 7.0), p(9.0, 4.2), w);
+            push_segment(&mut path, p(9.0, 4.2), p(11.8, 7.0), w);
+            push_segment(&mut path, p(6.2, 11.0), p(9.0, 13.8), w);
+            push_segment(&mut path, p(9.0, 13.8), p(11.8, 11.0), w);
+        }
+        Icon::Ellipsis => {
+            for x in [4.0, 9.0, 14.0] {
+                push_disc(&mut path, p(x, 9.0), 1.45 * s);
+            }
+        }
+        Icon::Rotate => {
+            // A clockwise arc over the top, its head pointing along the
+            // arc at the right end.
+            let (cx, cy, r, a0, a1) = (9.0f32, 10.0f32, 5.2f32, 2.7f32, 6.1f32);
+            push_arc(&mut path, p(cx, cy), r * s, a0, a1, w);
+            let (ex, ey) = (cx + r * a1.cos(), cy + r * a1.sin());
+            // Unit tangent in the direction of travel, and its normal.
+            let (tx, ty) = (-a1.sin(), a1.cos());
+            let (nx, ny) = (-ty, tx);
+            let (hl, hw) = (3.4, 2.6);
+            push_filled_triangle(
+                &mut path,
+                p(ex + tx * 1.4, ey + ty * 1.4),
+                p(ex - tx * hl + nx * hw, ey - ty * hl + ny * hw),
+                p(ex - tx * hl - nx * hw, ey - ty * hl - ny * hw),
+            );
+        }
+        Icon::FlipH => {
+            // Mirror axis with a filled half and an outlined half.
+            push_segment(&mut path, p(9.0, 3.0), p(9.0, 15.0), w * 0.8);
+            push_filled_triangle(&mut path, p(7.4, 5.0), p(7.4, 13.0), p(2.6, 13.0));
+            push_segment(&mut path, p(10.6, 5.0), p(10.6, 13.0), w);
+            push_segment(&mut path, p(10.6, 13.0), p(15.4, 13.0), w);
+            push_segment(&mut path, p(15.4, 13.0), p(10.6, 5.0), w);
+        }
+        Icon::FlipV => {
+            push_segment(&mut path, p(3.0, 9.0), p(15.0, 9.0), w * 0.8);
+            push_filled_triangle(&mut path, p(5.0, 7.4), p(13.0, 7.4), p(13.0, 2.6));
+            push_segment(&mut path, p(5.0, 10.6), p(13.0, 10.6), w);
+            push_segment(&mut path, p(13.0, 10.6), p(13.0, 15.4), w);
+            push_segment(&mut path, p(13.0, 15.4), p(5.0, 10.6), w);
+        }
+        Icon::Share => {
+            // Tray open at the top with an arrow rising out of it.
+            push_segment(&mut path, p(6.4, 7.6), p(4.4, 7.6), w);
+            push_segment(&mut path, p(4.4, 7.6), p(4.4, 15.2), w);
+            push_segment(&mut path, p(4.4, 15.2), p(13.6, 15.2), w);
+            push_segment(&mut path, p(13.6, 15.2), p(13.6, 7.6), w);
+            push_segment(&mut path, p(13.6, 7.6), p(11.6, 7.6), w);
+            push_segment(&mut path, p(9.0, 11.4), p(9.0, 3.0), w);
+            push_segment(&mut path, p(6.4, 5.4), p(9.0, 2.8), w);
+            push_segment(&mut path, p(9.0, 2.8), p(11.6, 5.4), w);
+        }
+        Icon::Fill => {
+            // A filled rounded square: shapes drawn with a fill.
+            push_rect_fill(&mut path, p(4.2, 5.4), p(13.8, 12.6));
+        }
+        Icon::Keyboard => {
+            let (a, b) = (p(2.4, 4.8), p(15.6, 13.2));
+            push_segment(&mut path, a, point(b.x, a.y), w);
+            push_segment(&mut path, point(b.x, a.y), b, w);
+            push_segment(&mut path, b, point(a.x, b.y), w);
+            push_segment(&mut path, point(a.x, b.y), a, w);
+            for x in [5.4, 8.0, 10.6, 13.2] {
+                push_disc(&mut path, p(x, 7.6), 0.85 * s);
+            }
+            push_segment(&mut path, p(6.2, 10.6), p(11.8, 10.6), w);
+        }
+        Icon::Download => {
+            // Arrow into a ring: software updates.
+            push_ring(&mut path, p(9.0, 9.0), 6.6 * s, 6.6 * s, w);
+            push_segment(&mut path, p(9.0, 5.0), p(9.0, 12.4), w);
+            push_segment(&mut path, p(6.2, 9.8), p(9.0, 12.6), w);
+            push_segment(&mut path, p(9.0, 12.6), p(11.8, 9.8), w);
+        }
+        Icon::Sliders => {
+            // Two tracks with knobs: general preferences.
+            push_segment(&mut path, p(3.0, 6.0), p(15.0, 6.0), w);
+            push_segment(&mut path, p(3.0, 12.0), p(15.0, 12.0), w);
+            push_disc(&mut path, p(6.6, 6.0), 2.3 * s);
+            push_disc(&mut path, p(11.4, 12.0), 2.3 * s);
+        }
     }
 }
 
@@ -351,6 +435,18 @@ fn paint_undo(
         point(px(tx - dx * hl + nx * hw), px(ty - dy * hl + ny * hw)),
         point(px(tx - dx * hl - nx * hw), px(ty - dy * hl - ny * hw)),
     );
+}
+
+/// A circular arc from angle `a0` to `a1` (radians, clockwise in screen
+/// space), `w` thick.
+fn push_arc(path: &mut impl TriSink, c: Point<Pixels>, r: f32, a0: f32, a1: f32, w: f32) {
+    let n = 20;
+    let pt = |t: f32| point(c.x + px(r * t.cos()), c.y + px(r * t.sin()));
+    for i in 0..n {
+        let t0 = a0 + (a1 - a0) * i as f32 / n as f32;
+        let t1 = a0 + (a1 - a0) * (i + 1) as f32 / n as f32;
+        push_segment(path, pt(t0), pt(t1), w);
+    }
 }
 
 /// A thick segment as a filled rectangle plus round caps.

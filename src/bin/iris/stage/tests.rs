@@ -110,3 +110,56 @@ fn prepare_thumb_reuses_stashed_decode() {
     // red PNG on disk.
     assert_eq!(&thumb.rgba[..4], &[0, 255, 0, 255]);
 }
+
+// WHY: the class closed here is "the hover actions jump or stick". A
+// fade that restarts from 0 or 1 at every edge crossing flickers when the
+// pointer grazes the card, and one that ignores the pointer's side leaves
+// the capsule over the capture after the pointer leaves. Each case pins
+// the start, the end, the clamp past the end, and a reversal in mid-fade
+// for both sides. Not covered: the frame scheduling that advances `t`.
+#[test]
+fn hover_reveal_eases_from_the_crossing_toward_the_pointer_side() {
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-6;
+    for hovered in [false, true] {
+        let to = if hovered { 1.0 } else { 0.0 };
+        for from in [0.0, 0.4, 1.0] {
+            assert!(close(hover_reveal(from, hovered, 0.0), from));
+            assert!(close(hover_reveal(from, hovered, 1.0), to));
+            assert!(
+                close(hover_reveal(from, hovered, 7.0), to),
+                "t past the fade clamps"
+            );
+            let mid = hover_reveal(from, hovered, 0.5);
+            assert!(mid >= from.min(to) - 1e-6 && mid <= from.max(to) + 1e-6);
+        }
+    }
+    // Left at 40%: the fade continues down from 0.4, and re-entering at
+    // 40% continues up from it.
+    assert!(hover_reveal(0.4, false, 0.25) < 0.4);
+    assert!(hover_reveal(0.4, true, 0.25) > 0.4);
+}
+
+// WHY: the class closed here is "a status that buries the actions, or
+// actions that bury a status before it is read". The status holds the
+// slot off the pointer, while an action runs, and for STATUS_HOLD after
+// it was set; past the hold, the pointer gets the actions back. Each
+// branch and the hold's boundary is a case. Not covered: the timer that
+// repaints at the hold's end.
+#[test]
+fn status_holds_the_slot_off_pointer_while_busy_and_through_the_hold() {
+    let fresh = Duration::ZERO;
+    let held = STATUS_HOLD - Duration::from_millis(1);
+    let stale = STATUS_HOLD + Duration::from_millis(1);
+    // No status: the slot is the actions', busy or not.
+    assert!(!status_holds_slot(false, false, false, fresh));
+    assert!(!status_holds_slot(false, true, true, fresh));
+    // Off the pointer the status shows, however old.
+    assert!(status_holds_slot(true, false, false, stale));
+    // Under the pointer: through the hold, then the actions.
+    assert!(status_holds_slot(true, true, false, fresh));
+    assert!(status_holds_slot(true, true, false, held));
+    assert!(!status_holds_slot(true, true, false, STATUS_HOLD));
+    assert!(!status_holds_slot(true, true, false, stale));
+    // A running action (OCR) keeps its "Reading text" line up.
+    assert!(status_holds_slot(true, true, true, stale));
+}

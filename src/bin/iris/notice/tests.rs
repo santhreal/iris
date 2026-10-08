@@ -81,33 +81,6 @@ fn on_screen_edge(window: Rect, screen: Rect) -> [bool; 4] {
 }
 
 #[test]
-fn wraps_greedily_at_whitespace() {
-    let cases: [(&str, usize, usize); 9] = [
-        ("", 10, 1),
-        ("short", 10, 1),
-        ("exactly10c", 10, 1),
-        ("two words", 9, 1),
-        ("two words", 8, 2),
-        ("aaaa bbbb cccc", 9, 2),
-        ("aaaa  bbbb\ncccc", 9, 2),
-        ("abcdefghijklmnopqrstuvwxy", 10, 3),
-        ("ab abcdefghijklmnopqrst cd", 10, 4),
-    ];
-    for (text, cols, want) in cases {
-        assert_eq!(
-            wrapped_lines(text, cols),
-            want,
-            "{text:?} at {cols} columns"
-        );
-    }
-}
-
-#[test]
-fn zero_columns_count_one_character_a_line() {
-    assert_eq!(wrapped_lines("abc", 0), 3);
-}
-
-#[test]
 fn an_error_becomes_one_paragraph() {
     // A hard break the estimate cannot see would add a line GPUI
     // draws and the card has no room for.
@@ -134,12 +107,18 @@ fn card_holds_its_text_and_buttons_with_no_slack() {
 
 #[test]
 fn detail_column_fits_a_recording_name_beside_both_buttons() {
-    let cols = |buttons| (text_width(buttons) / theme::SMALL_ADVANCE).floor() as usize;
     // The longest name unique_recording_path makes, but the millis
     // fallback: a date, a time, a 3-digit suffix, and the extension.
-    assert_eq!(wrapped_lines("2026-08-09_14-02-11_999.webm", cols(2)), 1);
-    assert!(cols(2) < cols(1), "the reveal button narrows the column");
-    assert!(cols(2) >= 36, "{} columns", cols(2));
+    let name = theme::advance_sum("2026-08-09_14-02-11_999.webm", theme::TEXT_SMALL);
+    assert!(
+        name < text_width(2),
+        "{name}px of name in a {}px column",
+        text_width(2)
+    );
+    assert!(
+        text_width(2) < text_width(1),
+        "the reveal button narrows the column"
+    );
 }
 
 #[test]

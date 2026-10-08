@@ -3,26 +3,37 @@
 ;
 ; References:
 ;   packaging/CONTRACT.md
+;   packaging/windows/build_installer.sh, which defines VERSION,
+;   VERSION_QUAD, ARCH, BINARY_PATH, LICENSE_DIR, ICON_PATH and OUTFILE
 ;
 ; Identity:
 ;   - App Name:            iris
 ;   - App / Bundle ID:     dev.iris.app
-;   - Executable:          iris.exe
+;   - Executable:          iris.exe, built for ARCH (x86_64 or aarch64)
 ;   - Install Scope:       Per-user (no administrator privileges required)
-;   - Install Directory:   %LOCALAPPDATA%\Programs\iris
+;   - Install Directory:   %LOCALAPPDATA%\Programs\iris on both
+;                          architectures: the per-user Programs folder
+;                          has no 32-bit or emulated variant
+;   - Registry:            HKCU in the native (64-bit) view
 ;   - Start Menu Shortcut: iris.lnk -> iris.exe --home
 ;   - Autostart:           HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 ;                          Value 'iris' -> "$INSTDIR\iris.exe" --daemon
+;   - License notices:     LICENSE-MIT, LICENSE-APACHE, Inter-OFL.txt
+;                          beside iris.exe
 ;   - Uninstaller:         $INSTDIR\uninstall.exe
 ;                          Removes files, shortcuts, autostart Run entry, and
 ;                          Add/Remove Programs registration.
+;
+; The aarch64 installer stops on a PC whose native architecture is not
+; ARM64. The x86_64 installer stops on a PC that is neither x64 nor
+; ARM64 (Windows 11 on ARM runs x64 programs).
 ;
 ; Runtime Model:
 ;   - iris (no args) = background daemon (tray + global hotkeys + IPC listener),
 ;                      or the home window of the daemon that runs.
 ;   - iris --daemon  = background daemon; exits when a daemon runs.
 ;   - iris --home    = opens/surfaces the home window in the daemon.
-;   - iris --quit    = asks the running daemon to shut down gracefully.
+;   - iris --quit    = sends the running daemon a request to exit.
 ;
 ; Supported Parameters:
 ;   - /S             = Silent installation / uninstallation.
@@ -37,48 +48,31 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
 ; ------------------------------------------------------------------------------
-; Build Configuration & Default Variables
-; (Can be overridden on the command line via -DVAR=VAL)
+; Build Configuration (build_installer.sh passes these with -DVAR=VAL)
 ; ------------------------------------------------------------------------------
-!ifndef VERSION
-  !define VERSION "0.1.0"
+!macro RequireDefine NAME
+  !ifndef ${NAME}
+    !error "${NAME} is not defined: build the installer with packaging/windows/build_installer.sh"
+  !endif
+!macroend
+!insertmacro RequireDefine VERSION
+!insertmacro RequireDefine VERSION_QUAD
+!insertmacro RequireDefine ARCH
+!insertmacro RequireDefine BINARY_PATH
+!insertmacro RequireDefine LICENSE_DIR
+!insertmacro RequireDefine ICON_PATH
+!insertmacro RequireDefine OUTFILE
+!if "${ARCH}" != "x86_64"
+  !if "${ARCH}" != "aarch64"
+    !error "ARCH is ${ARCH}, not x86_64 or aarch64"
+  !endif
 !endif
 
-!ifndef VERSION_QUAD
-  !define VERSION_QUAD "${VERSION}.0"
-!endif
-
-!ifndef APP_NAME
-  !define APP_NAME "iris"
-!endif
-
-!ifndef APP_ID
-  !define APP_ID "dev.iris.app"
-!endif
-
-!ifndef PUBLISHER
-  !define PUBLISHER "Santh"
-!endif
-
-!ifndef URL
-  !define URL "https://github.com/santhreal/iris"
-!endif
-
-!ifndef DESCRIPTION
-  !define DESCRIPTION "Screenshot and screen-recording utility"
-!endif
-
-!ifndef BINARY_PATH
-  !define BINARY_PATH "..\..\target\release\iris.exe"
-!endif
-
-!ifndef ICON_PATH
-  !define ICON_PATH "..\icons\iris.ico"
-!endif
-
-!ifndef OUTFILE
-  !define OUTFILE "..\..\dist\iris-${VERSION}-windows-x86_64-setup.exe"
-!endif
+!define APP_NAME "iris"
+!define APP_ID "dev.iris.app"
+!define PUBLISHER "Santh"
+!define URL "https://github.com/santhreal/iris"
+!define DESCRIPTION "Screenshot and screen-recording utility"
 
 ; ------------------------------------------------------------------------------
 ; General Settings
@@ -91,23 +85,27 @@ BrandingText "${APP_NAME} ${VERSION}"
 
 ; ------------------------------------------------------------------------------
 ; Version & Executable Metadata
+; The numeric versions are major.minor.patch.0; the strings hold the
+; full version, prerelease included (packaging/CONTRACT.md, "Versions").
 ; ------------------------------------------------------------------------------
 VIProductVersion "${VERSION_QUAD}"
+VIFileVersion "${VERSION_QUAD}"
 VIAddVersionKey "ProductName" "${APP_NAME}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "CompanyName" "${PUBLISHER}"
 VIAddVersionKey "FileDescription" "${APP_NAME} - ${DESCRIPTION}"
-VIAddVersionKey "FileVersion" "${VERSION_QUAD}"
+VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "InternalName" "iris-setup"
 VIAddVersionKey "LegalCopyright" "${PUBLISHER}"
-VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-x86_64-setup.exe"
+VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-${ARCH}-setup.exe"
 
 ; ------------------------------------------------------------------------------
-; Modern UI (MUI2), LogicLib, and FileFunc Includes
+; Modern UI (MUI2), LogicLib, FileFunc, and x64 Includes
 ; ------------------------------------------------------------------------------
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
+!include "x64.nsh"
 
 ; Registry key constants
 !define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
@@ -187,10 +185,31 @@ VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-x86_64-setup.exe"
 ; Installer Initialization
 ; ------------------------------------------------------------------------------
 Function .onInit
+    ; Stop on a PC that cannot run this iris.exe
+!if "${ARCH}" == "aarch64"
+    ${IfNot} ${IsNativeARM64}
+        MessageBox MB_OK|MB_ICONSTOP "This installer holds ${APP_NAME} for ARM64 Windows. Install iris-${VERSION}-windows-x86_64-setup.exe on this PC." /SD IDOK
+        Abort
+    ${EndIf}
+!else
+    ${IfNot} ${IsNativeAMD64}
+    ${AndIfNot} ${IsNativeARM64}
+        MessageBox MB_OK|MB_ICONSTOP "${APP_NAME} runs on 64-bit Windows (x64 or ARM64)." /SD IDOK
+        Abort
+    ${EndIf}
+!endif
+    ; The installer is a 32-bit program: read and write the native
+    ; registry view, the one iris.exe reads.
+    SetRegView 64
+
     ; Default $INSTDIR if not set by /D= or previous registry entry
     ${If} $INSTDIR == ""
         StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_NAME}"
     ${EndIf}
+FunctionEnd
+
+Function un.onInit
+    SetRegView 64
 FunctionEnd
 
 ; With /RUN, start $INSTDIR\iris.exe: the new one after a successful
@@ -221,6 +240,9 @@ Section "Install" SecInstall
     DetailPrint "Installing ${APP_NAME} files..."
     File /oname=iris.exe "${BINARY_PATH}"
     File /oname=iris.ico "${ICON_PATH}"
+    File "${LICENSE_DIR}\LICENSE-MIT"
+    File "${LICENSE_DIR}\LICENSE-APACHE"
+    File "${LICENSE_DIR}\Inter-OFL.txt"
 
     ; 3. Generate uninstaller
     DetailPrint "Creating uninstaller..."
@@ -289,6 +311,9 @@ Section "Uninstall"
     DetailPrint "Removing application files..."
     Delete "$INSTDIR\iris.exe"
     Delete "$INSTDIR\iris.ico"
+    Delete "$INSTDIR\LICENSE-MIT"
+    Delete "$INSTDIR\LICENSE-APACHE"
+    Delete "$INSTDIR\Inter-OFL.txt"
     Delete "$INSTDIR\uninstall.exe"
 
     ; 5. Remove registry entries

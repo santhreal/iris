@@ -39,12 +39,15 @@ const PAD: f32 = 12.0;
 /// The card's hairline, inside its width and height.
 const BORDER: f32 = 1.0;
 const GLYPH: f32 = 18.0;
-const BUTTON: f32 = 26.0;
+/// A form control's edge: 24, with a 14px glyph.
+const BUTTON: f32 = 24.0;
 const BUTTON_GAP: f32 = 4.0;
 const GAP: f32 = 10.0;
-const TITLE_LINE: f32 = 18.0;
-const TITLE_GAP: f32 = 2.0;
-const DETAIL_LINE: f32 = 16.0;
+/// The title's line is the button row's height, so the 13px headline
+/// and the glyph center on the buttons beside them.
+const TITLE_LINE: f32 = BUTTON;
+const TITLE_GAP: f32 = 0.0;
+const DETAIL_LINE: f32 = 15.0;
 /// A longer detail ends in an ellipsis on its last line.
 const MAX_LINES: usize = 3;
 /// A failure stays at least this long: it is read, not glanced at.
@@ -62,12 +65,24 @@ pub fn saved(cx: &mut App, title: &str, path: &Path) {
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    show(cx, title, name, Some(path.to_path_buf()), false);
+    show(cx, title, name, Some(path.to_path_buf()), false, false);
 }
 
 /// `what` failed with `err`.
 pub fn failed(cx: &mut App, what: &str, err: &str) {
-    show(cx, what, one_paragraph(err), None, true);
+    show(cx, what, one_paragraph(err), None, true, false);
+}
+
+/// iris `version` is available: Install hands off the offered update.
+pub fn update_available(cx: &mut App, version: &semver::Version) {
+    show(
+        cx,
+        &format!("iris {version} is available"),
+        "Install it now, or later from the tray menu or Settings.".to_string(),
+        None,
+        false,
+        true,
+    );
 }
 
 /// A toast card landed on `toast`: a notice under it leaves, as for a
@@ -89,8 +104,15 @@ fn one_paragraph(err: &str) -> String {
     err.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn show(cx: &mut App, title: &str, detail: String, file: Option<PathBuf>, failure: bool) {
-    if let Err(e) = open(cx, title, detail, file, failure) {
+fn show(
+    cx: &mut App,
+    title: &str,
+    detail: String,
+    file: Option<PathBuf>,
+    failure: bool,
+    install: bool,
+) {
+    if let Err(e) = open(cx, title, detail, file, failure, install) {
         iris_lib::ilog!("iris: notice: {e}");
     }
 }
@@ -102,6 +124,8 @@ pub struct Notice {
     lines: usize,
     file: Option<PathBuf>,
     failure: bool,
+    /// The card offers Install for the update the daemon offers.
+    install: bool,
     height: f32,
     /// The card's rect on screen, for a landing toast's overlap test.
     card: Rect,
@@ -123,30 +147,6 @@ pub struct Notice {
 fn text_width(buttons: usize) -> f32 {
     let row = buttons as f32 * BUTTON + buttons.saturating_sub(1) as f32 * BUTTON_GAP;
     W - 2.0 * (BORDER + PAD) - GLYPH - GAP - row - GAP
-}
-
-/// Lines `text` wraps to at `cols` characters a line: greedy, at
-/// whitespace, with a word wider than a line broken across lines.
-fn wrapped_lines(text: &str, cols: usize) -> usize {
-    let cols = cols.max(1);
-    let mut lines = 1;
-    let mut col = 0;
-    for word in text.split_whitespace() {
-        let mut n = word.chars().count();
-        if col > 0 && col + 1 + n <= cols {
-            col += 1 + n;
-            continue;
-        }
-        if col > 0 {
-            lines += 1;
-        }
-        while n > cols {
-            lines += 1;
-            n -= cols;
-        }
-        col = n;
-    }
-    lines
 }
 
 /// Card height for `lines` detail lines.
@@ -205,6 +205,7 @@ fn open(
     detail: String,
     file: Option<PathBuf>,
     failure: bool,
+    install: bool,
 ) -> Result<(), String> {
     use iris_lib::config::ToastPosition;
     let cfg = iris_lib::config::Config::load();
@@ -217,19 +218,25 @@ fn open(
         ToastPosition::TopLeft | ToastPosition::TopRight
     );
     let hold = Duration::from_millis(u64::from(cfg.toast_duration_ms));
-    let hold = if failure {
+    let hold = if failure || install {
         hold.max(FAILURE_HOLD)
     } else {
         hold
     };
-    let buttons = 1 + usize::from(file.is_some());
-    // Monospace: the detail wraps at a known column, so the card height
-    // is known before layout.
-    let cols = (text_width(buttons) / theme::SMALL_ADVANCE).floor() as usize;
+    let buttons = 1 + usize::from(file.is_some()) + usize::from(install);
+    // The detail wraps as GPUI's text element wraps it, measured before
+    // layout, so the card height is known before the window opens.
     let lines = if detail.trim().is_empty() {
         0
     } else {
-        wrapped_lines(&detail, cols).min(MAX_LINES)
+        theme::wrapped_lines(
+            cx,
+            &detail,
+            theme::TEXT_SMALL,
+            FontWeight::NORMAL,
+            text_width(buttons),
+        )
+        .min(MAX_LINES)
     };
     let height = card_height(lines);
     let screen = crate::sys::window::primary_monitor_rect(cx).ok_or("no display")?;
@@ -242,6 +249,7 @@ fn open(
         lines,
         file,
         failure,
+        install,
         height,
         card,
         inset: card.1 - win.1,
@@ -376,6 +384,8 @@ impl Render for Notice {
         );
         let (glyph, tint) = if self.failure {
             (Icon::Alert, theme::DANGER)
+        } else if self.install {
+            (Icon::Download, theme::ACCENT)
         } else {
             (Icon::Check, theme::FG)
         };
@@ -387,7 +397,8 @@ impl Render for Notice {
             .gap(px(TITLE_GAP))
             .child(
                 div()
-                    .text_size(px(theme::TEXT_TITLE))
+                    .text_size(px(theme::TEXT_HEADLINE))
+                    .font_weight(FontWeight::SEMIBOLD)
                     .line_height(px(TITLE_LINE))
                     .text_color(theme::FG)
                     .truncate()
@@ -405,14 +416,27 @@ impl Render for Notice {
             );
         }
         let reveal = self.file.clone().map(|path| {
-            icon_button("notice-reveal", Icon::Folder, false, BUTTON).on_click(cx.listener(
-                move |n, _, _, cx| {
+            icon_button("notice-reveal", Icon::Folder, false, BUTTON)
+                .tooltip(crate::widgets::tip(crate::sys::reveal::LABEL, None))
+                .on_click(cx.listener(move |n, _, _, cx| {
                     crate::sys::reveal::reveal(&path);
                     n.leave(EXIT, cx);
-                },
-            ))
+                }))
+        });
+        // The install runs on a thread of its own; a failure arrives
+        // through the command pump as a new notice.
+        let install = self.install.then(|| {
+            icon_button("notice-install", Icon::Download, true, BUTTON)
+                .tooltip(crate::widgets::tip("Install", None))
+                .on_click(cx.listener(|n, _, _, cx| {
+                    if let Err(e) = crate::update::install_offered() {
+                        crate::daemon::report_failure("Update failed", e);
+                    }
+                    n.leave(EXIT, cx);
+                }))
         });
         let close = icon_button("notice-close", Icon::Close, false, BUTTON)
+            .tooltip(crate::widgets::tip("Close", None))
             .on_click(cx.listener(|n, _, _, cx| n.leave(EXIT, cx)));
 
         let mut card = div()
@@ -431,7 +455,12 @@ impl Render for Notice {
             .overflow_hidden()
             .shadow(theme::card_shadow(ease))
             .opacity(opacity)
-            .child(div().flex_none().pt(px(1.)).child(icon(glyph, tint, GLYPH)))
+            .child(
+                div()
+                    .flex_none()
+                    .pt(px((TITLE_LINE - GLYPH) / 2.0))
+                    .child(icon(glyph, tint, GLYPH)),
+            )
             .child(text)
             .child(
                 div()
@@ -439,6 +468,7 @@ impl Render for Notice {
                     .flex_none()
                     .gap(px(BUTTON_GAP))
                     .children(reveal)
+                    .children(install)
                     .child(close),
             )
             .on_hover(cx.listener(|n, hovering: &bool, _, cx| {

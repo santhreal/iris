@@ -16,3 +16,13 @@ pub use linux::reveal;
 pub use macos::reveal;
 #[cfg(windows)]
 pub use windows::reveal;
+
+/// The menu and tooltip label of the action that runs `reveal`, in the
+/// platform file manager's own name.
+pub const LABEL: &str = if cfg!(target_os = "macos") {
+    "Show in Finder"
+} else if cfg!(windows) {
+    "Show in File Explorer"
+} else {
+    "Show in Folder"
+};

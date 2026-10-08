@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::*;
-use crate::{motion, pipeline};
+use crate::{icons::Icon, motion, pipeline, widgets::tip};
 
 impl ToastStage {
     /// Build the stage from an already-scaled thumbnail. The scaling
@@ -36,18 +36,23 @@ impl ToastStage {
             closing_dur: EXIT,
             cfg: iris_lib::config::Config::load(),
             status: None,
+            status_at: Instant::now(),
             busy: false,
-            bar: Bar::Shown,
+            hover_turn: (Instant::now(), 0.0),
             cutout: Default::default(),
         }
     }
 
-    /// Fade in the action bar a landed toast opened without.
-    pub(super) fn reveal_bar(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.bar, Bar::Hidden) {
-            self.bar = Bar::FadingIn(Instant::now());
-            cx.notify();
-        }
+    /// How far the hover actions show now. A screen that does not blend
+    /// the window shows them or hides them at once.
+    pub(super) fn reveal(&self, still: bool) -> f32 {
+        let (turned, from) = self.hover_turn;
+        let t = if still {
+            1.0
+        } else {
+            turned.elapsed().as_secs_f32() / motion::tempo(motion::FADE).as_secs_f32()
+        };
+        hover_reveal(from, self.hover_paused, t)
     }
 
     /// Start the auto-dismiss countdown. When it fires, hovering pushes
@@ -144,10 +149,18 @@ impl ToastStage {
     }
 
     /// Show `text` over the card and give it a full dismiss duration
-    /// from now, so a result that lands late is still read.
+    /// from now, so a result that lands late is still read. The status
+    /// holds the slot for STATUS_HOLD; a frame at its end hands the slot
+    /// back to the actions under the pointer.
     pub(super) fn show_status(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.status = Some(text.into());
+        self.status_at = Instant::now();
         self.arm_dismiss(cx);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(STATUS_HOLD).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -207,17 +220,17 @@ impl ToastStage {
     }
 
     pub(super) fn delete_capture(&mut self, cx: &mut Context<Self>) {
-        // File unlink + library.json rewrite off the UI thread: a slow
+        // The trash move + library.json rewrite off the UI thread: a slow
         // shots dir would freeze the toast mid-swipe.
         let path = self.path.clone();
         let task = cx
             .background_executor()
-            .spawn(async move { iris_lib::library::delete(&path) });
+            .spawn(async move { iris_lib::library::trash(&path) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |stage, cx| match result {
                 Ok(()) => stage.begin_close(cx),
-                Err(e) => stage.show_status(format!("Delete failed: {e}"), cx),
+                Err(e) => stage.show_status(e, cx),
             });
         })
         .detach();
@@ -307,13 +320,15 @@ impl ToastStage {
                 },
             )),
         );
-        menu = menu.child(crate::widgets::menu_row("toast-delete", "Delete").on_click(
-            cx.listener(|stage, _, _, cx| {
-                cx.stop_propagation();
-                stage.menu_at = None;
-                stage.delete_capture(cx);
-            }),
-        ));
+        menu = menu.child(
+            crate::widgets::menu_row("toast-delete", "Move to Trash").on_click(cx.listener(
+                |stage, _, _, cx| {
+                    cx.stop_propagation();
+                    stage.menu_at = None;
+                    stage.delete_capture(cx);
+                },
+            )),
+        );
         menu = menu.child(
             crate::widgets::menu_row("toast-close", "Close").on_click(cx.listener(
                 |stage, _, _, cx| {
@@ -326,59 +341,67 @@ impl ToastStage {
         Some((menu, area))
     }
 
-    pub(super) fn render_action_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// The hover actions: one frosted capsule centered over the card's
+    /// lower edge, in groups split by hairlines: keep open (when
+    /// `toast_pin_enabled`), the two copies, reveal and markup, then
+    /// Move to Trash. Every button carries a tooltip.
+    pub(super) fn render_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.cfg.toast_show_actions {
             return None;
         }
-        let mut actions = div()
-            .absolute()
-            .bottom(px(6.))
-            .left(px(6.))
-            .right(px(6.))
+        let button = |id: &'static str, glyph: Icon, active: bool, label: &'static str| {
+            crate::widgets::icon_button(id, glyph, active, ACTION_BUTTON).tooltip(tip(label, None))
+        };
+        let mut capsule = div()
             .flex()
             .items_center()
-            .justify_center()
-            .gap(px(3.));
-
+            .p(px(3.))
+            .rounded(px(ACTION_BUTTON / 2.0 + 3.0))
+            .bg(theme::alpha(theme::BG_ELEV, 0.96))
+            .border_1()
+            .border_color(theme::HAIRLINE)
+            .shadow(theme::shadow_float());
         if self.cfg.toast_pin_enabled {
-            actions = actions.child(
-                crate::widgets::overlay_icon_button_active(
-                    ElementId::Name("toast-action-pin".into()),
-                    crate::icons::Icon::Pin,
-                    self.pinned,
+            let label = if self.pinned {
+                "Allow to Close"
+            } else {
+                "Keep Open"
+            };
+            capsule = capsule
+                .child(
+                    button("toast-action-pin", Icon::Pin, self.pinned, label).on_click(
+                        cx.listener(|stage, _, _, cx| {
+                            cx.stop_propagation();
+                            stage.toggle_pin(cx);
+                        }),
+                    ),
                 )
-                .on_click(cx.listener(|stage, _, _, cx| {
-                    cx.stop_propagation();
-                    stage.toggle_pin(cx);
-                })),
-            );
+                .child(group_rule());
         }
-
-        actions = actions
+        capsule = capsule
             .child(
-                crate::widgets::overlay_icon_button(
-                    ElementId::Name("toast-action-copy-img".into()),
-                    crate::icons::Icon::Copy,
-                )
-                .on_click(cx.listener(|stage, _, _, cx| {
-                    cx.stop_propagation();
-                    stage.copy_image(cx);
-                })),
+                button("toast-action-copy-img", Icon::Copy, false, "Copy Image").on_click(
+                    cx.listener(|stage, _, _, cx| {
+                        cx.stop_propagation();
+                        stage.copy_image(cx);
+                    }),
+                ),
             )
             .child(
-                crate::widgets::overlay_icon_button(
-                    ElementId::Name("toast-action-copy-file".into()),
-                    crate::icons::Icon::Grid,
-                )
-                .on_click(cx.listener(|stage, _, _, cx| {
-                    cx.stop_propagation();
-                    stage.copy_file(cx);
-                })),
+                button("toast-action-copy-file", Icon::Share, false, "Copy File").on_click(
+                    cx.listener(|stage, _, _, cx| {
+                        cx.stop_propagation();
+                        stage.copy_file(cx);
+                    }),
+                ),
             )
+            .child(group_rule())
             .child(
-                crate::widgets::overlay_icon_button(
-                    ElementId::Name("toast-action-open-folder".into()),
-                    crate::icons::Icon::Viewfinder,
+                button(
+                    "toast-action-open-folder",
+                    Icon::Folder,
+                    false,
+                    crate::sys::reveal::LABEL,
                 )
                 .on_click(cx.listener(|stage, _, _, cx| {
                     cx.stop_propagation();
@@ -386,42 +409,89 @@ impl ToastStage {
                 })),
             )
             .child(
-                crate::widgets::overlay_icon_button(
-                    ElementId::Name("toast-action-markup".into()),
-                    crate::icons::Icon::Pen,
-                )
-                .on_click(cx.listener(|stage, _, window, cx| {
-                    cx.stop_propagation();
-                    stage.hand_off_to_editor(window, cx);
-                })),
+                button("toast-action-markup", Icon::Pen, false, "Markup").on_click(cx.listener(
+                    |stage, _, window, cx| {
+                        cx.stop_propagation();
+                        stage.hand_off_to_editor(window, cx);
+                    },
+                )),
             )
+            .child(group_rule())
             .child(
-                crate::widgets::overlay_icon_button(
-                    ElementId::Name("toast-action-delete".into()),
-                    crate::icons::Icon::Trash,
-                )
-                .on_click(cx.listener(|stage, _, _, cx| {
-                    cx.stop_propagation();
-                    stage.delete_capture(cx);
-                })),
+                button("toast-action-delete", Icon::Trash, false, "Move to Trash").on_click(
+                    cx.listener(|stage, _, _, cx| {
+                        cx.stop_propagation();
+                        stage.delete_capture(cx);
+                    }),
+                ),
             );
-        Some(actions)
+        Some(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom(px(SLOT_INSET))
+                .flex()
+                .justify_center()
+                .child(capsule),
+        )
     }
 }
 
-/// The last action's result over the card's lower edge. The card is
-/// the toast's only surface, so a failure shows here, not only in the
-/// log. Text wraps to the card width; the card clips the overflow.
+/// Edge of one capsule button: 24, a form control's height; the glyph
+/// is 14.
+const ACTION_BUTTON: f32 = 24.0;
+/// The action slot's inset from the card's lower and side edges.
+const SLOT_INSET: f32 = 6.0;
+
+/// The hairline between two groups of capsule buttons.
+fn group_rule() -> Div {
+    div().w(px(1.)).h(px(14.)).mx(px(3.)).bg(theme::HAIRLINE)
+}
+
+/// The pinned toast's mark at rest: an accent disc with the pin glyph in
+/// the card's top-right corner. The hover actions show the same state
+/// on their pin button.
+pub(super) fn pinned_badge() -> Div {
+    div()
+        .absolute()
+        .top(px(SLOT_INSET))
+        .right(px(SLOT_INSET))
+        .size(px(20.))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(theme::ACCENT)
+        .shadow(theme::shadow_float())
+        .child(crate::icons::icon(Icon::Pin, theme::ACCENT_INK, 12.0))
+}
+
+/// The last action's result in the slot along the card's lower edge,
+/// on the capsule's frosted fill. The card is the toast's only surface,
+/// so a failure shows here, not only in the log. Text wraps to the card
+/// width; the card clips the overflow.
 pub(super) fn status_band(text: SharedString) -> Div {
     div()
         .absolute()
-        .left_0()
-        .right_0()
-        .bottom_0()
-        .px(px(8.))
-        .py(px(6.))
-        .bg(theme::alpha(theme::BG, 0.86))
-        .text_size(px(theme::TEXT_SMALL))
-        .text_color(theme::FG)
-        .child(text)
+        .left(px(SLOT_INSET))
+        .right(px(SLOT_INSET))
+        .bottom(px(SLOT_INSET))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .px(px(10.))
+                .py(px(5.))
+                .rounded(px(theme::RADIUS_CONTROL + 2.0))
+                .bg(theme::alpha(theme::BG_ELEV, 0.96))
+                .border_1()
+                .border_color(theme::HAIRLINE)
+                .shadow(theme::shadow_float())
+                .text_size(px(theme::TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme::FG)
+                .text_center()
+                .child(text),
+        )
 }

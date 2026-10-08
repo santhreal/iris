@@ -11,67 +11,85 @@ Open the library via:
 
 One library window is open at a time. Opening the library while it is open raises and focuses that window.
 
-## Header and Toolbar
+## Toolbar
 
-The window header uses the client-side decorated frame (56 pixels high) containing traffic light window controls, the title **Library**, and action clusters:
+The window's title bar is a unified toolbar, 52 pixels high, with the traffic light window controls, the title **Library**, and under it the capture count (for example, `42 captures`) once `library.json` is read. The trailing buttons depend on the selection:
 
-- **When no items are selected**:
-  - Capture count (for example, `42 captures`), shown once `library.json` is read.
-  - **Capture**: Starts a region capture overlay via `iris --capture`.
-  - **Settings**: Opens the Settings window ([configuration.md#settings-window](configuration.md#settings-window)).
-  - **?**: Toggles the keyboard shortcut reference sheet.
-- **When one or more cards are selected**:
-  - Selection count label (for example, `3 selected`).
-  - **Copy**: Copies the selection to the system clipboard. A single selection copies the decoded image pixels; multiple items copy file paths in platform file-list format.
-  - **Delete**: Deletes selected image files and their cached thumbnails from disk, removes entries from `library.json`, and clears the selection.
-  - **Clear**: Clears the current selection.
+- **No selection**:
+  - **Keyboard Shortcuts** (keyboard icon): toggles the shortcut reference sheet.
+  - **Settings** (gear icon): opens the Settings window ([configuration.md#settings-window](configuration.md#settings-window)).
+  - **New Screenshot** (viewfinder icon): starts a region capture, as `iris --capture` does.
+- **One or more cards selected**:
+  - The selection count (for example, `3 selected`).
+  - **Copy**: copies the selection to the clipboard. One capture copies its decoded pixels; several copy their file paths in the platform file-list format.
+  - **Move to Trash**: moves the selected captures to the system trash ([Move to Trash](#move-to-trash)).
+  - **Done**: clears the selection.
 
-## Thumbnail Grid and Cards
+A pointer that rests on a toolbar button for half a second shows a tooltip with the button's name and its keyboard shortcut.
 
-The body contains a responsive multi-column grid of capture cards with 16-pixel padding and gaps:
+## Grid
 
-- **Ordering**: Sorted by creation timestamp in descending order (newest captures first).
-- **Auto-refresh**: A capture that the daemon saves, re-saves from the editor, or deletes shows in the grid at once. A capture file that another program deletes, or moves out of its folder, leaves the grid at once: the library watches the folders that hold its captures. Where the system refuses the watch, the library reads `library.json` every 1.5 seconds and writes the reason to the log. A watch does not report a change that another computer makes to a folder on a network filesystem.
-- **Empty library**: With no captures, the grid shows the capture hotkey in place of cards.
-- **Scrolling**: A mouse wheel tick scrolls the grid over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once.
-- **Card layout**: Each card is 216 pixels wide and contains:
-  - Top thumbnail container (132 pixels high) displaying the cached thumbnail image.
-  - Top-left selection circle checkbox.
-  - Bottom metadata row showing the file name without its `.png` extension and the pixel dimensions (`<width>×<height>`). A name longer than the space beside the dimensions keeps its start and end around an ellipsis, so the time and any collision suffix (`-2`) stay visible.
+The grid lists captures newest first under a title per local day: **Today**, **Yesterday**, then the weekday and date (`Tuesday, October 6`), with the year for a day in another year. The titles change at local midnight while the window is open. Each day starts a new row. The columns are 216 pixels wide with 16 pixels between them, as many as fit the window with 20 pixels of margin on each side, and the grid is centered in the window.
 
-## Selection Model and Gestures
+- **Auto-refresh**: A capture that the daemon saves, re-saves from the editor, or moves to the trash shows in the grid at once. A capture file that another program deletes, or moves out of its folder, leaves the grid at once: the library watches the folders that hold its captures. Where the system refuses the watch, the library reads `library.json` every 1.5 seconds and writes the reason to the log. A watch does not report a change that another computer makes to a folder on a network filesystem.
+- **Opening**: The window opens empty and shows the grid when `library.json` is read on a background thread. Thumbnails decode in the background and appear as each lands.
+- **Empty library**: With no captures, the window shows a viewfinder glyph, **No Captures**, and the capture hotkey.
+- **Scrolling**: A mouse wheel tick scrolls the grid over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once. A hairline under the toolbar marks content scrolled under it.
 
-- **Open in Editor**: Left-clicking a card without modifier keys opens the capture in the annotation editor ([editor.md](editor.md)) with an expand-morph animation.
-- **Toggle selection**: `Ctrl`-click (Linux and Windows) or `Cmd`-click (macOS) toggles selection of the clicked card and sets the selection anchor. Clicking the check circle on a card also toggles selection without opening the editor.
-- **Range selection**: `Shift`-click selects all cards between the current anchor index and the clicked card index, inclusive.
-- **Select all (`Ctrl+A` or `Cmd+A`)**: Selects every capture currently present in the library.
-- **Clear selection (`Escape`)**: Clears the active selection. If no items are selected and the shortcut sheet is closed, `Escape` closes the library window.
-- **Rubber-band selection**: Left-clicking on empty grid space and dragging draws a rectangular marquee. Releasing the mouse button selects all cards whose boundaries intersect the rectangle. A drag under 4 pixels is treated as a click on empty space and clears any existing selection.
-- **Direct file drag-out**: Pressing and dragging a card thumbnail by at least 8 pixels initiates a system drag-and-drop operation. If the card is part of an active multi-card selection, all selected files are included in the drag payload; otherwise, only the dragged card file is included. On Linux X11, the drag payload includes an RGBA thumbnail drag icon.
+Each card is 216 pixels wide:
 
-## Card Hover Actions
+- The thumbnail, 132 pixels high, with 8-pixel corners and a hairline border. A selected card has a 2-pixel accent ring 2 pixels outside the thumbnail.
+- Under it, the local time the capture was taken (`14:02`) and its pixel dimensions (`1920 × 1080`). A pointer resting on this line shows the file name.
 
-Hovering the cursor over a card lifts the card preview and displays an overlay action bar in the bottom-right corner of the thumbnail:
+## Selection
 
-1. **Copy** (copy icon): Reads the PNG file on a background thread and copies decoded image pixels to the system clipboard.
-2. **Reveal in folder** (folder icon): Opens the system file manager with the capture file highlighted:
-   - Linux: Sends a D-Bus message to `org.freedesktop.FileManager1.ShowItems`. If unavailable, falls back to `xdg-open` on the containing folder.
-   - macOS: Runs `/usr/bin/open -R <path>`. If the file does not exist, opens the parent directory.
-   - Windows: Calls the Win32 Shell API `SHOpenFolderAndSelectItems`. If unavailable, falls back to launching `explorer.exe <folder>`.
-   Right-clicking anywhere on a card also invokes this reveal action.
-3. **Delete** (close icon): Removes the image file and its thumbnail from disk and deletes the entry from `library.json`.
+- **Open in Editor**: A click on a card without modifier keys opens the capture in the annotation editor ([editor.md](editor.md)) with an expand-morph animation.
+- **Toggle selection**: `Ctrl`-click (Linux and Windows) or `Cmd`-click (macOS) toggles the clicked card and sets the range anchor.
+- **Range selection**: `Shift`-click selects every card from the anchor to the clicked card, inclusive.
+- **Arrow keys**: Left and Right move the selection to the previous and next capture across rows and days. Up and Down move to the card in the same column of the row above or below; a shorter row takes its last card. With no selection, an arrow key selects the first capture. `Shift` with an arrow key extends the selection from the anchor. The grid scrolls the least distance that shows the selected card, with its day title when the card is in the day's first row.
+- **Select all (`Ctrl+A` or `Cmd+A`)**: Selects every capture in the library.
+- **Clear selection (`Escape`)**: Clears the selection. With no selection and the shortcut sheet closed, `Escape` closes the window.
+- **Rubber-band selection**: A press on empty grid space and a drag draws a marquee. Releasing the button selects every card the marquee touches. A drag under 4 pixels is a click on empty space and clears the selection.
+- **File drag-out**: A press on a card and a drag of 8 pixels or more starts a system drag-and-drop. A card in a multi-card selection drags every selected file; any other card drags its own file. On Linux X11, the drag shows the thumbnail as its icon.
+
+## Card Actions
+
+A pointer on a card lifts its shadow and shows three buttons in the thumbnail's bottom-right corner, each with a tooltip:
+
+1. **Copy** (copy icon): copies the capture's decoded pixels to the clipboard. The PNG decodes on a background thread.
+2. **Show in Folder** (folder icon; **Show in Finder** on macOS, **Show in File Explorer** on Windows): opens the system file manager with the capture selected:
+   - Linux: sends `org.freedesktop.FileManager1.ShowItems` over D-Bus. Without that service, runs `xdg-open` on the containing folder.
+   - macOS: runs `/usr/bin/open -R <path>`. If the file does not exist, opens the parent folder.
+   - Windows: calls `SHOpenFolderAndSelectItems`. Without it, runs `explorer.exe <folder>`.
+3. **Move to Trash** (trash icon): moves the capture to the system trash ([Move to Trash](#move-to-trash)).
+
+A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Copy**, **Show in Folder**, and **Move to Trash**. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. A click outside the menu or `Escape` closes it.
+
+## Quick Look
+
+`Space` shows the selected capture over the grid at its own pixel size, scaled down to fit the window and never up, with its file name and dimensions under it. The card's thumbnail stands in until the full image decodes on a background thread. Arrow keys move the selection and the preview with it. `Return` opens the previewed capture in the editor. `Space`, `Escape`, or a click closes the preview.
+
+## Move to Trash
+
+**Move to Trash** moves each capture file to the system trash, where the file manager can restore it, then drops its entry from `library.json` and deletes its cached thumbnail. The trash is the freedesktop.org trash on Linux (`$XDG_DATA_HOME/Trash`, or `.Trash-$UID` at the top of another volume), the Finder Trash on macOS, and the Recycle Bin on Windows. On macOS the move goes through `NSFileManager`, not Finder: it plays no sound and needs no Automation permission, and Finder's **Put Back** command may be unavailable for the moved file; drag the file out of the Trash to restore it. A capture file that no longer exists drops its entry. A capture the system fails to move keeps its file, its entry, and its card, and the status pill shows the reason; when several captures were moved, it starts with `N of M captures stayed.` The toast's **Move to Trash** action takes the same path.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+A` / `Cmd+A` | Select all captures in the library |
-| `Delete` / `Backspace` | Delete selected captures from disk and library |
-| `Escape` | Dismiss shortcut sheet, clear active selection, or close library window |
-| `?` or `/` | Toggle keyboard shortcuts reference sheet |
-| Title bar double-click | Trigger platform window action: toggle maximize on Linux and Windows, or invoke the system Desktop & Dock preference on macOS |
+| Arrow keys | Move the selection; `Shift` extends it |
+| `Return` | Open the selected capture in the editor |
+| `Space` | Show or close Quick Look |
+| `Ctrl+A` / `Cmd+A` | Select every capture |
+| `Ctrl+C` / `Cmd+C` | Copy the selection |
+| `Delete` / `Backspace` | Move the selection to the trash |
+| `Ctrl+,` / `Cmd+,` | Open Settings |
+| `Ctrl+W` / `Cmd+W` | Close the window |
+| `Escape` | Close the menu, Quick Look, or the shortcut sheet; clear the selection; or close the window |
+| `?` or `/` | Toggle the shortcut reference sheet |
+| Title bar double-click | Run the platform title bar action: toggle maximize on Linux and Windows, or the action set in the macOS Desktop & Dock settings |
 
-Window traffic light controls in the top-left corner offer standard actions: close (red), minimize (yellow), and zoom/maximize (green, which toggles fullscreen on macOS and toggles maximize on Linux and Windows). On X11 with no compositing manager, the window manager frames the window and the header has no traffic lights ([Window Frame](platforms.md)).
+The traffic lights in the top-left corner close (red), minimize (yellow), and zoom (green: fullscreen on macOS, maximize on Linux and Windows) the window. On X11 with no compositing manager, the window manager frames the window and the toolbar has no traffic lights ([Window Frame](platforms.md)).
 
 Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×480.
 

@@ -55,6 +55,8 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 ring = "0.17"
 # Compares the running version against the release tag.
 semver = "1"
+# Verifies an update download's .minisig against packaging/minisign.pub.
+minisign-verify = "0.3"
 arboard = "3"
 # Cross-platform local IPC: Unix domain sockets on Unix, named pipes on
 # Windows, behind one Listener/Stream API. Replaces the hand-rolled
@@ -63,6 +65,9 @@ interprocess = { version = "2", features = [] }
 # Native window ids for GPUI windows: the X11 id, the Win32 HWND, the
 # AppKit view.
 raw-window-handle = "0.6"
+# Library and toast deletes move the capture to the system trash
+# (freedesktop Trash, the macOS Trash, the Windows Recycle Bin).
+trash = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # async-io, not the default tokio: ashpd's tokio feature unifies into

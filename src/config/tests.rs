@@ -57,6 +57,53 @@ fn enum_fields_parse_kebab_case() {
     assert_eq!(cfg.toast_position, ToastPosition::TopLeft);
 }
 
+/// WHY: the class closed here is "a config file decides updates the
+/// release contract did not": update checks default on, the channel
+/// defaults to stable, a file written before the keys existed gets
+/// those defaults, and each channel and both switch values survive a
+/// store and a load under their documented TOML names. Not covered:
+/// what the update check does with them (update::tests).
+#[test]
+#[serial_test::serial]
+fn update_keys_default_on_and_stable_and_round_trip_by_name() {
+    let cfg = Config::default();
+    assert!(cfg.check_for_updates);
+    assert_eq!(cfg.update_channel, UpdateChannel::Stable);
+
+    let old: Config = toml::from_str("recording_fps = 24\n").unwrap();
+    assert!(old.check_for_updates);
+    assert_eq!(old.update_channel, UpdateChannel::Stable);
+
+    for channel in UpdateChannel::ALL {
+        for check in [true, false] {
+            let _d = isolated_home();
+            Config {
+                check_for_updates: check,
+                update_channel: channel,
+                ..Config::default()
+            }
+            .store()
+            .unwrap();
+            let text = std::fs::read_to_string(Config::path().unwrap()).unwrap();
+            assert!(
+                text.contains(&format!("check_for_updates = {check}\n")),
+                "{text}"
+            );
+            assert!(
+                text.contains(&format!("update_channel = \"{}\"\n", channel.name())),
+                "{text}"
+            );
+            let back: Config = toml::from_str(&text).unwrap();
+            assert_eq!(back.check_for_updates, check);
+            assert_eq!(back.update_channel, channel);
+        }
+    }
+
+    let beta: Config = toml::from_str("update_channel = \"beta\"\n").unwrap();
+    assert_eq!(beta.update_channel, UpdateChannel::Beta);
+    assert!(toml::from_str::<Config>("update_channel = \"nightly\"\n").is_err());
+}
+
 #[test]
 #[serial_test::serial]
 fn tilde_dirs_expand_to_home() {

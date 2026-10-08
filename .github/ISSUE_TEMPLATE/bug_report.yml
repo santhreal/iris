@@ -1,0 +1,110 @@
+name: Bug report
+description: Report iris behaving differently from its documentation.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report a security vulnerability privately as [SECURITY.md](https://github.com/santhreal/iris/blob/main/SECURITY.md) describes, not here.
+  - type: input
+    id: version
+    attributes:
+      label: iris version
+      description: The output of `iris --version`.
+      placeholder: iris 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: Operating system version
+      description: The distribution and its release, or the Windows or macOS version.
+      placeholder: Ubuntu 24.04, Windows 11 24H2, macOS 15.3
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      description: "`uname -m` on Linux and macOS (`arm64` is aarch64); System > About > System type on Windows (ARM-based is aarch64)."
+      options:
+        - x86_64
+        - aarch64
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed from
+      options:
+        - Windows installer (setup.exe)
+        - Windows portable zip
+        - macOS disk image (dmg)
+        - AppImage
+        - deb
+        - rpm
+        - Built from source
+    validations:
+      required: true
+  - type: dropdown
+    id: display-server
+    attributes:
+      label: Display server
+      description: On Linux, `echo $XDG_SESSION_TYPE` prints x11 or wayland.
+      options:
+        - X11
+        - Wayland
+        - Not Linux (Windows or macOS)
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop environment, compositor, or window manager
+      description: Linux only.
+      placeholder: GNOME 46, KDE Plasma 6.2, sway 1.10, Hyprland 0.45, i3 4.23
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands, hotkeys, and clicks, in order, from starting iris.
+      placeholder: |
+        1. Run `iris`.
+        2. Press Print.
+        3. Drag a rectangle and press Enter.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error messages and the exit status of a failing command.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        The lines of iris.log from the time of the problem. iris.log is at:
+        - Linux: `~/.local/state/iris/iris.log` (`$XDG_STATE_HOME/iris/iris.log`)
+        - Windows: `%APPDATA%\iris\iris.log`
+        - macOS: `~/Library/Application Support/iris/iris.log`
+        - With `IRIS_HOME` set: `$IRIS_HOME/state/iris.log`
+      render: text

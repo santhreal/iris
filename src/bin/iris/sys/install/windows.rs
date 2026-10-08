@@ -8,11 +8,12 @@ use std::process::{Command, Stdio};
 
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
-/// Release asset suffix for an installed iris.
-pub const SETUP_ASSET: &str = "windows-x86_64-setup.exe";
+/// Release asset suffix for an installed iris. `{arch}` is this
+/// build's architecture (`super::for_this_arch`).
+pub const SETUP_ASSET: &str = "windows-{arch}-setup.exe";
 
 /// Release asset suffix for a portable iris.
-pub const PORTABLE_ASSET: &str = "windows-x86_64-portable.zip";
+pub const PORTABLE_ASSET: &str = "windows-{arch}-portable.zip";
 
 /// The installer's options (packaging/windows/iris.nsi): `/S` runs it
 /// silent, and `/RUN` starts iris when the installation ends, whether
@@ -35,11 +36,11 @@ fn installed(exe: &Path) -> bool {
 }
 
 /// The release asset that updates this iris.
-pub fn asset() -> &'static str {
-    match exe() {
+pub fn asset() -> String {
+    super::for_this_arch(match exe() {
         Ok(exe) if !installed(&exe) => PORTABLE_ASSET,
         _ => SETUP_ASSET,
-    }
+    })
 }
 
 /// Ok for an installed iris: the installer replaces any install, and

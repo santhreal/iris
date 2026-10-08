@@ -1,18 +1,22 @@
 // WHY: the class closed here is "the library loses or corrupts captures":
-// a store that does not round-trip, a delete that leaves the file, a cap
-// that keeps the wrong end, or a path_key that collides all surface as
-// missing thumbnails or vanished shots; a thumbnail smaller than the
-// card's 2x box, or one kept at an older build's size, shows as a soft
-// card on a HiDPI display. Env-mutating tests run serially with
-// IRIS_HOME pointed at a tempdir. Not covered: the library window's
-// decode of the returned pixels.
+// a store that does not round-trip, a trash that leaves the file or loses
+// it outright, a cap that keeps the wrong end, or a path_key that
+// collides all surface as missing thumbnails or vanished shots; a
+// thumbnail smaller than the card's 2x box, or one kept at an older
+// build's size, shows as a soft card on a HiDPI display. Env-mutating
+// tests run serially with IRIS_HOME (and the freedesktop trash) pointed
+// at a tempdir. Not covered: the library window's decode of the returned
+// pixels.
 use super::*;
 
 /// Root iris data/cache in a fresh tempdir via `IRIS_HOME` (on every
-/// platform); returns it for file seeds.
+/// platform); returns it for file seeds. The freedesktop home trash
+/// (`$XDG_DATA_HOME/Trash`) is in the same tempdir, so a trash in a test
+/// never reaches the trash of the account running it.
 fn isolated_home() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var(crate::dirs::HOME_ENV, dir.path());
+    std::env::set_var("XDG_DATA_HOME", dir.path().join("xdg"));
     dir
 }
 
@@ -34,25 +38,82 @@ fn path_key_is_stable_and_path_sensitive() {
     assert_eq!(path_key(a).len(), 16);
 }
 
+// WHY: a delete from the library moves the capture to the system trash,
+// where it can be restored, instead of unlinking it. Closed here: a trash
+// that unlinks or leaves the file, a moved capture that keeps its entry
+// or thumbnail, a failed move that drops the entry of a file still on
+// disk (the capture would vanish from the library and stay in the
+// folder), and a capture already gone that keeps an entry nothing can
+// remove. Not covered: the macOS and Windows trash calls, which the
+// `trash` crate's own tests exercise.
 #[test]
 #[serial_test::serial]
-fn add_list_delete_round_trips() {
+fn add_list_trash_round_trips() {
     let d = isolated_home();
     let (shot, img) = png(d.path(), "a.png");
     let entry = add(&shot, &img).unwrap();
     assert!(entry.thumb.exists());
     assert_eq!(list().len(), 1);
-    delete(&shot).unwrap();
+    trash(&shot).unwrap();
     assert!(list().is_empty());
     assert!(!entry.thumb.exists());
     assert!(!shot.exists());
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let trashed = d.path().join("xdg/Trash/files/a.png");
+        assert!(trashed.exists(), "the capture is in the trash");
+        assert!(d.path().join("xdg/Trash/info/a.png.trashinfo").exists());
+    }
 }
 
 #[test]
 #[serial_test::serial]
-fn delete_unknown_path_errors() {
-    let _d = isolated_home();
-    assert!(delete(Path::new("/nonexistent.png")).is_err());
+fn trash_of_a_capture_already_gone_drops_its_entry() {
+    let d = isolated_home();
+    let (shot, img) = png(d.path(), "gone.png");
+    let entry = add(&shot, &img).unwrap();
+    std::fs::remove_file(&shot).unwrap();
+    assert_eq!(trash(&shot), Ok(()));
+    assert!(read_store().is_empty());
+    assert!(!entry.thumb.exists());
+    // A path the store never listed and the disk never held.
+    assert_eq!(trash(Path::new("/nonexistent/never.png")), Ok(()));
+}
+
+#[test]
+#[serial_test::serial]
+#[cfg(all(unix, not(target_os = "macos")))]
+fn a_failed_trash_keeps_the_file_and_its_entry() {
+    let d = isolated_home();
+    let (a, img) = png(d.path(), "a.png");
+    let (b, _) = png(d.path(), "b.png");
+    let ea = add(&a, &img).unwrap();
+    let eb = add(&b, &img).unwrap();
+    // A file where the trash directory goes: the move has nowhere to go.
+    std::fs::create_dir_all(d.path().join("xdg")).unwrap();
+    std::fs::write(d.path().join("xdg/Trash"), b"").unwrap();
+    let err = trash(&a).unwrap_err();
+    assert!(
+        err.starts_with(&format!("Could not move a.png to the {TRASH_NAME}: ")),
+        "{err}"
+    );
+    let errors = trash_many(&[b.clone(), a.clone()]);
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(errors[0].starts_with("Could not move b.png"), "{errors:?}");
+    assert!(errors[1].starts_with("Could not move a.png"), "{errors:?}");
+    for (shot, entry) in [(&a, &ea), (&b, &eb)] {
+        assert!(shot.exists(), "{} stays on disk", shot.display());
+        assert!(entry.thumb.exists());
+    }
+    let stored: Vec<_> = read_store().into_iter().map(|e| e.path).collect();
+    assert_eq!(stored.len(), 2);
+    assert!(stored.contains(&a) && stored.contains(&b));
+    // The trash comes back: the same captures move, and only they leave.
+    std::fs::remove_file(d.path().join("xdg/Trash")).unwrap();
+    assert!(trash_many(std::slice::from_ref(&a)).is_empty());
+    assert!(!a.exists() && b.exists());
+    let stored: Vec<_> = read_store().into_iter().map(|e| e.path).collect();
+    assert_eq!(stored, [b]);
 }
 
 #[test]
@@ -294,8 +355,8 @@ fn every_store_write_runs_the_write_hook_once() {
     solid(&a, 300, 300, GREEN);
     std::fs::remove_file(&entry.thumb).unwrap();
     assert_eq!(hooked(|| thumbnail(&entry)), 1, "resized capture");
-    assert_eq!(hooked(|| delete(&a)), 1, "delete");
-    assert_eq!(hooked(|| delete(&a)), 0, "delete of an unstored path");
-    assert_eq!(hooked(|| delete_many(&[b])), 1, "delete_many");
+    assert_eq!(hooked(|| trash(&a)), 1, "trash");
+    assert_eq!(hooked(|| trash(&a)), 0, "trash of an unstored path");
+    assert_eq!(hooked(|| trash_many(&[b])), 1, "trash_many");
     assert!(list().is_empty());
 }

@@ -47,19 +47,31 @@ pub(crate) enum Tool {
     Counter,
 }
 
-pub(crate) const TOOLS: [(Tool, Icon, &str); 11] = [
-    (Tool::Select, Icon::Cursor, "Select"),
-    (Tool::Pen, Icon::Pen, "Pen"),
-    (Tool::Line, Icon::Line, "Line"),
-    (Tool::Arrow, Icon::Arrow, "Arrow"),
-    (Tool::Ellipse, Icon::Ellipse, "Ellipse"),
-    (Tool::Rect, Icon::Rect, "Rectangle"),
-    (Tool::Text, Icon::Text, "Text"),
-    (Tool::Highlight, Icon::Highlight, "Highlight"),
-    (Tool::Blur, Icon::Blur, "Blur"),
-    (Tool::Crop, Icon::Crop, "Crop"),
-    (Tool::Counter, Icon::Counter, "Counter"),
+/// Each tool: its value, toolbar glyph, name, and the single key that
+/// selects it. The toolbar tooltips and the key handler both read this
+/// table, so a tool's shown shortcut is the key that selects it.
+pub(crate) const TOOLS: [(Tool, Icon, &str, &str); 11] = [
+    (Tool::Select, Icon::Cursor, "Select", "V"),
+    (Tool::Pen, Icon::Pen, "Pen", "P"),
+    (Tool::Line, Icon::Line, "Line", "L"),
+    (Tool::Arrow, Icon::Arrow, "Arrow", "A"),
+    (Tool::Ellipse, Icon::Ellipse, "Ellipse", "E"),
+    (Tool::Rect, Icon::Rect, "Rectangle", "R"),
+    (Tool::Text, Icon::Text, "Text", "T"),
+    (Tool::Highlight, Icon::Highlight, "Highlight", "H"),
+    (Tool::Blur, Icon::Blur, "Blur", "B"),
+    (Tool::Crop, Icon::Crop, "Crop", "C"),
+    (Tool::Counter, Icon::Counter, "Counter", "N"),
 ];
+
+/// The tool an unmodified key press selects; `key` is GPUI's lowercase
+/// key name.
+pub(crate) fn tool_for_key(key: &str) -> Option<Tool> {
+    TOOLS
+        .iter()
+        .find(|(_, _, _, k)| k.eq_ignore_ascii_case(key))
+        .map(|&(tool, ..)| tool)
+}
 
 #[derive(Clone)]
 pub(crate) struct Action {

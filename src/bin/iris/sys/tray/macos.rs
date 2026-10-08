@@ -1,18 +1,24 @@
 //! The system-tray icon on macOS via `NSStatusItem`.
 //!
-//! The status item lives in the menu bar and owns an `NSMenu` drawn
+//! The status item lives in the menu bar and holds an `NSMenu` drawn
 //! from the shared rows. Menu items need an ObjC target that responds
 //! to a selector, so `spawn` defines a tiny `IrisTrayTarget` class at
 //! runtime whose `onItem:` reads the item's tag, the row id, and
-//! reports the pick. All runtime calls go through
-//! `iris_lib::sys::objc`'s typed sends.
+//! reports the pick. `redraw` replaces the menu with one drawn from the
+//! rows again. All runtime calls go through `iris_lib::sys::objc`'s
+//! typed sends.
+
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use iris_lib::sys::objc::{
     class, class_addMethod, nsstring, objc_allocateClassPair, objc_registerClassPair, sel, send,
     send1, send3, Id, Imp, Sel,
 };
 
-use super::Row;
+use super::Drawn;
+
+/// The status item, once `spawn` made it.
+static ITEM: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
 
 /// `onItem:` — the menu action. `sender` is the NSMenuItem; its tag
 /// is the row id. Signature `v@:@` (void, self, _cmd, sender).
@@ -39,6 +45,36 @@ unsafe fn tray_target() -> Id {
     TARGET
 }
 
+/// A new menu drawn from the rows, retained once for the caller.
+unsafe fn build_menu() -> Id {
+    let target = tray_target();
+    let menu: Id = send(send::<Id>(class(c"NSMenu"), sel(c"alloc")), sel(c"init"));
+    for (id, row) in super::drawn() {
+        match row {
+            Drawn::Separator => {
+                let mi: Id = send(class(c"NSMenuItem"), sel(c"separatorItem"));
+                send1::<Id, ()>(menu, sel(c"addItem:"), mi);
+            }
+            Drawn::Item(label) => {
+                let mi: Id = send3(
+                    send::<Id>(class(c"NSMenuItem"), sel(c"alloc")),
+                    sel(c"initWithTitle:action:keyEquivalent:"),
+                    nsstring(&label),
+                    sel(c"onItem:"),
+                    nsstring(""),
+                );
+                // Row ids are small: the cast cannot wrap.
+                send1::<isize, ()>(mi, sel(c"setTag:"), id as isize);
+                send1::<Id, ()>(mi, sel(c"setTarget:"), target);
+                // The menu retains the item; a redraw frees both.
+                send1::<Id, ()>(menu, sel(c"addItem:"), mi);
+                send::<()>(mi, sel(c"release"));
+            }
+        }
+    }
+    menu
+}
+
 /// Spawn the status item. The menu bar item and its menu are created on
 /// the calling thread; AppKit delivers `onItem:` on the main run loop,
 /// which GPUI already runs, so no dedicated thread is needed. A
@@ -63,28 +99,26 @@ pub(super) fn spawn() {
         if !button.is_null() {
             send1::<Id, ()>(button, sel(c"setTitle:"), nsstring("iris"));
         }
+        set_menu(item);
+        ITEM.store(item, Ordering::Release);
+    }
+}
 
-        let target = tray_target();
-        let menu: Id = send(send::<Id>(class(c"NSMenu"), sel(c"alloc")), sel(c"init"));
-        for (id, row) in super::rows() {
-            let mi: Id = match row {
-                Row::Separator => send(class(c"NSMenuItem"), sel(c"separatorItem")),
-                Row::Item { label, .. } => {
-                    let mi: Id = send3(
-                        send::<Id>(class(c"NSMenuItem"), sel(c"alloc")),
-                        sel(c"initWithTitle:action:keyEquivalent:"),
-                        nsstring(label),
-                        sel(c"onItem:"),
-                        nsstring(""),
-                    );
-                    // Row ids are small: the cast cannot wrap.
-                    send1::<isize, ()>(mi, sel(c"setTag:"), id as isize);
-                    send1::<Id, ()>(mi, sel(c"setTarget:"), target);
-                    mi
-                }
-            };
-            send1::<Id, ()>(menu, sel(c"addItem:"), mi);
-        }
-        send1::<Id, ()>(item, sel(c"setMenu:"), menu);
+/// Give `item` a menu drawn from the rows. The item retains the menu
+/// and releases the one it replaces.
+unsafe fn set_menu(item: Id) {
+    let menu = build_menu();
+    send1::<Id, ()>(item, sel(c"setMenu:"), menu);
+    send::<()>(menu, sel(c"release"));
+}
+
+/// Replace the status item's menu with one drawn from the rows. Runs on
+/// the main thread, as every AppKit call here does. Before `spawn` made
+/// the item this does nothing: the first menu is drawn from the current
+/// rows.
+pub(super) fn redraw() {
+    let item = ITEM.load(Ordering::Acquire);
+    if !item.is_null() {
+        unsafe { set_menu(item) };
     }
 }

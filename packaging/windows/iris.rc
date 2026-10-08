@@ -1,7 +1,8 @@
 // Windows resources for iris.exe: the app icon and version metadata.
 // embed-resource compiles this into the binary at build time; build.rs
-// defines IRIS_VERSION ("0.1.0") and IRIS_VERSION_QUAD (0,1,0,0) from
-// Cargo.toml.
+// defines IRIS_VERSION, the Cargo.toml version ("0.2.0-beta.1"), and
+// IRIS_VERSION_QUAD, its major,minor,patch,0 (0,2,0,0), the numeric
+// form VERSIONINFO requires (packaging/CONTRACT.md, "Versions").
 
 #include <windows.h>
 

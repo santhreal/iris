@@ -10,6 +10,14 @@
 
 use super::*;
 
+/// The macOS update downloads the universal DMG, which serves both
+/// architectures, and packaging/CONTRACT.md lists it.
+#[test]
+fn the_update_asset_is_the_universal_dmg_the_contract_lists() {
+    assert_eq!(asset(), "macos-universal.dmg");
+    assert!(crate::sys::install::in_contract(&asset()));
+}
+
 #[test]
 fn an_executable_inside_a_bundle_names_the_bundle() {
     for (exe, bundle) in [

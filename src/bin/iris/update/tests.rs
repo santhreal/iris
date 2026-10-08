@@ -9,16 +9,47 @@ const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f2001
 /// SHA-256 of one million `a` bytes, the FIPS 180-2 long-message vector.
 const MILLION_A: &str = "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0";
 
-const ASSET: &str = "iris-9.9.9-linux-x86_64.AppImage";
+pub(super) const ASSET: &str = "iris-9.9.9-linux-x86_64.AppImage";
 const SELECTOR: &str = "linux-x86_64.AppImage";
 
-fn info(base: &str, asset_name: &str) -> UpdateInfo {
+/// The release asset the signature fixtures sign: one million `a`
+/// bytes.
+pub(super) fn million_a() -> Vec<u8> {
+    vec![b'a'; 1_000_000]
+}
+
+// The fixtures are minisign signatures of `million_a()`, made with
+// `minisign -S` (prehashed) by the scratch key in fixtures/test.pub
+// unless the name states otherwise. Their trusted comment is
+// `file:{ASSET} version:9.9.9` unless the name states otherwise. The
+// release key in packaging/minisign.pub signs none of them.
+
+/// The release workflow's signature of `ASSET` 9.9.9.
+pub(super) const SIGNED: &str = include_str!("fixtures/signed.minisig");
+/// `SIGNED`, made by the key in fixtures/other.pub.
+pub(super) const OTHER_KEY: &str = include_str!("fixtures/other-key.minisig");
+/// `SIGNED` with the comment `file:iris-9.9.9-macos-universal.dmg
+/// version:9.9.9`.
+pub(super) const OTHER_FILE: &str = include_str!("fixtures/other-file.minisig");
+/// `SIGNED` with the comment `file:{ASSET} version:9.9.8`.
+pub(super) const OTHER_VERSION: &str = include_str!("fixtures/other-version.minisig");
+/// `SIGNED` made with `minisign -S -l`: a legacy signature of the bytes
+/// themselves, not of their BLAKE2b-512 hash.
+pub(super) const LEGACY: &str = include_str!("fixtures/legacy.minisig");
+
+pub(super) fn info(base: &str, asset_name: &str) -> UpdateInfo {
     UpdateInfo {
         version: semver::Version::new(9, 9, 9),
         asset_url: format!("{base}/asset"),
         asset_name: asset_name.to_string(),
         checksum_url: format!("{base}/asset.sha256"),
+        signature_url: format!("{base}/asset.minisig"),
     }
+}
+
+/// The key the fixtures are signed with.
+pub(super) fn test_key() -> PublicKey {
+    PublicKey::decode(include_str!("fixtures/test.pub")).expect("test key decodes")
 }
 
 /// One path an HTTP test server answers.
@@ -83,30 +114,40 @@ fn is_empty(dir: &Path) -> bool {
     std::fs::read_dir(dir).expect("read dir").next().is_none()
 }
 
+/// `routes` and the release signature of `million_a()`, `SIGNED`.
+fn signed(mut routes: Vec<Route>) -> Vec<Route> {
+    routes.push(route("/asset.minisig", SIGNED));
+    routes
+}
+
 #[test]
 fn a_download_that_matches_its_sidecar_is_kept() {
-    let body = vec![b'a'; 1_000_000];
-    let base = serve(vec![
+    let body = million_a();
+    let base = serve(signed(vec![
         route("/asset", body.clone()),
         route("/asset.sha256", sidecar(MILLION_A, ASSET)),
-    ]);
+    ]));
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = download_into(&info(&base, ASSET), dir.path()).expect("verified download");
+    let path = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect("verified download");
     assert_eq!(path, dir.path().join(ASSET));
     assert!(std::fs::read(&path).expect("read download") == body);
 }
 
 /// A file a failed install left in the update directory is the release
-/// asset when its SHA-256 is the one the sidecar lists: the update uses
-/// it and fetches only the sidecar. The server has no `/asset`, so a
-/// download would fail.
+/// asset when its SHA-256 is the one the sidecar lists and its
+/// signature verifies: the update uses it and fetches only the sidecar
+/// and the signature. The server has no `/asset`, so a download would
+/// fail.
 #[test]
 fn a_verified_file_already_there_is_not_downloaded_again() {
-    let body = vec![b'a'; 1_000_000];
-    let base = serve(vec![route("/asset.sha256", sidecar(MILLION_A, ASSET))]);
+    let body = million_a();
+    let base = serve(signed(vec![route(
+        "/asset.sha256",
+        sidecar(MILLION_A, ASSET),
+    )]));
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join(ASSET), &body).expect("write");
-    let path = download_into(&info(&base, ASSET), dir.path()).expect("kept file");
+    let path = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect("kept file");
     assert_eq!(path, dir.path().join(ASSET));
     assert!(std::fs::read(&path).expect("read") == body);
 }
@@ -115,32 +156,32 @@ fn a_verified_file_already_there_is_not_downloaded_again() {
 /// the download, or deleted when the download fails too.
 #[test]
 fn a_stale_file_already_there_is_replaced_or_deleted() {
-    let body = vec![b'a'; 1_000_000];
-    let base = serve(vec![
+    let body = million_a();
+    let base = serve(signed(vec![
         route("/asset", body.clone()),
         route("/asset.sha256", sidecar(MILLION_A, ASSET)),
-    ]);
+    ]));
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join(ASSET), b"abc").expect("write");
-    let path = download_into(&info(&base, ASSET), dir.path()).expect("download");
+    let path = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect("download");
     assert!(std::fs::read(&path).expect("read") == body);
 
-    let base = serve(vec![
+    let base = serve(signed(vec![
         route("/asset", "abc"),
         route("/asset.sha256", sidecar(MILLION_A, ASSET)),
-    ]);
+    ]));
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join(ASSET), &body[1..]).expect("write");
-    let err = download_into(&info(&base, ASSET), dir.path()).expect_err("not the release");
+    let err = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect_err("not the release");
     assert!(err.contains(&format!("has SHA-256 {ABC}")), "{err}");
     assert!(is_empty(dir.path()), "the stale file stayed behind");
 }
 
 /// Each download fails, and the update directory holds no file of it
-/// that a later install could pick up.
+/// that a later install could pick up. Every server here signs the
+/// release asset, so the failure is the download's or the sidecar's.
 #[test]
 fn a_download_that_is_not_the_released_file_is_deleted() {
-    let million_a = || vec![b'a'; 1_000_000];
     let half = || vec![b'a'; 500_000];
     let cases: [(&str, Vec<Route>, String); 6] = [
         (
@@ -198,12 +239,227 @@ fn a_download_that_is_not_the_released_file_is_deleted() {
         ),
     ];
     for (case, routes, fragment) in cases {
-        let base = serve(routes);
+        let base = serve(signed(routes));
         let dir = tempfile::tempdir().expect("tempdir");
-        let err = download_into(&info(&base, ASSET), dir.path()).expect_err(case);
+        let err = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect_err(case);
         assert!(err.contains(&fragment), "{case}: {err}");
         assert!(is_empty(dir.path()), "{case}: a file stayed behind");
     }
+}
+
+// WHY: the class closed here is "a download the release key did not
+// sign for this asset and this release reaches the installer": a
+// release with no signature, a signature by another key, a signature
+// of other bytes, a signature whose trusted comment names another
+// asset or another release, a comment rewritten after signing, a
+// legacy signature, and a `.minisig` that is no signature each fail
+// the update before the daemon stops, and leave no file in the update
+// directory, whether downloaded or already there. Not covered: the
+// release key itself signing a wrong file, which no client check can
+// catch.
+
+/// A signature case: what the server answers for `/asset.minisig`
+/// (`None` for 404), the asset bytes and their SHA-256, and a fragment
+/// of the error.
+struct SignatureCase {
+    case: &'static str,
+    minisig: Option<String>,
+    body: Vec<u8>,
+    digest: &'static str,
+    fragment: String,
+}
+
+/// Every way a download can lack a release signature for itself.
+fn unsigned_cases() -> Vec<SignatureCase> {
+    let case = |case, minisig: Option<&str>, fragment: &str| SignatureCase {
+        case,
+        minisig: minisig.map(str::to_owned),
+        body: million_a(),
+        digest: MILLION_A,
+        fragment: fragment.to_owned(),
+    };
+    vec![
+        case("no signature", None, "/asset.minisig: status code 404"),
+        case(
+            "a signature by another key",
+            Some(OTHER_KEY),
+            &format!(
+                "update: {ASSET}.minisig is not a release signature: \
+                 The signature was created with a different key"
+            ),
+        ),
+        SignatureCase {
+            case: "a signature of another file",
+            minisig: Some(SIGNED.to_owned()),
+            body: b"abc".to_vec(),
+            digest: ABC,
+            fragment: format!(
+                "update: {ASSET} does not match its signature {ASSET}.minisig: \
+                 The signature verification failed"
+            ),
+        },
+        case(
+            "a trusted comment naming another file",
+            Some(OTHER_FILE),
+            &format!(
+                "update: {ASSET}.minisig signs \"file:iris-9.9.9-macos-universal.dmg \
+                 version:9.9.9\", not \"file:{ASSET} version:9.9.9\""
+            ),
+        ),
+        case(
+            "a trusted comment naming another version",
+            Some(OTHER_VERSION),
+            &format!(
+                "update: {ASSET}.minisig signs \"file:{ASSET} version:9.9.8\", \
+                 not \"file:{ASSET} version:9.9.9\""
+            ),
+        ),
+        case(
+            "a trusted comment rewritten to name this release",
+            Some(OTHER_VERSION.replace("version:9.9.8", "version:9.9.9").as_str()),
+            &format!(
+                "update: {ASSET} does not match its signature {ASSET}.minisig: \
+                 The signature verification failed"
+            ),
+        ),
+        case(
+            "a legacy signature",
+            Some(LEGACY),
+            &format!(
+                "update: {ASSET}.minisig is not a release signature: \
+                 StreamVerifier only supports non-legacy mode signatures"
+            ),
+        ),
+        case(
+            "a .minisig that is not a signature",
+            Some("untrusted comment: none\n"),
+            &format!("update: {ASSET}.minisig is not a minisign signature"),
+        ),
+    ]
+}
+
+impl SignatureCase {
+    /// A server for this case's release.
+    fn serve(&self) -> String {
+        let mut routes = vec![
+            route("/asset", self.body.clone()),
+            route("/asset.sha256", sidecar(self.digest, ASSET)),
+        ];
+        if let Some(minisig) = &self.minisig {
+            routes.push(route("/asset.minisig", minisig.clone()));
+        }
+        serve(routes)
+    }
+}
+
+/// What `install` did: whether it stopped the daemon, and the file it
+/// swapped in.
+#[derive(Debug, Default, PartialEq)]
+struct Installed {
+    stopped: bool,
+    swapped: Option<PathBuf>,
+}
+
+/// `install` of `info` downloading into `dir` with the test key, with
+/// a stop and a swap that record what ran.
+fn install_into(info: &UpdateInfo, dir: &Path) -> (Result<(), String>, Installed) {
+    let installed = std::cell::RefCell::new(Installed::default());
+    let result = install(
+        info,
+        |info| download_into(info, dir, &test_key()),
+        || {
+            installed.borrow_mut().stopped = true;
+            Ok(Quit::Exited)
+        },
+        |file| {
+            installed.borrow_mut().swapped = Some(file.to_path_buf());
+            Ok(())
+        },
+        || panic!("a swap that succeeded restarted the daemon"),
+    );
+    (result, installed.into_inner())
+}
+
+/// A signed download is installed: the daemon stops and the verified
+/// file is swapped in.
+#[test]
+fn a_download_the_release_key_signed_is_installed() {
+    let base = serve(signed(vec![
+        route("/asset", million_a()),
+        route("/asset.sha256", sidecar(MILLION_A, ASSET)),
+    ]));
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (result, installed) = install_into(&info(&base, ASSET), dir.path());
+    assert_eq!(result, Ok(()));
+    assert_eq!(
+        installed,
+        Installed {
+            stopped: true,
+            swapped: Some(dir.path().join(ASSET)),
+        }
+    );
+}
+
+/// Each download fails the update with the case's error: the daemon
+/// keeps running, nothing is swapped in, and the update directory holds
+/// no file of it.
+#[test]
+fn a_download_without_a_release_signature_for_it_is_deleted_and_installs_nothing() {
+    for case in unsigned_cases() {
+        let base = case.serve();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (result, installed) = install_into(&info(&base, ASSET), dir.path());
+        let err = result.expect_err(case.case);
+        assert!(err.contains(&case.fragment), "{}: {err}", case.case);
+        assert_eq!(installed, Installed::default(), "{}", case.case);
+        assert!(is_empty(dir.path()), "{}: a file stayed behind", case.case);
+    }
+}
+
+/// A file already in the update directory whose SHA-256 is the
+/// sidecar's is no more trusted than a download: each case fails, and
+/// the file is deleted. A signature that cannot be fetched fails the
+/// update before the update directory is read, and leaves it as it
+/// was.
+#[test]
+fn a_file_already_there_without_a_release_signature_for_it_is_deleted() {
+    for case in unsigned_cases() {
+        let base = case.serve();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kept = dir.path().join(ASSET);
+        std::fs::write(&kept, &case.body).expect("write");
+        let (result, installed) = install_into(&info(&base, ASSET), dir.path());
+        let err = result.expect_err(case.case);
+        assert!(err.contains(&case.fragment), "{}: {err}", case.case);
+        assert_eq!(installed, Installed::default(), "{}", case.case);
+        if case.minisig.is_none() {
+            assert!(kept.is_file(), "{}: the file was deleted", case.case);
+        } else {
+            assert!(is_empty(dir.path()), "{}: the file stayed", case.case);
+        }
+    }
+}
+
+/// A `.minisig` larger than any signature is read up to
+/// `SIGNATURE_MAX` bytes and fails as no signature: this one is the
+/// release signature behind a 4 MiB untrusted comment, which verifies
+/// only when read whole.
+#[test]
+fn an_oversized_signature_is_read_to_its_bound_and_rejected() {
+    let (_, lines) = SIGNED.split_once('\n').expect("a signature line");
+    let minisig = format!("untrusted comment: {}\n{lines}", "x".repeat(4 << 20));
+    let base = serve(vec![
+        route("/asset", million_a()),
+        route("/asset.sha256", sidecar(MILLION_A, ASSET)),
+        route("/asset.minisig", minisig),
+    ]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect_err("oversized");
+    assert!(
+        err.starts_with(&format!("update: {ASSET}.minisig is not a minisign signature")),
+        "{err}"
+    );
+    assert!(is_empty(dir.path()), "a file stayed behind");
 }
 
 #[test]
@@ -274,6 +530,7 @@ fn a_newer_release_offers_its_asset_and_the_asset_s_sidecar() {
     let assets = serde_json::json!([
         asset(&format!("{ASSET}.sha256")),
         asset("iris-9.9.9-macos-universal.dmg"),
+        asset(&format!("{ASSET}.minisig")),
         asset(ASSET),
     ]);
     let found = select(
@@ -290,6 +547,10 @@ fn a_newer_release_offers_its_asset_and_the_asset_s_sidecar() {
         found.checksum_url,
         format!("https://dl.example/{ASSET}.sha256")
     );
+    assert_eq!(
+        found.signature_url,
+        format!("https://dl.example/{ASSET}.minisig")
+    );
 }
 
 #[test]
@@ -305,21 +566,213 @@ fn a_release_that_is_not_newer_offers_nothing() {
     }
 }
 
+/// A newer release offers its asset only with both sidecars of that
+/// asset: a missing one, one of another asset, or one with no download
+/// URL is an error naming the missing file.
 #[test]
 fn a_newer_asset_with_no_sidecar_of_its_own_is_an_error() {
     let current = semver::Version::new(0, 1, 0);
-    for assets in [
-        serde_json::json!([asset(ASSET)]),
-        serde_json::json!([asset(ASSET), asset("iris-9.9.9-macos-universal.dmg.sha256")]),
-        serde_json::json!([asset(ASSET), { "name": format!("{ASSET}.sha256") }]),
+    for (missing, present) in [(".sha256", ".minisig"), (".minisig", ".sha256")] {
+        let ours = asset(&format!("{ASSET}{present}"));
+        for assets in [
+            serde_json::json!([asset(ASSET), ours]),
+            serde_json::json!([
+                asset(ASSET),
+                ours,
+                asset(&format!("iris-9.9.9-macos-universal.dmg{missing}"))
+            ]),
+            serde_json::json!([asset(ASSET), ours, { "name": format!("{ASSET}{missing}") }]),
+        ] {
+            let err = select(&release("v9.9.9", assets.clone()), &current, SELECTOR)
+                .expect_err(&assets.to_string());
+            assert_eq!(
+                err,
+                format!("update: release v9.9.9 has no {ASSET}{missing} to check {ASSET} against")
+            );
+        }
+    }
+}
+
+// WHY: the class closed here is "a channel offers a release its
+// contract excludes, or misses the one it includes": stable offers
+// GitHub's latest release and never a draft or a prerelease, by flag
+// or by tag; beta offers the highest `v{semver}` release by version,
+// prerelease or stable, in any list order, and skips drafts, other
+// tags, and releases with no asset for this platform; neither offers a
+// version that is not newer than the running one. Not covered: the
+// GitHub requests themselves, which need the network.
+
+/// A GitHub release tagged `tag` holding `asset_name` and both its
+/// sidecars.
+fn published(tag: &str, asset_name: &str, draft: bool, prerelease: bool) -> serde_json::Value {
+    serde_json::json!({
+        "tag_name": tag,
+        "draft": draft,
+        "prerelease": prerelease,
+        "assets": [
+            asset(asset_name),
+            asset(&format!("{asset_name}.sha256")),
+            asset(&format!("{asset_name}.minisig")),
+        ],
+    })
+}
+
+/// The published release of `version` for this platform, a prerelease
+/// when `version` is one.
+fn linux(version: &str) -> serde_json::Value {
+    published(
+        &format!("v{version}"),
+        &format!("iris-{version}-linux-x86_64.AppImage"),
+        false,
+        version.contains('-'),
+    )
+}
+
+fn version(text: &str) -> semver::Version {
+    semver::Version::parse(text).expect(text)
+}
+
+/// The version and asset `found` offers, `None` for no offer.
+fn offer(found: Result<Option<UpdateInfo>, String>) -> Option<(String, String)> {
+    found
+        .expect("select")
+        .map(|info| (info.version.to_string(), info.asset_name))
+}
+
+fn offer_of(version: &str) -> Option<(String, String)> {
+    Some((
+        version.to_string(),
+        format!("iris-{version}-linux-x86_64.AppImage"),
+    ))
+}
+
+#[test]
+fn stable_offers_the_latest_release_and_never_a_draft_or_a_prerelease() {
+    let current = version("0.1.0");
+    assert_eq!(
+        offer(select_stable(&linux("9.9.9"), &current, SELECTOR)),
+        offer_of("9.9.9")
+    );
+    for (case, latest) in [
+        ("a draft", published("v9.9.9", ASSET, true, false)),
+        (
+            "a release GitHub marks a prerelease",
+            published("v9.9.9", ASSET, false, true),
+        ),
+        (
+            "a prerelease tag GitHub does not mark",
+            published(
+                "v9.9.10-beta.1",
+                "iris-9.9.10-beta.1-linux-x86_64.AppImage",
+                false,
+                false,
+            ),
+        ),
+        ("the running version", linux("0.1.0")),
+        ("an older version", linux("0.0.9")),
     ] {
-        let err = select(&release("v9.9.9", assets.clone()), &current, SELECTOR)
-            .expect_err(&assets.to_string());
+        assert_eq!(select_stable(&latest, &current, SELECTOR), Ok(None), "{case}");
+    }
+}
+
+#[test]
+fn beta_offers_the_highest_version_prerelease_or_stable() {
+    let current = version("0.1.0");
+    let other = |tag| published(tag, "iris-11.0.0-linux-x86_64.AppImage", false, false);
+    for (case, list, want) in [
+        (
+            "a prerelease above the latest stable release",
+            vec![linux("9.10.0-beta.1"), linux("9.9.9")],
+            "9.10.0-beta.1",
+        ),
+        (
+            "a stable release above its prereleases",
+            vec![linux("9.10.0-rc.1"), linux("9.10.0"), linux("9.10.0-beta.2")],
+            "9.10.0",
+        ),
+        (
+            "a list by date that is not by version",
+            vec![linux("9.9.10"), linux("10.0.0-beta.1"), linux("9.9.9")],
+            "10.0.0-beta.1",
+        ),
+        (
+            "a draft above the rest",
+            vec![
+                published("v11.0.0", "iris-11.0.0-linux-x86_64.AppImage", true, false),
+                published("v11.0.0-beta.1", "iris-11.0.0-beta.1-linux-x86_64.AppImage", true, true),
+                linux("9.9.9"),
+            ],
+            "9.9.9",
+        ),
+        (
+            "tags that are not v{semver}",
+            vec![
+                other("11.0.0"),
+                other("V11.0.0"),
+                other("release-11.0.0"),
+                other("v11.0"),
+                other("nightly"),
+                linux("9.9.9"),
+            ],
+            "9.9.9",
+        ),
+        (
+            "a newer release with no asset for this platform",
+            vec![
+                published("v11.0.0", "iris-11.0.0-macos-universal.dmg", false, false),
+                published("v10.0.0", "iris-10.0.0-linux-aarch64.AppImage", false, false),
+                linux("9.9.9"),
+            ],
+            "9.9.9",
+        ),
+    ] {
+        let list = serde_json::Value::Array(list);
         assert_eq!(
-            err,
-            format!("update: release v9.9.9 has no {ASSET}.sha256 to check {ASSET} against")
+            offer(select_beta(&list, &current, SELECTOR)),
+            offer_of(want),
+            "{case}"
         );
     }
+}
+
+#[test]
+fn beta_offers_only_a_version_newer_than_the_running_one() {
+    for (current, list, want) in [
+        ("0.1.0", vec![], None),
+        (
+            "0.1.0",
+            vec![linux("0.1.0"), linux("0.1.0-beta.3"), linux("0.0.9")],
+            None,
+        ),
+        (
+            "0.1.0",
+            vec![published("v9.9.9", ASSET, true, false)],
+            None,
+        ),
+        (
+            "0.2.0-beta.2",
+            vec![linux("0.2.0-beta.1"), linux("0.2.0-beta.2"), linux("0.1.0")],
+            None,
+        ),
+        ("0.2.0-beta.1", vec![linux("0.2.0-beta.2")], offer_of("0.2.0-beta.2")),
+        ("0.2.0-beta.2", vec![linux("0.2.0")], offer_of("0.2.0")),
+    ] {
+        let list = serde_json::Value::Array(list);
+        assert_eq!(
+            offer(select_beta(&list, &version(current), SELECTOR)),
+            want,
+            "running {current}: {list}"
+        );
+    }
+}
+
+#[test]
+fn a_release_list_that_is_not_an_array_is_an_error() {
+    let answer = serde_json::json!({ "message": "Not Found" });
+    assert_eq!(
+        select_beta(&answer, &version("0.1.0"), SELECTOR),
+        Err("update: the release list is not a JSON array".to_string())
+    );
 }
 
 #[test]
@@ -334,7 +787,7 @@ fn asset_names_that_leave_the_update_dir_are_rejected() {
         "",
     ] {
         let err =
-            download_into(&info("https://invalid.example", name), dir.path()).expect_err(name);
+            download_into(&info("https://invalid.example", name), dir.path(), &test_key()).expect_err(name);
         assert!(err.starts_with("update: bad asset name"), "{name:?}: {err}");
     }
 }

@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>dev.iris.app</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT OR Apache-2.0</project_license>
+  <project_license>(MIT OR Apache-2.0) AND OFL-1.1</project_license>
   <name>iris</name>
   <summary>Screenshot and screen-recording utility</summary>
   <description>

@@ -253,3 +253,20 @@ fn pixelate_region_respects_offsets_and_leaves_outside() {
     assert_eq!(bgra.len(), 16 * 16 * 4);
     assert_eq!(&bgra[0..4], &[0, 124, 124, 255]);
 }
+
+// WHY: a tool's tooltip shows its TOOLS key and the key handler selects
+// through tool_for_key, so one table backs both. A tool whose key is
+// missing, shared, or mapped to another tool fails here, as does a tool
+// key that collides with the editor's other unmodified keys (F fill,
+// 1 to 3 stroke, 0 zoom) or with the Ctrl chords' letters.
+#[test]
+fn every_tool_key_selects_its_tool_and_no_key_is_shared() {
+    use super::action::{tool_for_key, TOOLS};
+    for (tool, _, label, key) in TOOLS {
+        assert_eq!(tool_for_key(&key.to_ascii_lowercase()), Some(tool), "{label}");
+        assert_eq!(TOOLS.iter().filter(|t| t.3 == key).count(), 1, "{key} is shared");
+    }
+    for key in ["f", "1", "2", "3", "0", "space", "enter", "escape", "z", "s", "w", "y"] {
+        assert_eq!(tool_for_key(key), None, "{key}");
+    }
+}

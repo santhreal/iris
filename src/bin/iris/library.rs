@@ -1,30 +1,39 @@
-//! Library panel: the main window. A grid of captures, newest first.
+//! Library panel: the main window. A grid of captures, newest first,
+//! grouped by the local day each was taken.
 //!
-//! Click opens the canvas editor, Ctrl/Shift-click multi-selects, and
-//! hover reveals per-card annotate/copy/delete actions. The toolbar
-//! starts a region capture or opens settings. The grid lists a capture
-//! this process saves at once, and a watch on the capture folders drops
-//! a capture another program deletes or moves away.
+//! Click opens the canvas editor, Ctrl/Shift-click multi-selects, the
+//! arrow keys move the selection, Return opens and Space previews the
+//! selected capture, and hover reveals per-card copy/reveal/trash
+//! actions. The toolbar starts a region capture or opens settings. The
+//! grid lists a capture this process saves at once, and a watch on the
+//! capture folders drops a capture another program deletes or moves
+//! away.
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gpui::*;
 
 mod card;
+mod context_menu;
 mod entries;
 mod folders;
+mod keys;
+mod layout;
 mod listing;
+mod preview;
 mod render;
 #[cfg(test)]
 mod tests;
 
 pub(super) const CARD_W: f32 = 216.0;
 pub(super) const THUMB_H: f32 = 132.0;
+/// Space between a card's thumbnail and its caption, and the caption
+/// line's height.
+pub(super) const CAPTION_GAP: f32 = 7.0;
+pub(super) const CAPTION_H: f32 = 15.0;
+pub(super) const CARD_H: f32 = THUMB_H + CAPTION_GAP + CAPTION_H;
+/// Space between two cards of a row.
 pub(super) const GAP: f32 = 16.0;
-/// The label row under a card's thumbnail: its inset on each side and
-/// the space between the name and the dimensions.
-pub(super) const LABEL_PAD: f32 = 2.0;
-pub(super) const LABEL_GAP: f32 = 6.0;
 /// How often a window whose capture folders the OS refused to watch
 /// reads the store.
 pub(super) const REFRESH: Duration = Duration::from_millis(1500);
@@ -49,105 +58,27 @@ pub(super) fn evict_thumbs(cache: &mut ThumbCache, keep: impl Fn(&Path) -> bool,
     });
 }
 
-/// The card rows that intersect the scroll viewport, plus the heights
-/// of the full-width spacer rows that stand in for the rows above and
-/// below. A spacer occupies a whole wrap line, so its height is the
-/// covered rows' pitch minus the inter-row GAP the line break adds.
-/// Returns `(first_row, last_row, top_spacer_h, bottom_spacer_h)`;
-/// `top_spacer_h`/`bottom_spacer_h` are 0 when no spacer is needed.
-/// `viewport_h <= 0` means the scroll bounds are not laid out yet, so
-/// every row renders that frame rather than flash an empty grid.
-pub(super) fn visible_rows(
-    n: usize,
-    cols: usize,
-    scroll_y: f32,
-    viewport_h: f32,
-) -> (usize, usize, f32, f32) {
-    let card_h = THUMB_H + 8.0 + 18.0;
-    let row_pitch = card_h + GAP;
-    let rows = n.div_ceil(cols.max(1));
-    if rows == 0 {
-        return (0, 0, 0.0, 0.0);
-    }
-    if viewport_h <= 0.0 {
-        return (0, rows - 1, 0.0, 0.0);
-    }
-    let first = (((scroll_y - GAP) / row_pitch).floor().max(0.0) as usize).min(rows - 1);
-    // The last row whose top is above the viewport bottom. A row top
-    // exactly at the bottom edge is not visible, so ceil(x) - 1, not
-    // ceil(x): x = 4.0 means row 4 starts at the edge and is excluded.
-    let last = (((scroll_y + viewport_h - GAP) / row_pitch).ceil() as usize)
-        .saturating_sub(1)
-        .min(rows - 1);
-    let first_row = first.saturating_sub(1);
-    let last_row = (last + 1).min(rows - 1);
-    let top_h = if first_row > 0 {
-        first_row as f32 * row_pitch - GAP
-    } else {
-        0.0
-    };
-    let bottom_h = if last_row + 1 < rows {
-        (rows - last_row - 1) as f32 * row_pitch - GAP
-    } else {
-        0.0
-    };
-    (first_row, last_row, top_h, bottom_h)
-}
-
-/// The rows `visible_rows` returns for every scroll amount from
-/// `scroll_y` to `target_y`. A wheel motion moves the offset toward its
-/// target during prepaint, after the grid renders; rendering the whole
-/// span keeps every frame of the motion filled however far one frame
-/// moves.
-pub(super) fn motion_rows(
-    n: usize,
-    cols: usize,
-    scroll_y: f32,
-    target_y: f32,
-    viewport_h: f32,
-) -> (usize, usize, f32, f32) {
-    if viewport_h <= 0.0 {
-        return visible_rows(n, cols, scroll_y, viewport_h);
-    }
-    visible_rows(
-        n,
-        cols,
-        scroll_y.min(target_y),
-        viewport_h + (scroll_y - target_y).abs(),
-    )
-}
-
-/// The open cascade: each card rises and fades in over CASCADE_RISE
-/// seconds, CASCADE_STAGGER after the card before it. The stagger stops
-/// growing after CASCADE_CARDS cards, so every card is in place by
-/// CASCADE_END: a card scrolled into view early joins the end of the
-/// wave instead of staying hidden, and none jumps when the wave stops.
-const CASCADE_STAGGER: f32 = 0.025;
-const CASCADE_RISE: f32 = 0.35;
-const CASCADE_CARDS: usize = 24;
-pub(super) const CASCADE_END: f32 = CASCADE_STAGGER * CASCADE_CARDS as f32 + CASCADE_RISE;
-
-/// Card `index`'s cascade progress `at` seconds into the wave: 0 is
-/// hidden and lowered, 1 is in place.
-pub(super) fn cascade(at: f32, index: usize) -> f32 {
-    ((at - index.min(CASCADE_CARDS) as f32 * CASCADE_STAGGER) / CASCADE_RISE).clamp(0.0, 1.0)
-}
-
 pub struct Library {
     listing: listing::Listing,
+    /// The grid at the window's width, rebuilt when the listing or the
+    /// width changes, not per frame.
+    layout: layout::Layout,
+    /// The listing generation and width `layout` was built for.
+    layout_key: (u64, f32),
     pub(super) selected: Vec<PathBuf>,
     /// Membership set for `selected`, rebuilt on the render after a
     /// mutation instead of hashed fresh every frame.
     pub(super) sel_set: std::collections::HashSet<PathBuf>,
     pub(super) sel_dirty: bool,
+    /// Where a Shift-click or Shift-arrow range starts.
     pub(super) anchor: Option<usize>,
+    /// The card the arrow keys move from, Return opens, and Space
+    /// previews.
+    pub(super) cursor: Option<usize>,
     pub(super) hovered: Option<usize>,
-    /// Pointer-coupled springs per card: hover lift and selection
-    /// pop. They reverse mid-flight, which is the liquid feel.
+    /// Hover springs per card: the lift and the quick actions' fade.
+    /// They reverse mid-flight when the pointer leaves.
     pub(super) springs: std::collections::HashMap<usize, crate::motion::Spring>,
-    pub(super) sel_springs: std::collections::HashMap<usize, crate::motion::Spring>,
-    pub(super) press_spring: crate::motion::Spring,
-    pub(super) pressed: Option<usize>,
     pub(super) last_frame: Option<Instant>,
     pub(super) drag_start: Option<(usize, f32, f32)>,
     /// Decoded thumbnails, keyed by capture path. Reading and
@@ -174,8 +105,8 @@ pub struct Library {
     /// The selection count label, rebuilt only when the selection
     /// changes: formatting it per frame is a String a frame.
     pub(super) sel_label: SharedString,
-    /// Empty-state line: the hotkey is fixed for the session.
-    pub(super) empty_label: SharedString,
+    /// The empty state's hint line: the hotkey is fixed for the session.
+    pub(super) empty_hint: SharedString,
     pub(super) drag_fired: bool,
     pub(super) help: bool,
     pub(super) status: Option<String>,
@@ -193,6 +124,10 @@ pub struct Library {
     /// Scroll offset of the card grid, so band math stays in
     /// document space during a band drag.
     pub(super) scroll: gpui::ScrollHandle,
+    /// The Space preview, while it is open.
+    preview: Option<preview::Preview>,
+    /// The card context menu, while it is open.
+    menu: Option<context_menu::ContextMenu>,
 }
 
 /// The library window's minimum logical size, where its resize stops.
@@ -236,9 +171,11 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 let cfg = iris_lib::config::Config::load();
                 let mut this = Library {
                     listing: listing::Listing::default(),
+                    layout: layout::Layout::default(),
+                    layout_key: (u64::MAX, 0.0),
                     sel_label: SharedString::from(""),
-                    empty_label: SharedString::from(format!(
-                        "No captures yet — press {}",
+                    empty_hint: SharedString::from(format!(
+                        "Press {} to capture a region of the screen.",
                         cfg.capture_hotkey
                     )),
                     selected: Vec::new(),
@@ -247,11 +184,9 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     sel_set: std::collections::HashSet::new(),
                     sel_dirty: false,
                     anchor: None,
+                    cursor: None,
                     hovered: None,
                     springs: std::collections::HashMap::new(),
-                    sel_springs: std::collections::HashMap::new(),
-                    press_spring: crate::motion::Spring::default(),
-                    pressed: None,
                     last_frame: None,
                     drag_start: None,
                     thumb_keep: (0, 0),
@@ -266,8 +201,11 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     cfg,
                     band: None,
                     scroll: gpui::ScrollHandle::new(),
+                    preview: None,
+                    menu: None,
                 };
                 this.refresh(false, cx);
+                this.arm_midnight(cx);
                 this
             })
         },
@@ -278,6 +216,9 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     if let Ok(entity) = handle.entity(cx) {
         cx.observe_release(&entity, |this, cx| {
             for img in this.thumb_cache.values() {
+                crate::widgets::release_render(img, cx);
+            }
+            if let Some(img) = this.preview.as_ref().and_then(|p| p.image.as_ref()) {
                 crate::widgets::release_render(img, cx);
             }
         })
@@ -293,5 +234,25 @@ pub fn store_changed(cx: &mut App) {
         if let Some(library) = window.downcast::<Library>() {
             let _ = library.update(cx, |this, _, cx| this.refresh(true, cx));
         }
+    }
+}
+
+impl Library {
+    /// Rewrite the day titles at each local midnight, for the life of
+    /// the window: one timer a day, no per-frame clock read.
+    fn arm_midnight(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| loop {
+            let wait = Duration::from_secs(layout::secs_to_midnight() + 1);
+            cx.background_executor().timer(wait).await;
+            let alive = this.update(cx, |this, cx| {
+                if this.listing.relabel(layout::today()) {
+                    cx.notify();
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
     }
 }

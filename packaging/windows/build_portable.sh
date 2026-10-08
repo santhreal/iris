@@ -1,82 +1,70 @@
 #!/usr/bin/env bash
+# build_portable.sh: builds the portable zip of iris for Windows.
+#
+#   packaging/windows/build_portable.sh --bin <path> --out <dir>
+#       [--version <ver>] [--arch x86_64|aarch64] [--skip-sha]
+#
+#   --bin <path>      the iris.exe to package
+#   --out <dir>       the directory the zip is written to
+#   --version <ver>   the iris version (default: Cargo.toml)
+#   --arch <arch>     x86_64 or aarch64 (default: iris.exe's); fails
+#                     when iris.exe is built for another
+#   --skip-sha        write no .sha256 sidecar
+#
+# Writes iris-{ver}-windows-{arch}-portable.zip (packaging/CONTRACT.md)
+# and its .sha256 sidecar. The zip holds one directory, iris, with
+# iris.exe (the updater reads iris\iris.exe,
+# src/bin/iris/sys/install/windows.rs), LICENSE-MIT, LICENSE-APACHE,
+# and Inter-OFL.txt.
 set -euo pipefail
-
-# build_portable.sh — Builds the Windows portable zip for iris
-#
-# References:
-#   packaging/CONTRACT.md
-#
-# Release asset name:
-#   iris-{ver}-windows-x86_64-portable.zip
-#   iris-{ver}-windows-x86_64-portable.zip.sha256
-#
-# Contents of the zip (the updater reads iris\iris.exe,
-# src/bin/iris/sys/install/windows.rs):
-#   iris/iris.exe
-#   iris/LICENSE-APACHE
-#   iris/LICENSE-MIT
-#
-# Usage:
-#   ./build_portable.sh [options]
-#
-# Options:
-#   -b, --binary <path>    Path to iris.exe (default: target/release/iris.exe)
-#   -o, --out <dir>        Output directory (default: dist)
-#   -v, --version <ver>    App version (default: from Cargo.toml)
-#   -h, --help             Show this help message
+# Zipped directories are 0755 and files 0644 whatever the caller's umask.
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck source=packaging/lib.sh
+. "$REPO_ROOT/packaging/lib.sh"
 
-IRIS_BIN="$REPO_ROOT/target/release/iris.exe"
-OUT_DIR="$REPO_ROOT/dist"
+IRIS_BIN=""
+OUT_DIR=""
 VERSION=""
-
+ARCH=""
+GEN_SHA=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -b|--binary)
-      IRIS_BIN="$2"
-      shift 2
-      ;;
-    -o|--out)
-      OUT_DIR="$2"
-      shift 2
-      ;;
-    -v|--version)
-      VERSION="$2"
-      shift 2
-      ;;
-    -h|--help)
-      awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; seen = 1; next } seen { exit }' "$0"
-      exit 0
-      ;;
-    *)
-      echo "Error: unknown argument $1 (see --help)" >&2
-      exit 1
-      ;;
+    --bin) IRIS_BIN=${2:?--bin needs a path}; shift 2 ;;
+    --out) OUT_DIR=${2:?--out needs a directory}; shift 2 ;;
+    --version) VERSION=${2:?--version needs a version}; shift 2 ;;
+    --arch) ARCH=${2:?--arch needs x86_64 or aarch64}; shift 2 ;;
+    --skip-sha) GEN_SHA=false; shift ;;
+    -h|--help) iris_help "$0"; exit 0 ;;
+    *) echo "Error: unknown argument $1 (see --help)" >&2; exit 2 ;;
   esac
 done
-
-if [[ -z "$VERSION" ]]; then
-  VERSION=$(sed -nE 's/^version = "([^"]+)"/\1/p' "$REPO_ROOT/Cargo.toml" | head -n1)
+if [[ -z "$IRIS_BIN" || -z "$OUT_DIR" ]]; then
+  echo "Error: --bin and --out are required (see --help)" >&2
+  exit 2
 fi
 if [[ ! -f "$IRIS_BIN" ]]; then
-  echo "Error: $IRIS_BIN not found; build it with: cargo build --release --bin iris" >&2
+  echo "Error: $IRIS_BIN does not exist" >&2
   exit 1
 fi
 
-ZIP_NAME="iris-${VERSION}-windows-x86_64-portable.zip"
-mkdir -p "$OUT_DIR"
-OUT_DIR="$(cd "$OUT_DIR" && pwd)"
-rm -f "$OUT_DIR/$ZIP_NAME" "$OUT_DIR/$ZIP_NAME.sha256"
+VERSION=${VERSION:-$(iris_cargo_version "$REPO_ROOT")}
+ARCH=$(iris_resolve_arch "$IRIS_BIN" "$ARCH")
 
-STAGING_DIR="$(mktemp -d "$OUT_DIR/.portable.XXXXXX")"
+mkdir -p "$OUT_DIR"
+ZIP_NAME="iris-${VERSION}-windows-${ARCH}-portable.zip"
+ZIP_PATH="$(cd "$OUT_DIR" && pwd)/$ZIP_NAME"
+echo "Packaging $IRIS_BIN as $ZIP_PATH"
+rm -f "$ZIP_PATH" "$ZIP_PATH.sha256"
+
+STAGING_DIR=$(iris_staging_dir "$REPO_ROOT" portable)
 trap 'rm -rf "$STAGING_DIR"' EXIT
 mkdir "$STAGING_DIR/iris"
 cp "$IRIS_BIN" "$STAGING_DIR/iris/iris.exe"
-cp "$REPO_ROOT/LICENSE-APACHE" "$REPO_ROOT/LICENSE-MIT" "$STAGING_DIR/iris/"
+iris_license_files "$REPO_ROOT" "$STAGING_DIR/iris"
 
-echo "==> Building $OUT_DIR/$ZIP_NAME"
 # The updater unpacks the zip with the tar.exe Windows ships (bsdtar),
 # which writes it here on Windows. zip or Python's zipfile writes one it
 # reads elsewhere.
@@ -93,15 +81,11 @@ elif command -v zip >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
   (cd "$STAGING_DIR" && python3 -m zipfile -c iris.zip iris)
 else
-  echo "Error: building the zip needs zip or python3 on PATH" >&2
+  echo "Error: building the zip requires zip or python3 on PATH" >&2
   exit 1
 fi
-mv "$STAGING_DIR/iris.zip" "$OUT_DIR/$ZIP_NAME"
-
-if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$OUT_DIR" && sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256")
-else
-  (cd "$OUT_DIR" && shasum -a 256 "$ZIP_NAME" > "$ZIP_NAME.sha256")
+mv "$STAGING_DIR/iris.zip" "$ZIP_PATH"
+if [[ "$GEN_SHA" == true ]]; then
+  iris_sha256_sidecar "$ZIP_PATH"
 fi
-
-echo "==> Created $OUT_DIR/$ZIP_NAME"
+echo "Built $ZIP_PATH"

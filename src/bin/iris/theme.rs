@@ -1,8 +1,9 @@
 //! Design tokens: the single source of truth for iris's visual register.
-//! Register (near-black monochrome, semantic
-//! color only where it carries meaning, 9/14 radius scale).
+//! Register: dark macOS chrome. Neutral grays, label tiers as white at
+//! falling opacity, one systemBlue accent for state and selection,
+//! semantic red and green only where they carry meaning, a 4px grid.
 
-use gpui::Rgba;
+use gpui::{px, App, FontFeatures, FontWeight, Rgba};
 
 const fn rgb(r: f32, g: f32, b: f32) -> Rgba {
     Rgba { r, g, b, a: 1.0 }
@@ -13,70 +14,115 @@ pub const fn alpha(color: Rgba, a: f32) -> Rgba {
 }
 
 const WHITE: Rgba = rgb(1.0, 1.0, 1.0);
+const BLACK: Rgba = rgb(0.0, 0.0, 0.0);
 
-pub const BG: Rgba = rgb(0.106, 0.106, 0.118);
-pub const BG_ELEV: Rgba = rgb(0.149, 0.149, 0.169);
-pub const SURFACE: Rgba = alpha(WHITE, 0.055);
-pub const SURFACE_HOVER: Rgba = alpha(WHITE, 0.095);
-pub const HAIRLINE: Rgba = alpha(WHITE, 0.09);
-/// Grouped-list card fill (macOS System Settings register).
-pub const GROUP_BG: Rgba = alpha(WHITE, 0.045);
-/// Row separator inside a group card, inset from the card's left edge.
-pub const SEPARATOR: Rgba = alpha(WHITE, 0.07);
-/// Text field fill inside a group row.
-pub const FIELD_BG: Rgba = alpha(WHITE, 0.07);
-pub const FG: Rgba = rgb(0.949, 0.949, 0.957);
-pub const FG_DIM: Rgba = rgb(0.635, 0.635, 0.659);
-pub const FG_FAINT: Rgba = rgb(0.443, 0.443, 0.478);
-pub const ACCENT: Rgba = rgb(0.961, 0.961, 0.969);
-pub const ACCENT_INK: Rgba = rgb(0.106, 0.106, 0.118);
-// Only the Linux recording chip's pause state uses DANGER today; the
-// palette is a shared vocabulary, so it stays defined everywhere.
-#[allow(dead_code)]
-pub const DANGER: Rgba = rgb(1.0, 0.271, 0.227);
-
+/// Window background, #1E1E1E.
+pub const BG: Rgba = rgb(0.118, 0.118, 0.118);
+/// Floating panels over the window: menus, popovers, sheets, pills.
+pub const BG_ELEV: Rgba = rgb(0.169, 0.169, 0.169);
+pub const SURFACE: Rgba = alpha(WHITE, 0.05);
+/// Hover wash on ghost controls and rows.
+pub const SURFACE_HOVER: Rgba = alpha(WHITE, 0.06);
 /// Pressed-state wash: instant feedback that a control took the
 /// press, the biggest single cue for perceived responsiveness.
-pub const SURFACE_PRESS: Rgba = alpha(WHITE, 0.16);
+pub const SURFACE_PRESS: Rgba = alpha(WHITE, 0.10);
+pub const HAIRLINE: Rgba = alpha(WHITE, 0.09);
+/// Grouped-list card fill (macOS System Settings register).
+pub const GROUP_BG: Rgba = alpha(WHITE, 0.05);
+/// A clickable group card under the pointer and pressed: the card fill
+/// with the hover and press washes over it.
+pub const CARD_HOVER: Rgba = alpha(WHITE, 0.10);
+pub const CARD_PRESS: Rgba = alpha(WHITE, 0.14);
+/// Row separator inside a group card, inset to the label's leading edge.
+pub const SEPARATOR: Rgba = alpha(WHITE, 0.08);
+/// Text field fill and its 1px inner border.
+pub const FIELD_BG: Rgba = alpha(BLACK, 0.20);
+pub const FIELD_BORDER: Rgba = alpha(WHITE, 0.10);
+/// Pop-up button and secondary push button fill.
+pub const CONTROL_BG: Rgba = alpha(WHITE, 0.10);
+
+/// Label tiers: primary text, secondary (metadata, captions, resting
+/// glyphs), tertiary (placeholders, shortcut columns), disabled.
+pub const FG: Rgba = alpha(WHITE, 0.90);
+pub const FG_DIM: Rgba = alpha(WHITE, 0.55);
+pub const FG_FAINT: Rgba = alpha(WHITE, 0.30);
+pub const FG_DISABLED: Rgba = alpha(WHITE, 0.25);
+
+/// systemBlue (dark), #0A84FF: toggle on-track, the primary button,
+/// focus rings, selection, links.
+pub const ACCENT: Rgba = rgb(0.039, 0.518, 1.0);
+/// Text and glyphs drawn on an `ACCENT` fill.
+pub const ACCENT_INK: Rgba = WHITE;
+/// Keyboard focus ring: 3px of accent at 45%.
+pub const FOCUS_RING: Rgba = alpha(ACCENT, 0.45);
+/// Destructive text and confirmation fills, #FF453A.
+pub const DANGER: Rgba = rgb(1.0, 0.271, 0.227);
 
 /// Window control dots (the macOS traffic-light register).
 pub const WIN_CLOSE: Rgba = rgb(1.0, 0.373, 0.341);
 pub const WIN_MIN: Rgba = rgb(0.996, 0.741, 0.180);
 pub const WIN_ZOOM: Rgba = rgb(0.157, 0.784, 0.251);
 
-pub const RADIUS_SM: f32 = 9.0;
+/// Pills and small floating chips.
+pub const RADIUS_SM: f32 = 8.0;
 /// Grouped-list card corners.
-pub const RADIUS_GROUP: f32 = 12.0;
-/// Buttons, fields, and dropdowns share one corner radius and height
-/// so a row of mixed controls lines up edge to edge.
-pub const RADIUS_CONTROL: f32 = 7.0;
-pub const CONTROL_H: f32 = 28.0;
+pub const RADIUS_GROUP: f32 = 10.0;
+/// Menus and popovers.
+pub const RADIUS_MENU: f32 = 8.0;
+/// Buttons, fields, pop-up buttons, and segmented controls share one
+/// corner radius so a row of mixed controls lines up edge to edge.
+pub const RADIUS_CONTROL: f32 = 6.0;
+/// Control height inside forms and settings rows.
+pub const CONTROL_H: f32 = 24.0;
+/// Control height in toolbars, and the minimum icon-only hit area.
+pub const TOOLBAR_CONTROL_H: f32 = 28.0;
+/// Glyph sizes: toolbar icons and row icons.
+pub const ICON_TOOLBAR: f32 = 16.0;
+pub const ICON_ROW: f32 = 14.0;
 
-/// Type scale, px. JetBrains Mono has a 0.6 em advance, wider than a
-/// proportional sans, so body text is 13px rather than GPUI's 14px
-/// `text_sm` to keep labels inside fixed-width controls.
-pub const TEXT_SMALL: f32 = 11.5;
+/// Spacing, logical px, on the 4px grid.
+/// Content inset from the window edges.
+pub const INSET: f32 = 20.0;
+/// Horizontal padding inside a group row.
+pub const ROW_PAD_X: f32 = 12.0;
+/// Minimum height of a single-line group row, and of one with a
+/// secondary line.
+pub const ROW_H: f32 = 36.0;
+pub const ROW_H_TALL: f32 = 44.0;
+/// Space between groups, and from a section header to its group.
+pub const GROUP_GAP: f32 = 20.0;
+pub const HEADER_GAP: f32 = 6.0;
+/// Unified toolbar (title bar) height.
+pub const TOOLBAR_H: f32 = 52.0;
+
+/// Type scale, logical px (weights in the doc of each).
+/// Large title, Bold: the Home wordmark.
+pub const TEXT_LARGE_TITLE: f32 = 22.0;
+/// Title, SemiBold: pane and sheet titles.
+pub const TEXT_TITLE: f32 = 15.0;
+/// Headline, SemiBold: window titles in the toolbar, row titles.
+pub const TEXT_HEADLINE: f32 = 13.0;
+/// Body, Regular: labels, menu rows, field text.
 pub const TEXT_BODY: f32 = 13.0;
-pub const TEXT_TITLE: f32 = 13.5;
-pub const TEXT_HEADING: f32 = 17.0;
-/// Width of one glyph at `TEXT_SMALL`. JetBrains Mono is monospace at a
-/// 0.6 em advance, so a small label's width is known before layout.
-pub const SMALL_ADVANCE: f32 = 0.6 * TEXT_SMALL;
+/// Caption, Regular or Medium: metadata, section headers, tooltips.
+pub const TEXT_SMALL: f32 = 11.0;
 
 /// UI font family. Every surface sets it on its root; GPUI cascades
 /// text styles down the element tree. Bundled (see `load_fonts`) so
 /// the family resolves on machines without it installed.
-pub const FONT: &str = "JetBrains Mono";
+pub const FONT: &str = "Inter";
 
 /// The bold face, also used to bake text annotations into saved
-/// images so the output matches on every platform.
-pub const FONT_BOLD_TTF: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf");
+/// images so the output matches the editor's on-canvas text on every
+/// platform.
+pub const FONT_BOLD_TTF: &[u8] = include_bytes!("../../../assets/fonts/Inter-Bold.ttf");
 
-/// The bundled faces of `FONT`, one per weight the UI uses.
+/// The bundled faces of `FONT`, one per weight the UI uses: Regular,
+/// Medium, SemiBold, Bold.
 const FONT_FACES: [&[u8]; 4] = [
-    include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/JetBrainsMono-Medium.ttf"),
-    include_bytes!("../../../assets/fonts/JetBrainsMono-SemiBold.ttf"),
+    include_bytes!("../../../assets/fonts/Inter-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/Inter-Medium.ttf"),
+    include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf"),
     FONT_BOLD_TTF,
 ];
 
@@ -92,7 +138,61 @@ pub fn load_fonts(cx: &mut gpui::App) {
     }
 }
 
-use gpui::{point, px, BoxShadow};
+/// `FONT` at `weight`.
+pub fn font(weight: FontWeight) -> gpui::Font {
+    gpui::Font {
+        weight,
+        ..gpui::font(FONT)
+    }
+}
+
+/// Tabular numerals (`tnum`): every digit has one advance, so a number
+/// that updates in place (a timer, a dimension readout) or aligns in a
+/// column does not shift. Apply with `.font_features(theme::tabular())`.
+pub fn tabular() -> FontFeatures {
+    FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
+}
+
+/// Lines `text` wraps to in `FONT` at `size` and `weight` within
+/// `width` logical px, as GPUI's text element wraps it: at word
+/// boundaries, with a word wider than a line broken across lines. An
+/// empty text is one line.
+pub fn wrapped_lines(cx: &App, text: &str, size: f32, weight: FontWeight, width: f32) -> usize {
+    let mut wrapper = cx.text_system().line_wrapper(font(weight), px(size));
+    text.split('\n')
+        .map(|line| {
+            1 + wrapper
+                .wrap_line(&[gpui::LineFragment::text(line)], px(width))
+                .count()
+        })
+        .sum()
+}
+
+/// The sum of the Regular face's glyph advances for `text` at `size`,
+/// logical px, read from the bundled TTF without a text system: what a
+/// unit test without a GPUI app measures a string with. Kerning is not
+/// applied; Inter's pairs mostly tighten, so this is close to and
+/// usually above the shaped width.
+#[cfg(test)]
+pub fn advance_sum(text: &str, size: f32) -> f32 {
+    use ab_glyph::{Font as _, ScaleFont as _};
+    let face = ab_glyph::FontRef::try_from_slice(FONT_FACES[0]).expect("bundled Inter parses");
+    let scaled = face.as_scaled(ab_glyph::PxScale::from(size * face.height_unscaled() / face.units_per_em().expect("units per em")));
+    text.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum()
+}
+
+use gpui::{point, BoxShadow};
+
+/// The soft drop under a toggle knob and similar raised discs.
+pub fn shadow_knob() -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: gpui::hsla(0.0, 0.0, 0.0, 0.30),
+        offset: point(px(0.), px(1.)),
+        blur_radius: px(2.5),
+        spread_radius: px(0.),
+        inset: false,
+    }]
+}
 
 /// Resting elevation: cards and thumbnails sitting on a surface.
 pub fn shadow_rest() -> BoxShadow {

@@ -25,6 +25,24 @@ pub fn tidy() {
     windows::tidy();
 }
 
+/// The release asset suffix `kind` with `{arch}` replaced by this
+/// build's architecture, `std::env::consts::ARCH`. Asset names in
+/// packaging/CONTRACT.md use the same names: `x86_64`, `aarch64`.
+#[cfg(any(target_os = "linux", windows))]
+fn for_this_arch(kind: &str) -> String {
+    kind.replace("{arch}", std::env::consts::ARCH)
+}
+
+/// Whether packaging/CONTRACT.md lists the release asset `suffix`
+/// (`iris-{ver}-<suffix>`), so every release holds it.
+#[cfg(test)]
+fn in_contract(suffix: &str) -> bool {
+    let line = format!("- `iris-{{ver}}-{suffix}`");
+    include_str!("../../../../packaging/CONTRACT.md")
+        .lines()
+        .any(|l| l.starts_with(&line))
+}
+
 /// Start the new binary at `exe` and exit this process. The daemon is
 /// already stopped (see `update::apply`), so the fresh `iris` binds the
 /// socket and becomes the daemon rather than forwarding to a stale

@@ -6,7 +6,7 @@ rounded tile, matching `home.rs::iris_mark`. Rendered at 1024 then
 downsampled so every size is anti-aliased.
 
 Outputs into packaging/icons/:
-  iris-256.png, iris-512.png, iris-1024.png  (Linux + general)
+  iris-{16,24,32,48,64,128,256,512,1024}.png  (Linux hicolor sizes)
   iris.ico                                    (Windows)
   iris.icns                                   (macOS)
 """
@@ -95,7 +95,7 @@ def write_icns(base, path):
 
 def main():
     base = render(1024)
-    for n in (256, 512, 1024):
+    for n in (16, 24, 32, 48, 64, 128, 256, 512, 1024):
         write_png(base.resize((n, n), Image.LANCZOS),
                   os.path.join(OUT, f"iris-{n}.png"))
     write_ico(base, os.path.join(OUT, "iris.ico"))

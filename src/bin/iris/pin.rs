@@ -2,8 +2,9 @@
 //!
 //! A borderless window holding the capture at native scale, pinned
 //! above every other window via _NET_WM_STATE_ABOVE. Drag anywhere to
-//! move it; double-click or Escape closes. The image is the frozen
-//! capture's own pixels, not a live feed.
+//! move it; double-click, Escape, or the close button that shows in the
+//! top-left corner while the pointer is over the window closes it. The
+//! image is the frozen capture's own pixels, not a live feed.
 
 use std::sync::Arc;
 
@@ -114,6 +115,7 @@ impl Render for PinStage {
         // would show only in the transparent rounded corners, as dark
         // wedges that square them off.
         div()
+            .group("pin")
             .size_full()
             .font_family(theme::FONT)
             .rounded(crate::widgets::window_corner(window, 8.))
@@ -131,6 +133,36 @@ impl Render for PinStage {
                 img(ImageSource::Render(self.img.clone()))
                     .size_full()
                     .object_fit(ObjectFit::Contain),
+            )
+            // Over the move handle and occluding it, so a press on the
+            // button closes instead of starting a window drag.
+            .child(
+                div()
+                    .id("pin-close")
+                    .absolute()
+                    .top(px(8.))
+                    .left(px(8.))
+                    .size(px(22.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(theme::alpha(theme::BG_ELEV, 0.9))
+                    .border_1()
+                    .border_color(theme::HAIRLINE)
+                    .shadow(theme::shadow_float())
+                    .opacity(0.)
+                    .group_hover("pin", |s| s.opacity(1.))
+                    .hover(|s| s.bg(theme::BG_ELEV))
+                    .occlude()
+                    .cursor_pointer()
+                    .tooltip(crate::widgets::tip("Close", Some("Esc".into())))
+                    .on_click(|_, window, _| window.remove_window())
+                    .child(crate::icons::icon(
+                        crate::icons::Icon::Close,
+                        theme::FG,
+                        12.0,
+                    )),
             )
     }
 }
