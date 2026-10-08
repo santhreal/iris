@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Minor and patch updates of every crate arrive as one pull request a
+  # week; each semver-major update arrives as its own.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # Every action update arrives as one pull request a week, the pinned
+  # commit SHA and its version comment updated together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

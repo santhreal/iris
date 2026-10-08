@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a new capability or a change to existing behavior.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do, and what in iris today prevents it or slows it down.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What iris does after the change, written as the manual would describe it.
+    validations:
+      required: true
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Platforms
+      multiple: true
+      options:
+        - Linux (X11)
+        - Linux (Wayland)
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other ways to reach the same result, in iris or another tool, and where they fall short.
+  - type: input
+    id: version
+    attributes:
+      label: iris version
+      description: The output of `iris --version`, when the request concerns an installed iris.
+      placeholder: iris 0.1.0
