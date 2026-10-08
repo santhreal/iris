@@ -110,6 +110,9 @@ impl Watch {
         if index == 0 {
             return Woke::Woken;
         }
+        // The timeout runs on the interrupt clock, which advances once
+        // per timer tick (15.6 ms by default), so it can end up to a tick
+        // short of `limit`; `DirWatch::wait` waits out the rest.
         if index >= handles.len() {
             return Woke::Limit;
         }

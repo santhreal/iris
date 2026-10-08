@@ -1,4 +1,4 @@
-// WHY: two classes close here.
+// WHY: three classes close here.
 //
 // "A segment is judged by the wrong line of ffmpeg's log": a progress
 // report taken for an error (which sends a clean run down the slow exit
@@ -15,6 +15,14 @@
 // before 6.0 does; that segment goes out early only where a held file
 // can be deleted. Not covered: an ffmpeg that writes to its output
 // after the report; 4.4 and 6.0 write nothing to it after the report.
+//
+// "A segment's log waits on the exit of the thread that reads it": a
+// Windows thread's exit waits for the loader lock, which a DLL load on
+// any other thread of the process holds, for seconds on a cold host,
+// and `settle` then ran past its deadline. A reader whose thread's exit
+// stalls checks that the report and the log arrive without it. Not
+// covered: the start of the reading thread, which waits for the same
+// lock.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -120,6 +128,58 @@ fn a_long_log_keeps_its_tail() {
         );
         assert!(tail.len() <= 16 << 10, "{} bytes kept", tail.len());
         assert_eq!(sent, None);
+    }
+}
+
+/// How long the exit of a thread that read a [`SlowExit`] takes.
+const EXIT_STALL: Duration = Duration::from_secs(2);
+
+/// A log whose reading thread takes `EXIT_STALL` to exit, as a Windows
+/// thread's exit waits for the loader lock while another thread loads a
+/// DLL.
+struct SlowExit(std::io::Cursor<String>);
+
+/// Held by each thread that read a [`SlowExit`]; dropped at its exit.
+struct ExitStall;
+
+impl Drop for ExitStall {
+    fn drop(&mut self) {
+        std::thread::sleep(EXIT_STALL);
+    }
+}
+
+thread_local! {
+    static STALL_AT_EXIT: ExitStall = const { ExitStall };
+}
+
+impl Read for SlowExit {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        STALL_AT_EXIT.with(|_| {});
+        self.0.read(buf)
+    }
+}
+
+#[test]
+fn the_report_and_the_log_arrive_before_their_reading_thread_exits() {
+    let logs = [
+        (format!("{REPORT}progress=end\n"), true, ""),
+        (
+            "Conversion failed!\n".to_string(),
+            false,
+            "Conversion failed!",
+        ),
+    ];
+    for (log, want_clean, want_text) in logs {
+        let start = Instant::now();
+        let stderr = Stderr::read(SlowExit(std::io::Cursor::new(log))).expect("read the log");
+        let clean = stderr.ended_clean(start + EXIT_STALL);
+        let text = stderr.text();
+        let took = start.elapsed();
+        assert_eq!((clean, text.as_str()), (want_clean, want_text));
+        assert!(
+            took < EXIT_STALL / 2,
+            "{want_text:?}: the log took {took:?}, as long as its reading thread's exit"
+        );
     }
 }
 

@@ -9,9 +9,8 @@
 //! 300 ms of it releasing its CUDA context.
 
 use std::io::Read;
-use std::process::{Child, ChildStderr, ExitStatus};
+use std::process::{Child, ExitStatus};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::join::Segment;
@@ -115,18 +114,26 @@ pub fn written(segment: Segment) -> Result<Segment, String> {
 /// A child's stderr, read on its own thread so a chatty child never
 /// blocks on a full pipe.
 pub struct Stderr {
-    log: JoinHandle<String>,
     /// Sends once, at `progress=end`: whether nothing else came first.
     end: Receiver<bool>,
+    /// Sends once, when the child closes stderr: what it logged. The
+    /// reading thread sends before it exits: a Windows thread's exit
+    /// waits for the loader lock, which a DLL load on any other thread of
+    /// the process holds.
+    log: Receiver<String>,
 }
 
 impl Stderr {
-    pub fn read(err: ChildStderr) -> std::io::Result<Self> {
+    pub fn read(err: impl Read + Send + 'static) -> std::io::Result<Self> {
         let (tx, end) = sync_channel(1);
-        let log = std::thread::Builder::new()
+        let (sent, log) = sync_channel(1);
+        std::thread::Builder::new()
             .name("iris-rec-stderr".into())
-            .spawn(move || read_log(err, &tx))?;
-        Ok(Self { log, end })
+            .spawn(move || {
+                // The receiver is gone only once its `Stderr` is dropped.
+                let _ = sent.send(read_log(err, &tx));
+            })?;
+        Ok(Self { end, log })
     }
 
     /// Whether ffmpeg reports its output written by `deadline` with
@@ -138,9 +145,10 @@ impl Stderr {
     }
 
     /// What ffmpeg logged, without its progress reports: the last 8KB,
-    /// trimmed. Blocks until ffmpeg closes stderr.
+    /// trimmed. Blocks until ffmpeg closes stderr, and not until the
+    /// reading thread exits.
     pub fn text(self) -> String {
-        self.log.join().unwrap_or_default()
+        self.log.recv().unwrap_or_default()
     }
 }
 
