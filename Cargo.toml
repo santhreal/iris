@@ -93,7 +93,7 @@ x11rb = { version = "0.13", features = ["composite", "damage", "randr", "xfixes"
 # 500-thread limit, so each pool thread wakes every 500 ms for the life
 # of the process. zbus (the tray, the portals) and async-fs start one in
 # every daemon. 1.6 retires a thread 500 ms after its last task.
-blocking = "~1.6"
+blocking = "~1.7"
 
 [target.'cfg(windows)'.dependencies]
 # Win32 for monitor enumeration, the foreground-window rect, region
