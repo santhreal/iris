@@ -12,15 +12,15 @@
 #                          executable's); fails when the executable is
 #                          built for another
 #   --skip-sha             write no .sha256 sidecar
-#   --appimagetool <path>  the appimagetool to run (default: appimagetool
-#                          on PATH, else the continuous build for this
-#                          machine, downloaded to .build-staging/)
+#   --appimagetool <path>  the appimagetool to run (default: the pinned
+#                          release for this machine, downloaded to
+#                          .build-staging/ and checked against its
+#                          recorded SHA-256)
 #
 # Writes iris-{ver}-linux-{arch}.AppImage (packaging/CONTRACT.md) and
-# its .sha256 sidecar. The AppImage starts with the type2-runtime build
-# for {arch}, downloaded from the continuous release of
-# AppImage/type2-runtime, so an x86_64 machine can build the aarch64
-# AppImage.
+# its .sha256 sidecar. The AppImage starts with the pinned type2-runtime
+# release for {arch}, checked against its recorded SHA-256, so an x86_64
+# machine can build the aarch64 AppImage.
 set -euo pipefail
 # Packaged directories are 0755 and files 0644 whatever the caller's umask.
 umask 022
@@ -68,13 +68,46 @@ echo "Packaging $IRIS_BIN as $APPIMAGE_PATH"
 TMP_DIR=$(iris_staging_dir "$REPO_ROOT" appimage)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# fetch URL FILE: downloads URL to FILE.
-fetch() {
+# Pinned tool releases. Change a version and its hashes together. Each
+# hash was taken from a download whose signature verified: type2-runtime
+# signs every runtime with key 570C77ACEA40C0F1B758902CBF96CCA56490F695
+# (runtime-{arch}.sig on the release).
+APPIMAGETOOL_VERSION=1.9.1
+RUNTIME_VERSION=20251108
+
+# pinned_sha256 NAME: prints the recorded SHA-256 of the pinned file NAME.
+pinned_sha256() {
+  case "$1" in
+    appimagetool-x86_64.AppImage) echo ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 ;;
+    appimagetool-aarch64.AppImage) echo f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158 ;;
+    runtime-x86_64) echo 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d ;;
+    runtime-aarch64) echo 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444 ;;
+    *) echo "Error: no pinned $1 exists; build on an x86_64 or aarch64 machine" >&2; return 1 ;;
+  esac
+}
+
+# pinned_ok NAME FILE: whether FILE has the SHA-256 recorded for NAME.
+pinned_ok() {
+  local want
+  want=$(pinned_sha256 "$1") || return 1
+  [[ "$(sha256sum "$2" | cut -d' ' -f1)" == "$want" ]]
+}
+
+# fetch_pinned URL FILE: downloads URL to FILE. Deletes FILE and fails
+# unless its SHA-256 is the one recorded for the URL's file name.
+fetch_pinned() {
+  local name=${1##*/}
+  pinned_sha256 "$name" >/dev/null
   echo "Downloading $1"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1"
   else
     wget -q --tries=3 --timeout=20 -O "$2" "$1"
+  fi
+  if ! pinned_ok "$name" "$2"; then
+    echo "Error: $1 has SHA-256 $(sha256sum "$2" | cut -d' ' -f1), not the pinned $(pinned_sha256 "$name"); deleted it" >&2
+    rm -f "$2"
+    return 1
   fi
 }
 
@@ -82,20 +115,17 @@ fetch() {
 # architecture. The runtime runs where the AppImage runs: the build
 # for $ARCH.
 if [[ -z "$APPIMAGETOOL" ]]; then
-  if command -v appimagetool >/dev/null 2>&1; then
-    APPIMAGETOOL=appimagetool
-  else
-    APPIMAGETOOL="$REPO_ROOT/.build-staging/appimagetool-$(uname -m).AppImage"
-    if [[ ! -x "$APPIMAGETOOL" ]]; then
-      fetch "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(uname -m).AppImage" \
-        "$TMP_DIR/appimagetool"
-      chmod 0755 "$TMP_DIR/appimagetool"
-      mv "$TMP_DIR/appimagetool" "$APPIMAGETOOL"
-    fi
+  TOOL_NAME="appimagetool-$(uname -m).AppImage"
+  APPIMAGETOOL="$REPO_ROOT/.build-staging/appimagetool-$APPIMAGETOOL_VERSION-$(uname -m).AppImage"
+  if [[ ! -x "$APPIMAGETOOL" ]] || ! pinned_ok "$TOOL_NAME" "$APPIMAGETOOL"; then
+    fetch_pinned "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/$TOOL_NAME" \
+      "$TMP_DIR/appimagetool"
+    chmod 0755 "$TMP_DIR/appimagetool"
+    mv "$TMP_DIR/appimagetool" "$APPIMAGETOOL"
   fi
 fi
 RUNTIME="$TMP_DIR/runtime-$ARCH"
-fetch "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$ARCH" "$RUNTIME"
+fetch_pinned "https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_VERSION/runtime-$ARCH" "$RUNTIME"
 
 APPDIR="$TMP_DIR/iris.AppDir"
 DOC_DIR="$APPDIR/usr/share/doc/iris"

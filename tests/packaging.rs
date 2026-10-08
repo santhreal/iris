@@ -20,11 +20,14 @@
 //!   control directory. Each package is built under 077, 000 and 002.
 //! - Icons: the hicolor set held nine sizes when the build host had
 //!   python3 with Pillow and three otherwise.
+//! - AppImage tools: appimagetool and the type2-runtime came from the
+//!   moving `continuous` releases unchecked; both are now tagged
+//!   releases checked against recorded hashes.
 //!
-//! Not covered: the rpm and the AppImage (rpmbuild and the type2 runtime
-//! download are not on the test runners; the package workflow builds and
-//! install-checks both), the DMG (hdiutil or genisoimage), and the NSIS
-//! installer (makensis).
+//! Not covered: building the rpm and the AppImage (rpmbuild and the real
+//! tool downloads are not on the test runners; the package workflow
+//! builds and install-checks both), the DMG (hdiutil or genisoimage), and
+//! the NSIS installer (makensis).
 
 #![cfg(target_os = "linux")]
 
@@ -720,4 +723,146 @@ fn app_bundle_modes_and_versions() {
             assert_eq!(got, value, "{key}");
         }
     }
+}
+
+/// WHY: the AppImage embeds the type2-runtime and is assembled by
+/// appimagetool, both downloaded while it builds. They came from the
+/// moving `continuous` releases with no checksum, so a release AppImage
+/// held whatever runtime was current on its build day. Every download
+/// is now a tagged release checked against a SHA-256 recorded in the
+/// script before use: other bytes fail the build and write no AppImage,
+/// for the runtime of either arch, for appimagetool, and for a cached
+/// appimagetool in .build-staging/. A host with no pinned appimagetool
+/// fails before any download.
+///
+/// Not caught: a wrong hash recorded for the right file (the package
+/// workflow's AppImage build fails on it), and an `--appimagetool` the
+/// caller names, which is run as given.
+#[test]
+fn appimage_tool_downloads_are_pinned() {
+    require(&["bash", "od", "tr", "sha256sum", "cut"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    // A repository holding only what the script reads before it
+    // downloads, so an appimagetool cached in this checkout is not used.
+    let root = dir.path().join("repo");
+    for file in ["packaging/lib.sh", "packaging/linux/build_appimage.sh"] {
+        let to = root.join(file);
+        std::fs::create_dir_all(to.parent().expect("parent")).expect("mkdir");
+        std::fs::copy(Path::new(REPO).join(file), &to).expect("copy");
+    }
+    let shim = dir.path().join("bin");
+    std::fs::create_dir(&shim).expect("mkdir");
+    let urls = dir.path().join("urls");
+    // `curl ... -o FILE URL`: records URL, writes bytes no pin matches.
+    let curl = format!(
+        "#!/bin/sh\nwhile [ $# -gt 1 ]; do [ \"$1\" = -o ] && out=$2; shift; done\n\
+         echo \"$1\" >> '{}'\necho tampered > \"$out\"\n",
+        urls.display()
+    );
+    fixture(&shim, "curl", curl.as_bytes());
+    let riscv = dir.path().join("riscv-bin");
+    std::fs::create_dir(&riscv).expect("mkdir");
+    fixture(&riscv, "uname", b"#!/bin/sh\necho riscv64\n");
+    let x86 = fixture(dir.path(), "iris-x86_64", &elf(EM_X86_64));
+    let arm = fixture(dir.path(), "iris-aarch64", &elf(EM_AARCH64));
+    let host_path = std::env::var("PATH").unwrap_or_default();
+    let dist = dir.path().join("dist");
+
+    let run = |what: &str, bin: &Path, tool: Option<&str>, riscv_host: bool| {
+        let _ = std::fs::remove_file(&urls);
+        let mut path = format!("{}:{host_path}", shim.display());
+        if riscv_host {
+            path = format!("{}:{path}", riscv.display());
+        }
+        let mut cmd = Command::new("bash");
+        cmd.arg(root.join("packaging/linux/build_appimage.sh"))
+            .arg("--bin")
+            .arg(bin)
+            .arg("--out")
+            .arg(&dist)
+            .args(["--version", "0.1.0"]);
+        if let Some(tool) = tool {
+            cmd.args(["--appimagetool", tool]);
+        }
+        let out = cmd.env("PATH", path).output().expect("run bash");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(
+            !out.status.success(),
+            "{what}: built with tampered tools\n{stderr}"
+        );
+        let built: Vec<_> = std::fs::read_dir(&dist)
+            .map(|d| d.map(|e| e.expect("entry").file_name()).collect())
+            .unwrap_or_default();
+        assert!(built.is_empty(), "{what}: wrote {built:?}");
+        let fetched: Vec<String> = std::fs::read_to_string(&urls)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        (stderr, fetched)
+    };
+    // URL is a file of a tagged release of AppImage/REPO named NAME;
+    // returns the tag.
+    let pinned = |what: &str, url: &str, repo: &str, name: &str| -> String {
+        let prefix = format!("https://github.com/AppImage/{repo}/releases/download/");
+        let (tag, file) = url
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.split_once('/'))
+            .unwrap_or_else(|| panic!("{what}: {url} is not a {repo} release download"));
+        assert_eq!(file, name, "{what}: {url}");
+        assert!(
+            tag != "continuous" && !tag.is_empty(),
+            "{what}: {url} is not a tagged release"
+        );
+        tag.to_owned()
+    };
+    let rejected = |what: &str, stderr: &str, url: &str| {
+        assert!(
+            stderr.contains(&format!("Error: {url} has SHA-256 "))
+                && stderr.contains(", not the pinned "),
+            "{what}: {stderr}"
+        );
+    };
+
+    for (arch, bin) in [("x86_64", &x86), ("aarch64", &arm)] {
+        let what = format!("{arch} runtime");
+        let (stderr, fetched) = run(&what, bin, Some("/bin/true"), false);
+        let [url] = fetched.as_slice() else {
+            panic!("{what}: fetched {fetched:?}");
+        };
+        pinned(&what, url, "type2-runtime", &format!("runtime-{arch}"));
+        rejected(&what, &stderr, url);
+    }
+
+    let host = std::env::consts::ARCH;
+    let tool_name = format!("appimagetool-{host}.AppImage");
+    let (stderr, fetched) = run("appimagetool", &x86, None, false);
+    let [url] = fetched.as_slice() else {
+        panic!("appimagetool: fetched {fetched:?}");
+    };
+    let tag = pinned("appimagetool", url, "appimagetool", &tool_name);
+    rejected("appimagetool", &stderr, url);
+    let cache = root.join(format!(".build-staging/appimagetool-{tag}-{host}.AppImage"));
+    assert!(
+        !cache.exists(),
+        "a rejected appimagetool was cached at {}",
+        cache.display()
+    );
+
+    // An executable cached appimagetool with other bytes is fetched again.
+    fixture(
+        cache.parent().expect("parent"),
+        cache.file_name().expect("name").to_str().expect("utf-8"),
+        b"#!/bin/sh\nexit 0\n",
+    );
+    let (stderr, fetched) = run("cached appimagetool", &x86, None, false);
+    assert_eq!(fetched, [url.clone()], "cached appimagetool: {stderr}");
+    rejected("cached appimagetool", &stderr, url);
+
+    let (stderr, fetched) = run("riscv64 host", &x86, None, true);
+    assert!(fetched.is_empty(), "riscv64 host: fetched {fetched:?}");
+    assert!(
+        stderr.contains("Error: no pinned appimagetool-riscv64.AppImage exists"),
+        "riscv64 host: {stderr}"
+    );
 }

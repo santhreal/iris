@@ -61,7 +61,7 @@ bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
 
 On an x86_64 host this writes `iris-<ver>-linux-x86_64.deb`, `.rpm`, and `.AppImage`; on an aarch64 host, `iris-<ver>-linux-aarch64.deb`, `.rpm`, and `.AppImage`.
 
-`build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version the executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` runs `appimagetool` from `PATH`, from `--appimagetool <path>`, or downloads it to `.build-staging/`.
+`build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version the executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` downloads appimagetool 1.9.1 for the build host to `.build-staging/` and the type2-runtime release 20251108 for the target architecture, and fails unless each download has the SHA-256 recorded in the script. `--appimagetool <path>` runs another appimagetool.
 
 The release workflow (`.github/workflows/package.yml`) builds the Linux executable in the `rust:1.98.0-bookworm` container (Debian 12, the pinned toolchain), on an x86_64 runner and on an aarch64 runner (`ubuntu-24.04-arm`). That executable uses no glibc symbol version newer than 2.35, so the packages install on glibc 2.35 and later. An executable built on a newer system requires that system's glibc.
 

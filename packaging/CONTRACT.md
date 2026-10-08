@@ -107,6 +107,20 @@ at mode 0755 and other files at 0644, whatever the caller's umask.
 | `packaging/macos/make_app.sh` | `--bin <path> --out <dir> [--version <ver>]` (writes `iris.app`, no sidecar) |
 | `packaging/macos/make_dmg.sh` | `--app <path> --out <dir> [--version <ver>] [--skip-sha]` |
 
+`build_appimage.sh` downloads two tools, each a tagged release checked
+against a SHA-256 recorded in the script before use; other bytes fail
+the build:
+
+| Tool | Release | Files |
+|------|---------|-------|
+| appimagetool (runs on the build host) | AppImage/appimagetool `1.9.1` | `appimagetool-x86_64.AppImage`, `appimagetool-aarch64.AppImage` |
+| type2-runtime (embedded in the AppImage) | AppImage/type2-runtime `20251108` | `runtime-x86_64`, `runtime-aarch64` |
+
+To move a pin, download the new files, verify each runtime against its
+`runtime-{arch}.sig` with the release's `signing-pubkey.asc` (key
+570C77ACEA40C0F1B758902CBF96CCA56490F695), and change the version and
+every hash in `build_appimage.sh` together.
+
 ## License notices
 iris is MIT OR Apache-2.0. The binary embeds the Inter font
 (`assets/fonts/Inter-*.ttf`), licensed under the SIL Open Font License
