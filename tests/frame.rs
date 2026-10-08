@@ -93,8 +93,9 @@ const STATES: &[State] = &[
     },
 ];
 
-/// The option that opens the window, and the window's title.
-const OPEN: (&str, &str) = ("--settings", "Settings - iris");
+/// The option that opens the window, and the window's title: a
+/// resizable window, so that a frame the window draws has resize strips.
+const OPEN: (&str, &str) = ("--library", "Library - iris");
 
 /// The title of the capture overlay's window.
 const OVERLAY: &str = "Capture - iris";
@@ -110,8 +111,8 @@ const UNFRAMED: u32 = 0;
 
 /// The close control of a frame the window draws, from the window's
 /// top-left corner in pixels: the first control, 20 px in and centered
-/// in the 56 px toolbar.
-const CLOSE: (i16, i16) = (26, 28);
+/// in the 52 px toolbar.
+const CLOSE: (i16, i16) = (26, 26);
 
 /// A point on the left resize strip, 6 px wide, from the window's left
 /// edge, and how far a drag takes it leftward.

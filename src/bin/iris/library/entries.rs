@@ -3,14 +3,17 @@ use std::path::PathBuf;
 use gpui::*;
 use iris_lib::library::{self, CaptureEntry};
 
-use crate::{editor, pipeline, theme};
+use crate::{editor, pipeline};
 
-use super::{Library, CARD_W, GAP, LABEL_GAP, LABEL_PAD, REFRESH, THUMB_H};
+use super::{layout, Library, CARD_W, REFRESH, THUMB_H};
+
+/// How long a status message stays up.
+const STATUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// The status line after a trash of `asked` captures that left `errors`
 /// behind: None when every capture moved, else the count that stayed
 /// and the first reason.
-fn trash_status(asked: usize, errors: &[String]) -> Option<String> {
+pub(super) fn trash_status(asked: usize, errors: &[String]) -> Option<String> {
     let first = errors.first()?;
     Some(match errors.len() {
         1 if asked == 1 => first.clone(),
@@ -18,48 +21,7 @@ fn trash_status(asked: usize, errors: &[String]) -> Option<String> {
     })
 }
 
-/// Name columns that fit beside `dims` on a card's label row. The font
-/// is monospace, so a width is a column count.
-pub(super) fn name_cols(dims: &str) -> usize {
-    let row = (CARD_W - 2.0 * LABEL_PAD - LABEL_GAP) / theme::SMALL_ADVANCE;
-    (row.floor() as usize)
-        .saturating_sub(dims.chars().count())
-        .max(1)
-}
-
-/// `name` in at most `cols` characters. A longer name keeps its head and
-/// tail around one ellipsis, as file managers shorten names, so the end
-/// of a timestamp and a collision suffix (`-2`) stay readable.
-pub(super) fn fit_name(name: &str, cols: usize) -> String {
-    let n = name.chars().count();
-    if n <= cols {
-        return name.to_owned();
-    }
-    let keep = cols.saturating_sub(1);
-    let head = keep.div_ceil(2);
-    let mut out: String = name.chars().take(head).collect();
-    out.push('\u{2026}');
-    out.extend(name.chars().skip(n - (keep - head)));
-    out
-}
-
 impl Library {
-    /// The card's display strings: the file stem fitted beside the
-    /// dimensions, and the dimensions. Every entry is a PNG, so the
-    /// extension is dropped. GPUI's text_ellipsis only fires on wrapped
-    /// text (nowrap clips), so the fitting happens here, once per entry
-    /// rather than per frame.
-    pub(super) fn entry_name(e: &CaptureEntry) -> (SharedString, SharedString) {
-        let dims = format!("{}×{}", e.width, e.height);
-        let stem = e
-            .path
-            .file_stem()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default();
-        let name = fit_name(&stem, name_cols(&dims));
-        (SharedString::from(name), SharedString::from(dims))
-    }
-
     /// Read thumbnails off the main thread and fill the cache in one
     /// delivery: a first paint that blocks on N disk reads stutters.
     /// `range` is the entry-index window to decode (the keep window
@@ -155,9 +117,9 @@ impl Library {
     }
 
     /// Show a listing from the store: a refresh, or the listing read
-    /// back after a delete.
+    /// back after a trash.
     pub(super) fn show(&mut self, fresh: Vec<CaptureEntry>, cx: &mut Context<Self>) {
-        let Some(stale) = self.listing.set(fresh, &mut self.selected) else {
+        let Some(stale) = self.listing.set(fresh, &mut self.selected, layout::today()) else {
             return;
         };
         // A capture changed under its path: drop its thumbnail so the
@@ -165,6 +127,20 @@ impl Library {
         super::evict_thumbs(&mut self.thumb_cache, |p| !stale.iter().any(|s| s == p), cx);
         self.entries_dirty = true;
         self.sel_dirty = true;
+        // Indexes into the old listing: the cursor stays where it was,
+        // on the card that took that place.
+        let n = self.listing.entries().len();
+        self.cursor = self
+            .cursor
+            .and_then(|c| n.checked_sub(1).map(|last| c.min(last)));
+        self.anchor = self.anchor.filter(|a| *a < n);
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|p| self.listing.entries().get(p.index).map(|e| &e.path) != Some(&p.path))
+        {
+            self.close_preview(cx);
+        }
         // Decode the window the grid keeps: a capture re-saved on
         // screen needs its new thumbnail now, and the keep window only
         // prefetches when it moves. Before the first render with cards
@@ -191,6 +167,23 @@ impl Library {
         .detach();
     }
 
+    /// Show `text` in the status pill for STATUS_FOR; a newer message
+    /// replaces it and gets its own time.
+    pub(super) fn set_status(&mut self, text: String, cx: &mut Context<Self>) {
+        self.status = Some(text.clone());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(STATUS_FOR).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.status.as_ref() == Some(&text) {
+                    this.status = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub(super) fn toggle_select(&mut self, path: PathBuf) {
         if let Some(i) = self.selected.iter().position(|p| *p == path) {
             self.selected.remove(i);
@@ -215,6 +208,7 @@ impl Library {
         if ctrl {
             self.toggle_select(entry.path.clone());
             self.anchor = Some(index);
+            self.cursor = Some(index);
             cx.notify();
         } else if mods.shift {
             // The anchor is an index into entries; a refresh that
@@ -228,65 +222,96 @@ impl Library {
                         self.selected.push(entry.path.clone());
                     }
                 }
+                self.cursor = Some(index);
                 self.sel_dirty = true;
                 cx.notify();
             }
-        } else if let Err(e) = editor::open(
-            cx,
-            &entry.path,
-            Some(Self::card_morph_rect(ev, window)),
-            None,
-        ) {
-            self.status = Some(e);
-            cx.notify();
+        } else {
+            self.cursor = Some(index);
+            self.anchor = Some(index);
+            self.open_entry(index, window, cx);
         }
     }
 
-    /// The rect the editor morphs out of when a card opens: the card's
-    /// thumb geometry centered on the click, in screen coordinates. The
-    /// true card origin is layout state; centering on the click is within
-    /// half a card of it, well inside the spring's travel.
-    pub(super) fn card_morph_rect(ev: &ClickEvent, window: &Window) -> (f32, f32, f32, f32) {
+    /// Open entry `index` in the editor, morphing out of its card.
+    pub(super) fn open_entry(&mut self, index: usize, window: &Window, cx: &mut Context<Self>) {
+        let Some(path) = self.listing.entries().get(index).map(|e| e.path.clone()) else {
+            return;
+        };
+        let from = self.card_screen_rect(index, window);
+        if let Err(e) = editor::open(cx, &path, from, None) {
+            self.set_status(e, cx);
+        }
+    }
+
+    /// Entry `index`'s thumbnail rect in screen coordinates, the rect the
+    /// editor morphs out of; None before the grid is laid out.
+    pub(super) fn card_screen_rect(
+        &self,
+        index: usize,
+        window: &Window,
+    ) -> Option<(f32, f32, f32, f32)> {
+        let (x, y, ..) = self.layout.card_rect(index)?;
+        let view = self.scroll.bounds();
+        if f32::from(view.size.height) <= 0.0 {
+            return None;
+        }
         let (wx, wy) = match window.window_bounds() {
             WindowBounds::Windowed(b) => (f32::from(b.origin.x), f32::from(b.origin.y)),
             _ => (0.0, 0.0),
         };
-        let (mx, my): (f32, f32) = (ev.position().x.into(), ev.position().y.into());
-        (
-            wx + mx - CARD_W / 2.0,
-            wy + my - THUMB_H / 2.0,
+        let scroll_top = -f32::from(self.scroll.offset().y);
+        Some((
+            wx + f32::from(view.origin.x) + x,
+            wy + f32::from(view.origin.y) + y - scroll_top,
             CARD_W,
             THUMB_H,
-        )
+        ))
     }
 
     pub(super) fn copy_selection(&mut self, cx: &mut Context<Self>) {
-        let paths = self.selected.clone();
+        self.copy_paths(self.selected.clone(), cx);
+    }
+
+    /// Copy `paths` to the clipboard: one capture as its image, several
+    /// as files. The status line reports the result.
+    pub(super) fn copy_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let count = paths.len();
+        if count == 0 {
+            return;
+        }
         // Single-image copy decodes the PNG; keep it off the UI thread.
         let task = cx.background_executor().spawn(async move {
-            if paths.len() == 1 {
+            if count == 1 {
                 pipeline::copy_image_file(&paths[0])
             } else {
                 pipeline::copy_files(&paths)
             }
         });
-        let count = self.selected.len();
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.status = Some(match result {
-                    Ok(()) => format!("{count} copied"),
+                let text = match result {
+                    Ok(()) if count == 1 => "Copied".to_owned(),
+                    Ok(()) => format!("Copied {count} captures"),
                     Err(e) => e,
-                });
-                cx.notify();
+                };
+                this.set_status(text, cx);
             });
         })
         .detach();
     }
 
-    pub(super) fn delete_selection(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn trash_selection(&mut self, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = std::mem::take(&mut self.selected);
         self.sel_dirty = true;
+        self.trash_paths(paths, cx);
+    }
+
+    /// Move `paths` to the system trash and show the listing read back.
+    /// A capture that stays keeps its card, and the status line states
+    /// why.
+    pub(super) fn trash_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         // The trash move + the follow-up list() stat every file; keep the
         // disk work off the UI thread.
         let asked = paths.len();
@@ -297,9 +322,10 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let (errors, entries) = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.status = trash_status(asked, &errors);
+                if let Some(text) = trash_status(asked, &errors) {
+                    this.set_status(text, cx);
+                }
                 this.show(entries, cx);
-                cx.notify();
             });
         })
         .detach();
@@ -308,12 +334,7 @@ impl Library {
     /// Close the rubber band: a sub-4px drag is a click on empty
     /// space and clears the selection; anything larger selects every
     /// card whose rect intersects the band.
-    pub(super) fn finish_band(
-        &mut self,
-        _ev: &MouseUpEvent,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn finish_band(&mut self, cx: &mut Context<Self>) {
         let Some((x0, y0, x1, y1)) = self.band.take() else {
             return;
         };
@@ -326,39 +347,31 @@ impl Library {
             }
             return;
         }
-        let (bx0, bx1) = (x0.min(x1), x0.max(x1));
-        let (by0, by1) = (y0.min(y1), y0.max(y1));
-        // Card rects live in document space: grid top is the 56px
-        // frame toolbar, scroll shifts rows up. ScrollHandle::offset
-        // is <= 0 (negative when scrolled down), so the positive
-        // scroll amount is -offset.y and a card's window-space top is
-        // its document top minus that amount.
-        let width: f32 = window.bounds().size.width.into();
-        let scroll_top: f32 = -f32::from(self.scroll.offset().y);
-        let cols = ((width - GAP) / (CARD_W + GAP)).floor().max(1.0) as usize;
-        let card_h = THUMB_H + 8.0 + 18.0;
-        self.selected.clear();
+        // The band is in window space; cards are in document space,
+        // which starts at the scroll viewport's origin and moves up by
+        // the scroll amount (-offset.y: the offset is <= 0).
+        let view = self.scroll.bounds().origin;
+        let (ox, oy) = (
+            f32::from(view.x),
+            f32::from(view.y) + f32::from(self.scroll.offset().y),
+        );
+        let hit = self.layout.cards_in(
+            x0.min(x1) - ox,
+            y0.min(y1) - oy,
+            x0.max(x1) - ox,
+            y0.max(y1) - oy,
+        );
+        let entries = self.listing.entries();
+        self.selected = hit.iter().map(|&i| entries[i].path.clone()).collect();
+        self.anchor = hit.first().copied();
+        self.cursor = hit.last().copied();
         self.sel_dirty = true;
-        for (i, e) in self.listing.entries().iter().enumerate() {
-            let (r, c) = (i / cols, i % cols);
-            let cx0 = GAP + c as f32 * (CARD_W + GAP);
-            let cy0 = 56.0 + GAP + r as f32 * (card_h + GAP) - scroll_top;
-            if cx0 < bx1 && cx0 + CARD_W > bx0 && cy0 < by1 && cy0 + card_h > by0 {
-                self.selected.push(e.path.clone());
-            }
-        }
-        self.anchor = self
-            .listing
-            .entries()
-            .iter()
-            .position(|e| self.selected.contains(&e.path));
         cx.notify();
     }
 
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
         if let Err(e) = crate::daemon::dispatch(cx, &crate::daemon::Command::Capture) {
-            self.status = Some(e);
-            cx.notify();
+            self.set_status(e, cx);
         }
     }
 }

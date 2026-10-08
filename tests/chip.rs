@@ -96,11 +96,12 @@ impl Row {
     }
 
     /// The runs of pixels that differ from the pill, as pill x ranges.
-    /// Items on the row are 8 px apart; a gap of 5 px or less joins the
+    /// Items on the row are 6 px apart; a gap of 5 px or less joins the
     /// parts of one glyph.
     fn runs(&self) -> Vec<(i16, i16)> {
-        // Inside the pill's rounded ends, left of every item.
-        let (start, end) = (PILL.1 / 2, PILL.0 - PILL.1 / 2);
+        // 7 px in from each end: inside the pill's rounded ends on the
+        // centre row, and left of the dot, which starts 14 px in.
+        let (start, end) = (7, PILL.0 - 7);
         let bg = self.px[start as usize];
         let differs = |p: [u8; 3]| {
             p.iter()

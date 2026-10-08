@@ -8,9 +8,10 @@
 //! back off the edge, fading in the last third. A flick toward the edge
 //! dismisses it 1:1 under the pointer; any other drag is a file
 //! drag-out. A click runs the configured click action; the default,
-//! Markup, morphs the card into the editor. The optional action bar
-//! and the right-click menu act on the capture, and an action's result
-//! replaces the bar with a status line. A new capture replaces it.
+//! Markup, morphs the card into the editor. Hovering the card fades in
+//! a capsule of grouped actions with tooltips, and the right-click menu
+//! acts on the capture too; an action's result takes the capsule's slot
+//! as a status line. A new capture replaces the toast.
 
 use std::{
     path::PathBuf,
@@ -63,6 +64,32 @@ pub(super) const SWIPE_STALE: Duration = Duration::from_millis(120);
 /// rightward swipe dismisses instead of springing back.
 pub(super) const SWIPE_TRAVEL: f32 = 100.0;
 pub(super) const SWIPE_VELOCITY: f32 = 400.0;
+/// A fresh status holds the action slot this long even under the
+/// pointer, so the result of a click on the capsule is read before the
+/// capsule returns.
+pub(super) const STATUS_HOLD: Duration = Duration::from_millis(1600);
+
+/// How far the hover actions show, 0 hidden to 1 shown: `from` at the
+/// last crossing of the card's edge, eased toward the side the pointer
+/// is on over `t`, the fraction of the fade elapsed. A crossing in
+/// mid-fade continues from where the fade stood.
+pub(super) fn hover_reveal(from: f32, hovered: bool, t: f32) -> f32 {
+    let to = if hovered { 1.0 } else { 0.0 };
+    from + (to - from) * motion::ease_out(t)
+}
+
+/// The status line holds the slot along the card's lower edge: always
+/// off the pointer, and under it while an action runs or for
+/// STATUS_HOLD after the status was set. Otherwise the slot belongs to
+/// the hover actions.
+pub(super) fn status_holds_slot(
+    has_status: bool,
+    hovered: bool,
+    busy: bool,
+    status_age: Duration,
+) -> bool {
+    has_status && (!hovered || busy || status_age < STATUS_HOLD)
+}
 
 /// The card's logical size for a capture of `img_w`x`img_h` pixels:
 /// aspect-true within MAX_W x MAX_H, never enlarged, whole pixels. The
@@ -120,13 +147,16 @@ pub struct ToastStage {
     /// call.
     pub(super) cfg: iris_lib::config::Config,
     /// The result of the last toast action (copy, OCR, delete, pin),
-    /// drawn over the card's lower edge in place of the action bar.
+    /// drawn in the slot along the card's lower edge.
     pub(super) status: Option<SharedString>,
+    /// When `status` was last set.
+    pub(super) status_at: Instant,
     /// OCR in flight: the dismiss timer re-arms instead of closing, so
     /// the result has a card to land on.
     pub(super) busy: bool,
-    /// The action bar's visibility: a landed toast opens without it.
-    pub(super) bar: Bar,
+    /// The hover actions' fade: when the pointer last crossed the
+    /// card's edge, and how far the actions showed at that instant.
+    pub(super) hover_turn: (Instant, f32),
     /// The card and its menu, where a screen that does not blend the
     /// window shows it.
     pub(super) cutout: crate::sys::window::Cutout,
@@ -137,16 +167,6 @@ pub(super) enum Gesture {
     Undecided,
     Swipe,
     FileDrag,
-}
-
-/// The action bar's visibility. A landed toast opens with the bar
-/// hidden, so its first frame matches the flight card it replaces, and
-/// fades the bar in once the overlay is gone.
-#[derive(Clone, Copy)]
-pub(super) enum Bar {
-    Shown,
-    Hidden,
-    FadingIn(Instant),
 }
 
 /// A rightward dismiss swipe in progress: 1:1 travel under the
@@ -193,16 +213,10 @@ impl Render for ToastStage {
         let mut opacity = 1.0f32;
         let shadow_vis = ease;
         let mut animating = enter_t < 1.0;
-        let bar = match self.bar {
-            Bar::Shown => 1.0,
-            Bar::Hidden => 0.0,
-            Bar::FadingIn(from) => {
-                let t = (from.elapsed().as_secs_f32() / motion::tempo(motion::FADE).as_secs_f32())
-                    .min(1.0);
-                animating |= t < 1.0;
-                motion::ease_out(t)
-            }
-        };
+        let reveal = self.reveal(still);
+        if self.hover_turn.0.elapsed() < motion::tempo(motion::FADE) && !still {
+            animating = true;
+        }
 
         // Dismiss swipe: the card tracks the pointer toward the screen edge.
         if let Some(s) = self.swipe.as_ref().filter(|_| !still) {
@@ -419,19 +433,30 @@ impl Render for ToastStage {
                     ),
                 );
 
-                if let Some(status) = &self.status {
-                    card = card.child(actions::status_band(status.clone()));
-                } else if bar > 0.0 {
-                    if let Some(actions) = self.render_action_bar(cx) {
-                        card = card.child(actions.opacity(bar));
+                let status_age = self.status_at.elapsed();
+                let status = self
+                    .status
+                    .clone()
+                    .filter(|_| status_holds_slot(true, self.hover_paused, self.busy, status_age));
+                if let Some(status) = status {
+                    card = card.child(actions::status_band(status));
+                } else if reveal > 0.0 {
+                    if let Some(actions) = self.render_actions(cx) {
+                        card = card.child(actions.opacity(reveal));
                     }
                 }
+                if self.pinned && reveal < 1.0 {
+                    card = card.child(actions::pinned_badge().opacity(1.0 - reveal));
+                }
 
-                card.on_hover(cx.listener(|stage, hovering, _window, cx| {
+                card.on_hover(cx.listener(|stage, hovering, window, cx| {
+                    let still = !crate::sys::window::blended(window);
+                    stage.hover_turn = (Instant::now(), stage.reveal(still));
                     stage.hover_paused = *hovering;
                     if !*hovering {
                         stage.arm_dismiss(cx);
                     }
+                    cx.notify();
                 }))
                 .on_mouse_down(
                     MouseButton::Left,

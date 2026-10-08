@@ -272,6 +272,11 @@ pub fn offered() -> Option<UpdateInfo> {
     state::State::load(&state::path()).offer_for(Config::load().update_channel, &current_version())
 }
 
+/// When the last check that got an answer ran. Reads `update.json`.
+pub fn last_checked() -> Option<SystemTime> {
+    state::State::load(&state::path()).checked()
+}
+
 /// Download `info.asset_url` into this user's cache and return its
 /// path. The cache is private to the user: a download in a shared temp
 /// directory could be swapped by another local user between the write

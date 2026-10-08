@@ -90,6 +90,12 @@ impl State {
             .filter(|info| channel == UpdateChannel::Beta || info.version.pre.is_empty())
             .cloned()
     }
+
+    /// When the last check got an answer.
+    pub fn checked(&self) -> Option<SystemTime> {
+        self.checked_at
+            .map(|at| UNIX_EPOCH + Duration::from_secs(at))
+    }
 }
 
 /// Apply `change` to the state in the file at `path` and write it back.

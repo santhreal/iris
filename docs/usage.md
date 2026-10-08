@@ -6,7 +6,7 @@ Run `iris`. The daemon starts in the background and adds a tray icon. It holds t
 
 The application menu entry on Linux and the Start menu shortcut on Windows run `iris --home`, which opens the home window. On macOS, opening iris.app while the daemon runs with no iris window open shows the home window.
 
-The home window has three tiles, **New Screenshot**, **Record Window**, and **Library**, and a gear that opens the settings window. `Escape` closes it.
+The home window has three tiles, **New Screenshot**, **Record Window**, and **Library**, each with its shortcut under the title, and a gear in the toolbar that opens the settings window. `Tab`, `Shift+Tab`, and the left and right arrow keys select a tile, and `Enter` or `Space` runs the selected tile. `Ctrl+L` opens the library and `Ctrl+,` opens the settings window (`Cmd` on macOS). `Escape` or `Ctrl+W` closes the home window.
 
 The tray menu holds the same actions:
 
@@ -21,7 +21,7 @@ The tray menu holds the same actions:
 
 A primary or secondary click on the tray icon opens the tray menu.
 
-To start the daemon at login, turn on **Start at login** in the settings window ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
+To start the daemon at login, turn on **Start iris at login** in the settings window ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
 
 ### First start per platform
 
@@ -47,7 +47,7 @@ A thumbnail card, the toast, slides in at a corner of the screen ([Toast Notific
 - Click it to open the annotation editor.
 - Drag it into another application to drop the PNG file there.
 - Swipe it away to dismiss it. It also dismisses itself after its countdown.
-- Its action bar pins it, copies the image or the file, shows the file in its folder, opens the editor, or moves the capture to the trash.
+- Point at it to show its actions: keep it open, copy the image or the file, show the file in its folder, open the editor, or move the capture to the trash.
 - Right-click it to copy the text in the image (OCR, with Tesseract installed) or to pin the capture in a window of its own.
 
 The editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops. **Done** (`Ctrl+S`, `Cmd+S` on macOS) writes the image back to its file and copies it to the clipboard. `Escape` discards the changes ([Annotation Editor](editor.md)).
@@ -63,11 +63,11 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 
 ## Find Past Captures
 
-Click **Library**, or run `iris --library`. The library shows the captures as thumbnails, newest first. Click a thumbnail to open it in the editor, drag thumbnails out to drop their files, and select several to copy or move them to the trash at once ([Capture Library](library.md)).
+Click **Library**, or run `iris --library`. The library shows the captures as thumbnails, newest first. Click a thumbnail to open it in the editor, drag thumbnails out to drop their files, and select several to copy or delete them at once ([Capture Library](library.md)).
 
 ## Change Settings
 
-Click the gear in the home window, click **Settings** in the tray menu, or run `iris --settings`. The settings window edits the save folders and file names, the capture and toast behavior, recording, the hotkeys, and Start at login, and checks for updates. **Save** writes `config.toml` and registers the hotkeys again in the running daemon ([Configuration](configuration.md)).
+Click the gear in the home window, click **Settings** in the tray menu, or run `iris --settings`. The settings window has five tabs: **General** (Start at login, save folders, file names), **Capture** (capture feedback and the floating thumbnail), **Recording**, **Shortcuts**, and **Updates**. Each change writes `config.toml` at once, and a changed hotkey registers again in the running daemon at once ([Settings Window](configuration.md#settings-window)).
 
 ## Quit
 

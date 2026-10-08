@@ -5,7 +5,7 @@ use std::time::Instant;
 use gpui::*;
 use iris_lib::history::Edit;
 
-use super::action::Tool;
+use super::action::tool_for_key;
 use super::Editor;
 
 impl Editor {
@@ -52,8 +52,9 @@ impl Editor {
             "escape" => {
                 if self.help {
                     self.help = false;
-                } else if self.copy_menu {
+                } else if self.copy_menu || self.more_menu {
                     self.copy_menu = false;
+                    self.more_menu = false;
                 } else if self.crop_rect.is_some() {
                     self.crop_rect = None;
                 } else if self.selected.is_some() {
@@ -93,19 +94,9 @@ impl Editor {
             "?" | "/" => {
                 self.help = !self.help;
             }
-            // Tool hotkeys, single letters like Markup/Photoshop.
-            // No modifier: the editor owns the window's keys.
-            "v" => self.set_tool(Tool::Select, cx),
-            "p" => self.set_tool(Tool::Pen, cx),
-            "l" => self.set_tool(Tool::Line, cx),
-            "a" => self.set_tool(Tool::Arrow, cx),
-            "e" => self.set_tool(Tool::Ellipse, cx),
-            "r" => self.set_tool(Tool::Rect, cx),
-            "t" => self.set_tool(Tool::Text, cx),
-            "h" => self.set_tool(Tool::Highlight, cx),
-            "b" => self.set_tool(Tool::Blur, cx),
-            "c" => self.set_tool(Tool::Crop, cx),
-            "n" => self.set_tool(Tool::Counter, cx),
+            "w" if meta => {
+                self.finish(window, cx);
+            }
             "f" => {
                 self.fill = !self.fill;
             }
@@ -125,6 +116,11 @@ impl Editor {
             }
             "space" => {
                 self.space_pan = true;
+            }
+            _ if !meta => {
+                if let Some(tool) = tool_for_key(key) {
+                    self.set_tool(tool, cx);
+                }
             }
             _ => {}
         }

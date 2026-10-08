@@ -53,7 +53,16 @@ pub enum Icon {
     Play,
     Stop,
     Alert,
+    ChevronUpDown,
+    Ellipsis,
+    Rotate,
+    FlipH,
+    FlipV,
+    Share,
+    Fill,
+    Keyboard,
     Download,
+    Sliders,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.

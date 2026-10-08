@@ -1,76 +1,58 @@
-//! The Startup and Updates sections: start at login, the version, and
-//! the update check and install.
+//! Start at login, and the Updates pane's version row: the running
+//! version, the update state, Check Now, and Install.
+
+use std::time::SystemTime;
 
 use gpui::*;
 
 use super::Settings;
-use crate::theme;
 use crate::update::UpdateInfo;
+use crate::{theme, widgets};
 
-/// What the Updates section offers.
+/// What the version row offers.
 #[derive(Debug)]
 pub(crate) enum Release {
     /// No check has found a newer release.
     None,
-    /// The newer release the last check found. Install shows.
+    /// The newer release a check found. Install shows.
     Found(UpdateInfo),
     /// Install is downloading the release or has handed it off. Check
     /// and Install hide, and a check already running changes nothing.
     Installing,
 }
 
-impl Settings {
-    /// The Startup and Updates sections.
-    pub(super) fn app_sections(&self, cx: &mut Context<Self>) -> [Div; 2] {
-        let startup = self.section(
-            "Startup",
-            vec![self
-                .toggle_row(
-                    "tog-login",
-                    "Start at login",
-                    self.login,
-                    cx.listener(|this, _, _, cx| {
-                        this.login = !this.login;
-                        this.open_dropdown = None;
-                        cx.notify();
-                    }),
-                )
-                .into_any_element()],
-        );
+/// The release the last check offered for the configured channel, as
+/// the window opens with it.
+pub(super) fn offered_release() -> Release {
+    match crate::update::offered() {
+        Some(info) => Release::Found(info),
+        None => Release::None,
+    }
+}
 
-        // Current version, a manual check, and Install once a check
-        // finds a newer release. Both run off the UI loop and report
-        // through the status pill. Install goes left of the
-        // right-aligned Check, so Check stays under the pointer that
-        // clicked it and a second click checks again.
-        let mut release = div().flex().gap(px(8.));
-        if let Release::Found(_) = self.release {
-            release = release.child(
-                crate::widgets::button("install-update", "Install update", false)
-                    .on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
-            );
-        }
-        if !matches!(self.release, Release::Installing) {
-            release = release.child(
-                crate::widgets::button("check-update", "Check for updates", false)
-                    .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx))),
-            );
-        }
-        let updates = self.section(
-            "Updates",
-            vec![
-                self.row_shell(
-                    "Version",
-                    div()
-                        .text_size(px(theme::TEXT_BODY))
-                        .text_color(theme::FG_DIM)
-                        .child(env!("CARGO_PKG_VERSION")),
-                )
-                .into_any_element(),
-                self.row_shell("Latest release", release).into_any_element(),
-            ],
-        );
-        [startup, updates]
+/// "Last checked today at 14:05" or "Last checked on 2026-10-07 at
+/// 14:05", in local time.
+pub(super) fn checked_line(at: SystemTime, now: SystemTime) -> String {
+    let secs = |t: SystemTime| {
+        t.duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    };
+    let (y, mo, d, h, mi, _) = iris_lib::time::local_fields(secs(at));
+    let (ny, nmo, nd, ..) = iris_lib::time::local_fields(secs(now));
+    if (y, mo, d) == (ny, nmo, nd) {
+        format!("Last checked today at {h:02}:{mi:02}")
+    } else {
+        format!("Last checked on {y:04}-{mo:02}-{d:02} at {h:02}:{mi:02}")
+    }
+}
+
+impl Settings {
+    /// Read when the last check ran (a small state file): on open and
+    /// after a check, never per frame.
+    pub(super) fn with_last_checked(mut self) -> Self {
+        self.last_checked = crate::update::last_checked();
+        self
     }
 
     /// Point this account's start-at-login entry (`sys::autostart`) at
@@ -82,18 +64,38 @@ impl Settings {
         crate::sys::autostart::set(self.login)
     }
 
-    /// Check GitHub for a newer release on a background thread and
-    /// report the result in the status pill. The network call never
-    /// touches the UI loop.
+    /// The version row's state line.
+    fn update_line(&self) -> String {
+        if let Some(note) = &self.update_note {
+            return note.clone();
+        }
+        if let Release::Found(info) = &self.release {
+            return format!("Version {} is available", info.version);
+        }
+        match self.last_checked {
+            Some(at) => checked_line(at, SystemTime::now()),
+            None => "Not checked yet".to_string(),
+        }
+    }
+
+    /// Check GitHub for a newer release on a background thread and show
+    /// the result on the version row. The network call never touches
+    /// the UI loop.
     pub(super) fn check_updates(&mut self, cx: &mut Context<Self>) {
-        self.status = Some("checking…".to_string());
+        if self.checking || matches!(self.release, Release::Installing) {
+            return;
+        }
+        self.checking = true;
+        self.update_note = Some("Checking\u{2026}".to_string());
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = cx
+            let (result, at) = cx
                 .background_executor()
-                .spawn(async move { crate::update::check() })
+                .spawn(async move { (crate::update::check(), crate::update::last_checked()) })
                 .await;
             this.update(cx, |this, cx| {
+                this.checking = false;
+                this.last_checked = at;
                 this.checked(result);
                 cx.notify();
             })
@@ -108,15 +110,15 @@ impl Settings {
         if matches!(self.release, Release::Installing) {
             return;
         }
-        let (status, release) = match result {
+        let (note, release) = match result {
             Ok(Some(info)) => (
-                format!("update available: {}", info.version),
+                format!("Version {} is available", info.version),
                 Release::Found(info),
             ),
-            Ok(None) => ("up to date".to_string(), Release::None),
+            Ok(None) => ("iris is up to date".to_string(), Release::None),
             Err(e) => (e, Release::None),
         };
-        self.status = Some(status);
+        self.update_note = Some(note);
         self.release = release;
     }
 
@@ -150,7 +152,7 @@ impl Settings {
     pub(super) fn start_install(&mut self) -> Option<UpdateInfo> {
         match std::mem::replace(&mut self.release, Release::Installing) {
             Release::Found(info) => {
-                self.status = Some(format!("downloading {}…", info.version));
+                self.update_note = Some(format!("Downloading {}\u{2026}", info.version));
                 Some(info)
             }
             other => {
@@ -163,12 +165,67 @@ impl Settings {
     /// Show how the download of `info` ended. A failed one shows its
     /// error and offers Install again.
     pub(super) fn installed(&mut self, info: UpdateInfo, result: Result<(), String>) {
-        self.status = Some(match result {
-            Ok(()) => format!("installing {}; iris restarts when it is done", info.version),
+        self.update_note = Some(match result {
+            Ok(()) => format!("Installing {}; iris restarts when it is done", info.version),
             Err(e) => {
                 self.release = Release::Found(info);
                 e
             }
         });
+    }
+
+    /// The version row: the running version over the update state, and
+    /// Install when a check found a newer release, Check Now otherwise.
+    /// Neither shows while a check or an install runs.
+    pub(super) fn version_row(&self, _: &mut Window, cx: &mut Context<Self>) -> Div {
+        let action = match &self.release {
+            _ if self.checking => None,
+            Release::Installing => None,
+            Release::Found(info) => Some(
+                widgets::push_button(
+                    "install-update",
+                    format!("Install {}", info.version),
+                    widgets::ButtonStyle::Primary,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
+            ),
+            Release::None => Some(
+                widgets::push_button("check-update", "Check Now", widgets::ButtonStyle::Bordered)
+                    .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx))),
+            ),
+        };
+        div()
+            .h(px(theme::ROW_H_TALL))
+            .px(px(theme::ROW_PAD_X))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_BODY))
+                            .line_height(px(16.))
+                            .text_color(theme::FG)
+                            .font_features(theme::tabular())
+                            .child(concat!("iris ", env!("CARGO_PKG_VERSION"))),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_SMALL))
+                            .line_height(px(14.))
+                            .text_color(theme::FG_DIM)
+                            .font_features(theme::tabular())
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(self.update_line()),
+                    ),
+            )
+            .children(action)
     }
 }

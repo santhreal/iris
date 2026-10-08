@@ -237,7 +237,7 @@ pub(crate) fn draw_text(
     // identically on every platform with no system font dependency.
     static FONT: std::sync::LazyLock<ab_glyph::FontRef<'static>> = std::sync::LazyLock::new(|| {
         ab_glyph::FontRef::try_from_slice(crate::theme::FONT_BOLD_TTF)
-            .expect("bundled JetBrains Mono Bold parses")
+            .expect("bundled Inter Bold parses")
     });
     let font = &*FONT;
     // Inline of imageproc's draw_text_mut so the imageproc crate (and

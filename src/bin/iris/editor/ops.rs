@@ -10,6 +10,8 @@ use super::raster::{pixelate_region_bgra, png_bytes, rasterize};
 use super::Editor;
 use crate::pipeline;
 
+use super::render_chrome::{STAGE_MARGIN, STAGE_TOP};
+
 impl Editor {
     pub(crate) fn img_w(&self) -> u32 {
         self.base_dims.0
@@ -206,10 +208,7 @@ impl Editor {
         self.composite = Arc::new(cropped);
         self.base = Arc::clone(&self.composite);
         self.base_dims = (w, h);
-        self.title = SharedString::from(format!(
-            "{} · {}×{}",
-            self.filename, self.base_dims.0, self.base_dims.1
-        ));
+        self.dims = SharedString::from(format!("{} × {}", self.base_dims.0, self.base_dims.1));
         self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
@@ -242,10 +241,7 @@ impl Editor {
         self.composite = Arc::new(out);
         self.base = Arc::clone(&self.composite);
         self.base_dims = (w, h);
-        self.title = SharedString::from(format!(
-            "{} · {}×{}",
-            self.filename, self.base_dims.0, self.base_dims.1
-        ));
+        self.dims = SharedString::from(format!("{} × {}", self.base_dims.0, self.base_dims.1));
         self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
@@ -412,8 +408,9 @@ impl Editor {
     pub(crate) fn fit_origin(&self, window: &Window, scale: f32) -> (f32, f32) {
         let size = window.bounds().size;
         (
-            72.0 + (f32::from(size.width) - 72.0 - self.base_dims.0 as f32 * scale) / 2.0,
-            72.0 + (f32::from(size.height) - 72.0 - self.base_dims.1 as f32 * scale) / 2.0,
+            (f32::from(size.width) - self.base_dims.0 as f32 * scale) / 2.0,
+            STAGE_TOP
+                + (f32::from(size.height) - STAGE_TOP - self.base_dims.1 as f32 * scale) / 2.0,
         )
     }
 
@@ -421,11 +418,11 @@ impl Editor {
     /// zoomed and panned. Returns (origin_x, origin_y, scale) mapping
     /// image -> window px.
     pub(crate) fn view(&self, window: &Window) -> (f32, f32, f32) {
-        // The chrome floats (12px margin + 48px pill), so the stage
-        // keeps a 72px clear zone left and top, 24px right and bottom.
+        // The stage is the window under the toolbar and the options
+        // bar; the fit image keeps STAGE_MARGIN clear on every side.
         let size = window.bounds().size;
-        let usable_w = (f32::from(size.width) - 72.0 - 24.0).max(100.0);
-        let usable_h = (f32::from(size.height) - 72.0 - 24.0).max(100.0);
+        let usable_w = (f32::from(size.width) - 2.0 * STAGE_MARGIN).max(100.0);
+        let usable_h = (f32::from(size.height) - STAGE_TOP - 2.0 * STAGE_MARGIN).max(100.0);
         let fit = (usable_w / self.base_dims.0 as f32)
             .min(usable_h / self.base_dims.1 as f32)
             .min(4.0);

@@ -1,9 +1,9 @@
 //! Canvas editor: markup on a capture before it leaves the machine.
 //!
-//! Layout: topbar (file name, undo, redo, clear; Discard, Copy text,
-//! the Copy menu, Rotate, Flip, Flip V, Done, help), left sidebar
-//! (eleven tools, three stroke widths, the fill toggle, eleven
-//! swatches), stage with the fit-scaled image.
+//! Layout: a toolbar (file name and size; the tools; undo, redo, the
+//! Copy menu, the More menu, Done), the tool options bar under it
+//! (three stroke widths, the fill toggle, eleven swatches), and the
+//! stage with the fit-scaled image.
 //! Actions live in image pixels; the stage scales them to view. Vector
 //! shapes render as tessellated GPU paths, blur as pre-pixelated patch
 //! images, text as shaped text elements. Saving rasterizes everything
@@ -51,13 +51,12 @@ pub(crate) type CropMove = ((f32, f32), (f32, f32, f32, f32));
 
 pub struct Editor {
     pub(crate) path: PathBuf,
-    /// Display name for the topbar: the path's file name, computed
-    /// once at open instead of allocating per render.
-    pub(crate) filename: String,
-    /// The topbar's "name · WxH" label, rebuilt only when the base
-    /// image changes: formatting it per frame allocates a String a
-    /// frame.
-    pub(crate) title: SharedString,
+    /// The toolbar title: the path's file name, computed once at open
+    /// instead of allocating per render.
+    pub(crate) filename: SharedString,
+    /// The toolbar caption, "W × H", rebuilt only when the base image
+    /// changes: formatting it per frame allocates a String a frame.
+    pub(crate) dims: SharedString,
     /// The unedited pixels. Arc so crop/transform can share one buffer
     /// with composite instead of cloning a full-size image per op.
     /// Until the background decode lands this is a 1x1 placeholder:
@@ -108,6 +107,9 @@ pub struct Editor {
     pub(crate) crop_anchor: Option<(f32, f32)>,
     pub(crate) crop_move: Option<CropMove>,
     pub(crate) copy_menu: bool,
+    /// The toolbar's More menu: Copy Text, Rotate, Flip, Clear,
+    /// shortcuts, Discard.
+    pub(crate) more_menu: bool,
     pub(crate) help: bool,
     pub(crate) status: Option<String>,
     pub(crate) focus: FocusHandle,
@@ -130,8 +132,6 @@ pub struct Editor {
     /// composite are transparent placeholders of the right size. Blur
     /// and save, which bake composite pixels, refuse until then.
     pub(crate) base_ready: bool,
-    /// Copy dropdown entrance clock.
-    pub(crate) copy_menu_opened: Option<Instant>,
     /// Zoom multiplier over the fit scale (1.0 = fit). Scroll zooms
     /// around the cursor; 0 resets.
     pub(crate) zoom: f32,
@@ -143,12 +143,13 @@ pub struct Editor {
     pub(crate) space_pan: bool,
     /// Rect/Ellipse fill toggle for new shapes.
     pub(crate) fill: bool,
-    /// The tool sidebar's scroll state.
-    pub(crate) tools_scroll: ScrollHandle,
 }
 
-/// The editor window's minimum logical size, where its resize stops.
-const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
+/// The editor window's minimum logical size, where its resize stops:
+/// the toolbar's tools and buttons with the file name still readable.
+const MIN_W: f32 = 760.0;
+const MIN_H: f32 = 480.0;
+const MIN_SIZE: Size<Pixels> = size(px(MIN_W), px(MIN_H));
 
 /// Editor window default placement; morph rects arrive in screen
 /// coordinates and the window grows to contain them.
@@ -186,7 +187,7 @@ fn resolve_window_placement(
             let x1 = (origin.0 + win.0).max(fx + fw).min(mx1);
             let y1 = (origin.1 + win.1).max(fy + fh).min(my1);
             origin = (x0, y0);
-            win = ((x1 - x0).max(640.0), (y1 - y0).max(480.0));
+            win = ((x1 - x0).max(MIN_W), (y1 - y0).max(MIN_H));
         } else {
             if fx < origin.0 {
                 win.0 += origin.0 - fx;
@@ -300,8 +301,8 @@ pub fn open(
         },
         |_, cx| {
             cx.new(|_| Editor {
-                title: SharedString::from(format!("{filename} · {bw}×{bh}")),
-                filename,
+                dims: SharedString::from(format!("{bw} × {bh}")),
+                filename: SharedString::from(filename),
                 path: path.to_path_buf(),
                 base: Arc::new(base),
                 base_dims: (bw, bh),
@@ -323,6 +324,7 @@ pub fn open(
                 crop_anchor: None,
                 crop_move: None,
                 copy_menu: false,
+                more_menu: false,
                 help: false,
                 status: None,
                 focus,
@@ -332,13 +334,11 @@ pub fn open(
                 morph_frames: 0,
                 closing: None,
                 base_ready: false,
-                copy_menu_opened: None,
                 zoom: 1.0,
                 pan: (0.0, 0.0),
                 pan_drag: None,
                 space_pan: false,
                 fill: false,
-                tools_scroll: ScrollHandle::new(),
             })
         },
     )
@@ -354,9 +354,9 @@ pub fn open(
                             crate::widgets::release_render(&old, cx);
                             this.base = base;
                             this.base_dims = (this.base.width(), this.base.height());
-                            this.title = SharedString::from(format!(
-                                "{} · {}×{}",
-                                this.filename, this.base_dims.0, this.base_dims.1
+                            this.dims = SharedString::from(format!(
+                                "{} × {}",
+                                this.base_dims.0, this.base_dims.1
                             ));
                             this.composite = this.base.clone();
                             this.base_ready = true;
@@ -401,7 +401,7 @@ impl Render for Editor {
         let mut stage_rect = (ox, oy, vw, vh);
         let mut chrome = 1.0f32;
         let mut topbar = 1.0f32;
-        let mut sidebar = 1.0f32;
+        let mut options = 1.0f32;
         let mut morph_radius = 6.0f32;
         if let Some(from) = self.morph {
             let started = *self.morph_started.get_or_insert_with(Instant::now);
@@ -415,7 +415,7 @@ impl Render for Editor {
             );
             chrome = (t * 2.2).min(1.0);
             topbar = ((t - 0.08) * 2.2).clamp(0.0, 1.0);
-            sidebar = ((t - 0.18) * 2.2).clamp(0.0, 1.0);
+            options = ((t - 0.18) * 2.2).clamp(0.0, 1.0);
             morph_radius = 12.0 - 6.0 * e;
             if t >= 1.0 {
                 self.morph = None;
@@ -440,15 +440,15 @@ impl Render for Editor {
                 window.request_animation_frame();
             }
         }
-        let title = self.title.clone();
         let stage = self.render_stage(stage_rect, morph_radius, chrome, scale, window, cx);
 
         // Paint order is stacking order: the zoomed or panned image
-        // runs under the floating chrome, never over it.
+        // runs under the toolbar and options bar, never over them.
         let root = div()
             .id("editor")
             .size_full()
             .font_family(theme::FONT)
+            .rounded(crate::widgets::window_corner(window, 12.))
             .bg(theme::alpha(theme::BG, chrome))
             .opacity(outro)
             .track_focus(&self.focus)
@@ -460,8 +460,8 @@ impl Render for Editor {
             }))
             .child(self.render_backdrop(chrome, cx))
             .child(stage)
-            .child(self.render_topbar(topbar, title, window, cx))
-            .child(self.render_sidebar(sidebar, cx));
+            .child(self.render_topbar(topbar, window, cx))
+            .child(self.render_options(options, cx));
 
         self.render_menus_and_overlays(root, topbar, window, cx)
             .children(crate::widgets::resize_edges(window, MIN_SIZE))

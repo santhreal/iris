@@ -1,20 +1,110 @@
-//! Editor chrome rendering: backdrop, topbar, sidebar, menus, help sheet.
-
-use std::time::Instant;
+//! Editor chrome: the toolbar, the tool options bar, the toolbar menus,
+//! the status pill, and the shortcuts sheet.
 
 use gpui::*;
 
 use super::action::{hex_rgba, Transform, COLORS, TOOLS};
 use super::Editor;
 use crate::icons::Icon;
-use crate::{motion, theme};
+use crate::theme;
+use crate::widgets::{self, tip, MenuItem, Segment, SegmentStyle, Toolbar};
+
+/// The tool options bar's height, under the toolbar.
+pub(super) const OPTIONS_H: f32 = 40.0;
+/// The stage's top edge: the toolbar and the options bar above it.
+pub(super) const STAGE_TOP: f32 = theme::TOOLBAR_H + OPTIONS_H;
+/// The clear space between the fit image and each stage edge.
+pub(super) const STAGE_MARGIN: f32 = 24.0;
+
+/// The stroke-width stops: glyph, tooltip, and the key that selects it.
+const STROKES: [(Icon, &str, &str); 3] = [
+    (Icon::Stroke1, "Thin Stroke", "1"),
+    (Icon::Stroke2, "Medium Stroke", "2"),
+    (Icon::Stroke3, "Thick Stroke", "3"),
+];
+
+/// A row of the toolbar's More menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum More {
+    CopyText,
+    Rotate,
+    FlipHorizontal,
+    FlipVertical,
+    ClearMarkup,
+    Shortcuts,
+    Discard,
+}
+
+impl More {
+    pub(super) const ALL: [More; 7] = [
+        More::CopyText,
+        More::Rotate,
+        More::FlipHorizontal,
+        More::FlipVertical,
+        More::ClearMarkup,
+        More::Shortcuts,
+        More::Discard,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            More::CopyText => "Copy Text",
+            More::Rotate => "Rotate Right",
+            More::FlipHorizontal => "Flip Horizontal",
+            More::FlipVertical => "Flip Vertical",
+            More::ClearMarkup => "Clear Markup",
+            More::Shortcuts => "Keyboard Shortcuts",
+            More::Discard => "Discard",
+        }
+    }
+
+    fn shortcut(self) -> Option<&'static str> {
+        match self {
+            More::Shortcuts => Some("?"),
+            More::Discard => Some("Esc"),
+            _ => None,
+        }
+    }
+
+    /// A separator goes above this row.
+    fn starts_group(self) -> bool {
+        matches!(self, More::ClearMarkup | More::Shortcuts | More::Discard)
+    }
+}
+
+/// A toolbar menu panel dropped under its button, inside the window.
+fn drop_menu(panel: impl IntoElement) -> impl IntoElement {
+    deferred(
+        anchored()
+            .offset(point(px(0.), px(theme::TOOLBAR_CONTROL_H + 4.)))
+            .snap_to_window_with_margin(px(8.))
+            .child(panel),
+    )
+    .with_priority(1)
+}
 
 impl Editor {
+    /// Run a More menu row: the same operation its former toolbar
+    /// button ran.
+    pub(super) fn run_more(&mut self, item: More, window: &mut Window, cx: &mut Context<Self>) {
+        self.more_menu = false;
+        match item {
+            More::CopyText => self.copy_text_ocr(cx),
+            More::Rotate => self.transform(Transform::Rot90, cx),
+            More::FlipHorizontal => self.transform(Transform::FlipH, cx),
+            More::FlipVertical => self.transform(Transform::FlipV, cx),
+            More::ClearMarkup => self.clear(),
+            More::Shortcuts => self.help = true,
+            More::Discard => self.discard(window, cx),
+        }
+        cx.notify();
+    }
+
     pub(super) fn render_backdrop(&self, chrome: f32, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .absolute()
-            .left(px(64.))
-            .top(px(52.))
+            .left_0()
+            .top(px(STAGE_TOP))
             .right_0()
             .bottom_0()
             .id("backdrop")
@@ -22,251 +112,244 @@ impl Editor {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _ev: &MouseDownEvent, _, _| {
-                    // Clicking outside the image only settles an
-                    // open text entry; work is never thrown away
-                    // by a stray click. Discard is explicit.
+                    // A press outside the image settles an open text
+                    // entry and keeps it; Discard is explicit.
                     this.commit_text(true);
                 }),
             )
     }
 
-    /// Undo, redo, and clear. The group stops presses from reaching the
-    /// title bar's move.
-    fn history_buttons(&self, cx: &mut Context<Self>) -> Div {
-        let button = |id: &'static str, glyph: Icon, run: fn(&mut Self)| {
-            crate::widgets::icon_button(id, glyph, false, theme::CONTROL_H).on_click(cx.listener(
-                move |this, _, _, cx| {
-                    run(this);
-                    cx.notify();
-                },
-            ))
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(button("action-undo", Icon::Undo, Self::undo))
-            .child(button("action-redo", Icon::Redo, Self::redo))
-            .child(button("action-clear", Icon::Trash, Self::clear))
+    /// The tools as one Toolbar segmented control; each tooltip shows
+    /// the tool's name and the key that selects it.
+    fn tool_buttons(&self, cx: &mut Context<Self>) -> Div {
+        let this = cx.entity().downgrade();
+        widgets::segmented(
+            "editor-tools",
+            SegmentStyle::Toolbar,
+            TOOLS
+                .iter()
+                .map(|&(_, glyph, label, key)| Segment::icon(glyph).tip(label, Some(key.into())))
+                .collect(),
+            TOOLS.iter().position(|t| t.0 == self.tool),
+            move |ix, _, cx| {
+                this.update(cx, |this, cx| this.set_tool(TOOLS[ix].0, cx))
+                    .ok();
+            },
+        )
     }
 
     pub(super) fn render_topbar(
         &self,
         topbar: f32,
-        title: SharedString,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // The topbar is the window's title bar, opaque and over the
-        // stage: a zoomed image runs under it and never takes its
-        // presses, hover, or wheel.
-        div()
-            .absolute()
-            .top(px(12.))
-            .left(px(12.))
-            .right(px(12.))
-            .h(px(48.))
-            .opacity(topbar)
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(14.))
-            .rounded(px(12.))
-            .bg(theme::BG_ELEV)
-            .shadow(theme::shadow_float())
-            .occlude()
-            .child(crate::widgets::move_handle(
-                crate::widgets::Double::TitleBar,
-            ))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_BODY))
-                            .text_color(theme::FG_DIM)
-                            .child(title),
-                    )
-                    .child(self.history_buttons(cx)),
+        let history = |id: &'static str,
+                       glyph: Icon,
+                       label: &'static str,
+                       keys: &'static str,
+                       run: fn(&mut Self)| {
+            widgets::icon_button(id, glyph, false, theme::TOOLBAR_CONTROL_H)
+                .tooltip(tip(label, Some(keys.into())))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    run(this);
+                    cx.notify();
+                }))
+        };
+        let undo = history("action-undo", Icon::Undo, "Undo", "Ctrl+Z", Self::undo);
+        let redo = history(
+            "action-redo",
+            Icon::Redo,
+            "Redo",
+            "Ctrl+Shift+Z",
+            Self::redo,
+        );
+
+        // A press toggles from the state this frame drew: with the menu
+        // open, its press-outside dismissal runs first.
+        let copy_open = self.copy_menu;
+        let mut copy = div().relative().child(
+            widgets::button_with_icon("btn-copy", "Copy", Icon::ChevronDown, false)
+                .tooltip(tip("Copy Image, File, or Path", None))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        this.copy_menu = !copy_open;
+                        this.more_menu = false;
+                        cx.notify();
+                    }),
+                ),
+        );
+        if copy_open {
+            let mut panel = widgets::menu()
+                .id("copy-menu")
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.copy_menu = false;
+                    cx.notify();
+                }));
+            for (variant, label) in [
+                ("image", "Copy Image"),
+                ("file", "Copy File"),
+                ("path", "Copy Path"),
+            ] {
+                let item = MenuItem::new(ElementId::Name(variant.into()), label);
+                panel =
+                    panel.child(item.into_row().on_click(cx.listener(move |this, _, _, cx| {
+                        this.copy_menu = false;
+                        this.copy_variant(variant, cx);
+                    })));
+            }
+            copy = copy.child(drop_menu(panel));
+        }
+
+        let more_open = self.more_menu;
+        let mut more = div().relative().child(
+            widgets::icon_button(
+                "btn-more",
+                Icon::Ellipsis,
+                more_open,
+                theme::TOOLBAR_CONTROL_H,
             )
-            .child({
-                let mut buttons = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    // Buttons handle their own presses; the bar's move
-                    // must not take them.
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-                buttons = buttons
-                    .child(
-                        crate::widgets::button("btn-discard", "Discard", false)
-                            .on_click(cx.listener(|this, _, window, cx| this.discard(window, cx))),
-                    )
-                    .child(
-                        crate::widgets::button("btn-copy-text", "Copy text", false)
-                            .on_click(cx.listener(|this, _, _, cx| this.copy_text_ocr(cx))),
-                    )
-                    .child(
-                        div().relative().child(
-                            crate::widgets::button_with_icon(
-                                "btn-copy",
-                                "Copy",
-                                Icon::ChevronDown,
-                                false,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.copy_menu = !this.copy_menu;
-                                this.copy_menu_opened = None;
-                                cx.notify();
-                            })),
-                        ),
-                    )
-                    .child(
-                        crate::widgets::button("btn-rotate", "Rotate", false).on_click(
-                            cx.listener(|this, _, _, cx| this.transform(Transform::Rot90, cx)),
-                        ),
-                    )
-                    .child(crate::widgets::button("btn-flip", "Flip", false).on_click(
-                        cx.listener(|this, _, _, cx| this.transform(Transform::FlipH, cx)),
-                    ))
-                    .child(
-                        crate::widgets::button("btn-flipv", "Flip V", false).on_click(
-                            cx.listener(|this, _, _, cx| this.transform(Transform::FlipV, cx)),
-                        ),
-                    )
-                    .child(
-                        crate::widgets::button("btn-done", "Done", true)
-                            .on_click(cx.listener(|this, _, window, cx| this.finish(window, cx))),
-                    )
-                    .child(
-                        crate::widgets::button("btn-help", "?", false).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.help = !this.help;
-                                cx.notify();
-                            },
-                        )),
+            .tooltip(tip("More", None))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.more_menu = !more_open;
+                    this.copy_menu = false;
+                    cx.notify();
+                }),
+            ),
+        );
+        if more_open {
+            let mut panel = widgets::menu()
+                .id("more-menu")
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.more_menu = false;
+                    cx.notify();
+                }));
+            for item in More::ALL {
+                if item.starts_group() {
+                    panel = panel.child(widgets::menu_separator());
+                }
+                // Clear Markup has nothing to clear on an unmarked image.
+                let disabled = item == More::ClearMarkup && self.actions.borrow().is_empty();
+                let mut row = MenuItem::new(ElementId::Name(item.label().into()), item.label())
+                    .disabled(disabled);
+                if let Some(keys) = item.shortcut() {
+                    row = row.shortcut(keys);
+                }
+                if item == More::Discard {
+                    row = row.destructive();
+                }
+                let mut row = row.into_row();
+                if !disabled {
+                    row = row.on_click(
+                        cx.listener(move |this, _, window, cx| this.run_more(item, window, cx)),
                     );
-                buttons
-            })
+                }
+                panel = panel.child(row);
+            }
+            more = more.child(drop_menu(panel));
+        }
+
+        let done = widgets::button("btn-done", "Done", true)
+            .tooltip(tip("Save and Close", Some("Enter".into())))
+            .on_click(cx.listener(|this, _, window, cx| this.finish(window, cx)));
+
+        let toolbar = Toolbar::new(self.filename.clone())
+            .caption(self.dims.clone())
+            .center(self.tool_buttons(cx))
+            .trailing(undo)
+            .trailing(redo)
+            .trailing(copy)
+            .trailing(more)
+            .trailing(done);
+        // The toolbar is opaque and over the stage: a zoomed image runs
+        // under it and never takes its presses, hover, or wheel.
+        widgets::toolbar_bar(window, toolbar, true)
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .opacity(topbar)
+            .rounded_t(widgets::window_corner(window, 12.))
+            .bg(theme::BG_ELEV)
+            .occlude()
     }
 
-    pub(super) fn render_sidebar(&self, sidebar: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut bar = crate::widgets::scroll_y(div().id("sidebar"), &self.tools_scroll)
+    /// The tool options bar: stroke width, the fill toggle, and the
+    /// markup colors for new actions.
+    pub(super) fn render_options(&self, options: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut bar = div()
+            .id("tool-options")
             .absolute()
-            .left(px(12.))
-            .top(px(72.))
-            .bottom(px(12.))
-            .w(px(48.))
-            .opacity(sidebar)
+            .top(px(theme::TOOLBAR_H))
+            .left_0()
+            .right_0()
+            .h(px(OPTIONS_H))
+            .opacity(options)
             .flex()
-            .flex_col()
             .items_center()
-            .gap(px(2.))
-            .py(px(10.))
-            .rounded(px(12.))
+            .justify_center()
+            .gap(px(4.))
             .bg(theme::BG_ELEV)
-            .shadow(theme::shadow_float())
-            // Over the stage, as the topbar is.
-            .occlude();
-        for (tool, glyph, label) in TOOLS {
-            let active = self.tool == tool;
+            .border_t_1()
+            .border_b_1()
+            .border_color(theme::HAIRLINE)
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        for (i, (glyph, label, key)) in STROKES.into_iter().enumerate() {
             bar = bar.child(
-                crate::widgets::icon_button(
-                    ElementId::Name(label.into()),
-                    glyph,
-                    active,
-                    theme::CONTROL_H,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.commit_text(true);
-                    this.tool = tool;
-                    cx.notify();
-                })),
-            );
-        }
-        bar = bar.child(
-            div()
-                .h(px(1.))
-                .w(px(28.))
-                .my(px(4.))
-                .flex_shrink_0()
-                .bg(theme::HAIRLINE),
-        );
-        // Stroke width stops for new vector actions.
-        for (i, glyph) in [Icon::Stroke1, Icon::Stroke2, Icon::Stroke3]
-            .into_iter()
-            .enumerate()
-        {
-            let active = self.stroke == i as u8;
-            bar = bar.child(
-                crate::widgets::icon_button(
+                widgets::icon_button(
                     ElementId::NamedInteger("stroke".into(), i as u64),
                     glyph,
-                    active,
-                    theme::CONTROL_H,
+                    self.stroke == i as u8,
+                    theme::TOOLBAR_CONTROL_H,
                 )
+                .tooltip(tip(label, Some(key.into())))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.stroke = i as u8;
                     cx.notify();
                 })),
             );
         }
-        // Fill toggle for Rect/Ellipse: paints the interior
-        // instead of just the outline.
         bar = bar.child(
-            crate::widgets::icon_button(
-                ElementId::Name("fill-toggle".into()),
-                Icon::Rect,
+            widgets::icon_button(
+                "fill-toggle",
+                Icon::Fill,
                 self.fill,
-                theme::CONTROL_H,
+                theme::TOOLBAR_CONTROL_H,
             )
+            .tooltip(tip("Fill Shapes", Some("F".into())))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.fill = !this.fill;
                 cx.notify();
             })),
         );
-        bar = bar.child(
-            div()
-                .h(px(1.))
-                .w(px(28.))
-                .my(px(4.))
-                .flex_shrink_0()
-                .bg(theme::HAIRLINE),
-        );
-        // Swatches in a two-column grid; the active color gets a
-        // ring, like Markup's swatch selection.
-        let mut swatches = div()
-            .flex()
-            .flex_wrap()
-            .justify_center()
-            .gap(px(4.))
-            .w(px(40.));
+        bar = bar.child(div().w(px(1.)).h(px(20.)).mx(px(8.)).bg(theme::HAIRLINE));
         for c in COLORS {
             let active = c == self.color;
-            swatches = swatches.child(
+            bar = bar.child(
                 div()
                     .id(ElementId::Name(c.into()))
-                    .w(px(16.))
-                    .h(px(16.))
+                    .w(px(24.))
+                    .h(px(24.))
                     .flex_shrink_0()
                     .rounded_full()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .border_1()
+                    .border_2()
                     .border_color(if active {
-                        theme::FG
+                        theme::ACCENT
                     } else {
-                        theme::alpha(theme::FG, 0.0)
+                        theme::alpha(theme::ACCENT, 0.0)
                     })
                     .cursor_pointer()
                     .child(
                         div()
-                            .w(px(12.))
-                            .h(px(12.))
+                            .w(px(16.))
+                            .h(px(16.))
                             .rounded_full()
                             .bg(hex_rgba(c))
                             .border_1()
@@ -278,65 +361,34 @@ impl Editor {
                     })),
             );
         }
-        bar.child(swatches)
+        bar
     }
 
     pub(super) fn render_menus_and_overlays(
         &mut self,
         mut root: Stateful<Div>,
         topbar: f32,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        // Copy dropdown menu, fading in over 120ms. Painted after the
-        // stage so its rows are never under the canvas.
-        if self.copy_menu {
-            let opened = *self.copy_menu_opened.get_or_insert_with(Instant::now);
-            let mt = (opened.elapsed().as_secs_f32() / motion::tempo(motion::FADE).as_secs_f32())
-                .min(1.0);
-            if mt < 1.0 {
-                window.request_animation_frame();
-            }
-            let mut menu = crate::widgets::menu()
-                .absolute()
-                .top(px(48. + 3.0 * (1.0 - motion::ease_out_cubic(mt))))
-                .right(px(86.))
-                .opacity(mt);
-            for (id, label) in [
-                ("copy-image", "Copy Image"),
-                ("copy-file", "Copy File"),
-                ("copy-path", "Copy Path"),
-            ] {
-                let variant = id.strip_prefix("copy-").unwrap_or(id);
-                menu = menu.child(crate::widgets::menu_row(id, label).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.copy_variant(variant, cx);
-                    },
-                )));
-            }
-            root = root.child(menu);
-        }
-
         // Transient status line (copy results, OCR counts, save errors).
         if let Some(status) = &self.status {
-            root = root.child(crate::widgets::status_pill(status, 76.0));
+            root = root.child(widgets::status_pill(status, STAGE_MARGIN));
         }
 
         if self.help {
             root = root.child(
-                crate::widgets::shortcuts_sheet(vec![
+                widgets::shortcuts_sheet(vec![
                     ("Tools", "V P L A E R T H B C N".into()),
                     ("Fill shapes", "F".into()),
                     ("Stroke width", "1 / 2 / 3".into()),
                     ("Zoom fit / in / out", "0 / + / -".into()),
                     ("Pan", "Space + drag".into()),
-                    ("Save and close", "Ctrl+S / Enter".into()),
+                    ("Save and close", "Ctrl+S / Ctrl+W / Enter".into()),
                     ("Discard", "Esc".into()),
                     ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z".into()),
                     ("Delete selected action", "Delete".into()),
                     ("Apply crop", "Enter".into()),
-                    ("Copy image / file / path", "Copy menu".into()),
                     ("This sheet", "?".into()),
                 ])
                 .opacity(topbar)

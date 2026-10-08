@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use gpui::*;
 use iris_lib::capture::WinRect;
 
-use crate::theme;
+use crate::{icons::Icon, theme};
 
 const CHIP_W: f32 = 208.0;
 const CHIP_H: f32 = 36.0;
@@ -79,6 +79,10 @@ pub struct Chip {
     text: SharedString,
     /// The frame at the clock's next second; None while paused.
     tick: Option<Task<()>>,
+    /// The control under the pointer, named in the timer slot.
+    hovered: Option<Control>,
+    /// The record hotkey, trimmed: empty when none is set.
+    record_hotkey: SharedString,
 }
 
 impl Chip {
@@ -90,6 +94,8 @@ impl Chip {
             shown: 0,
             text: SharedString::new_static("00:00"),
             tick: None,
+            hovered: None,
+            record_hotkey: SharedString::default(),
         }
     }
 
@@ -153,7 +159,10 @@ pub fn open(
         },
         |window, cx| {
             crate::sys::window::Cutout::default().set(window, &[PILL]);
-            cx.new(|_| Chip::new(mic, Instant::now()))
+            let mut chip = Chip::new(mic, Instant::now());
+            let keys = iris_lib::config::Config::load().record_hotkey;
+            chip.record_hotkey = SharedString::from(keys.trim().to_owned());
+            cx.new(|_| chip)
         },
     )
     .map_err(|e| format!("open chip window: {e}"))?;
@@ -226,8 +235,116 @@ fn pill_shadow() -> Vec<gpui::BoxShadow> {
     theme::shadow_tight()
 }
 
+/// Edge of one chip control: a form control's 24, with a 14px glyph.
+const BUTTON: f32 = 24.0;
+/// The record dot's diameter.
+const DOT: f32 = 9.0;
+/// Space between the pill's items.
+const GAP: f32 = 6.0;
+/// The pill's inner padding: wider before the dot, so the dot sits
+/// inside the pill's round end; narrow after the last control, whose
+/// hover wash fills the end.
+const PAD_LEAD: f32 = 14.0;
+const PAD_TRAIL: f32 = 6.0;
+/// Space between a control's name and its shortcut in the slot.
+const KEYS_GAP: f32 = 6.0;
+
+/// Width of the slot between the dot and the controls, which holds the
+/// timer or a hovered control's name. It is fixed for the recording, so
+/// a name that replaces the timer never moves a control from under the
+/// pointer.
+fn slot_w(has_mic: bool) -> f32 {
+    let controls = 2 + usize::from(has_mic);
+    CHIP_W - PAD_LEAD - PAD_TRAIL - DOT - controls as f32 * BUTTON - (1 + controls) as f32 * GAP
+}
+
+/// One chip control: the shared ghost icon button with a hover wash.
+fn control(id: &'static str, glyph: Icon) -> Stateful<Div> {
+    crate::widgets::icon_button(id, glyph, false, BUTTON)
+}
+
+/// A chip control, named in the timer slot while the pointer rests on
+/// it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Control {
+    Pause,
+    Stop,
+    Mic,
+}
+
+impl Control {
+    /// What a click does in the chip's current state.
+    fn label(self, paused: bool, mic: Option<bool>) -> &'static str {
+        match self {
+            Control::Pause if paused => "Resume",
+            Control::Pause => "Pause",
+            Control::Stop => "Stop",
+            Control::Mic if mic == Some(true) => "Mute",
+            Control::Mic => "Unmute",
+        }
+    }
+}
+
+/// What the timer slot shows.
+#[derive(Clone, Debug, PartialEq)]
+enum Slot {
+    Clock,
+    /// A control's name, and the record hotkey when that runs it too.
+    Control {
+        label: &'static str,
+        keys: Option<SharedString>,
+    },
+}
+
+impl Chip {
+    /// The clock, or the hovered control's name in the chip's current
+    /// state. The record hotkey toggles recording, so while the chip is
+    /// open it stops; no other control has a shortcut.
+    fn slot(&self) -> Slot {
+        let Some(control) = self.hovered else {
+            return Slot::Clock;
+        };
+        let keys = (control == Control::Stop && !self.record_hotkey.is_empty())
+            .then(|| self.record_hotkey.clone());
+        Slot::Control {
+            label: control.label(self.paused_at.is_some(), self.mic),
+            keys,
+        }
+    }
+
+    /// The pointer entered or left `control`. Leaving a control the
+    /// pointer already moved off of changes nothing, so a late leave
+    /// event does not clear the next control's name.
+    fn hover(&mut self, control: Control, hovering: bool) {
+        if hovering {
+            self.hovered = Some(control);
+        } else if self.hovered == Some(control) {
+            self.hovered = None;
+        }
+    }
+}
+
+/// Width of `text` in the UI font at `size` and `weight` as GPUI shapes
+/// it, logical px.
+fn shaped_w(window: &Window, text: &str, size: f32, weight: FontWeight) -> f32 {
+    let run = TextRun {
+        len: text.len(),
+        font: theme::font(weight),
+        color: theme::FG.into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        tracking: px(0.),
+    };
+    window
+        .text_system()
+        .shape_line(SharedString::from(text.to_owned()), px(size), &[run], None)
+        .width
+        .into()
+}
+
 impl Render for Chip {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let elapsed = self.elapsed(Instant::now());
         let secs = elapsed.as_secs();
         if self.shown != secs {
@@ -248,7 +365,39 @@ impl Render for Chip {
             }));
         }
         let mic = self.mic;
-        let timer = self.text.clone();
+        let slot = match self.slot() {
+            Slot::Clock => div()
+                .font_features(theme::tabular())
+                .child(self.text.clone()),
+            Slot::Control { label, keys } => {
+                // The shortcut shows when it fits beside the name; the
+                // slot never grows, and a clipped shortcut reads wrong.
+                let keys = keys.filter(|keys| {
+                    shaped_w(window, label, theme::TEXT_BODY, FontWeight::MEDIUM)
+                        + KEYS_GAP
+                        + shaped_w(window, keys, theme::TEXT_SMALL, FontWeight::NORMAL)
+                        <= slot_w(mic.is_some())
+                });
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(KEYS_GAP))
+                    .child(label)
+                    .children(keys.map(|keys| {
+                        div()
+                            .text_size(px(theme::TEXT_SMALL))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(theme::FG_DIM)
+                            .child(keys)
+                    }))
+            }
+        };
+        let hover = |control: Control| {
+            cx.listener(move |chip: &mut Chip, hovering: &bool, _, cx| {
+                chip.hover(control, *hovering);
+                cx.notify();
+            })
+        };
 
         // The pill inside a window-filling root: taffy places the root
         // element at the window origin whatever its insets, so a bare
@@ -260,18 +409,19 @@ impl Render for Chip {
             .top(px(CHIP_BLEED))
             .w(px(CHIP_W))
             .h(px(CHIP_H))
+            .pl(px(PAD_LEAD))
+            .pr(px(PAD_TRAIL))
             .rounded_full()
             .font_family(theme::FONT)
             .bg(theme::alpha(theme::BG_ELEV, 0.92))
             .shadow(pill_shadow())
             .flex()
             .items_center()
-            .justify_center()
-            .gap(px(8.))
+            .gap(px(GAP))
             .child(
                 div()
-                    .w(px(9.))
-                    .h(px(9.))
+                    .flex_none()
+                    .size(px(DOT))
                     .rounded_full()
                     .bg(if paused {
                         theme::FG_FAINT
@@ -282,61 +432,42 @@ impl Render for Chip {
             )
             .child(
                 div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
                     .text_size(px(theme::TEXT_BODY))
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(theme::FG)
-                    .font_family(theme::FONT)
-                    .child(timer),
+                    .child(slot),
             )
             .child(
-                div()
-                    .id("chip-pause")
-                    .cursor_pointer()
+                control("chip-pause", if paused { Icon::Play } else { Icon::Pause })
+                    .on_hover(hover(Control::Pause))
                     .on_click(cx.listener(|_, _, _, cx| {
                         crate::daemon::run(cx, &crate::daemon::Command::RecordPause);
-                    }))
-                    .child(crate::icons::icon(
-                        if paused {
-                            crate::icons::Icon::Play
-                        } else {
-                            crate::icons::Icon::Pause
-                        },
-                        theme::FG_DIM,
-                        14.0,
-                    )),
+                    })),
             )
             .child(
-                div()
-                    .id("chip-stop")
-                    .cursor_pointer()
+                control("chip-stop", Icon::Stop)
+                    .on_hover(hover(Control::Stop))
                     .on_click(cx.listener(|_, _, _, cx| {
                         crate::daemon::run(cx, &crate::daemon::Command::RecordStop);
-                    }))
-                    .child(crate::icons::icon(
-                        crate::icons::Icon::Stop,
-                        theme::FG_DIM,
-                        14.0,
-                    )),
+                    })),
             )
             .children(mic.map(|on| {
-                div()
-                    .id("chip-mic")
-                    .cursor_pointer()
+                control("chip-mic", if on { Icon::Mic } else { Icon::MicOff })
+                    .on_hover(hover(Control::Mic))
                     .on_click(cx.listener(|_, _, _, cx| {
                         crate::daemon::run(cx, &crate::daemon::Command::RecordMic);
                     }))
-                    .child(crate::icons::icon(
-                        if on {
-                            crate::icons::Icon::Mic
-                        } else {
-                            crate::icons::Icon::MicOff
-                        },
-                        theme::FG_DIM,
-                        14.0,
-                    ))
             }));
         div().size_full().child(pill)
     }
 }
+
+#[cfg(test)]
+mod slot_tests;
 
 #[cfg(test)]
 mod clock_tests;

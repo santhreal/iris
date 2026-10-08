@@ -50,6 +50,7 @@ fn a_recorded_check_reads_back_whole() {
     let state = State::load(&path);
     assert_eq!(state.announced.as_deref(), Some("9.9.9"));
     assert_eq!(state.offer, Some(found));
+    assert_eq!(state.checked(), Some(at(T)));
 
     record_check(&path, UpdateChannel::Stable, None, at(T + 60)).expect("record");
     let state = State::load(&path);

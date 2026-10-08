@@ -5,6 +5,25 @@ use gpui::*;
 use super::{loupe::LOUPE_PX, shell::reveal, Overlay, DIM, DIM_FADE, HANDLE_PX, HOVER_FADE};
 use crate::theme;
 
+/// One overlay readout: coordinates, the selection's size, the loupe's
+/// pixel, or the confirm hint. Every pill shares the padding, corner,
+/// fill, and hairline, and digits are tabular so a number that changes
+/// under the pointer keeps its width.
+fn readout(text: SharedString, color: Rgba) -> Div {
+    div()
+        .px(px(8.))
+        .py(px(3.))
+        .rounded(px(theme::RADIUS_CONTROL))
+        .bg(theme::alpha(theme::BG_ELEV, 0.9))
+        .border_1()
+        .border_color(theme::HAIRLINE)
+        .text_size(px(theme::TEXT_SMALL))
+        .font_features(theme::tabular())
+        .whitespace_nowrap()
+        .text_color(color)
+        .child(text)
+}
+
 impl Overlay {
     /// The dim over the frozen frame as it fades in from the overlay's
     /// first render, and whether it is still fading.
@@ -69,16 +88,10 @@ impl Overlay {
                 self.cursor.1 + 16.0
             };
             root = root.child(
-                div()
+                readout(coord_label, theme::FG)
                     .absolute()
                     .left(px(lx))
-                    .top(px(ly))
-                    .px(px(6.))
-                    .py(px(2.))
-                    .rounded(px(6.))
-                    .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                    .text_size(px(theme::TEXT_SMALL))
-                    .child(coord_label),
+                    .top(px(ly)),
             );
         }
         root
@@ -167,17 +180,10 @@ impl Overlay {
                 root = root.child(reveal(fi, x, y, w, h, window));
             }
             root = root.child(
-                div()
+                readout(size_label, theme::FG)
                     .absolute()
                     .left(px(x))
-                    .top(px(if y < 44.0 { y + 4.0 } else { y - 28.0 }))
-                    .px(px(8.))
-                    .py(px(3.))
-                    .rounded(px(6.))
-                    .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                    .text_size(px(theme::TEXT_SMALL))
-                    .text_color(theme::FG)
-                    .child(size_label),
+                    .top(px(if y < 44.0 { y + 4.0 } else { y - 28.0 })),
             );
             // A committed selection (drag released, not yet captured)
             // shows what confirms and what cancels. While still
@@ -186,17 +192,10 @@ impl Overlay {
             if !self.dragging {
                 let hint = self.hint.clone();
                 root = root.child(
-                    div()
+                    readout(hint, theme::FG_DIM)
                         .absolute()
                         .left(px(x))
-                        .top(px(y + h + 6.0))
-                        .px(px(8.))
-                        .py(px(3.))
-                        .rounded(px(6.))
-                        .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                        .text_size(px(theme::TEXT_SMALL))
-                        .text_color(theme::FG_DIM)
-                        .child(hint),
+                        .top(px(y + h + 6.0)),
                 );
             }
             // Resize handles on a committed selection: 8 grab points
@@ -266,16 +265,7 @@ impl Overlay {
                                 .shadow(theme::shadow_float())
                                 .child(img(ImageSource::Render(loupe.clone())).size_full()),
                         )
-                        .child(
-                            div()
-                                .px(px(6.))
-                                .py(px(2.))
-                                .rounded(px(6.))
-                                .bg(theme::alpha(theme::BG_ELEV, 0.9))
-                                .text_size(px(theme::TEXT_SMALL))
-                                .text_color(theme::FG_DIM)
-                                .child(info.clone()),
-                        ),
+                        .child(readout(info.clone(), theme::FG_DIM)),
                 );
             }
         }
