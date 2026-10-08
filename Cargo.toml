@@ -103,7 +103,7 @@ blocking = "~1.6"
 # account SID that names and secures the daemon's pipe, and the folder
 # change notifications the library watches its captures with. windows-sys
 # is already in the tree through gpui.
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
