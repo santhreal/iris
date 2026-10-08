@@ -43,8 +43,8 @@ futures = "0.3"
 # the application for the current OS (X11 and Wayland on Linux, AppKit
 # on macOS, Win32 on Windows). Pinned to a rev so a later push to
 # santh-gpui cannot move the dependency under the build.
-gpui = { git = "https://github.com/santhreal/santh-gpui.git", rev = "3799b5f92fc783a999fecf03e73155e8741c7615" }
-gpui_platform = { git = "https://github.com/santhreal/santh-gpui.git", rev = "3799b5f92fc783a999fecf03e73155e8741c7615", features = ["font-kit", "wayland", "x11"] }
+gpui = { git = "https://github.com/santhreal/santh-gpui.git", rev = "f0de1c9f2c5246073507458bf88d3d0fd456aac6" }
+gpui_platform = { git = "https://github.com/santhreal/santh-gpui.git", rev = "f0de1c9f2c5246073507458bf88d3d0fd456aac6", features = ["font-kit", "wayland", "x11"] }
 libc = "0.2"
 # Auto-update: HTTPS GET of the release manifest + asset download.
 # rustls (no system OpenSSL), blocking API — the updater runs on its own
@@ -55,6 +55,8 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 ring = "0.17"
 # Compares the running version against the release tag.
 semver = "1"
+# Verifies an update download's .minisig against packaging/minisign.pub.
+minisign-verify = "0.3"
 arboard = "3"
 # Cross-platform local IPC: Unix domain sockets on Unix, named pipes on
 # Windows, behind one Listener/Stream API. Replaces the hand-rolled
@@ -63,6 +65,9 @@ interprocess = { version = "2", features = [] }
 # Native window ids for GPUI windows: the X11 id, the Win32 HWND, the
 # AppKit view.
 raw-window-handle = "0.6"
+# Library and toast deletes move the capture to the system trash
+# (freedesktop Trash, the macOS Trash, the Windows Recycle Bin).
+trash = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # async-io, not the default tokio: ashpd's tokio feature unifies into
