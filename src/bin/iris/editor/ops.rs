@@ -208,10 +208,7 @@ impl Editor {
         self.composite = Arc::new(cropped);
         self.base = Arc::clone(&self.composite);
         self.base_dims = (w, h);
-        self.dims = SharedString::from(format!(
-            "{} × {}",
-            self.base_dims.0, self.base_dims.1
-        ));
+        self.dims = SharedString::from(format!("{} × {}", self.base_dims.0, self.base_dims.1));
         self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
@@ -244,10 +241,7 @@ impl Editor {
         self.composite = Arc::new(out);
         self.base = Arc::clone(&self.composite);
         self.base_dims = (w, h);
-        self.dims = SharedString::from(format!(
-            "{} × {}",
-            self.base_dims.0, self.base_dims.1
-        ));
+        self.dims = SharedString::from(format!("{} × {}", self.base_dims.0, self.base_dims.1));
         self.actions.borrow_mut().clear();
         self.undos.clear();
         self.redos.clear();
@@ -415,7 +409,8 @@ impl Editor {
         let size = window.bounds().size;
         (
             (f32::from(size.width) - self.base_dims.0 as f32 * scale) / 2.0,
-            STAGE_TOP + (f32::from(size.height) - STAGE_TOP - self.base_dims.1 as f32 * scale) / 2.0,
+            STAGE_TOP
+                + (f32::from(size.height) - STAGE_TOP - self.base_dims.1 as f32 * scale) / 2.0,
         )
     }
 

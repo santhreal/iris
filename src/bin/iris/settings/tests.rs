@@ -108,13 +108,29 @@ fn a_text_field_applies_on_commit_and_keeps_a_rejected_value_open() {
     // beside it; config.toml keeps the last good value.
     let cases: [(Field, &str, &str); 8] = [
         (Field::ScreenshotsDir, "   ", "Enter a folder"),
-        (Field::ScreenshotsDir, "test-shots", "Use a full path or one starting with ~"),
-        (Field::ScreenshotsDir, "~user/shots", "Use a full path or one starting with ~"),
-        (Field::Template, "no_tokens_here", "Include {date} or {time}"),
+        (
+            Field::ScreenshotsDir,
+            "test-shots",
+            "Use a full path or one starting with ~",
+        ),
+        (
+            Field::ScreenshotsDir,
+            "~user/shots",
+            "Use a full path or one starting with ~",
+        ),
+        (
+            Field::Template,
+            "no_tokens_here",
+            "Include {date} or {time}",
+        ),
         (Field::Fps, "0", "Enter 1 to 120"),
         (Field::Fps, "121", "Enter 1 to 120"),
         (Field::Fps, "sixty", "Enter a number"),
-        (Field::CaptureHotkey, "Ctrl+K", "Press the shortcut instead of typing it"),
+        (
+            Field::CaptureHotkey,
+            "Ctrl+K",
+            "Press the shortcut instead of typing it",
+        ),
     ];
     for (field, bad, reason) in cases {
         edit(&mut s, field, bad);
@@ -211,7 +227,10 @@ fn a_chosen_folder_applies_and_a_picker_failure_opens_the_path_for_typing() {
     s.picked(Field::RecordingsDir, Ok(recs.clone()));
     assert_eq!(Config::load().recordings_dir, recs);
 
-    s.picked(Field::ScreenshotsDir, Err("folder picker: no portal".into()));
+    s.picked(
+        Field::ScreenshotsDir,
+        Err("folder picker: no portal".into()),
+    );
     assert_eq!(
         s.status.as_deref(),
         Some("folder picker: no portal; type the folder path instead")
@@ -275,7 +294,10 @@ fn every_setting_has_exactly_one_row_and_every_pane_fits_its_window() {
     for p in Pane::ALL {
         let h = p.height();
         assert!(px(h) >= min.height, "{p:?}: {h} under the minimum");
-        assert!(h <= 700.0, "{p:?}: {h} is taller than a 768px screen allows");
+        assert!(
+            h <= 700.0,
+            "{p:?}: {h} is taller than a 768px screen allows"
+        );
         assert_eq!(Pane::ALL[p.index()], p);
     }
 }
@@ -427,7 +449,9 @@ fn the_last_check_reads_today_or_its_date() {
     let line = app::checked_line(now, now);
     assert!(line.starts_with("Last checked today at "), "{line}");
     let (.., h, mi, _) = iris_lib::time::local_fields(
-        now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64,
+        now.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64,
     );
     assert!(line.ends_with(&format!("{h:02}:{mi:02}")), "{line}");
     let earlier = app::checked_line(now - Duration::from_secs(3 * 86_400), now);

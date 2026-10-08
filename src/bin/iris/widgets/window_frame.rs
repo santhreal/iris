@@ -156,7 +156,8 @@ pub fn toolbar_frame(
                 .child(traffic_lights(resizable)),
         );
     }
-    root.child(toolbar_bar(window, toolbar, resizable)).child(content)
+    root.child(toolbar_bar(window, toolbar, resizable))
+        .child(content)
 }
 
 /// The TOOLBAR_H unified toolbar band on its own: the traffic lights

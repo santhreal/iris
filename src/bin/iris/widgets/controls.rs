@@ -146,11 +146,7 @@ pub fn push_button(
     label: impl Into<SharedString>,
     style: ButtonStyle,
 ) -> Stateful<Div> {
-    styled_button(
-        div().id(id).h(px(theme::CONTROL_H)).px(px(10.)),
-        style,
-    )
-    .child(label.into())
+    styled_button(div().id(id).h(px(theme::CONTROL_H)).px(px(10.)), style).child(label.into())
 }
 
 /// The shared press and color treatment of every text button.

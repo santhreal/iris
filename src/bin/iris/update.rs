@@ -130,8 +130,9 @@ fn fetch(channel: UpdateChannel) -> Result<Option<UpdateInfo>, String> {
     let current = current_version();
     let api = format!("https://api.github.com/repos/{REPO}/releases");
     match channel {
-        UpdateChannel::Stable => get_json(&format!("{api}/latest"))?
-            .map_or(Ok(None), |latest| select_stable(&latest, &current, &selector)),
+        UpdateChannel::Stable => get_json(&format!("{api}/latest"))?.map_or(Ok(None), |latest| {
+            select_stable(&latest, &current, &selector)
+        }),
         UpdateChannel::Beta => get_json(&format!("{api}?per_page={BETA_PAGE}"))?
             .map_or(Ok(None), |list| select_beta(&list, &current, &selector)),
     }
@@ -268,8 +269,7 @@ fn str_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
 /// is newer than this iris (`state::State::offer_for`). Reads
 /// `update.json`.
 pub fn offered() -> Option<UpdateInfo> {
-    state::State::load(&state::path())
-        .offer_for(Config::load().update_channel, &current_version())
+    state::State::load(&state::path()).offer_for(Config::load().update_channel, &current_version())
 }
 
 /// When the last check that got an answer ran. Reads `update.json`.

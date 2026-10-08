@@ -197,7 +197,9 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                 // An edit open when the window loses focus commits, as
                 // a field does when focus moves within the window.
                 cx.observe_window_activation(window, |this: &mut Settings, window, cx| {
-                    if !window.is_window_active() && (this.editing.is_some() || this.recording.is_some()) {
+                    if !window.is_window_active()
+                        && (this.editing.is_some() || this.recording.is_some())
+                    {
                         this.blur();
                         cx.notify();
                     }

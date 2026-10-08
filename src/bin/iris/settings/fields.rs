@@ -58,11 +58,11 @@ pub(super) fn conflict(cfg: &Config, field: Field, chord: &str) -> Option<Field>
         Field::RecordHotkey => (Field::CaptureHotkey, &cfg.capture_hotkey),
         Field::CancelKeybind => (Field::ConfirmKeybind, &cfg.confirm_keybind),
         Field::ConfirmKeybind => (Field::CancelKeybind, &cfg.cancel_keybind),
-        Field::ScreenshotsDir | Field::RecordingsDir | Field::Template | Field::Fps => {
-            return None
-        }
+        Field::ScreenshotsDir | Field::RecordingsDir | Field::Template | Field::Fps => return None,
     };
-    held.trim().eq_ignore_ascii_case(chord.trim()).then_some(other)
+    held.trim()
+        .eq_ignore_ascii_case(chord.trim())
+        .then_some(other)
 }
 
 /// One row: the label on the left, the control right-aligned.
@@ -191,9 +191,7 @@ impl Settings {
             Field::CaptureHotkey
             | Field::RecordHotkey
             | Field::CancelKeybind
-            | Field::ConfirmKeybind => {
-                return Err("Press the shortcut instead of typing it".into())
-            }
+            | Field::ConfirmKeybind => return Err("Press the shortcut instead of typing it".into()),
         }
         Ok(())
     }
@@ -354,7 +352,12 @@ impl Settings {
         Some(parts.join("+"))
     }
 
-    pub(super) fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_key(
+        &mut self,
+        ev: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let ks = &ev.keystroke;
         // Recording takes every combination, Esc included: Esc is the
         // default cancel key. A click away stops it.
@@ -410,10 +413,12 @@ impl Settings {
     pub(super) fn switch_row(&self, s: Switch, cx: &mut Context<Self>) -> Div {
         row_shell(
             s.label(),
-            widgets::toggle(s.id(), self.switch_on(s)).on_click(cx.listener(move |this, _, _, cx| {
-                this.flip(s);
-                cx.notify();
-            })),
+            widgets::toggle(s.id(), self.switch_on(s)).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    this.flip(s);
+                    cx.notify();
+                },
+            )),
         )
     }
 
@@ -485,7 +490,11 @@ impl Settings {
     }
 
     pub(super) fn text_row(&self, field: Field, cx: &mut Context<Self>) -> Div {
-        let width = if field == Field::Fps { NUMBER_W } else { TEXT_W };
+        let width = if field == Field::Fps {
+            NUMBER_W
+        } else {
+            TEXT_W
+        };
         row_shell(field.label(), self.typed_field(field, width, cx))
     }
 
@@ -496,13 +505,18 @@ impl Settings {
         let this = cx.entity().downgrade();
         row_shell(
             field.label(),
-            widgets::folder_field(field.id(), self.field_text(field), PATH_W, move |picked, _, cx| {
-                this.update(cx, |this, cx| {
-                    this.picked(field, picked);
-                    cx.notify();
-                })
-                .ok();
-            }),
+            widgets::folder_field(
+                field.id(),
+                self.field_text(field),
+                PATH_W,
+                move |picked, _, cx| {
+                    this.update(cx, |this, cx| {
+                        this.picked(field, picked);
+                        cx.notify();
+                    })
+                    .ok();
+                },
+            ),
         )
     }
 
@@ -528,11 +542,15 @@ impl Settings {
     pub(super) fn restore_row(&self, cx: &mut Context<Self>) -> Div {
         row_shell(
             "Restore every setting to its default",
-            widgets::push_button("restore-defaults", "Restore Defaults", widgets::ButtonStyle::Destructive)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.restore_defaults();
-                    cx.notify();
-                })),
+            widgets::push_button(
+                "restore-defaults",
+                "Restore Defaults",
+                widgets::ButtonStyle::Destructive,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.restore_defaults();
+                cx.notify();
+            })),
         )
     }
 }

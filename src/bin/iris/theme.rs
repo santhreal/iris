@@ -177,8 +177,12 @@ pub fn wrapped_lines(cx: &App, text: &str, size: f32, weight: FontWeight, width:
 pub fn advance_sum(text: &str, size: f32) -> f32 {
     use ab_glyph::{Font as _, ScaleFont as _};
     let face = ab_glyph::FontRef::try_from_slice(FONT_FACES[0]).expect("bundled Inter parses");
-    let scaled = face.as_scaled(ab_glyph::PxScale::from(size * face.height_unscaled() / face.units_per_em().expect("units per em")));
-    text.chars().map(|c| scaled.h_advance(scaled.glyph_id(c))).sum()
+    let scaled = face.as_scaled(ab_glyph::PxScale::from(
+        size * face.height_unscaled() / face.units_per_em().expect("units per em"),
+    ));
+    text.chars()
+        .map(|c| scaled.h_advance(scaled.glyph_id(c)))
+        .sum()
 }
 
 use gpui::{point, BoxShadow};

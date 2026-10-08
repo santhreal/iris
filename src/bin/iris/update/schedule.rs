@@ -160,8 +160,7 @@ pub(crate) fn spawn(tx: UnboundedSender<Command>) {
         .name("iris-update-check".into())
         .spawn(move || {
             let current = super::current_version();
-            let mut scheduler =
-                Scheduler::new(state::path(), SystemTime::now() + START_DELAY);
+            let mut scheduler = Scheduler::new(state::path(), SystemTime::now() + START_DELAY);
             loop {
                 let cfg = Config::load();
                 let (wait, publish) = scheduler.pass(

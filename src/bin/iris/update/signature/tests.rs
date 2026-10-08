@@ -170,5 +170,8 @@ fn the_built_in_key_is_the_published_release_key() {
     let key = release_key().expect("the release key decodes");
     let (_dir, path) = asset_file();
     let err = verify(&path, SIGNED, &key, ASSET, &v999()).expect_err("a test signature");
-    assert!(err.ends_with("different key than the one provided"), "{err}");
+    assert!(
+        err.ends_with("different key than the one provided"),
+        "{err}"
+    );
 }

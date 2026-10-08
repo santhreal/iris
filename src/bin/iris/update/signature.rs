@@ -52,8 +52,8 @@ pub(super) fn verify(
     let mut verifier = key
         .verify_stream(&signature)
         .map_err(|e| format!("update: {asset}.minisig is not a release signature: {e}"))?;
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| format!("update: open {}: {e}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("update: open {}: {e}", path.display()))?;
     let mut buf = vec![0u8; 1 << 16];
     loop {
         let n = match file.read(&mut buf) {

@@ -138,12 +138,7 @@ impl MenuItem {
         }
         row = row.child(div().flex_1().child(self.label));
         if let Some(keys) = self.shortcut {
-            row = row.child(
-                div()
-                    .pl(px(16.))
-                    .text_color(theme::FG_FAINT)
-                    .child(keys),
-            );
+            row = row.child(div().pl(px(16.)).text_color(theme::FG_FAINT).child(keys));
         }
         row
     }

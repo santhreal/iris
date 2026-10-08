@@ -263,10 +263,20 @@ fn pixelate_region_respects_offsets_and_leaves_outside() {
 fn every_tool_key_selects_its_tool_and_no_key_is_shared() {
     use super::action::{tool_for_key, TOOLS};
     for (tool, _, label, key) in TOOLS {
-        assert_eq!(tool_for_key(&key.to_ascii_lowercase()), Some(tool), "{label}");
-        assert_eq!(TOOLS.iter().filter(|t| t.3 == key).count(), 1, "{key} is shared");
+        assert_eq!(
+            tool_for_key(&key.to_ascii_lowercase()),
+            Some(tool),
+            "{label}"
+        );
+        assert_eq!(
+            TOOLS.iter().filter(|t| t.3 == key).count(),
+            1,
+            "{key} is shared"
+        );
     }
-    for key in ["f", "1", "2", "3", "0", "space", "enter", "escape", "z", "s", "w", "y"] {
+    for key in [
+        "f", "1", "2", "3", "0", "space", "enter", "escape", "z", "s", "w", "y",
+    ] {
         assert_eq!(tool_for_key(key), None, "{key}");
     }
 }

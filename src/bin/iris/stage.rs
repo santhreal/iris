@@ -75,7 +75,7 @@ pub(super) const STATUS_HOLD: Duration = Duration::from_millis(1600);
 /// mid-fade continues from where the fade stood.
 pub(super) fn hover_reveal(from: f32, hovered: bool, t: f32) -> f32 {
     let to = if hovered { 1.0 } else { 0.0 };
-    from + (to - from) * motion::ease_out(t.clamp(0.0, 1.0))
+    from + (to - from) * motion::ease_out(t)
 }
 
 /// The status line holds the slot along the card's lower edge: always

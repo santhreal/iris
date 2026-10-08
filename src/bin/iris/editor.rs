@@ -145,8 +145,11 @@ pub struct Editor {
     pub(crate) fill: bool,
 }
 
-/// The editor window's minimum logical size, where its resize stops.
-const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
+/// The editor window's minimum logical size, where its resize stops:
+/// the toolbar's tools and buttons with the file name still readable.
+const MIN_W: f32 = 760.0;
+const MIN_H: f32 = 480.0;
+const MIN_SIZE: Size<Pixels> = size(px(MIN_W), px(MIN_H));
 
 /// Editor window default placement; morph rects arrive in screen
 /// coordinates and the window grows to contain them.
@@ -184,7 +187,7 @@ fn resolve_window_placement(
             let x1 = (origin.0 + win.0).max(fx + fw).min(mx1);
             let y1 = (origin.1 + win.1).max(fy + fh).min(my1);
             origin = (x0, y0);
-            win = ((x1 - x0).max(640.0), (y1 - y0).max(480.0));
+            win = ((x1 - x0).max(MIN_W), (y1 - y0).max(MIN_H));
         } else {
             if fx < origin.0 {
                 win.0 += origin.0 - fx;
@@ -437,7 +440,7 @@ impl Render for Editor {
                 window.request_animation_frame();
             }
         }
-                let stage = self.render_stage(stage_rect, morph_radius, chrome, scale, window, cx);
+        let stage = self.render_stage(stage_rect, morph_radius, chrome, scale, window, cx);
 
         // Paint order is stacking order: the zoomed or panned image
         // runs under the toolbar and options bar, never over them.
@@ -445,6 +448,7 @@ impl Render for Editor {
             .id("editor")
             .size_full()
             .font_family(theme::FONT)
+            .rounded(crate::widgets::window_corner(window, 12.))
             .bg(theme::alpha(theme::BG, chrome))
             .opacity(outro)
             .track_focus(&self.focus)

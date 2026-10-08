@@ -166,7 +166,10 @@ impl Pane {
             Pane::Updates => &[
                 Group {
                     header: None,
-                    rows: &[Row::Switch(Switch::AutoCheck), Row::Pick(Pick::UpdateChannel)],
+                    rows: &[
+                        Row::Switch(Switch::AutoCheck),
+                        Row::Pick(Pick::UpdateChannel),
+                    ],
                 },
                 Group {
                     header: None,

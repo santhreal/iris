@@ -101,10 +101,9 @@ fn drawn() -> Vec<(usize, Drawn)> {
         .filter_map(|(id, row)| {
             let drawn = match row {
                 Row::Item { label, .. } => Drawn::Item(Cow::Borrowed(*label)),
-                Row::Update => Drawn::Item(Cow::Owned(format!(
-                    "{UPDATE_LABEL} {}",
-                    offer.as_ref()?
-                ))),
+                Row::Update => {
+                    Drawn::Item(Cow::Owned(format!("{UPDATE_LABEL} {}", offer.as_ref()?)))
+                }
                 Row::Separator => Drawn::Separator,
             };
             Some((id, drawn))

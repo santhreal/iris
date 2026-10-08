@@ -132,7 +132,8 @@ impl Editor {
                 .collect(),
             TOOLS.iter().position(|t| t.0 == self.tool),
             move |ix, _, cx| {
-                this.update(cx, |this, cx| this.set_tool(TOOLS[ix].0, cx)).ok();
+                this.update(cx, |this, cx| this.set_tool(TOOLS[ix].0, cx))
+                    .ok();
             },
         )
     }
@@ -143,7 +144,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let history = |id: &'static str, glyph: Icon, label: &'static str, keys: &'static str, run: fn(&mut Self)| {
+        let history = |id: &'static str,
+                       glyph: Icon,
+                       label: &'static str,
+                       keys: &'static str,
+                       run: fn(&mut Self)| {
             widgets::icon_button(id, glyph, false, theme::TOOLBAR_CONTROL_H)
                 .tooltip(tip(label, Some(keys.into())))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -152,7 +157,13 @@ impl Editor {
                 }))
         };
         let undo = history("action-undo", Icon::Undo, "Undo", "Ctrl+Z", Self::undo);
-        let redo = history("action-redo", Icon::Redo, "Redo", "Ctrl+Shift+Z", Self::redo);
+        let redo = history(
+            "action-redo",
+            Icon::Redo,
+            "Redo",
+            "Ctrl+Shift+Z",
+            Self::redo,
+        );
 
         // A press toggles from the state this frame drew: with the menu
         // open, its press-outside dismissal runs first.
@@ -182,26 +193,32 @@ impl Editor {
                 ("path", "Copy Path"),
             ] {
                 let item = MenuItem::new(ElementId::Name(variant.into()), label);
-                panel = panel.child(item.into_row().on_click(cx.listener(move |this, _, _, cx| {
-                    this.copy_menu = false;
-                    this.copy_variant(variant, cx);
-                })));
+                panel =
+                    panel.child(item.into_row().on_click(cx.listener(move |this, _, _, cx| {
+                        this.copy_menu = false;
+                        this.copy_variant(variant, cx);
+                    })));
             }
             copy = copy.child(drop_menu(panel));
         }
 
         let more_open = self.more_menu;
         let mut more = div().relative().child(
-            widgets::icon_button("btn-more", Icon::Ellipsis, more_open, theme::TOOLBAR_CONTROL_H)
-                .tooltip(tip("More", None))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        this.more_menu = !more_open;
-                        this.copy_menu = false;
-                        cx.notify();
-                    }),
-                ),
+            widgets::icon_button(
+                "btn-more",
+                Icon::Ellipsis,
+                more_open,
+                theme::TOOLBAR_CONTROL_H,
+            )
+            .tooltip(tip("More", None))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.more_menu = !more_open;
+                    this.copy_menu = false;
+                    cx.notify();
+                }),
+            ),
         );
         if more_open {
             let mut panel = widgets::menu()
@@ -226,7 +243,9 @@ impl Editor {
                 }
                 let mut row = row.into_row();
                 if !disabled {
-                    row = row.on_click(cx.listener(move |this, _, window, cx| this.run_more(item, window, cx)));
+                    row = row.on_click(
+                        cx.listener(move |this, _, window, cx| this.run_more(item, window, cx)),
+                    );
                 }
                 panel = panel.child(row);
             }
@@ -253,6 +272,7 @@ impl Editor {
             .left_0()
             .right_0()
             .opacity(topbar)
+            .rounded_t(widgets::window_corner(window, 12.))
             .bg(theme::BG_ELEV)
             .occlude()
     }
@@ -294,12 +314,17 @@ impl Editor {
             );
         }
         bar = bar.child(
-            widgets::icon_button("fill-toggle", Icon::Fill, self.fill, theme::TOOLBAR_CONTROL_H)
-                .tooltip(tip("Fill Shapes", Some("F".into())))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.fill = !this.fill;
-                    cx.notify();
-                })),
+            widgets::icon_button(
+                "fill-toggle",
+                Icon::Fill,
+                self.fill,
+                theme::TOOLBAR_CONTROL_H,
+            )
+            .tooltip(tip("Fill Shapes", Some("F".into())))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.fill = !this.fill;
+                cx.notify();
+            })),
         );
         bar = bar.child(div().w(px(1.)).h(px(20.)).mx(px(8.)).bg(theme::HAIRLINE));
         for c in COLORS {
@@ -315,7 +340,11 @@ impl Editor {
                     .items_center()
                     .justify_center()
                     .border_2()
-                    .border_color(if active { theme::ACCENT } else { theme::alpha(theme::ACCENT, 0.0) })
+                    .border_color(if active {
+                        theme::ACCENT
+                    } else {
+                        theme::alpha(theme::ACCENT, 0.0)
+                    })
                     .cursor_pointer()
                     .child(
                         div()

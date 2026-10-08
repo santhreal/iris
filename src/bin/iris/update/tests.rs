@@ -128,7 +128,8 @@ fn a_download_that_matches_its_sidecar_is_kept() {
         route("/asset.sha256", sidecar(MILLION_A, ASSET)),
     ]));
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect("verified download");
+    let path =
+        download_into(&info(&base, ASSET), dir.path(), &test_key()).expect("verified download");
     assert_eq!(path, dir.path().join(ASSET));
     assert!(std::fs::read(&path).expect("read download") == body);
 }
@@ -172,7 +173,8 @@ fn a_stale_file_already_there_is_replaced_or_deleted() {
     ]));
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join(ASSET), &body[1..]).expect("write");
-    let err = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect_err("not the release");
+    let err =
+        download_into(&info(&base, ASSET), dir.path(), &test_key()).expect_err("not the release");
     assert!(err.contains(&format!("has SHA-256 {ABC}")), "{err}");
     assert!(is_empty(dir.path()), "the stale file stayed behind");
 }
@@ -316,7 +318,11 @@ fn unsigned_cases() -> Vec<SignatureCase> {
         ),
         case(
             "a trusted comment rewritten to name this release",
-            Some(OTHER_VERSION.replace("version:9.9.8", "version:9.9.9").as_str()),
+            Some(
+                OTHER_VERSION
+                    .replace("version:9.9.8", "version:9.9.9")
+                    .as_str(),
+            ),
             &format!(
                 "update: {ASSET} does not match its signature {ASSET}.minisig: \
                  The signature verification failed"
@@ -456,7 +462,9 @@ fn an_oversized_signature_is_read_to_its_bound_and_rejected() {
     let dir = tempfile::tempdir().expect("tempdir");
     let err = download_into(&info(&base, ASSET), dir.path(), &test_key()).expect_err("oversized");
     assert!(
-        err.starts_with(&format!("update: {ASSET}.minisig is not a minisign signature")),
+        err.starts_with(&format!(
+            "update: {ASSET}.minisig is not a minisign signature"
+        )),
         "{err}"
     );
     assert!(is_empty(dir.path()), "a file stayed behind");
@@ -671,7 +679,11 @@ fn stable_offers_the_latest_release_and_never_a_draft_or_a_prerelease() {
         ("the running version", linux("0.1.0")),
         ("an older version", linux("0.0.9")),
     ] {
-        assert_eq!(select_stable(&latest, &current, SELECTOR), Ok(None), "{case}");
+        assert_eq!(
+            select_stable(&latest, &current, SELECTOR),
+            Ok(None),
+            "{case}"
+        );
     }
 }
 
@@ -687,7 +699,11 @@ fn beta_offers_the_highest_version_prerelease_or_stable() {
         ),
         (
             "a stable release above its prereleases",
-            vec![linux("9.10.0-rc.1"), linux("9.10.0"), linux("9.10.0-beta.2")],
+            vec![
+                linux("9.10.0-rc.1"),
+                linux("9.10.0"),
+                linux("9.10.0-beta.2"),
+            ],
             "9.10.0",
         ),
         (
@@ -699,7 +715,12 @@ fn beta_offers_the_highest_version_prerelease_or_stable() {
             "a draft above the rest",
             vec![
                 published("v11.0.0", "iris-11.0.0-linux-x86_64.AppImage", true, false),
-                published("v11.0.0-beta.1", "iris-11.0.0-beta.1-linux-x86_64.AppImage", true, true),
+                published(
+                    "v11.0.0-beta.1",
+                    "iris-11.0.0-beta.1-linux-x86_64.AppImage",
+                    true,
+                    true,
+                ),
                 linux("9.9.9"),
             ],
             "9.9.9",
@@ -720,7 +741,12 @@ fn beta_offers_the_highest_version_prerelease_or_stable() {
             "a newer release with no asset for this platform",
             vec![
                 published("v11.0.0", "iris-11.0.0-macos-universal.dmg", false, false),
-                published("v10.0.0", "iris-10.0.0-linux-aarch64.AppImage", false, false),
+                published(
+                    "v10.0.0",
+                    "iris-10.0.0-linux-aarch64.AppImage",
+                    false,
+                    false,
+                ),
                 linux("9.9.9"),
             ],
             "9.9.9",
@@ -744,17 +770,17 @@ fn beta_offers_only_a_version_newer_than_the_running_one() {
             vec![linux("0.1.0"), linux("0.1.0-beta.3"), linux("0.0.9")],
             None,
         ),
-        (
-            "0.1.0",
-            vec![published("v9.9.9", ASSET, true, false)],
-            None,
-        ),
+        ("0.1.0", vec![published("v9.9.9", ASSET, true, false)], None),
         (
             "0.2.0-beta.2",
             vec![linux("0.2.0-beta.1"), linux("0.2.0-beta.2"), linux("0.1.0")],
             None,
         ),
-        ("0.2.0-beta.1", vec![linux("0.2.0-beta.2")], offer_of("0.2.0-beta.2")),
+        (
+            "0.2.0-beta.1",
+            vec![linux("0.2.0-beta.2")],
+            offer_of("0.2.0-beta.2"),
+        ),
         ("0.2.0-beta.2", vec![linux("0.2.0")], offer_of("0.2.0")),
     ] {
         let list = serde_json::Value::Array(list);
@@ -786,8 +812,12 @@ fn asset_names_that_leave_the_update_dir_are_rejected() {
         ".",
         "",
     ] {
-        let err =
-            download_into(&info("https://invalid.example", name), dir.path(), &test_key()).expect_err(name);
+        let err = download_into(
+            &info("https://invalid.example", name),
+            dir.path(),
+            &test_key(),
+        )
+        .expect_err(name);
         assert!(err.starts_with("update: bad asset name"), "{name:?}: {err}");
     }
 }

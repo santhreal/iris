@@ -57,7 +57,7 @@ The card remains visible for `toast_duration_ms` (default: `5000` ms):
 
 ## Hover Actions
 
-When `toast_show_actions` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), moving the pointer over the card fades in a capsule of action buttons centered 6 logical pixels above the card's lower edge; moving the pointer off fades it out. The fade runs 120 milliseconds and continues from its current opacity when the pointer crosses the card's edge mid-fade. On X11 with no compositing manager, the capsule appears and disappears at once. At rest the card shows only the capture.
+When `toast_show_actions` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), moving the pointer over the card fades in a capsule of action buttons centered 6 logical pixels above the card's lower edge; moving the pointer off fades it out. The fade runs 140 milliseconds and continues from its current opacity when the pointer crosses the card's edge mid-fade. On X11 with no compositing manager, the capsule appears and disappears at once. At rest the card shows only the capture.
 
 The capsule holds 24×24 logical pixel icon buttons with 14 pixel glyphs, in groups separated by hairlines. Resting the pointer on a button for 500 milliseconds shows its name in a tooltip:
 1. **Keep Open** (pin icon): Toggles the pinned state of the toast notification card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). The button fills with the accent color while pinned, and its tooltip reads **Allow to Close**.
@@ -91,7 +91,7 @@ Trigger OCR text extraction via the **Copy text (OCR)** item in the right-click 
 
 ## Context Menu
 
-Right-clicking the toast card opens a context menu that fades in over 120 milliseconds while rising 3 logical pixels. On X11 with no compositing manager, the menu appears at once.
+Right-clicking the toast card opens a context menu that fades in over 140 milliseconds while rising 3 logical pixels. On X11 with no compositing manager, the menu appears at once.
 
 Menu choices in order:
 1. **Markup**: Opens the annotation editor over the capture.

@@ -216,7 +216,10 @@ fn a_change_of_channel_checks_at_the_next_pass() {
         UpdateChannel::Beta,
         nothing,
     );
-    assert_eq!(beta.checks, [stable.end.duration_since(start()).expect("after")]);
+    assert_eq!(
+        beta.checks,
+        [stable.end.duration_since(start()).expect("after")]
+    );
 }
 
 #[test]
@@ -233,7 +236,10 @@ fn checks_off_never_check_and_withdraw_the_offer() {
     );
     assert!(off.checks.is_empty());
     assert!(off.published.is_empty(), "{:?}", off.published);
-    assert!(!dir.path().join("update.json").exists(), "update.json was written");
+    assert!(
+        !dir.path().join("update.json").exists(),
+        "update.json was written"
+    );
 
     let on = run(
         &mut scheduler,
@@ -245,7 +251,10 @@ fn checks_off_never_check_and_withdraw_the_offer() {
     );
     assert_eq!(on.checks.len(), 1, "{:?}", on.checks);
     assert_eq!(
-        on.published.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>(),
+        on.published
+            .iter()
+            .map(|(_, p)| p.clone())
+            .collect::<Vec<_>>(),
         [Publish {
             info: Some(offer("9.9.9")),
             announce: true,
@@ -293,14 +302,24 @@ fn a_run_of_failures_retries_hourly_and_logs_once() {
     );
     assert_eq!(
         failing.checks,
-        [MINUTE, MINUTE + HOUR, MINUTE + 2 * HOUR, MINUTE + 3 * HOUR, MINUTE + 4 * HOUR]
+        [
+            MINUTE,
+            MINUTE + HOUR,
+            MINUTE + 2 * HOUR,
+            MINUTE + 3 * HOUR,
+            MINUTE + 4 * HOUR
+        ]
     );
     assert_eq!(
         failing.logged,
         ["iris: update check failed, retrying every 60 min: \
           update: GET https://api.github.com/...: offline"]
     );
-    assert!(failing.published.is_empty(), "a failure published {:?}", failing.published);
+    assert!(
+        failing.published.is_empty(),
+        "a failure published {:?}",
+        failing.published
+    );
     assert!(
         !dir.path().join("update.json").exists(),
         "a failed check was recorded"
@@ -325,14 +344,22 @@ fn a_run_of_failures_retries_hourly_and_logs_once() {
         UpdateChannel::Stable,
         down,
     );
-    assert_eq!(again.checks, [MINUTE + 5 * HOUR + DAY, MINUTE + 6 * HOUR + DAY]);
+    assert_eq!(
+        again.checks,
+        [MINUTE + 5 * HOUR + DAY, MINUTE + 6 * HOUR + DAY]
+    );
     assert_eq!(again.logged.len(), 1, "{:?}", again.logged);
 }
 
 #[test]
 fn each_version_is_announced_once_across_restarts() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let published = |run: &Run| run.published.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>();
+    let published = |run: &Run| {
+        run.published
+            .iter()
+            .map(|(_, p)| p.clone())
+            .collect::<Vec<_>>()
+    };
     let found = |version: &'static str| {
         move |_: Duration| -> Result<Option<UpdateInfo>, String> { Ok(Some(offer(version))) }
     };
@@ -415,6 +442,10 @@ fn an_offer_the_running_iris_does_not_take_is_not_published() {
             |_| Ok(Some(offer(version))),
         );
         assert_eq!(run.checks, [MINUTE], "{channel:?} {version}");
-        assert!(run.published.is_empty(), "{channel:?} {version}: {:?}", run.published);
+        assert!(
+            run.published.is_empty(),
+            "{channel:?} {version}: {:?}",
+            run.published
+        );
     }
 }

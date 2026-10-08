@@ -205,7 +205,11 @@ fn action_tile(
         .justify_center()
         .rounded(px(theme::RADIUS_GROUP))
         .border_2()
-        .border_color(if selected { theme::ACCENT } else { theme::alpha(theme::ACCENT, 0.0) })
+        .border_color(if selected {
+            theme::ACCENT
+        } else {
+            theme::alpha(theme::ACCENT, 0.0)
+        })
         .bg(theme::GROUP_BG)
         .hover(|s| s.bg(theme::CARD_HOVER))
         .active(|s| s.bg(theme::CARD_PRESS))

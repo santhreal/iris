@@ -54,7 +54,10 @@ fn a_recorded_check_reads_back_whole() {
 
     record_check(&path, UpdateChannel::Stable, None, at(T + 60)).expect("record");
     let state = State::load(&path);
-    assert_eq!(state.offer, None, "a check that found nothing withdraws the offer");
+    assert_eq!(
+        state.offer, None,
+        "a check that found nothing withdraws the offer"
+    );
     assert_eq!(state.channel, Some(UpdateChannel::Stable));
     assert_eq!(state.announced.as_deref(), Some("9.9.9"));
 }
@@ -96,7 +99,10 @@ fn an_unreadable_file_reads_as_no_state_and_the_next_check_replaces_it() {
             v["offer"]["version"] = "9.9".into();
             v.to_string()
         }),
-        ("a channel this iris does not have", with("channel", "nightly".into())),
+        (
+            "a channel this iris does not have",
+            with("channel", "nightly".into()),
+        ),
     ] {
         let (_dir, path) = file();
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
@@ -115,7 +121,11 @@ fn an_unreadable_file_reads_as_no_state_and_the_next_check_replaces_it() {
     assert_eq!(State::load(&path), State::default(), "a missing file");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
     std::fs::write(&path, good.to_string()).expect("write");
-    assert_eq!(State::load(&path).offer, Some(found), "the file the others break");
+    assert_eq!(
+        State::load(&path).offer,
+        Some(found),
+        "the file the others break"
+    );
 }
 
 /// Writes from threads of one process replace the file whole and one
@@ -180,9 +190,27 @@ fn a_check_is_due_a_day_after_the_last_on_the_same_channel() {
     };
     let hour = Duration::from_secs(3600);
     for (case, state, channel, now, want) in [
-        ("no check yet", State::default(), UpdateChannel::Stable, at(T), Duration::ZERO),
-        ("at the check", checked.clone(), UpdateChannel::Stable, at(T), INTERVAL),
-        ("an hour on", checked.clone(), UpdateChannel::Stable, at(T + 3600), INTERVAL - hour),
+        (
+            "no check yet",
+            State::default(),
+            UpdateChannel::Stable,
+            at(T),
+            Duration::ZERO,
+        ),
+        (
+            "at the check",
+            checked.clone(),
+            UpdateChannel::Stable,
+            at(T),
+            INTERVAL,
+        ),
+        (
+            "an hour on",
+            checked.clone(),
+            UpdateChannel::Stable,
+            at(T + 3600),
+            INTERVAL - hour,
+        ),
         (
             "a second before the day",
             checked.clone(),
@@ -204,7 +232,13 @@ fn a_check_is_due_a_day_after_the_last_on_the_same_channel() {
             at(T + 2 * INTERVAL.as_secs()),
             Duration::ZERO,
         ),
-        ("on another channel", checked.clone(), UpdateChannel::Beta, at(T + 3600), Duration::ZERO),
+        (
+            "on another channel",
+            checked.clone(),
+            UpdateChannel::Beta,
+            at(T + 3600),
+            Duration::ZERO,
+        ),
         (
             "a clock set back before the check",
             checked.clone(),
@@ -225,9 +259,27 @@ fn the_offer_is_newer_than_the_running_iris_and_on_its_channel() {
     };
     let v = |text: &str| semver::Version::parse(text).expect(text);
     for (case, state, channel, running, want) in [
-        ("a newer release on stable", holding("9.9.9"), UpdateChannel::Stable, v("0.1.0"), true),
-        ("a newer release on beta", holding("9.9.9"), UpdateChannel::Beta, v("0.1.0"), true),
-        ("a newer prerelease on beta", holding("9.9.9-beta.1"), UpdateChannel::Beta, v("0.1.0"), true),
+        (
+            "a newer release on stable",
+            holding("9.9.9"),
+            UpdateChannel::Stable,
+            v("0.1.0"),
+            true,
+        ),
+        (
+            "a newer release on beta",
+            holding("9.9.9"),
+            UpdateChannel::Beta,
+            v("0.1.0"),
+            true,
+        ),
+        (
+            "a newer prerelease on beta",
+            holding("9.9.9-beta.1"),
+            UpdateChannel::Beta,
+            v("0.1.0"),
+            true,
+        ),
         (
             "a newer prerelease on stable",
             holding("9.9.9-beta.1"),
@@ -235,10 +287,34 @@ fn the_offer_is_newer_than_the_running_iris_and_on_its_channel() {
             v("0.1.0"),
             false,
         ),
-        ("the running version", holding("9.9.9"), UpdateChannel::Beta, v("9.9.9"), false),
-        ("an older version", holding("9.9.8"), UpdateChannel::Beta, v("9.9.9"), false),
-        ("a stable release above a running beta", holding("9.9.9"), UpdateChannel::Beta, v("9.9.9-rc.1"), true),
-        ("no offer", State::default(), UpdateChannel::Beta, v("0.1.0"), false),
+        (
+            "the running version",
+            holding("9.9.9"),
+            UpdateChannel::Beta,
+            v("9.9.9"),
+            false,
+        ),
+        (
+            "an older version",
+            holding("9.9.8"),
+            UpdateChannel::Beta,
+            v("9.9.9"),
+            false,
+        ),
+        (
+            "a stable release above a running beta",
+            holding("9.9.9"),
+            UpdateChannel::Beta,
+            v("9.9.9-rc.1"),
+            true,
+        ),
+        (
+            "no offer",
+            State::default(),
+            UpdateChannel::Beta,
+            v("0.1.0"),
+            false,
+        ),
     ] {
         assert_eq!(
             state.offer_for(channel, &running),
