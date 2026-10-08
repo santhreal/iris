@@ -313,6 +313,13 @@ fn icon_geometry(kind: Icon, mut path: &mut impl TriSink, s: f32) {
             push_segment(&mut path, p(9.0, 5.2), p(9.0, 10.0), 1.8 * s);
             push_disc(&mut path, p(9.0, 12.9), 1.15 * s);
         }
+        Icon::Download => {
+            // Arrow into a ring: software updates.
+            push_ring(&mut path, p(9.0, 9.0), 6.6 * s, 6.6 * s, w);
+            push_segment(&mut path, p(9.0, 5.0), p(9.0, 12.4), w);
+            push_segment(&mut path, p(6.2, 9.8), p(9.0, 12.6), w);
+            push_segment(&mut path, p(9.0, 12.6), p(11.8, 9.8), w);
+        }
     }
 }
 

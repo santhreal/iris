@@ -79,6 +79,16 @@ pub enum Command {
         what: &'static str,
         err: String,
     },
+    /// The background update check found `info`, or no update for
+    /// `None`: the tray shows or hides its install item, and
+    /// `announce` shows the update notice.
+    UpdateOffer {
+        info: Option<crate::update::UpdateInfo>,
+        announce: bool,
+    },
+    /// The install item of the tray or of the update notice: download,
+    /// verify, and install the offered update.
+    InstallUpdate,
     Quit,
 }
 
@@ -105,6 +115,8 @@ impl Command {
             Command::Annotate(_) => "Editor did not open",
             Command::Toast(_) => "Toast did not open",
             Command::Failed { what, .. } => what,
+            Command::UpdateOffer { .. } => "Update notice did not open",
+            Command::InstallUpdate => "Update failed",
             Command::Quit => "Quit failed",
         }
     }
@@ -142,7 +154,9 @@ pub fn live_daemon_only(cmds: &[Command]) -> bool {
             | Command::RecordRegion { .. }
             | Command::RecordingEnded
             | Command::LibraryChanged
-            | Command::Failed { .. } => false,
+            | Command::Failed { .. }
+            | Command::UpdateOffer { .. }
+            | Command::InstallUpdate => false,
         })
 }
 
@@ -217,6 +231,14 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             crate::notice::failed(cx, what, err);
             Ok(())
         }
+        Command::UpdateOffer { info, announce } => {
+            crate::sys::tray::set_offer(info.as_ref().map(|i| &i.version));
+            if let (Some(info), true) = (info, *announce) {
+                crate::notice::update_available(cx, &info.version);
+            }
+            Ok(())
+        }
+        Command::InstallUpdate => crate::update::install_offered(),
         // The quit observer `start` registers saves a live or flushing
         // recording before the process exits.
         Command::Quit => {
@@ -294,6 +316,8 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
         }
         Err(e) => iris_lib::ilog!("iris: single-instance socket unavailable: {e}"),
     }
+    // The background update check reports through the command pump.
+    crate::update::spawn_background_check(tx.clone());
     crate::sys::tray::spawn(tx);
     // A store write runs on whichever thread saved or deleted a capture;
     // the command pump brings it to the open library window.
@@ -363,6 +387,11 @@ mod tests {
             vec![RecordRegionPick],
             vec![Annotate("shot.png".into())],
             vec![Toast("shot.png".into())],
+            vec![UpdateOffer {
+                info: None,
+                announce: false,
+            }],
+            vec![InstallUpdate],
             vec![Quit, Capture],
             vec![RecordPause, RecordToggle],
         ] {

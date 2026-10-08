@@ -38,6 +38,11 @@ pub struct Config {
     pub cancel_keybind: String,
     /// Key that confirms a pending selection in the overlay.
     pub confirm_keybind: String,
+    /// Whether the daemon checks GitHub for a newer release in the
+    /// background: about a minute after it starts, then once a day.
+    pub check_for_updates: bool,
+    /// Which releases an update check offers.
+    pub update_channel: UpdateChannel,
 }
 
 /// The action a plain toast click runs.
@@ -93,6 +98,40 @@ pub enum RecordingEncoder {
     Nvenc,
 }
 
+/// The releases an update check offers.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateChannel {
+    /// Stable releases only: GitHub's latest release.
+    #[default]
+    Stable,
+    /// The newest release by version, prereleases included: a newer
+    /// stable release is offered too.
+    Beta,
+}
+
+impl UpdateChannel {
+    /// Every channel, in the order a picker lists them.
+    pub const ALL: [UpdateChannel; 2] = [UpdateChannel::Stable, UpdateChannel::Beta];
+
+    /// The channel's name in config.toml and in `iris --check-update`
+    /// output.
+    pub fn name(self) -> &'static str {
+        match self {
+            UpdateChannel::Stable => "stable",
+            UpdateChannel::Beta => "beta",
+        }
+    }
+
+    /// The channel's display label.
+    pub fn label(self) -> &'static str {
+        match self {
+            UpdateChannel::Stable => "Stable",
+            UpdateChannel::Beta => "Beta",
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let user_dirs = directories::UserDirs::new();
@@ -131,6 +170,8 @@ impl Default for Config {
             copy_to_clipboard: true,
             cancel_keybind: "Escape".to_string(),
             confirm_keybind: "Enter".to_string(),
+            check_for_updates: true,
+            update_channel: UpdateChannel::Stable,
         }
     }
 }

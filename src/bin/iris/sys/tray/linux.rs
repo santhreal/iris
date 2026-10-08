@@ -1,4 +1,9 @@
-use super::Row;
+use std::sync::OnceLock;
+
+use super::Drawn;
+
+/// The thread that holds the tray's handle: `redraw` wakes it.
+static THREAD: OnceLock<std::thread::Thread> = OnceLock::new();
 
 pub(super) struct IrisTray;
 
@@ -43,15 +48,16 @@ impl ksni::Tray for IrisTray {
     }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::*;
-        super::rows()
+        super::drawn()
+            .into_iter()
             .map(|(id, row)| match row {
-                Row::Item { label, .. } => StandardItem {
-                    label: (*label).to_string(),
+                Drawn::Item(label) => StandardItem {
+                    label: label.into_owned(),
                     activate: Box::new(move |_| super::pick(id)),
                     ..Default::default()
                 }
                 .into(),
-                Row::Separator => MenuItem::Separator,
+                Drawn::Separator => MenuItem::Separator,
             })
             .collect()
     }
@@ -71,18 +77,32 @@ impl ksni::Tray for IrisTray {
 /// Spawn the StatusNotifierItem on its own thread and keep it
 /// registered for the process lifetime. A watcher that is absent at
 /// startup does not fail the spawn: the item registers when one
-/// appears. Only a session bus failure degrades to a log line.
+/// appears. Only a session bus failure degrades to a log line. The
+/// thread sleeps until `redraw` wakes it, and each wake sends the menu
+/// again.
 pub(super) fn spawn() {
     std::thread::spawn(|| {
         use ksni::blocking::TrayMethods;
         match IrisTray.assume_sni_available(true).spawn() {
             Err(e) => iris_lib::ilog!("iris: tray unavailable: {e}"),
             Ok(handle) => {
-                let _keep = handle;
+                let _ = THREAD.set(std::thread::current());
                 loop {
                     std::thread::park();
+                    // An update with no change still makes ksni read
+                    // `menu` again and signal the new layout.
+                    handle.update(|_| {});
                 }
             }
         }
     });
+}
+
+/// Send the menu to the panel again. Before the tray thread holds its
+/// handle this does nothing: the menu the panel reads first is drawn
+/// from the current rows.
+pub(super) fn redraw() {
+    if let Some(thread) = THREAD.get() {
+        thread.unpark();
+    }
 }

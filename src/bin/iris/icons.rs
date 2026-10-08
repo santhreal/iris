@@ -53,6 +53,7 @@ pub enum Icon {
     Play,
     Stop,
     Alert,
+    Download,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`.

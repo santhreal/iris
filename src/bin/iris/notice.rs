@@ -62,12 +62,24 @@ pub fn saved(cx: &mut App, title: &str, path: &Path) {
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    show(cx, title, name, Some(path.to_path_buf()), false);
+    show(cx, title, name, Some(path.to_path_buf()), false, false);
 }
 
 /// `what` failed with `err`.
 pub fn failed(cx: &mut App, what: &str, err: &str) {
-    show(cx, what, one_paragraph(err), None, true);
+    show(cx, what, one_paragraph(err), None, true, false);
+}
+
+/// iris `version` is available: Install hands off the offered update.
+pub fn update_available(cx: &mut App, version: &semver::Version) {
+    show(
+        cx,
+        &format!("iris {version} is available"),
+        "Install it now, or later from the tray menu or Settings.".to_string(),
+        None,
+        false,
+        true,
+    );
 }
 
 /// A toast card landed on `toast`: a notice under it leaves, as for a
@@ -89,8 +101,15 @@ fn one_paragraph(err: &str) -> String {
     err.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn show(cx: &mut App, title: &str, detail: String, file: Option<PathBuf>, failure: bool) {
-    if let Err(e) = open(cx, title, detail, file, failure) {
+fn show(
+    cx: &mut App,
+    title: &str,
+    detail: String,
+    file: Option<PathBuf>,
+    failure: bool,
+    install: bool,
+) {
+    if let Err(e) = open(cx, title, detail, file, failure, install) {
         iris_lib::ilog!("iris: notice: {e}");
     }
 }
@@ -102,6 +121,8 @@ pub struct Notice {
     lines: usize,
     file: Option<PathBuf>,
     failure: bool,
+    /// The card offers Install for the update the daemon offers.
+    install: bool,
     height: f32,
     /// The card's rect on screen, for a landing toast's overlap test.
     card: Rect,
@@ -205,6 +226,7 @@ fn open(
     detail: String,
     file: Option<PathBuf>,
     failure: bool,
+    install: bool,
 ) -> Result<(), String> {
     use iris_lib::config::ToastPosition;
     let cfg = iris_lib::config::Config::load();
@@ -217,12 +239,12 @@ fn open(
         ToastPosition::TopLeft | ToastPosition::TopRight
     );
     let hold = Duration::from_millis(u64::from(cfg.toast_duration_ms));
-    let hold = if failure {
+    let hold = if failure || install {
         hold.max(FAILURE_HOLD)
     } else {
         hold
     };
-    let buttons = 1 + usize::from(file.is_some());
+    let buttons = 1 + usize::from(file.is_some()) + usize::from(install);
     // Monospace: the detail wraps at a known column, so the card height
     // is known before layout.
     let cols = (text_width(buttons) / theme::SMALL_ADVANCE).floor() as usize;
@@ -242,6 +264,7 @@ fn open(
         lines,
         file,
         failure,
+        install,
         height,
         card,
         inset: card.1 - win.1,
@@ -376,6 +399,8 @@ impl Render for Notice {
         );
         let (glyph, tint) = if self.failure {
             (Icon::Alert, theme::DANGER)
+        } else if self.install {
+            (Icon::Download, theme::ACCENT)
         } else {
             (Icon::Check, theme::FG)
         };
@@ -412,6 +437,18 @@ impl Render for Notice {
                 },
             ))
         });
+        // The install runs on a thread of its own; a failure arrives
+        // through the command pump as a new notice.
+        let install = self.install.then(|| {
+            icon_button("notice-install", Icon::Download, true, BUTTON).on_click(cx.listener(
+                |n, _, _, cx| {
+                    if let Err(e) = crate::update::install_offered() {
+                        crate::daemon::report_failure("Update failed", e);
+                    }
+                    n.leave(EXIT, cx);
+                },
+            ))
+        });
         let close = icon_button("notice-close", Icon::Close, false, BUTTON)
             .on_click(cx.listener(|n, _, _, cx| n.leave(EXIT, cx)));
 
@@ -439,6 +476,7 @@ impl Render for Notice {
                     .flex_none()
                     .gap(px(BUTTON_GAP))
                     .children(reveal)
+                    .children(install)
                     .child(close),
             )
             .on_hover(cx.listener(|n, hovering: &bool, _, cx| {

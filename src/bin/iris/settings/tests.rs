@@ -319,6 +319,7 @@ fn update(patch: u64) -> crate::update::UpdateInfo {
         asset_url: String::new(),
         asset_name: String::new(),
         checksum_url: String::new(),
+        signature_url: String::new(),
     }
 }
 

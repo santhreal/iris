@@ -16,6 +16,7 @@ The tray menu holds the same actions:
 | **Record window** | Start a window recording, or stop the one in progress |
 | **Library** | Open the capture library |
 | **Settings** | Open the settings window |
+| **Install iris** *version* | Download, verify, and install the update the last check found; shown only while one is available ([Updates](updates.md)) |
 | **Quit** | Stop the daemon |
 
 A primary or secondary click on the tray icon opens the tray menu.

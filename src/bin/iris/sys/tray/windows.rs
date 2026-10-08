@@ -20,7 +20,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSEXW,
 };
 
-use super::Row;
+use super::Drawn;
 
 /// The tray icon's callback message id (distinct from the hotkey
 /// thread's `WM_APP` offsets; they live on different queues anyway).
@@ -75,12 +75,12 @@ unsafe fn show_menu(hwnd: HWND) {
     if menu.is_null() {
         return;
     }
-    for (id, row) in super::rows() {
+    for (id, row) in super::drawn() {
         match row {
-            Row::Separator => {
+            Drawn::Separator => {
                 AppendMenuW(menu, MF_SEPARATOR, 0, core::ptr::null());
             }
-            Row::Item { label, .. } => {
+            Drawn::Item(label) => {
                 let wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
                 AppendMenuW(menu, MF_STRING, id, wide.as_ptr());
             }
