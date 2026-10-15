@@ -106,7 +106,7 @@ jobs:
           "$exe" --quit || fail "iris --quit exited with $?"
           for _ in $(seq 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
           ! kill -0 "$pid" 2>/dev/null || fail "the daemon runs 10 s after --quit"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iris-macos-universal
           path: dist/iris-*-macos-universal.dmg*
@@ -277,7 +277,7 @@ jobs:
           if (Test-Path $uninstall) { throw 'Uninstall key remains after uninstall' }
           if (@(& $irises).Count) { throw 'iris runs after uninstall' }
           if (& $pipe) { throw 'the daemon pipe remains after uninstall' }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iris-windows-${{ matrix.arch }}
           path: dist/iris-*-windows-${{ matrix.arch }}-*
@@ -429,7 +429,7 @@ jobs:
             [ "$(/pkg/iris-${version}-linux-${arch}.AppImage --version)" = "iris $version" ]
             bash /linux/check_installed.sh "/pkg/iris-${version}-linux-${arch}.AppImage"
           ' --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iris-linux-${{ matrix.arch }}
           path: dist/iris-*-linux-${{ matrix.arch }}.*
