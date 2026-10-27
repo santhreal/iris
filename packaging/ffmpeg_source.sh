@@ -95,6 +95,25 @@ The NVIDIA driver is loaded by FFmpeg only when NVENC is selected.
 EOF
 }
 
+# iris_ffmpeg_compiler_rt_notices REPO_ROOT OUT_DIR
+# Adds the license and contributor list for Clang's static builtins.
+# Call after iris_ffmpeg_source_notices, which creates FFMPEG-SOURCE.txt.
+iris_ffmpeg_compiler_rt_notices() {
+  local root=$1 out=$2
+  install -m 0644 "$root/packaging/licenses/compiler-rt.txt" \
+    "$out/licenses/compiler-rt.txt"
+  install -m 0644 "$root/packaging/licenses/compiler-rt-CREDITS.txt" \
+    "$out/licenses/compiler-rt-CREDITS.txt"
+  cat >>"$out/licenses/FFMPEG-SOURCE.txt" <<'EOF'
+
+Compiler-rt license and credits:
+  https://github.com/llvm/llvm-project/tree/llvmorg-23.1.4/compiler-rt
+License SHA-256: 1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d
+Credits SHA-256: a9901f47a089da41e4690682d00ce4cedaa2baf41fedbe79beee366d43ac2461
+The notice bytes are identical in LLVM 15.0.0, 17.0.0, and 23.1.4.
+EOF
+}
+
 # iris_ffmpeg_source_notices WORK OUT_DIR BUILD_DESCRIPTION
 # Installs notices shared by all source runtimes and records their common
 # sources. Callers add the notices of platform-specific static libraries.

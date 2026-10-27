@@ -97,13 +97,20 @@ jobs:
             .build-staging/ffmpeg/macos-x86_64/ffmpeg
           chmod 0755 "$universal/ffmpeg"
           cp .build-staging/ffmpeg/macos-arm64/licenses/* "$universal/licenses/"
-          diff -r .build-staging/ffmpeg/macos-arm64/licenses \
+          diff -r -x FFMPEG-SOURCE.txt .build-staging/ffmpeg/macos-arm64/licenses \
             .build-staging/ffmpeg/macos-x86_64/licenses
-          cat >> "$universal/licenses/FFMPEG-SOURCE.txt" <<'EOF'
-
-          The universal executable combines runtimes built natively for arm64 and
-          x86_64 from the identical pinned sources above.
-          EOF
+          {
+            printf 'arm64 runtime provenance:\n'
+            cat .build-staging/ffmpeg/macos-arm64/licenses/FFMPEG-SOURCE.txt
+            printf '\nx86_64 runtime provenance:\n'
+            cat .build-staging/ffmpeg/macos-x86_64/licenses/FFMPEG-SOURCE.txt
+            printf '\n%s\n' \
+              'The universal executable combines runtimes built natively for arm64 and' \
+              'x86_64 from the identical pinned sources above.'
+          } > "$universal/licenses/FFMPEG-SOURCE.txt"
+          for notice in compiler-rt.txt compiler-rt-CREDITS.txt; do
+            cmp "packaging/licenses/$notice" "$universal/licenses/$notice"
+          done
           archs=$(lipo -archs "$universal/ffmpeg")
           [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "FFmpeg archs: $archs"; exit 1; }
           packaging/check_ffmpeg.sh "$universal/ffmpeg" macos
@@ -188,7 +195,11 @@ jobs:
       - name: Install the cross-build tools
         run: sudo apt-get update && sudo apt-get install -y nasm pkg-config
       - name: Build the pinned source runtime
-        run: packaging/windows/build_ffmpeg.sh --arch "$ARCH" --out dist
+        run: |
+          packaging/windows/build_ffmpeg.sh --arch "$ARCH" --out dist
+          for notice in compiler-rt.txt compiler-rt-CREDITS.txt; do
+            cmp "packaging/licenses/$notice" "dist/licenses/$notice"
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-ffmpeg-windows-${{ matrix.arch }}
@@ -286,6 +297,8 @@ jobs:
             'iris\licenses\ffmpeg\libvpx.txt',
             'iris\licenses\ffmpeg\nv-codec-headers.txt',
             'iris\licenses\ffmpeg\LLVM.txt',
+            'iris\licenses\ffmpeg\compiler-rt.txt',
+            'iris\licenses\ffmpeg\compiler-rt-CREDITS.txt',
             'iris\licenses\ffmpeg\mingw-w64-runtime.txt',
             'iris\licenses\ffmpeg\Opus.txt',
             'iris\licenses\ffmpeg\x264.txt',
@@ -308,7 +321,7 @@ jobs:
           if ($hash -ne $sidecar) { throw "sha256 $hash, sidecar $sidecar" }
           $dir = Join-Path $env:RUNNER_TEMP 'iris'
           Start-Process -Wait -FilePath $setup -ArgumentList '/S', "/D=$dir"
-          foreach ($f in 'iris.exe', 'ffmpeg.exe', 'iris.ico', 'uninstall.exe', 'LICENSE-MIT', 'LICENSE-APACHE', 'Inter-OFL.txt', 'licenses\ffmpeg\FFmpeg.txt', 'licenses\ffmpeg\FFmpeg-LICENSE.txt', 'licenses\ffmpeg\FFMPEG-SOURCE.txt', 'licenses\ffmpeg\x264.txt', 'licenses\ffmpeg\libvpx.txt', 'licenses\ffmpeg\Opus.txt', 'licenses\ffmpeg\zlib.txt', 'licenses\ffmpeg\nv-codec-headers.txt', 'licenses\ffmpeg\LLVM.txt', 'licenses\ffmpeg\mingw-w64-runtime.txt') {
+          foreach ($f in 'iris.exe', 'ffmpeg.exe', 'iris.ico', 'uninstall.exe', 'LICENSE-MIT', 'LICENSE-APACHE', 'Inter-OFL.txt', 'licenses\ffmpeg\FFmpeg.txt', 'licenses\ffmpeg\FFmpeg-LICENSE.txt', 'licenses\ffmpeg\FFMPEG-SOURCE.txt', 'licenses\ffmpeg\x264.txt', 'licenses\ffmpeg\libvpx.txt', 'licenses\ffmpeg\Opus.txt', 'licenses\ffmpeg\zlib.txt', 'licenses\ffmpeg\nv-codec-headers.txt', 'licenses\ffmpeg\LLVM.txt', 'licenses\ffmpeg\compiler-rt.txt', 'licenses\ffmpeg\compiler-rt-CREDITS.txt', 'licenses\ffmpeg\mingw-w64-runtime.txt') {
             if (-not (Test-Path "$dir\$f")) { throw "setup did not install $f" }
           }
           $runtime = ".build-staging\ffmpeg\windows-$env:ARCH\ffmpeg.exe"

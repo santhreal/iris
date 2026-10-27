@@ -145,7 +145,11 @@ the build host and on the installed or extracted package. It rejects
 `nonfree` builds, checks the encoders and capture devices iris uses,
 and encodes and decodes real Matroska, MP4, WebM, and GIF files. Each runtime
 directory includes upstream notices and `FFMPEG-SOURCE.txt`, which
-records source and build provenance.
+records source and build provenance. Windows and macOS packages include
+`compiler-rt.txt` and `compiler-rt-CREDITS.txt` for Clang builtins.
+Windows packages also include `LLVM.txt` and `mingw-w64-runtime.txt`.
+The compiler-rt inputs are in `packaging/licenses/`; their upstream
+revision and SHA-256 values are in `FFMPEG-SOURCE.txt`.
 
 ## License notices
 iris is MIT OR Apache-2.0. The binary embeds the Inter font

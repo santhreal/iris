@@ -116,12 +116,17 @@ lipo -create -output "$runtime/ffmpeg" \
   .build-staging/ffmpeg/macos-arm64/ffmpeg \
   .build-staging/ffmpeg/macos-x86_64/ffmpeg
 cp -R .build-staging/ffmpeg/macos-arm64/licenses "$runtime/licenses"
-diff -r .build-staging/ffmpeg/macos-arm64/licenses \
+diff -r -x FFMPEG-SOURCE.txt .build-staging/ffmpeg/macos-arm64/licenses \
   .build-staging/ffmpeg/macos-x86_64/licenses
-cat >> "$runtime/licenses/FFMPEG-SOURCE.txt" <<'EOF'
-The universal executable combines runtimes built natively for arm64 and
-x86_64 from the identical pinned sources above.
-EOF
+{
+  printf 'arm64 runtime provenance:\n'
+  cat .build-staging/ffmpeg/macos-arm64/licenses/FFMPEG-SOURCE.txt
+  printf '\nx86_64 runtime provenance:\n'
+  cat .build-staging/ffmpeg/macos-x86_64/licenses/FFMPEG-SOURCE.txt
+  printf '\n%s\n' \
+    'The universal executable combines runtimes built natively for arm64 and' \
+    'x86_64 from the identical pinned sources above.'
+} > "$runtime/licenses/FFMPEG-SOURCE.txt"
 packaging/check_ffmpeg.sh "$runtime/ffmpeg" macos
 packaging/macos/make_app.sh --bin target/universal-apple-darwin/release/iris --ffmpeg "$runtime" --out dist
 packaging/macos/make_dmg.sh --app dist/iris.app --out dist

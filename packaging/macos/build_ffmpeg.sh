@@ -76,5 +76,11 @@ mkdir -p "$OUT_DIR"
 install -m 0755 "$PREFIX/bin/ffmpeg" "$OUT_DIR/ffmpeg"
 iris_ffmpeg_source_notices "$WORK" "$OUT_DIR" \
   "macOS, static x264/libvpx/Opus, AVFoundation capture"
+iris_ffmpeg_compiler_rt_notices "$REPO_ROOT" "$OUT_DIR"
+{
+  echo "Compiler used for the macOS runtime:"
+  clang --version
+  echo "Deployment target: $MACOSX_DEPLOYMENT_TARGET"
+} >>"$OUT_DIR/licenses/FFMPEG-SOURCE.txt"
 iris_ffmpeg_bin "$OUT_DIR" >/dev/null
 printf 'Built %s\n' "$OUT_DIR/ffmpeg"

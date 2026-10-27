@@ -187,6 +187,7 @@ iris_ffmpeg_source_notices "$WORK" "$OUT_DIR" \
 install -m 0644 "$WORK/zlib-1.3.1/LICENSE" "$OUT_DIR/licenses/zlib.txt"
 iris_ffmpeg_source_nv_notices "$WORK" "$OUT_DIR"
 install -m 0644 "$TOOLCHAIN/LICENSE.TXT" "$OUT_DIR/licenses/LLVM.txt"
+iris_ffmpeg_compiler_rt_notices "$REPO_ROOT" "$OUT_DIR"
 install -m 0644 \
   "$TOOLCHAIN/$TRIPLE/share/mingw32/COPYING.MinGW-w64-runtime.txt" \
   "$OUT_DIR/licenses/mingw-w64-runtime.txt"
@@ -197,8 +198,9 @@ SHA-256: $ZLIB_SOURCE_SHA
 Cross toolchain: $TOOLCHAIN_URL
 SHA-256: $TOOLCHAIN_SHA
 The embedded libvpx configure patch selects its native Win32 worker
-implementation instead of the pthread DLL. LLVM and MinGW-w64 runtime
-notices cover the statically linked compiler and Windows CRT support.
+implementation instead of the pthread DLL. LLVM, compiler-rt, and
+MinGW-w64 runtime notices accompany the statically linked compiler
+and Windows CRT support.
 EOF
 BIN=$(iris_ffmpeg_bin "$OUT_DIR" .exe)
 iris_resolve_arch "$BIN" "$ARCH" >/dev/null

@@ -703,6 +703,11 @@ fn portable_zip_modes() {
             0o100644,
         ),
         ("iris/licenses/ffmpeg/LLVM.txt".to_string(), 0o100644),
+        ("iris/licenses/ffmpeg/compiler-rt.txt".to_string(), 0o100644),
+        (
+            "iris/licenses/ffmpeg/compiler-rt-CREDITS.txt".to_string(),
+            0o100644,
+        ),
         (
             "iris/licenses/ffmpeg/mingw-w64-runtime.txt".to_string(),
             0o100644,
@@ -724,6 +729,8 @@ fn portable_zip_modes() {
                 "zlib.txt",
                 "nv-codec-headers.txt",
                 "LLVM.txt",
+                "compiler-rt.txt",
+                "compiler-rt-CREDITS.txt",
                 "mingw-w64-runtime.txt",
             ],
         );
@@ -765,6 +772,8 @@ fn app_bundle_modes_and_versions() {
             "x264.txt",
             "libvpx.txt",
             "Opus.txt",
+            "compiler-rt.txt",
+            "compiler-rt-CREDITS.txt",
         ],
     );
     let want = BTreeMap::from([
@@ -783,6 +792,8 @@ fn app_bundle_modes_and_versions() {
         ("Contents/Resources/ffmpeg/x264.txt", 0o644),
         ("Contents/Resources/ffmpeg/libvpx.txt", 0o644),
         ("Contents/Resources/ffmpeg/Opus.txt", 0o644),
+        ("Contents/Resources/ffmpeg/compiler-rt.txt", 0o644),
+        ("Contents/Resources/ffmpeg/compiler-rt-CREDITS.txt", 0o644),
         ("Contents/Resources/iris.icns", 0o644),
         ("Contents/Resources/LICENSE-MIT", 0o644),
         ("Contents/Resources/LICENSE-APACHE", 0o644),

@@ -27,7 +27,7 @@ const ZIP_DIR: &str = "iris";
 
 /// Non-iris files every portable package contains. Keeping the complete
 /// list here makes an incomplete update fail before any file moves.
-const RUNTIME_PAYLOAD: [&str; 11] = [
+const RUNTIME_PAYLOAD: [&str; 13] = [
     "ffmpeg.exe",
     "licenses/ffmpeg/FFmpeg.txt",
     "licenses/ffmpeg/FFmpeg-LICENSE.txt",
@@ -38,6 +38,8 @@ const RUNTIME_PAYLOAD: [&str; 11] = [
     "licenses/ffmpeg/zlib.txt",
     "licenses/ffmpeg/nv-codec-headers.txt",
     "licenses/ffmpeg/LLVM.txt",
+    "licenses/ffmpeg/compiler-rt.txt",
+    "licenses/ffmpeg/compiler-rt-CREDITS.txt",
     "licenses/ffmpeg/mingw-w64-runtime.txt",
 ];
 
