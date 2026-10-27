@@ -30,3 +30,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The daemon checks for a newer release about a minute after it starts and then once a day, and offers it in the tray menu, a notice, and the settings window's Updates pane.
 - `check_for_updates = false` in `config.toml` turns off the background update check.
 - `update_channel = "beta"` in `config.toml` offers prereleases as well as stable releases.
+
+### Security
+
+- Updates `rustls` to 0.23.46, `rustls-webpki` to 0.103.16, and `webpki-roots` to 1.0.10 to resolve six security advisories.
