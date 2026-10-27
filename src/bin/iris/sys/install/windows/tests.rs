@@ -198,9 +198,9 @@ fn a_failed_rollback_preserves_recovery_against_cleanup_and_retries() {
         std::fs::read(&backup).expect("preserved backup"),
         b"old-ffmpeg"
     );
-    assert_eq!(
-        std::fs::read(&ffmpeg).expect("partially replaced FFmpeg"),
-        b"new-ffmpeg"
+    assert!(
+        !ffmpeg.exists(),
+        "rollback removes the replacement before the injected restore failure"
     );
     assert_eq!(
         std::fs::read(&notice).expect("restored notice"),
@@ -230,7 +230,6 @@ fn a_failed_rollback_preserves_recovery_against_cleanup_and_retries() {
 
     // Once the caller restores the backup, ordinary startup cleanup
     // removes the empty staging tree again.
-    std::fs::remove_file(&ffmpeg).expect("remove partially replaced FFmpeg");
     std::fs::rename(&backup, &ffmpeg).expect("manual recovery");
     tidy_at(&exe);
     assert!(
