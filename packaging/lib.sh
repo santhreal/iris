@@ -139,7 +139,7 @@ iris_fetch_sha256() {
   mkdir -p "$(dirname "$file")"
   tmp="$file.part.$$"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp" "$url" || {
+    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 -o "$tmp" "$url" || {
       rm -f "$tmp"
       return 1
     }

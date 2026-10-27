@@ -1013,6 +1013,97 @@ fn appimage_appdir_modes_and_ffmpeg_notices() {
     }
 }
 
+/// WHY: curl's `--retry` does not include TLS connect errors unless
+/// `--retry-all-errors` is present. A transient TLS EOF therefore
+/// defeated the intended three-retry source download. These cases
+/// emulate curl's retry loop for recovered and persistent EOF, including
+/// the four-attempt bound. They do not exercise a real TLS session or
+/// the wget fallback.
+fn tls_download_case(succeed_at: &str) -> (Output, String, PathBuf, tempfile::TempDir) {
+    require(&["bash", "sha256sum", "cut"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let shim = dir.path().join("bin");
+    std::fs::create_dir(&shim).expect("mkdir shims");
+    fixture(
+        &shim,
+        "curl",
+        br#"#!/bin/sh
+retry=0
+retry_all=false
+out=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --retry) retry=$2; shift 2 ;;
+    --retry-all-errors) retry_all=true; shift ;;
+    -o) out=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+attempt=0
+while :; do
+  attempt=$((attempt + 1))
+  printf '%s\n' "$attempt" >>"$CURL_ATTEMPTS"
+  if [ "$attempt" -eq "$CURL_SUCCEED_AT" ]; then
+    printf 'pinned runtime\n' >"$out"
+    exit 0
+  fi
+  if [ "$retry_all" = true ] && [ "$attempt" -le "$retry" ]; then
+    continue
+  fi
+  exit 35
+done
+"#,
+    );
+    let expected = dir.path().join("expected");
+    std::fs::write(&expected, b"pinned runtime\n").expect("write expected payload");
+    let sha = lib("iris_sha256_file", &[expected.as_os_str()]).expect("payload hash");
+    let attempts = dir.path().join("attempts");
+    let downloaded = dir.path().join("downloads/source.tar");
+    let out = bash(
+        "022",
+        "export PATH=\"$1:$PATH\" CURL_ATTEMPTS=\"$2\" CURL_SUCCEED_AT=\"$3\"\n\
+         . packaging/lib.sh && iris_fetch_sha256 \"$4\" \"$5\" \"$6\"",
+        &[
+            shim.as_os_str(),
+            attempts.as_os_str(),
+            OsStr::new(succeed_at),
+            OsStr::new("https://example.invalid/pinned.tar"),
+            OsStr::new(sha.as_str()),
+            downloaded.as_os_str(),
+        ],
+    );
+    let attempts = std::fs::read_to_string(&attempts).expect("attempt log");
+    (out, attempts, downloaded, dir)
+}
+
+#[test]
+fn source_download_recovers_after_tls_eof() {
+    let (out, attempts, downloaded, _dir) = tls_download_case("2");
+    assert_success("recover pinned source download", &out);
+    assert_eq!(attempts, "1\n2\n");
+    assert_eq!(
+        std::fs::read(downloaded).expect("downloaded payload"),
+        b"pinned runtime\n"
+    );
+}
+
+#[test]
+fn source_download_bounds_persistent_tls_eof() {
+    let (out, attempts, downloaded, _dir) = tls_download_case("0");
+    assert!(
+        !out.status.success(),
+        "persistent TLS EOF unexpectedly succeeded"
+    );
+    assert_eq!(attempts, "1\n2\n3\n4\n");
+    assert_eq!(
+        std::fs::read_dir(downloaded.parent().expect("download directory"))
+            .expect("read download directory")
+            .count(),
+        0,
+        "a failed download left a final or partial payload"
+    );
+}
+
 /// WHY: the AppImage embeds the type2-runtime and is assembled by
 /// appimagetool, both downloaded while it builds. They came from the
 /// moving `continuous` releases with no checksum, so a release AppImage
