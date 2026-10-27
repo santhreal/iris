@@ -41,8 +41,8 @@ const TILES: [(&str, Icon, &str, Tile); 3] = [
 /// The library has no global hotkey; this in-window key opens it from
 /// home (with Ctrl or Cmd), and its tile shows it.
 const LIBRARY_KEY: &str = "l";
-const LIBRARY_SHORTCUT: &str = "Ctrl+L";
-const SETTINGS_SHORTCUT: &str = "Ctrl+,";
+const LIBRARY_SHORTCUT: &str = crate::widgets::meta_shortcut!("L");
+const SETTINGS_SHORTCUT: &str = crate::widgets::meta_shortcut!(",");
 
 impl Tile {
     fn command(self) -> daemon::Command {

@@ -88,7 +88,10 @@ impl Library {
                     .opacity(hover_amt)
                     .child(
                         crate::widgets::overlay_icon_button(("copy", index), Icon::Copy)
-                            .tooltip(tip("Copy", Some("Ctrl+C".into())))
+                            .tooltip(tip(
+                                "Copy",
+                                Some(crate::widgets::meta_shortcut!("C").into()),
+                            ))
                             .on_click(cx.listener({
                                 let entry = entry.clone();
                                 move |this, _, _, cx| {

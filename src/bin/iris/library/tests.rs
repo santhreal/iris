@@ -626,4 +626,23 @@ fn the_shortcuts_sheet_shows_the_configured_global_hotkeys() {
     let rows = help_rows(&cfg);
     assert_eq!(rows[0], ("New screenshot", "Super+P".into()));
     assert_eq!(rows[1], ("Record window", "Ctrl+Shift+5".into()));
+    assert_eq!(
+        rows[6],
+        (
+            "Add to selection",
+            crate::widgets::meta_shortcut!("click").into()
+        )
+    );
+    assert_eq!(
+        rows[7],
+        ("Select all", crate::widgets::meta_shortcut!("A").into())
+    );
+    assert_eq!(
+        rows[8],
+        ("Copy", crate::widgets::meta_shortcut!("C").into())
+    );
+    assert_eq!(
+        rows[11],
+        ("Settings", crate::widgets::meta_shortcut!(",").into())
+    );
 }

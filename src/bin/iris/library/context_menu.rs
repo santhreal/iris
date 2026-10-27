@@ -120,7 +120,7 @@ impl Library {
                     .child(menu_separator())
                     .child(
                         MenuItem::new("menu-copy", "Copy")
-                            .shortcut("Ctrl+C")
+                            .shortcut(crate::widgets::meta_shortcut!("C"))
                             .into_row()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.close_menu(cx);

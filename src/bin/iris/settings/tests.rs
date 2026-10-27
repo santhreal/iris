@@ -438,8 +438,16 @@ fn format_keystroke_formats_keys_and_modifiers() {
         Some("Ctrl+Alt+S".into())
     );
     assert_eq!(
+        [
+            Settings::platform_modifier_name(false),
+            Settings::platform_modifier_name(true),
+        ],
+        ["Super", "Cmd"]
+    );
+    let platform = Settings::platform_modifier_name(cfg!(target_os = "macos"));
+    assert_eq!(
         Settings::format_keystroke(&make_event("p", false, false, false, true)),
-        Some("Super+P".into())
+        Some(format!("{platform}+P"))
     );
 }
 

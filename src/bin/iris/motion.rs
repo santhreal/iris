@@ -56,11 +56,10 @@ pub fn spring(t: f32) -> f32 {
 }
 
 /// A value+velocity spring for pointer-coupled state. Unlike the
-/// clock-based curve above, this integrates per frame, so a hover
-/// that ends mid-rise reverses from the current value WITH its
-/// current velocity: the liquid feel. Critically damped (zeta=1):
-/// it glides to rest with no overshoot, because an oscillating
-/// shadow reads as jitter, not physics.
+/// clock-based curve above, this retains velocity when a hover ends
+/// mid-rise and reverses toward the new target. The exact critically
+/// damped update depends on elapsed time, not frame count, and catches
+/// up after a stalled frame without oscillating.
 #[derive(Clone, Copy, Default)]
 pub struct Spring {
     pub value: f32,
@@ -68,15 +67,20 @@ pub struct Spring {
 }
 
 impl Spring {
-    const K: f32 = 140.0;
-    const C: f32 = 23.66; // 2*sqrt(K): critical damping
+    const OMEGA: f32 = 28.0;
 
     /// Advance toward `target` by `dt` seconds; returns the value.
     pub fn to(&mut self, target: f32, dt: f32) -> f32 {
-        let dt = dt.min(0.05); // a stalled frame must not explode it
-        let force = -Self::K * (self.value - target) - Self::C * self.velocity;
-        self.velocity += force * dt;
-        self.value += self.velocity * dt;
+        let dt = dt.max(0.0);
+        let offset = self.value - target;
+        let coefficient = self.velocity + Self::OMEGA * offset;
+        let decay = (-Self::OMEGA * dt).exp();
+        self.value = target + (offset + coefficient * dt) * decay;
+        self.velocity = (self.velocity - Self::OMEGA * coefficient * dt) * decay;
+        if self.settled(target) {
+            self.value = target;
+            self.velocity = 0.0;
+        }
         self.value
     }
 
@@ -87,8 +91,9 @@ impl Spring {
 
 // WHY: the class closed here is "motion math breaks the animation
 // contract": spring() must stay inside 0..=1 (GPUI's animation driver
-// panics outside it) and Spring must converge without oscillation.
-// Not covered: wall-clock pacing, which is frame-scheduler territory.
+// panics outside it) and Spring must converge without oscillation or
+// refresh-rate-dependent timing.
+// Not covered: compositor delivery and paint duration.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,10 +139,50 @@ mod tests {
     }
 
     #[test]
-    fn stalled_frame_dt_is_clamped() {
+    fn integrator_matches_elapsed_time_across_frame_rates() {
+        for dt in [1.0_f32 / 120.0, 1.0 / 60.0, 1.0 / 30.0, 0.05, 0.1, 0.2] {
+            let mut s = Spring::default();
+            let steps = (0.2 / dt).round() as usize;
+            for _ in 0..steps {
+                s.to(1.0, dt);
+            }
+            let elapsed = steps as f32 * dt;
+            let x = 28.0 * elapsed;
+            let expected = 1.0 - (1.0 + x) * (-x).exp();
+            assert!(
+                (s.value - expected).abs() < 0.000_01,
+                "dt={dt}: value={}, expected={expected}",
+                s.value
+            );
+        }
+    }
+
+    #[test]
+    fn integrator_settles_within_350ms_at_any_frame_rate() {
+        for dt in [1.0 / 120.0, 1.0 / 60.0, 1.0 / 30.0, 0.05, 0.2] {
+            let mut s = Spring::default();
+            let mut elapsed = 0.0;
+            while elapsed < 0.35 {
+                s.to(1.0, dt);
+                elapsed += dt;
+            }
+            assert!(
+                s.settled(1.0),
+                "dt={dt}: value={} velocity={}",
+                s.value,
+                s.velocity
+            );
+            assert_eq!(s.value, 1.0, "dt={dt}: rest must be exact");
+            assert_eq!(s.velocity, 0.0, "dt={dt}: rest must have no velocity");
+        }
+    }
+
+    #[test]
+    fn stalled_frame_catches_up_to_the_current_time() {
         let mut s = Spring::default();
-        // A 10-second dt must not explode the integrator.
-        let v = s.to(1.0, 10.0);
-        assert!(v.is_finite() && v < 2.0);
+        s.to(1.0, 10.0);
+        assert!(s.settled(1.0), "value={} velocity={}", s.value, s.velocity);
+        assert_eq!(s.value, 1.0);
+        assert_eq!(s.velocity, 0.0);
     }
 }

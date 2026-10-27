@@ -15,6 +15,26 @@ mod window_frame;
 mod window_move;
 mod window_open;
 
+/// The label for a local action chord. Its handlers accept Control or
+/// the platform modifier; macOS presents that choice as Command.
+macro_rules! meta_shortcut_for {
+    ($macos:expr, $suffix:literal) => {
+        if $macos {
+            concat!("Cmd+", $suffix)
+        } else {
+            concat!("Ctrl+", $suffix)
+        }
+    };
+}
+pub(crate) use meta_shortcut_for;
+
+macro_rules! meta_shortcut {
+    ($suffix:literal) => {
+        $crate::widgets::meta_shortcut_for!(cfg!(target_os = "macos"), $suffix)
+    };
+}
+pub(crate) use meta_shortcut;
+
 pub use self::controls::{push_button, segmented, toggle, ButtonStyle, Segment, SegmentStyle};
 pub use self::field::{folder_field, text_field, FieldState};
 pub use self::image::*;
@@ -249,4 +269,39 @@ pub fn shortcuts_sheet(rows: Vec<(&'static str, SharedString)>) -> Stateful<Div>
                 )
                 .child(list),
         )
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    // WHY: local actions accept Command on macOS and Control elsewhere.
+    // These cover ordinary keys, modified chords, punctuation, and click
+    // instructions on both targets without needing a macOS test process.
+    #[test]
+    fn local_action_shortcuts_follow_each_platform_convention() {
+        let actual = [
+            (
+                super::meta_shortcut_for!(false, "C"),
+                super::meta_shortcut_for!(true, "C"),
+            ),
+            (
+                super::meta_shortcut_for!(false, "Shift+Z"),
+                super::meta_shortcut_for!(true, "Shift+Z"),
+            ),
+            (
+                super::meta_shortcut_for!(false, ","),
+                super::meta_shortcut_for!(true, ","),
+            ),
+            (
+                super::meta_shortcut_for!(false, "click"),
+                super::meta_shortcut_for!(true, "click"),
+            ),
+        ];
+        let expected = [
+            ("Ctrl+C", "Cmd+C"),
+            ("Ctrl+Shift+Z", "Cmd+Shift+Z"),
+            ("Ctrl+,", "Cmd+,"),
+            ("Ctrl+click", "Cmd+click"),
+        ];
+        assert_eq!(actual, expected);
+    }
 }

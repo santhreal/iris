@@ -314,6 +314,15 @@ impl Settings {
         self.persist(true);
     }
 
+    /// The platform modifier's name in a recorded global hotkey.
+    pub(super) fn platform_modifier_name(macos: bool) -> &'static str {
+        if macos {
+            "Cmd"
+        } else {
+            "Super"
+        }
+    }
+
     /// Format a pressed keystroke the way config.toml stores hotkeys:
     /// "Ctrl+Shift+R", "Print", "Escape", "Enter".
     pub(super) fn format_keystroke(ev: &KeyDownEvent) -> Option<String> {
@@ -334,7 +343,7 @@ impl Settings {
             parts.push("Shift");
         }
         if m.platform && !m.control {
-            parts.push("Super");
+            parts.push(Self::platform_modifier_name(cfg!(target_os = "macos")));
         }
         let named = match key {
             " " => "Space".to_string(),

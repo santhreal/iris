@@ -83,6 +83,32 @@ fn drop_menu(panel: impl IntoElement) -> impl IntoElement {
     .with_priority(1)
 }
 
+fn chord_labels(macos: bool) -> (&'static str, &'static str) {
+    if macos {
+        ("Cmd+S / Cmd+W / Enter", "Cmd+Z / Cmd+Shift+Z")
+    } else {
+        ("Ctrl+S / Ctrl+W / Enter", "Ctrl+Z / Ctrl+Shift+Z")
+    }
+}
+
+/// The editor help sheet's action and key rows.
+pub(super) fn help_rows() -> Vec<(&'static str, SharedString)> {
+    let (save_close, undo_redo) = chord_labels(cfg!(target_os = "macos"));
+    vec![
+        ("Tools", "V P L A E R T H B C N".into()),
+        ("Fill shapes", "F".into()),
+        ("Stroke width", "1 / 2 / 3".into()),
+        ("Zoom fit / in / out", "0 / + / -".into()),
+        ("Pan", "Space + drag".into()),
+        ("Save and close", save_close.into()),
+        ("Discard", "Esc".into()),
+        ("Undo / Redo", undo_redo.into()),
+        ("Delete selected action", "Delete".into()),
+        ("Apply crop", "Enter".into()),
+        ("This sheet", "?".into()),
+    ]
+}
+
 impl Editor {
     /// Run a More menu row: the same operation its former toolbar
     /// button ran.
@@ -156,12 +182,18 @@ impl Editor {
                     cx.notify();
                 }))
         };
-        let undo = history("action-undo", Icon::Undo, "Undo", "Ctrl+Z", Self::undo);
+        let undo = history(
+            "action-undo",
+            Icon::Undo,
+            "Undo",
+            crate::widgets::meta_shortcut!("Z"),
+            Self::undo,
+        );
         let redo = history(
             "action-redo",
             Icon::Redo,
             "Redo",
-            "Ctrl+Shift+Z",
+            crate::widgets::meta_shortcut!("Shift+Z"),
             Self::redo,
         );
 
@@ -378,27 +410,36 @@ impl Editor {
 
         if self.help {
             root = root.child(
-                widgets::shortcuts_sheet(vec![
-                    ("Tools", "V P L A E R T H B C N".into()),
-                    ("Fill shapes", "F".into()),
-                    ("Stroke width", "1 / 2 / 3".into()),
-                    ("Zoom fit / in / out", "0 / + / -".into()),
-                    ("Pan", "Space + drag".into()),
-                    ("Save and close", "Ctrl+S / Ctrl+W / Enter".into()),
-                    ("Discard", "Esc".into()),
-                    ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z".into()),
-                    ("Delete selected action", "Delete".into()),
-                    ("Apply crop", "Enter".into()),
-                    ("This sheet", "?".into()),
-                ])
-                .opacity(topbar)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.help = false;
-                    cx.notify();
-                })),
+                widgets::shortcuts_sheet(help_rows())
+                    .opacity(topbar)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.help = false;
+                        cx.notify();
+                    })),
             );
         }
 
         root
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    // WHY: editor history, save, and close accept the platform modifier.
+    // Their labels must present Command on macOS and Control elsewhere;
+    // both target mappings run on every host.
+    #[test]
+    fn help_rows_follow_each_platform_convention() {
+        assert_eq!(
+            [super::chord_labels(false), super::chord_labels(true)],
+            [
+                ("Ctrl+S / Ctrl+W / Enter", "Ctrl+Z / Ctrl+Shift+Z"),
+                ("Cmd+S / Cmd+W / Enter", "Cmd+Z / Cmd+Shift+Z"),
+            ]
+        );
+        let rows = super::help_rows();
+        let (save_close, undo_redo) = super::chord_labels(cfg!(target_os = "macos"));
+        assert_eq!(rows[5], ("Save and close", save_close.into()));
+        assert_eq!(rows[7], ("Undo / Redo", undo_redo.into()));
     }
 }

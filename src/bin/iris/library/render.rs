@@ -73,7 +73,10 @@ impl Library {
                 )
                 .trailing(
                     widgets::button("sel-copy", "Copy", false)
-                        .tooltip(tip("Copy", Some("Ctrl+C".into())))
+                        .tooltip(tip(
+                            "Copy",
+                            Some(crate::widgets::meta_shortcut!("C").into()),
+                        ))
                         .on_click(cx.listener(|this, _, _, cx| this.copy_selection(cx))),
                 )
                 .trailing(
@@ -108,7 +111,10 @@ impl Library {
         )
         .trailing(
             widgets::icon_button("settings", Icon::Gear, false, theme::TOOLBAR_CONTROL_H)
-                .tooltip(tip("Settings", Some("Ctrl+,".into())))
+                .tooltip(tip(
+                    "Settings",
+                    Some(crate::widgets::meta_shortcut!(",").into()),
+                ))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Err(e) = crate::settings::open(cx) {
                         this.set_status(e, cx);
@@ -373,12 +379,15 @@ pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, Sh
         ("Quick Look", "Space".into()),
         ("Move selection", "Arrow keys".into()),
         ("Extend selection", "Shift+Arrow or Shift+click".into()),
-        ("Add to selection", "Ctrl+click".into()),
-        ("Select all", "Ctrl+A".into()),
-        ("Copy", "Ctrl+C".into()),
+        (
+            "Add to selection",
+            crate::widgets::meta_shortcut!("click").into(),
+        ),
+        ("Select all", crate::widgets::meta_shortcut!("A").into()),
+        ("Copy", crate::widgets::meta_shortcut!("C").into()),
         ("Move to Trash", "Delete".into()),
         ("Clear selection", "Esc".into()),
-        ("Settings", "Ctrl+,".into()),
+        ("Settings", crate::widgets::meta_shortcut!(",").into()),
         ("This sheet", "?".into()),
     ]
 }
