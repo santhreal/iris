@@ -2,10 +2,11 @@
 # build_rpm.sh: builds the RPM package of iris with rpmbuild and
 # packaging/linux/iris.spec.
 #
-#   packaging/linux/build_rpm.sh --bin <path> --out <dir>
+#   packaging/linux/build_rpm.sh --bin <path> --ffmpeg <dir> --out <dir>
 #       [--version <ver>] [--arch x86_64|aarch64] [--skip-sha]
 #
 #   --bin <path>      the iris executable to package
+#   --ffmpeg <dir>    runtime from build_ffmpeg.sh (ffmpeg + licenses/)
 #   --out <dir>       the directory the package is written to
 #   --version <ver>   the iris version (default: Cargo.toml)
 #   --arch <arch>     x86_64 or aarch64 (default: the executable's);
@@ -26,6 +27,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$REPO_ROOT/packaging/lib.sh"
 
 IRIS_BIN=""
+FFMPEG_DIR=""
 OUT_DIR=""
 VERSION=""
 ARCH=""
@@ -33,6 +35,7 @@ GEN_SHA=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin) IRIS_BIN=${2:?--bin needs a path}; shift 2 ;;
+    --ffmpeg) FFMPEG_DIR=${2:?--ffmpeg needs a directory}; shift 2 ;;
     --out) OUT_DIR=${2:?--out needs a directory}; shift 2 ;;
     --version) VERSION=${2:?--version needs a version}; shift 2 ;;
     --arch) ARCH=${2:?--arch needs x86_64 or aarch64}; shift 2 ;;
@@ -41,8 +44,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Error: unknown argument $1 (see --help)" >&2; exit 2 ;;
   esac
 done
-if [[ -z "$IRIS_BIN" || -z "$OUT_DIR" ]]; then
-  echo "Error: --bin and --out are required (see --help)" >&2
+if [[ -z "$IRIS_BIN" || -z "$FFMPEG_DIR" || -z "$OUT_DIR" ]]; then
+  echo "Error: --bin, --ffmpeg, and --out are required (see --help)" >&2
   exit 2
 fi
 if [[ ! -f "$IRIS_BIN" ]]; then
@@ -53,6 +56,8 @@ fi
 VERSION=${VERSION:-$(iris_cargo_version "$REPO_ROOT")}
 RPM_VERSION=$(iris_tilde_version "$VERSION")
 ARCH=$(iris_resolve_arch "$IRIS_BIN" "$ARCH")
+FFMPEG_BIN=$(iris_ffmpeg_bin "$FFMPEG_DIR")
+iris_resolve_arch "$FFMPEG_BIN" "$ARCH" >/dev/null
 
 if ! command -v rpmbuild >/dev/null 2>&1; then
   echo "Error: building an rpm requires rpmbuild (Debian/Ubuntu: apt-get install rpm, Fedora: dnf install rpm-build)" >&2
@@ -71,8 +76,11 @@ mkdir -p "$TOPDIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 # Source0 holds the prebuilt binary and the files the spec installs,
 # at their paths in the repository; %autosetup unpacks it.
 SOURCE_DIR="$TOPDIR/src/iris-${RPM_VERSION}"
-mkdir -p "$SOURCE_DIR/packaging/linux" "$SOURCE_DIR/packaging/icons" "$SOURCE_DIR/assets/fonts"
+mkdir -p "$SOURCE_DIR/packaging/linux" "$SOURCE_DIR/packaging/icons" \
+  "$SOURCE_DIR/assets/fonts" "$SOURCE_DIR/ffmpeg-licenses"
 install -m 0755 "$IRIS_BIN" "$SOURCE_DIR/iris"
+install -m 0755 "$FFMPEG_BIN" "$SOURCE_DIR/ffmpeg"
+install -m 0644 "$FFMPEG_DIR/licenses/"* "$SOURCE_DIR/ffmpeg-licenses/"
 cp "$SCRIPT_DIR/dev.iris.app.desktop" "$SCRIPT_DIR/iris-autostart.desktop" \
   "$SCRIPT_DIR/dev.iris.app.metainfo.xml" "$SOURCE_DIR/packaging/linux/"
 cp "$REPO_ROOT"/packaging/icons/iris-*.png "$SOURCE_DIR/packaging/icons/"

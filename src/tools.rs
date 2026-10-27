@@ -1,10 +1,11 @@
 //! External programs iris runs, resolved to an absolute path before
-//! the spawn. The search covers the process PATH, then locations the
-//! process PATH can miss: a macOS app started from Finder or a login
-//! item inherits launchd's PATH, which has no Homebrew or MacPorts
-//! prefix; a Windows daemon keeps the PATH it started with, so a tool
-//! installed while it runs is not on it, and the Windows Tesseract
-//! installer adds no PATH entry at all.
+//! the spawn. A packaged runtime beside iris, or in /usr/lib/iris or
+//! /usr/lib64/iris for a native Linux package, takes precedence. The fallback search covers
+//! the process PATH, then locations the process PATH can miss: a macOS
+//! app started from Finder or a login item inherits launchd's PATH,
+//! which has no Homebrew or MacPorts prefix; a Windows daemon keeps the
+//! PATH it started with, so a tool installed while it runs is not on it,
+//! and the Windows Tesseract installer adds no PATH entry at all.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -52,7 +53,7 @@ impl Tool {
     /// The tool's absolute path, or None when no searched directory
     /// holds it.
     pub fn find(self) -> Option<PathBuf> {
-        find_in(self.name(), &search_dirs())
+        find_in(self.name(), &self.search_dirs())
     }
 
     /// A command for the tool at its `find` path. An unresolved tool
@@ -84,15 +85,22 @@ impl Tool {
             format!("{} failed to start: {e}", self.name())
         }
     }
-}
 
-/// PATH in order, then `extra_dirs`.
-fn search_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect())
-        .unwrap_or_default();
-    dirs.extend(crate::sys::tools::extra_dirs());
-    dirs
+    /// FFmpeg uses the packaged runtime before PATH. Other tools keep
+    /// PATH precedence, then search `extra_dirs`.
+    fn search_dirs(self) -> Vec<PathBuf> {
+        let mut dirs = match self {
+            Tool::Ffmpeg => crate::sys::tools::bundled_dirs(),
+            Tool::Tesseract => Vec::new(),
+        };
+        dirs.extend(
+            std::env::var_os("PATH")
+                .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+                .unwrap_or_default(),
+        );
+        dirs.extend(crate::sys::tools::extra_dirs());
+        dirs
+    }
 }
 
 /// The first `dir/name` (plus the platform's executable suffix) that
@@ -144,13 +152,49 @@ mod tests {
     }
 
     #[test]
-    fn path_is_searched_before_the_extra_directories() {
+    fn bundled_ffmpeg_is_searched_before_path_and_extra_directories() {
+        let bundled = crate::sys::tools::bundled_dirs();
         let path: Vec<PathBuf> = std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
-        let dirs = search_dirs();
+        let dirs = Tool::Ffmpeg.search_dirs();
+        assert_eq!(dirs[..bundled.len()], bundled[..]);
+        assert_eq!(dirs[bundled.len()..bundled.len() + path.len()], path[..]);
+        assert_eq!(dirs[bundled.len() + path.len()..], extra_dirs()[..]);
+        let exe_dir = crate::sys::exe::this()
+            .unwrap()
+            .parent()
+            .map(Path::to_path_buf);
+        assert!(exe_dir.is_some_and(|dir| bundled.contains(&dir)));
+    }
+
+    #[test]
+    fn unbundled_tools_keep_path_precedence() {
+        let path: Vec<PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        let dirs = Tool::Tesseract.search_dirs();
         assert_eq!(dirs[..path.len()], path[..]);
         assert_eq!(dirs[path.len()..], extra_dirs()[..]);
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    #[test]
+    fn native_linux_and_appimage_prefer_their_own_runtime() {
+        let native = crate::sys::tools::bundled_dirs_from(Path::new("/usr/bin/iris"));
+        assert_eq!(
+            native,
+            ["/usr/lib/iris", "/usr/lib64/iris", "/usr/bin"].map(PathBuf::from)
+        );
+        let appimage = crate::sys::tools::bundled_dirs_from(Path::new(
+            "/run/user/1000/.mount_iris/usr/bin/iris",
+        ));
+        assert_eq!(
+            appimage.first().map(PathBuf::as_path),
+            Some(Path::new("/run/user/1000/.mount_iris/usr/bin"))
+        );
+        assert!(appimage.contains(&PathBuf::from("/usr/lib/iris")));
+        assert!(appimage.contains(&PathBuf::from("/usr/lib64/iris")));
     }
 
     #[test]

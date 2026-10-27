@@ -49,44 +49,59 @@ xcode-select --install
 
 ## Packages
 
-Each packaging script takes the executable with `--bin` and writes the package and its `.sha256` sidecar to the directory given with `--out`. `--version` sets the version, which defaults to the one in `Cargo.toml`. `--arch x86_64` or `--arch aarch64` sets the architecture in the asset name, which defaults to the executable's; a script fails when `--arch` differs from the executable's architecture. The scripts do not sign: the release workflow signs every asset with minisign ([Releasing](../RELEASING.md)). `packaging/CONTRACT.md` lists the asset names, the version forms each package format uses, and the install layout.
+Each packaging script takes the executable with `--bin` and the runtime directory with `--ffmpeg`, and writes the package and its `.sha256` sidecar to the directory given with `--out`. Build all runtimes from pinned sources with the platform `packaging/<os>/build_ffmpeg.sh` scripts. The runtime directory contains `ffmpeg` or `ffmpeg.exe` and `licenses/`. `--version` sets the version, which defaults to the one in `Cargo.toml`. `--arch x86_64` or `--arch aarch64` sets the architecture in the asset name, which defaults to the executable's; a script fails when `--arch` differs from either executable's architecture. The scripts do not sign: the release workflow signs every asset with minisign ([Releasing](../RELEASING.md)). `packaging/CONTRACT.md` lists the asset names, the version forms each package format uses, and the install layout.
 
 ### Linux
 
+The FFmpeg runtime build requires `nasm`, `pkg-config`, PulseAudio development files, and zlib development files (`nasm libpulse-dev zlib1g-dev` on Debian and Ubuntu, `nasm pulseaudio-libs-devel zlib-devel` on Fedora).
+
 ```sh
-bash packaging/linux/build_deb.sh --bin target/release/iris --out dist
-bash packaging/linux/build_rpm.sh --bin target/release/iris --out dist
-bash packaging/linux/build_appimage.sh --bin target/release/iris --out dist
+runtime=.build-staging/ffmpeg/linux-$(uname -m)
+packaging/linux/build_ffmpeg.sh --out "$runtime"
+packaging/check_ffmpeg.sh "$runtime/ffmpeg" linux
+bash packaging/linux/build_deb.sh --bin target/release/iris --ffmpeg "$runtime" --out dist
+bash packaging/linux/build_rpm.sh --bin target/release/iris --ffmpeg "$runtime" --out dist
+bash packaging/linux/build_appimage.sh --bin target/release/iris --ffmpeg "$runtime" --out dist
 ```
 
 On an x86_64 host this writes `iris-<ver>-linux-x86_64.deb`, `.rpm`, and `.AppImage`; on an aarch64 host, `iris-<ver>-linux-aarch64.deb`, `.rpm`, and `.AppImage`.
 
-`build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version the executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` downloads appimagetool 1.9.1 for the build host to `.build-staging/` and the type2-runtime release 20251108 for the target architecture, and fails unless each download has the SHA-256 recorded in the script. `--appimagetool <path>` runs another appimagetool.
+`build_deb.sh` requires `dpkg-deb` and `readelf`, and sets the package's glibc dependency from the newest glibc symbol version either packaged executable uses. `build_rpm.sh` requires `rpmbuild` (the `rpm` package on Debian and Ubuntu, `rpm-build` on Fedora). `build_appimage.sh` downloads appimagetool 1.9.1 for the build host to `.build-staging/` and the type2-runtime release 20251108 for the target architecture, and fails unless each download has the SHA-256 recorded in the script. `--appimagetool <path>` runs another appimagetool.
 
-The release workflow (`.github/workflows/package.yml`) builds the Linux executable in the `rust:1.98.0-bookworm` container (Debian 12, the pinned toolchain), on an x86_64 runner and on an aarch64 runner (`ubuntu-24.04-arm`). That executable uses no glibc symbol version newer than 2.35, so the packages install on glibc 2.35 and later. An executable built on a newer system requires that system's glibc.
+The release workflow (`.github/workflows/package.yml`) builds the Linux executable in the `rust:1.98.0-bookworm` container (Debian 12, the pinned toolchain), on an x86_64 runner and on an aarch64 runner (`ubuntu-24.04-arm`). That executable uses no glibc symbol version newer than 2.35, so the packages install on glibc 2.35 and later. An executable built on a newer system requires that system's glibc. The same container builds and checks FFmpeg.
 
 `packaging/linux/check_installed.sh` starts an installed iris on a private Xvfb display, waits for the home window, and quits it. With `--upgrade <command>`, it runs the command while the daemon runs, checks that the daemon still runs on the replaced binary, quits it with the upgraded iris, and starts the upgraded iris. To check an upgrade of an installed deb to a package of the same binary at a higher version:
 
 ```sh
-bash packaging/linux/build_deb.sh --bin target/release/iris --version 0.1.0.1 --out dist/next
+bash packaging/linux/build_deb.sh --bin target/release/iris --ffmpeg "$runtime" --version 0.1.0.1 --out dist/next
 bash packaging/linux/check_installed.sh --upgrade "sudo apt-get install -y ./dist/next/iris-0.1.0.1-linux-$(uname -m).deb"
 ```
 
 ### Windows
 
-In Git Bash, with NSIS's `makensis` on `PATH`:
+Build the runtime on an x86_64 or aarch64 Linux host. The builder downloads a pinned LLVM-MinGW toolchain and checks its SHA-256. Both targets require `make`, `patch`, `pkg-config`, and `tar`; an x86_64 target also requires `nasm`.
+
+```sh
+runtime=.build-staging/ffmpeg/windows-x86_64
+packaging/windows/build_ffmpeg.sh --arch x86_64 --out "$runtime"
+```
+
+Copy the runtime directory to the Windows packaging host. In Git Bash, with NSIS's `makensis` on `PATH`:
 
 ```sh
 cargo build --locked --release --bin iris
-bash packaging/windows/build_installer.sh --bin target/release/iris.exe --out dist
-bash packaging/windows/build_portable.sh --bin target/release/iris.exe --out dist
+packaging/check_ffmpeg.sh "$runtime/ffmpeg.exe" windows
+bash packaging/windows/build_installer.sh --bin target/release/iris.exe --ffmpeg "$runtime" --out dist
+bash packaging/windows/build_portable.sh --bin target/release/iris.exe --ffmpeg "$runtime" --out dist
 ```
 
 On an x64 PC this writes `iris-<ver>-windows-x86_64-setup.exe` and `iris-<ver>-windows-x86_64-portable.zip`; on Windows on Arm, the `windows-aarch64` pair.
 
 ### macOS
 
-The release DMG holds a universal executable:
+Install `nasm` and `pkg-config` with Homebrew before building FFmpeg.
+
+The release DMG holds universal iris and FFmpeg executables. Build `packaging/macos/build_ffmpeg.sh --out <dir>` on an Apple silicon Mac and on an Intel Mac, then combine their outputs on one Mac:
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -95,7 +110,20 @@ mkdir -p target/universal-apple-darwin/release
 lipo -create -output target/universal-apple-darwin/release/iris \
   target/aarch64-apple-darwin/release/iris \
   target/x86_64-apple-darwin/release/iris
-packaging/macos/make_app.sh --bin target/universal-apple-darwin/release/iris --out dist
+runtime=.build-staging/ffmpeg/macos-universal
+mkdir -p "$runtime"
+lipo -create -output "$runtime/ffmpeg" \
+  .build-staging/ffmpeg/macos-arm64/ffmpeg \
+  .build-staging/ffmpeg/macos-x86_64/ffmpeg
+cp -R .build-staging/ffmpeg/macos-arm64/licenses "$runtime/licenses"
+diff -r .build-staging/ffmpeg/macos-arm64/licenses \
+  .build-staging/ffmpeg/macos-x86_64/licenses
+cat >> "$runtime/licenses/FFMPEG-SOURCE.txt" <<'EOF'
+The universal executable combines runtimes built natively for arm64 and
+x86_64 from the identical pinned sources above.
+EOF
+packaging/check_ffmpeg.sh "$runtime/ffmpeg" macos
+packaging/macos/make_app.sh --bin target/universal-apple-darwin/release/iris --ffmpeg "$runtime" --out dist
 packaging/macos/make_dmg.sh --app dist/iris.app --out dist
 ```
 

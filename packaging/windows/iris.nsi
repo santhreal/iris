@@ -4,7 +4,8 @@
 ; References:
 ;   packaging/CONTRACT.md
 ;   packaging/windows/build_installer.sh, which defines VERSION,
-;   VERSION_QUAD, ARCH, BINARY_PATH, LICENSE_DIR, ICON_PATH and OUTFILE
+;   VERSION_QUAD, ARCH, BINARY_PATH, FFMPEG_BIN, FFMPEG_DIR,
+;   LICENSE_DIR, ICON_PATH and OUTFILE
 ;
 ; Identity:
 ;   - App Name:            iris
@@ -18,8 +19,9 @@
 ;   - Start Menu Shortcut: iris.lnk -> iris.exe --home
 ;   - Autostart:           HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 ;                          Value 'iris' -> "$INSTDIR\iris.exe" --daemon
-;   - License notices:     LICENSE-MIT, LICENSE-APACHE, Inter-OFL.txt
-;                          beside iris.exe
+;   - License notices: LICENSE-MIT, LICENSE-APACHE, Inter-OFL.txt
+;                       beside iris.exe; FFmpeg notices under
+;                       licenses\ffmpeg\
 ;   - Uninstaller:         $INSTDIR\uninstall.exe
 ;                          Removes files, shortcuts, autostart Run entry, and
 ;                          Add/Remove Programs registration.
@@ -59,6 +61,8 @@ SetCompressor /SOLID lzma
 !insertmacro RequireDefine VERSION_QUAD
 !insertmacro RequireDefine ARCH
 !insertmacro RequireDefine BINARY_PATH
+!insertmacro RequireDefine FFMPEG_BIN
+!insertmacro RequireDefine FFMPEG_DIR
 !insertmacro RequireDefine LICENSE_DIR
 !insertmacro RequireDefine ICON_PATH
 !insertmacro RequireDefine OUTFILE
@@ -147,22 +151,40 @@ VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-${ARCH}-setup.exe"
 ; Stopping iris
 ; ------------------------------------------------------------------------------
 ; Ask a running daemon to quit, then wait up to 30 seconds until no
-; process runs $INSTDIR\iris.exe: Windows denies write access to the
-; file of a running program. While iris.exe stays in use, a message box
-; offers Retry, which waits again, and Cancel, which aborts. A silent
-; run aborts.
+; process runs $INSTDIR\iris.exe or $INSTDIR\ffmpeg.exe: Windows
+; denies write access to either file of a running program. While one
+; stays in use, a message box offers Retry, which waits again, and
+; Cancel, which aborts. A silent run aborts.
 !macro StopIris
     ${If} ${FileExists} "$INSTDIR\iris.exe"
+    ${OrIf} ${FileExists} "$INSTDIR\ffmpeg.exe"
         DetailPrint "Stopping ${APP_NAME}..."
-        ExecWait '"$INSTDIR\iris.exe" --quit'
+        ${If} ${FileExists} "$INSTDIR\iris.exe"
+            ExecWait '"$INSTDIR\iris.exe" --quit'
+        ${EndIf}
         ${Do}
             StrCpy $R1 0
             ${Do}
-                ClearErrors
-                FileOpen $R0 "$INSTDIR\iris.exe" a
-                ${IfNot} ${Errors}
-                    FileClose $R0
-                    StrCpy $R1 "free"
+                StrCpy $R3 "free"
+                ${If} ${FileExists} "$INSTDIR\iris.exe"
+                    ClearErrors
+                    FileOpen $R0 "$INSTDIR\iris.exe" a
+                    ${If} ${Errors}
+                        StrCpy $R3 0
+                    ${Else}
+                        FileClose $R0
+                    ${EndIf}
+                ${EndIf}
+                ${If} ${FileExists} "$INSTDIR\ffmpeg.exe"
+                    ClearErrors
+                    FileOpen $R0 "$INSTDIR\ffmpeg.exe" a
+                    ${If} ${Errors}
+                        StrCpy $R3 0
+                    ${Else}
+                        FileClose $R0
+                    ${EndIf}
+                ${EndIf}
+                ${If} $R3 == "free"
                     ${Break}
                 ${EndIf}
                 IntOp $R1 $R1 + 1
@@ -171,10 +193,10 @@ VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-${ARCH}-setup.exe"
                 ${EndIf}
                 Sleep 100
             ${Loop}
-            ${If} $R1 == "free"
+            ${If} $R3 == "free"
                 ${Break}
             ${EndIf}
-            ${IfNot} ${Cmd} `MessageBox MB_RETRYCANCEL|MB_ICONSTOP "$INSTDIR\iris.exe is in use. Quit iris, then click Retry." /SD IDCANCEL IDRETRY`
+            ${IfNot} ${Cmd} `MessageBox MB_RETRYCANCEL|MB_ICONSTOP "$INSTDIR\iris.exe or ffmpeg.exe is in use. Quit iris, then click Retry." /SD IDCANCEL IDRETRY`
                 Abort
             ${EndIf}
         ${Loop}
@@ -239,10 +261,14 @@ Section "Install" SecInstall
     SetOutPath "$INSTDIR"
     DetailPrint "Installing ${APP_NAME} files..."
     File /oname=iris.exe "${BINARY_PATH}"
+    File /oname=ffmpeg.exe "${FFMPEG_BIN}"
     File /oname=iris.ico "${ICON_PATH}"
     File "${LICENSE_DIR}\LICENSE-MIT"
     File "${LICENSE_DIR}\LICENSE-APACHE"
     File "${LICENSE_DIR}\Inter-OFL.txt"
+    SetOutPath "$INSTDIR\licenses\ffmpeg"
+    File /r "${FFMPEG_DIR}\licenses\*"
+    SetOutPath "$INSTDIR"
 
     ; 3. Generate uninstaller
     DetailPrint "Creating uninstaller..."
@@ -310,11 +336,14 @@ Section "Uninstall"
     ; 4. Remove installed files
     DetailPrint "Removing application files..."
     Delete "$INSTDIR\iris.exe"
+    Delete "$INSTDIR\ffmpeg.exe"
     Delete "$INSTDIR\iris.ico"
     Delete "$INSTDIR\LICENSE-MIT"
     Delete "$INSTDIR\LICENSE-APACHE"
     Delete "$INSTDIR\Inter-OFL.txt"
     Delete "$INSTDIR\uninstall.exe"
+    RMDir /r "$INSTDIR\licenses\ffmpeg"
+    RMDir "$INSTDIR\licenses"
 
     ; 5. Remove registry entries
     DetailPrint "Cleaning registry entries..."

@@ -1,20 +1,21 @@
 //! packaging/linux/AppRun starts iris with the environment it was given.
 //!
 //! WHY: the class closed here is "AppRun changes the environment of iris
-//! and of every program iris starts". iris bundles no libraries,
-//! programs or data. AppRun prepended the AppDir, a mount that is gone
-//! once iris quits, to LD_LIBRARY_PATH, PATH and XDG_DATA_DIRS, and with
-//! LD_LIBRARY_PATH unset it left a trailing colon: an empty entry, which
-//! the dynamic loader reads as the working directory. A library in the
-//! folder the AppImage was started from, such as ~/Downloads, then ran
-//! inside iris and inside each program iris started. AppRun also set
-//! $APPDIR to its own AppDir, which paired an inherited $APPIMAGE of
-//! another AppImage with iris's mount, so iris took that AppImage for
-//! its own. Each case runs the AppRun file the AppImage ships, with a
-//! copy of `env` as iris, and requires the environment `env` prints to
-//! be the caller's, variable for variable: any variable AppRun adds,
-//! drops or changes fails it. Not covered: the AppImage runtime, which
-//! sets $APPIMAGE and $APPDIR before AppRun runs.
+//! and of every program iris starts". iris resolves bundled tools
+//! beside its executable. AppRun used to prepend the AppDir, a mount
+//! that is gone once iris quits, to LD_LIBRARY_PATH, PATH and
+//! XDG_DATA_DIRS, and with LD_LIBRARY_PATH unset it left a trailing
+//! colon: an empty entry, which the dynamic loader reads as the working
+//! directory. A library in the folder the AppImage was started from,
+//! such as ~/Downloads, then ran inside iris and inside each program
+//! iris started. AppRun also set $APPDIR to its own AppDir, which paired
+//! an inherited $APPIMAGE of another AppImage with iris's mount, so iris
+//! took that AppImage for its own. Each case runs the AppRun file the
+//! AppImage ships, with a copy of `env` as iris, and requires the
+//! environment `env` prints to be the caller's, variable for variable:
+//! any variable AppRun adds, drops or changes fails it. Not covered:
+//! the AppImage runtime, which sets $APPIMAGE and $APPDIR before AppRun
+//! runs.
 
 #![cfg(target_os = "linux")]
 

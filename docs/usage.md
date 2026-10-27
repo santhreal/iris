@@ -59,7 +59,7 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 3. A chip with a timer and pause, stop, and microphone buttons floats beside the recorded area (X11, Windows, and macOS). A GIF recording has no microphone button.
 4. Press `Ctrl+Shift+R` again, click the chip's stop button, or run `iris --record-window` to stop.
 
-`iris --record-region` records a rectangle drawn as for a screenshot (X11, Windows, and macOS). Recordings are saved in `~/Videos/iris`. Recording requires `ffmpeg` ([Screen Recording](recording.md)).
+`iris --record-region` records a rectangle drawn as for a screenshot (X11, Windows, and macOS). Recordings are saved in `~/Videos/iris`. Release packages include FFmpeg; source builds use `ffmpeg` from `PATH` ([Screen Recording](recording.md)).
 
 ## Find Past Captures
 

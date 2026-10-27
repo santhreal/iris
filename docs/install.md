@@ -86,10 +86,10 @@ To start iris when the installation ends, append `/RUN`. The installer starts ir
 iris-<ver>-windows-<arch>-setup.exe /S /RUN
 ```
 
-When iris is installed and running, the installer sends it `--quit` and waits up to 30 seconds for every process that runs `iris.exe` to exit before it replaces the file. When `iris.exe` stays in use, the installer shows a message box with **Retry** and **Cancel**. **Cancel** stops the installation, and a silent installation stops without the message box and exits with status 2.
+When iris is installed and running, the installer sends it `--quit` and waits up to 30 seconds for every process that runs `iris.exe` or its bundled `ffmpeg.exe` to exit before it replaces those files. When either executable stays in use, the installer shows a message box with **Retry** and **Cancel**. **Cancel** stops the installation, and a silent installation stops without the message box and exits with status 2.
 
 The installer runs per-user without administrative privileges:
-- Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `iris.ico`, `LICENSE-MIT`, `LICENSE-APACHE`, `Inter-OFL.txt`, `uninstall.exe`).
+- Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `ffmpeg.exe`, `iris.ico`, license notices, and `uninstall.exe`). FFmpeg notices are in `licenses\ffmpeg`.
 - Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe --home`.
 - Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --daemon`. An upgrade rewrites the value when it exists and writes none when **Start iris at login** was turned off ([Start at Login](configuration.md#start-at-login)).
 - Registers uninstallation metadata under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris`.
@@ -100,11 +100,11 @@ To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
 "%LOCALAPPDATA%\Programs\iris\uninstall.exe"
 ```
 
-The uninstaller sends `--quit` to a running iris daemon and waits for `iris.exe` in the same way, then removes installed files and shortcuts, deletes the autostart registry value, and removes application registry entries.
+The uninstaller sends `--quit` to a running iris daemon, waits for both executables in the same way, then removes installed files and shortcuts, deletes the autostart registry value, and removes application registry entries.
 
 ### Portable zip
 
-Download `iris-<ver>-windows-<arch>-portable.zip`, unpack it to a folder your account can write, and run `iris\iris.exe`. The zip holds `iris\iris.exe`, `iris\LICENSE-APACHE`, `iris\LICENSE-MIT`, and `iris\Inter-OFL.txt`.
+Download `iris-<ver>-windows-<arch>-portable.zip`, unpack it to a folder your account can write, and run `iris\iris.exe`. The zip holds `iris.exe`, `ffmpeg.exe`, the iris license notices, and `licenses\ffmpeg` in the `iris` directory.
 
 The portable iris creates no shortcut, no autostart registry value, and no uninstall entry. It keeps settings, captures, and logs in the same directories as an installed iris ([paths](configuration.md#iris_home-directory-override)). To start it at login, turn on **Start iris at login** in the settings window ([Start at Login](configuration.md#start-at-login)). To remove it, turn off **Start iris at login**, quit iris (`iris.exe --quit`), and delete the folder.
 
@@ -141,6 +141,8 @@ hdiutil detach /Volumes/iris
 
 To uninstall, turn off **Start iris at login**, quit iris (`/Applications/iris.app/Contents/MacOS/iris --quit`), and delete `/Applications/iris.app`.
 
+The app bundle contains `Contents/MacOS/ffmpeg` and its notices under `Contents/Resources/ffmpeg`.
+
 ### First Start on macOS
 
 `iris.app` has an ad-hoc code signature and is not notarized. macOS quarantines an `iris.app` copied from a disk image that a web browser downloaded, and Gatekeeper blocks its first start with a dialog stating that Apple could not verify the app. To open it:
@@ -171,6 +173,7 @@ sudo apt install ./iris-<ver>-linux-<arch>.deb
 
 Installed files:
 - Binary: `/usr/bin/iris`
+- FFmpeg runtime: `/usr/lib/iris/ffmpeg`
 - Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
 - Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --daemon`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
@@ -195,6 +198,7 @@ sudo dnf install ./iris-<ver>-linux-<arch>.rpm
 
 Installed files:
 - Binary: `/usr/bin/iris`
+- FFmpeg runtime: `/usr/lib64/iris/ffmpeg`
 - Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
 - Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --daemon`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
@@ -211,7 +215,7 @@ sudo dnf remove iris
 
 Download `iris-<ver>-linux-<arch>.AppImage`.
 
-The AppImage holds the iris executable and uses the system's libraries: PipeWire (`libpipewire-0.3`), xkbcommon and xkbcommon-x11, XCB, fontconfig, the Wayland client library, the Vulkan loader, EGL, and GLES 2, the libraries the deb depends on. It runs iris with the environment it was started with and adds no `LD_LIBRARY_PATH`, `PATH`, or `XDG_DATA_DIRS` entry, so iris and the programs it starts load libraries from the system's library path. It mounts itself with FUSE through `fusermount3`, from the `fuse3` package. Without FUSE, run it with `--appimage-extract-and-run`.
+The AppImage holds the iris and FFmpeg executables and uses the system's other libraries: PulseAudio (`libpulse`), zlib, PipeWire (`libpipewire-0.3`), xkbcommon and xkbcommon-x11, XCB, fontconfig, the Wayland client library, the Vulkan loader, EGL, and GLES 2, the libraries the deb depends on. It runs iris with the environment it was started with and adds no `LD_LIBRARY_PATH`, `PATH`, or `XDG_DATA_DIRS` entry, so iris and the programs it starts load libraries from the system's library path. It mounts itself with FUSE through `fusermount3`, from the `fuse3` package. Without FUSE, run it with `--appimage-extract-and-run`.
 
 Set execution permissions and run:
 
@@ -228,16 +232,11 @@ To start the AppImage at login, turn on **Start iris at login** in the settings 
 
 ## Runtime Tools
 
-iris searches for external tool binaries in directories listed in `PATH`. On macOS, iris also inspects Homebrew and MacPorts directories (`/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`). On Windows, iris inspects user and machine `Path` values in the registry and default Tesseract directories (`%ProgramFiles%\Tesseract-OCR`, `%LOCALAPPDATA%\Programs\Tesseract-OCR`).
+For FFmpeg, iris searches a package's own runtime directory before `PATH`. Other tools use `PATH` first. On macOS, iris then inspects Homebrew and MacPorts directories (`/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`). On Windows, it also inspects user and machine `Path` values in the registry and default Tesseract directories (`%ProgramFiles%\Tesseract-OCR`, `%LOCALAPPDATA%\Programs\Tesseract-OCR`).
 
 ### ffmpeg
 
-`ffmpeg` is required for video recording across all platforms and for probing NVIDIA NVENC encoder availability.
-
-Installation instructions:
-- Linux: `sudo apt install ffmpeg` on Debian and Ubuntu, `sudo dnf install ffmpeg-free` on Fedora. The deb recommends `ffmpeg` and the rpm recommends `/usr/bin/ffmpeg`; `apt` and `dnf` install recommended packages by default. The AppImage does not include ffmpeg.
-- macOS: `brew install ffmpeg`
-- Windows: `winget install Gyan.FFmpeg`
+Every release package includes `ffmpeg` for video recording and for probing NVIDIA NVENC encoder availability. No separate installation is needed. A source build resolves `ffmpeg` from `PATH`.
 
 ### tesseract
 

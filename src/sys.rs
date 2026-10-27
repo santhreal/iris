@@ -6,6 +6,7 @@ pub mod capture;
 #[cfg(target_os = "linux")]
 mod clipboard;
 pub mod dragcopy;
+pub mod exe;
 #[cfg(target_os = "macos")]
 pub mod objc;
 pub mod record;

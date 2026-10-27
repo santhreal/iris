@@ -92,19 +92,22 @@ deb and rpm builds fail on it.
 ## Build scripts
 Each script writes its asset and the `.sha256` sidecar to `--out`. No
 script signs. `--version` defaults to the Cargo.toml version.
-`--arch` defaults to the architecture of the `--bin` executable (ELF
-or PE); an `--arch` the executable is not built for fails. The deb,
-rpm, AppImage, portable zip and DMG hold directories and executables
-at mode 0755 and other files at 0644, whatever the caller's umask.
+`--ffmpeg` names a verified runtime directory holding `ffmpeg` or
+`ffmpeg.exe` and `licenses/`; every executable package builder requires
+it. `--arch` defaults to the architecture of the `--bin` executable
+(ELF or PE); an `--arch` either executable is not built for fails. The
+deb, rpm, AppImage, portable zip and DMG hold directories and
+executables at mode 0755 and other files at 0644, whatever the caller's
+umask.
 
 | Script | Arguments |
 |--------|-----------|
-| `packaging/linux/build_deb.sh` | `--bin <path> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]` |
-| `packaging/linux/build_rpm.sh` | `--bin <path> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]` |
-| `packaging/linux/build_appimage.sh` | `--bin <path> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha] [--appimagetool <path>]` |
-| `packaging/windows/build_installer.sh` | `--bin <path> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]`, or `--check [--version <ver>] [--arch x86_64\|aarch64]` |
-| `packaging/windows/build_portable.sh` | `--bin <path> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]` |
-| `packaging/macos/make_app.sh` | `--bin <path> --out <dir> [--version <ver>]` (writes `iris.app`, no sidecar) |
+| `packaging/linux/build_deb.sh` | `--bin <path> --ffmpeg <dir> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]` |
+| `packaging/linux/build_rpm.sh` | `--bin <path> --ffmpeg <dir> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]` |
+| `packaging/linux/build_appimage.sh` | `--bin <path> --ffmpeg <dir> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha] [--appimagetool <path>]` |
+| `packaging/windows/build_installer.sh` | `--bin <path> --ffmpeg <dir> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]`, or `--check [--version <ver>] [--arch x86_64\|aarch64]` |
+| `packaging/windows/build_portable.sh` | `--bin <path> --ffmpeg <dir> --out <dir> [--version <ver>] [--arch x86_64\|aarch64] [--skip-sha]` |
+| `packaging/macos/make_app.sh` | `--bin <path> --ffmpeg <dir> --out <dir> [--version <ver>]` (writes `iris.app`, no sidecar) |
 | `packaging/macos/make_dmg.sh` | `--app <path> --out <dir> [--version <ver>] [--skip-sha]` |
 
 `build_appimage.sh` downloads two tools, each a tagged release checked
@@ -121,6 +124,29 @@ To move a pin, download the new files, verify each runtime against its
 570C77ACEA40C0F1B758902CBF96CCA56490F695), and change the version and
 every hash in `build_appimage.sh` together.
 
+## FFmpeg runtime
+
+Every package ships FFmpeg and requires no external FFmpeg
+installation. `packaging/linux/build_ffmpeg.sh --out <dir>` builds the Linux
+runtime from pinned FFmpeg, x264, libvpx, Opus, and NVENC header
+sources. x264, libvpx, and Opus are static; PulseAudio and zlib are
+declared system libraries. `packaging/macos/build_ffmpeg.sh --out
+<dir>` builds a static runtime from pinned sources on a native arm64
+or x86_64 Mac. The package workflow builds and checks both Mac
+architectures and combines them with `lipo`.
+`packaging/windows/build_ffmpeg.sh --arch x86_64|aarch64 --out
+<dir>` cross-builds the Windows runtime on Linux from the same pinned
+sources plus zlib, with a pinned LLVM-MinGW toolchain. The package
+workflow runs the resulting executable natively on each Windows
+architecture before packaging it.
+
+Run `packaging/check_ffmpeg.sh <ffmpeg path> linux|macos|windows` on
+the build host and on the installed or extracted package. It rejects
+`nonfree` builds, checks the encoders and capture devices iris uses,
+and encodes and decodes real Matroska, MP4, WebM, and GIF files. Each runtime
+directory includes upstream notices and `FFMPEG-SOURCE.txt`, which
+records source and build provenance.
+
 ## License notices
 iris is MIT OR Apache-2.0. The binary embeds the Inter font
 (`assets/fonts/Inter-*.ttf`), licensed under the SIL Open Font License
@@ -135,29 +161,40 @@ iris is MIT OR Apache-2.0. The binary embeds the Inter font
 - Windows portable zip: `iris\` beside `iris.exe`
 - macOS: `iris.app/Contents/Resources/`
 
+FFmpeg and its notices ship at:
+- deb: `/usr/lib/iris/ffmpeg` and `/usr/share/doc/iris/ffmpeg/`
+- rpm: `%{_libdir}/iris/ffmpeg` and `%{_licensedir}/iris/ffmpeg/`
+- AppImage: `usr/bin/ffmpeg` and `usr/share/doc/iris/ffmpeg/`
+- Windows: `ffmpeg.exe` beside `iris.exe` and `licenses\ffmpeg\`
+- macOS: `Contents/MacOS/ffmpeg` and `Contents/Resources/ffmpeg/`
+
 ## Install layout
-- Windows: per-user, `%LOCALAPPDATA%\Programs\iris\iris.exe` on x86_64
-  and ARM64; Start Menu shortcut; autostart via `HKCU\...\Run` value
+- Windows: per-user, `%LOCALAPPDATA%\Programs\iris\iris.exe` and
+  `ffmpeg.exe` beside it on x86_64 and ARM64; Start Menu shortcut; autostart via `HKCU\...\Run` value
   `iris` = `"...\iris.exe" --daemon`, written on a first install and
   rewritten on an upgrade only when it exists. The installer writes
   HKCU in the native (64-bit) registry view. The ARM64 installer stops
   on a PC that is not ARM64; the x86_64 installer stops on a PC that is
   neither x64 nor ARM64. Uninstaller removes files, shortcuts, the Run
   value.
-- Windows portable: `iris\iris.exe` wherever the zip is unpacked; no
+- Windows portable: `iris\iris.exe` and `iris\ffmpeg.exe` wherever the
+  zip is unpacked; no
   shortcut, no Uninstall key, and no Run value until Start at login
   writes one. Delete the folder to remove it.
-- macOS: `/Applications/iris.app`; autostart via a LaunchAgent
+- macOS: `/Applications/iris.app`, with `Contents/MacOS/ffmpeg`;
+  autostart via a LaunchAgent
   `~/Library/LaunchAgents/dev.iris.app.plist` running
   `iris --daemon`, written by Settings' Start at login.
-- Linux (deb/rpm): `/usr/bin/iris`; `dev.iris.app.desktop` in
+- Linux (deb/rpm): `/usr/bin/iris`; FFmpeg at `/usr/lib/iris/ffmpeg`
+  for deb or `%{_libdir}/iris/ffmpeg` for rpm;
+  `dev.iris.app.desktop` in
   `/usr/share/applications`; icon in
   `/usr/share/icons/hicolor/*/apps/iris.png`; autostart via
   `/etc/xdg/autostart/iris-autostart.desktop` (XDG autostart,
   `Exec=iris --daemon`).
 - Linux (AppImage): one file, wherever it is kept. Its `AppRun` runs
-  `usr/bin/iris` from the mount with the environment it was given:
-  the AppImage bundles no libraries, programs or data, and sets no
+  `usr/bin/iris` from the mount with the environment it was given.
+  FFmpeg is `usr/bin/ffmpeg` beside iris. AppRun sets no
   `LD_LIBRARY_PATH`, `PATH` or `XDG_DATA_DIRS` entry. No desktop entry
   and no autostart until Start at login writes one.
 - Start at login (Settings) reads and writes the account's entry:
@@ -190,10 +227,12 @@ iris is MIT OR Apache-2.0. The binary embeds the Inter font
   update before the daemon stops; the download is deleted. An
   installed Windows iris
   (uninstall.exe beside iris.exe) starts the NSIS installer with
-  `/S /RUN`: it waits for iris.exe to be free, replaces it, and starts
-  iris. A portable Windows iris unpacks the portable zip beside itself,
-  renames the running iris.exe to iris.exe.old, moves the new one in,
-  and starts it; the daemon deletes iris.exe.old at its next start.
+  `/S /RUN`: it waits for iris.exe and ffmpeg.exe to be free, replaces
+  the payload, and starts iris. A portable Windows iris unpacks the
+  portable zip beside itself, replaces every packaged file with
+  rollback on failure, renames the running iris.exe to iris.exe.old
+  last, and starts it; the daemon deletes iris.exe.old and the staging
+  directory at its next start.
   macOS mounts the DMG and swaps its iris.app for the bundle iris runs
   from in one rename; Linux replaces the AppImage file at `$APPIMAGE`
   when iris runs from inside `$APPDIR`, its mount. A deb or rpm

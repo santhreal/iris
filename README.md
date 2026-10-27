@@ -24,7 +24,7 @@ Download installers and binaries from [Releases](https://github.com/santhreal/ir
 - **Linux**: Install `iris-<ver>-linux-<arch>.deb` on Debian/Ubuntu, `iris-<ver>-linux-<arch>.rpm` on Fedora/RHEL, or run `iris-<ver>-linux-<arch>.AppImage`, with `<arch>` `x86_64` or `aarch64`.
 - **Source**: `cargo build --release --bin iris`. [Building](docs/building.md) lists the build dependencies per platform.
 
-Recording requires `ffmpeg`.
+Release packages include FFmpeg. Source builds use `ffmpeg` from `PATH`.
 
 ![Annotation Editor](docs/images/editor.png)
 

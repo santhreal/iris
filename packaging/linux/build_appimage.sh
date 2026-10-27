@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # build_appimage.sh: builds the AppImage of iris with appimagetool.
 #
-#   packaging/linux/build_appimage.sh --bin <path> --out <dir>
+#   packaging/linux/build_appimage.sh --bin <path> --ffmpeg <dir> --out <dir>
 #       [--version <ver>] [--arch x86_64|aarch64] [--skip-sha]
 #       [--appimagetool <path>]
 #
 #   --bin <path>           the iris executable to package
-#   --out <dir>            the directory the AppImage is written to
+#   --ffmpeg <dir>        runtime from build_ffmpeg.sh (ffmpeg + licenses/)
+#   --out <dir>           the directory the AppImage is written to
 #   --version <ver>        the iris version (default: Cargo.toml)
 #   --arch <arch>          x86_64 or aarch64 (default: the
 #                          executable's); fails when the executable is
@@ -31,6 +32,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$REPO_ROOT/packaging/lib.sh"
 
 IRIS_BIN=""
+FFMPEG_DIR=""
 OUT_DIR=""
 VERSION=""
 ARCH=""
@@ -39,6 +41,7 @@ APPIMAGETOOL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin) IRIS_BIN=${2:?--bin needs a path}; shift 2 ;;
+    --ffmpeg) FFMPEG_DIR=${2:?--ffmpeg needs a directory}; shift 2 ;;
     --out) OUT_DIR=${2:?--out needs a directory}; shift 2 ;;
     --version) VERSION=${2:?--version needs a version}; shift 2 ;;
     --arch) ARCH=${2:?--arch needs x86_64 or aarch64}; shift 2 ;;
@@ -48,8 +51,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Error: unknown argument $1 (see --help)" >&2; exit 2 ;;
   esac
 done
-if [[ -z "$IRIS_BIN" || -z "$OUT_DIR" ]]; then
-  echo "Error: --bin and --out are required (see --help)" >&2
+if [[ -z "$IRIS_BIN" || -z "$FFMPEG_DIR" || -z "$OUT_DIR" ]]; then
+  echo "Error: --bin, --ffmpeg, and --out are required (see --help)" >&2
   exit 2
 fi
 if [[ ! -f "$IRIS_BIN" ]]; then
@@ -59,6 +62,8 @@ fi
 
 VERSION=${VERSION:-$(iris_cargo_version "$REPO_ROOT")}
 ARCH=$(iris_resolve_arch "$IRIS_BIN" "$ARCH")
+FFMPEG_BIN=$(iris_ffmpeg_bin "$FFMPEG_DIR")
+iris_resolve_arch "$FFMPEG_BIN" "$ARCH" >/dev/null
 
 mkdir -p "$OUT_DIR"
 APPIMAGE_NAME="iris-${VERSION}-linux-${ARCH}.AppImage"
@@ -129,14 +134,16 @@ fetch_pinned "https://github.com/AppImage/type2-runtime/releases/download/$RUNTI
 
 APPDIR="$TMP_DIR/iris.AppDir"
 DOC_DIR="$APPDIR/usr/share/doc/iris"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/metainfo" "$DOC_DIR"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/metainfo" "$DOC_DIR/ffmpeg"
 install -m 0755 "$IRIS_BIN" "$APPDIR/usr/bin/iris"
+install -m 0755 "$FFMPEG_BIN" "$APPDIR/usr/bin/ffmpeg"
+install -m 0644 "$FFMPEG_DIR/licenses/"* "$DOC_DIR/ffmpeg/"
 install -m 0755 "$SCRIPT_DIR/AppRun" "$APPDIR/AppRun"
 install -m 0644 "$SCRIPT_DIR/dev.iris.app.desktop" "$APPDIR/"
 install -m 0644 "$SCRIPT_DIR/dev.iris.app.desktop" "$APPDIR/usr/share/applications/"
 install -m 0644 "$SCRIPT_DIR/dev.iris.app.metainfo.xml" "$APPDIR/usr/share/metainfo/"
 iris_license_files "$REPO_ROOT" "$DOC_DIR"
-chmod 0644 "$DOC_DIR"/*
+chmod 0644 "$DOC_DIR/LICENSE-MIT" "$DOC_DIR/LICENSE-APACHE" "$DOC_DIR/Inter-OFL.txt"
 
 install -m 0644 "$REPO_ROOT/packaging/icons/iris-256.png" "$APPDIR/iris.png"
 ln -s iris.png "$APPDIR/.DirIcon"

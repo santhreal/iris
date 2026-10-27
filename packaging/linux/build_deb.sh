@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # build_deb.sh: builds the Debian package of iris.
 #
-#   packaging/linux/build_deb.sh --bin <path> --out <dir>
+#   packaging/linux/build_deb.sh --bin <path> --ffmpeg <dir> --out <dir>
 #       [--version <ver>] [--arch x86_64|aarch64] [--skip-sha]
 #
 #   --bin <path>      the iris executable to package
+#   --ffmpeg <dir>    runtime from build_ffmpeg.sh (ffmpeg + licenses/)
 #   --out <dir>       the directory the package is written to
 #   --version <ver>   the iris version (default: Cargo.toml)
 #   --arch <arch>     x86_64 or aarch64 (default: the executable's);
@@ -25,6 +26,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$REPO_ROOT/packaging/lib.sh"
 
 IRIS_BIN=""
+FFMPEG_DIR=""
 OUT_DIR=""
 VERSION=""
 ARCH=""
@@ -32,6 +34,7 @@ GEN_SHA=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin) IRIS_BIN=${2:?--bin needs a path}; shift 2 ;;
+    --ffmpeg) FFMPEG_DIR=${2:?--ffmpeg needs a directory}; shift 2 ;;
     --out) OUT_DIR=${2:?--out needs a directory}; shift 2 ;;
     --version) VERSION=${2:?--version needs a version}; shift 2 ;;
     --arch) ARCH=${2:?--arch needs x86_64 or aarch64}; shift 2 ;;
@@ -40,8 +43,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Error: unknown argument $1 (see --help)" >&2; exit 2 ;;
   esac
 done
-if [[ -z "$IRIS_BIN" || -z "$OUT_DIR" ]]; then
-  echo "Error: --bin and --out are required (see --help)" >&2
+if [[ -z "$IRIS_BIN" || -z "$FFMPEG_DIR" || -z "$OUT_DIR" ]]; then
+  echo "Error: --bin, --ffmpeg, and --out are required (see --help)" >&2
   exit 2
 fi
 if [[ ! -f "$IRIS_BIN" ]]; then
@@ -56,6 +59,8 @@ case "$ARCH" in
   x86_64) DEB_ARCH=amd64 ;;
   aarch64) DEB_ARCH=arm64 ;;
 esac
+FFMPEG_BIN=$(iris_ffmpeg_bin "$FFMPEG_DIR")
+iris_resolve_arch "$FFMPEG_BIN" "$ARCH" >/dev/null
 
 for tool in dpkg-deb readelf; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -64,13 +69,13 @@ for tool in dpkg-deb readelf; do
   fi
 done
 
-# The newest glibc symbol version the binary requires (weak references
-# excepted) is the oldest libc6 it runs on.
-GLIBC_MIN=$(readelf -V --wide "$IRIS_BIN" \
+# The newest glibc symbol version either executable requires (weak
+# references excepted) is the oldest libc6 the package runs on.
+GLIBC_MIN=$(readelf -V --wide "$IRIS_BIN" "$FFMPEG_BIN" \
   | grep -oE 'Name: GLIBC_[0-9.]+ +Flags: none' \
   | grep -oE '[0-9]+\.[0-9.]+' | sort -V | tail -n1 || true)
 if [[ -z "$GLIBC_MIN" ]]; then
-  echo "Error: no glibc version requirement found in $IRIS_BIN" >&2
+  echo "Error: no glibc version requirement found in $IRIS_BIN or $FFMPEG_BIN" >&2
   exit 1
 fi
 
@@ -83,10 +88,13 @@ TMP_DIR=$(iris_staging_dir "$REPO_ROOT" deb)
 trap 'rm -rf "$TMP_DIR"' EXIT
 PKG_DIR="$TMP_DIR/pkg"
 DOC_DIR="$PKG_DIR/usr/share/doc/iris"
-mkdir -p "$PKG_DIR/DEBIAN" "$PKG_DIR/usr/bin" "$PKG_DIR/usr/share/applications" \
-  "$PKG_DIR/usr/share/metainfo" "$PKG_DIR/etc/xdg/autostart" "$DOC_DIR"
+mkdir -p "$PKG_DIR/DEBIAN" "$PKG_DIR/usr/bin" "$PKG_DIR/usr/lib/iris" \
+  "$PKG_DIR/usr/share/applications" "$PKG_DIR/usr/share/metainfo" \
+  "$PKG_DIR/etc/xdg/autostart" "$DOC_DIR/ffmpeg"
 
 install -m 0755 "$IRIS_BIN" "$PKG_DIR/usr/bin/iris"
+install -m 0755 "$FFMPEG_BIN" "$PKG_DIR/usr/lib/iris/ffmpeg"
+install -m 0644 "$FFMPEG_DIR/licenses/"* "$DOC_DIR/ffmpeg/"
 install -m 0644 "$SCRIPT_DIR/dev.iris.app.desktop" "$PKG_DIR/usr/share/applications/"
 install -m 0644 "$SCRIPT_DIR/iris-autostart.desktop" "$PKG_DIR/etc/xdg/autostart/"
 install -m 0644 "$SCRIPT_DIR/dev.iris.app.metainfo.xml" "$PKG_DIR/usr/share/metainfo/"
@@ -113,6 +121,10 @@ Files: assets/fonts/Inter-*
 Copyright: 2016 The Inter Project Authors (https://github.com/rsms/inter)
 License: OFL-1.1
 
+Files: usr/lib/iris/ffmpeg
+Copyright: 2000-2026 the FFmpeg developers and bundled library authors
+License: GPL-2.0-or-later and BSD-3-Clause and MIT
+
 License: MIT
 EOF
   license_text "$REPO_ROOT/LICENSE-MIT"
@@ -122,6 +134,12 @@ EOF
   echo
   echo "License: OFL-1.1"
   license_text "$REPO_ROOT/assets/fonts/Inter-OFL.txt"
+  echo
+  echo "License: GPL-2.0-or-later"
+  license_text "$FFMPEG_DIR/licenses/FFmpeg.txt"
+  echo
+  echo "License: BSD-3-Clause"
+  license_text "$FFMPEG_DIR/licenses/libvpx.txt"
 } >"$DOC_DIR/copyright"
 chmod 0644 "$DOC_DIR/copyright"
 
@@ -135,16 +153,16 @@ Architecture: ${DEB_ARCH}
 Maintainer: Santh <64453045+santhreal@users.noreply.github.com>
 Installed-Size: ${INSTALLED_SIZE}
 Homepage: https://github.com/santhreal/iris
-Depends: libc6 (>= ${GLIBC_MIN}), libpipewire-0.3-0 (>= 0.3.0), libxkbcommon0, libxkbcommon-x11-0, libxcb1, libfontconfig1, libwayland-client0, libvulkan1, libegl1, libgles2
-Recommends: ffmpeg, pkexec | policykit-1
+Depends: libc6 (>= ${GLIBC_MIN}), libgcc-s1, libpulse0, zlib1g, libpipewire-0.3-0 (>= 0.3.0), libxkbcommon0, libxkbcommon-x11-0, libxcb1, libfontconfig1, libwayland-client0, libvulkan1, libegl1, libgles2
+Recommends: pkexec | policykit-1
 Suggests: tesseract-ocr
 Description: Screenshot and screen-recording utility
  iris is a screenshot and screen-recording tool for X11 and Wayland. A
  background daemon holds the global hotkeys and the tray icon. A capture
  freezes the screen for region selection, saves a PNG, copies it to the
  clipboard, and shows a thumbnail toast that opens the annotation editor.
- Recording runs ffmpeg; the text copy in the toast and the editor runs
- tesseract.
+ Recording uses the bundled FFmpeg; the text copy in the toast and the
+ editor runs tesseract.
 EOF
 chmod 0644 "$PKG_DIR/DEBIAN/control"
 install -m 0755 "$SCRIPT_DIR/deb/postinst" "$SCRIPT_DIR/deb/postrm" "$PKG_DIR/DEBIAN/"

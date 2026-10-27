@@ -147,6 +147,22 @@ fn fixture(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     path
 }
 
+/// A runtime directory in the form the platform build_ffmpeg.sh scripts
+/// produce. `name` is ffmpeg on Unix and ffmpeg.exe on Windows.
+fn ffmpeg_fixture(dir: &Path, name: &str, bytes: &[u8], notices: &[&str]) -> PathBuf {
+    let root = dir.join("ffmpeg-runtime");
+    let licenses = root.join("licenses");
+    std::fs::create_dir_all(&licenses).expect("mkdir FFmpeg licenses");
+    fixture(&root, name, bytes);
+    for file in notices {
+        let path = licenses.join(file);
+        std::fs::write(&path, format!("{file}\n")).expect("write FFmpeg notice");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod FFmpeg notice");
+    }
+    root
+}
+
 #[test]
 fn version_forms() {
     require(&["bash", "sed", "dpkg"]);
@@ -368,6 +384,12 @@ fn every_script_that_packages_an_executable_enforces_arch() {
     let x86 = fixture(dir.path(), "iris", &elf(EM_X86_64));
     let arm = fixture(dir.path(), "iris.exe", &pe(PE_ARM64));
     let out = dir.path().join("out");
+    let ffmpeg = ffmpeg_fixture(
+        dir.path(),
+        "ffmpeg",
+        &elf(EM_X86_64),
+        &["FFmpeg.txt", "FFMPEG-SOURCE.txt"],
+    );
     let cases = [
         (
             &x86,
@@ -399,6 +421,8 @@ fn every_script_that_packages_an_executable_enforces_arch() {
                 &[
                     OsStr::new("--bin"),
                     bin.as_os_str(),
+                    OsStr::new("--ffmpeg"),
+                    ffmpeg.as_os_str(),
                     OsStr::new("--out"),
                     out.as_os_str(),
                     OsStr::new("--arch"),
@@ -499,15 +523,36 @@ fn deb_modes_version_and_sidecar() {
         "true",
     ]);
     let arch = std::env::consts::ARCH;
+    let machine = match arch {
+        "x86_64" => EM_X86_64,
+        "aarch64" => EM_AARCH64,
+        other => panic!("no iris package for {other}"),
+    };
     let name = format!("iris-0.2.0-beta.1-linux-{arch}.deb");
     for umask in UMASKS {
         let dir = tempfile::tempdir().expect("tempdir");
+        let ffmpeg = ffmpeg_fixture(
+            dir.path(),
+            "ffmpeg",
+            &elf(machine),
+            &[
+                "FFmpeg.txt",
+                "FFmpeg-LICENSE.txt",
+                "FFMPEG-SOURCE.txt",
+                "x264.txt",
+                "libvpx.txt",
+                "Opus.txt",
+                "nv-codec-headers.txt",
+            ],
+        );
         let run = script(
             umask,
             "packaging/linux/build_deb.sh",
             &[
                 OsStr::new("--bin"),
                 OsStr::new("/usr/bin/true"),
+                OsStr::new("--ffmpeg"),
+                ffmpeg.as_os_str(),
                 OsStr::new("--out"),
                 dir.path().as_os_str(),
                 OsStr::new("--version"),
@@ -549,7 +594,7 @@ fn deb_modes_version_and_sidecar() {
         for (path, mode) in &entries {
             let want = if path.ends_with('/') {
                 "drwxr-xr-x"
-            } else if path == "./usr/bin/iris" {
+            } else if path == "./usr/bin/iris" || path == "./usr/lib/iris/ffmpeg" {
                 "-rwxr-xr-x"
             } else {
                 "-rw-r--r--"
@@ -558,7 +603,15 @@ fn deb_modes_version_and_sidecar() {
         }
         let mut want = vec![
             "./usr/bin/iris".to_string(),
+            "./usr/lib/iris/ffmpeg".to_string(),
             "./usr/share/doc/iris/copyright".to_string(),
+            "./usr/share/doc/iris/ffmpeg/FFmpeg.txt".to_string(),
+            "./usr/share/doc/iris/ffmpeg/FFmpeg-LICENSE.txt".to_string(),
+            "./usr/share/doc/iris/ffmpeg/FFMPEG-SOURCE.txt".to_string(),
+            "./usr/share/doc/iris/ffmpeg/x264.txt".to_string(),
+            "./usr/share/doc/iris/ffmpeg/libvpx.txt".to_string(),
+            "./usr/share/doc/iris/ffmpeg/Opus.txt".to_string(),
+            "./usr/share/doc/iris/ffmpeg/nv-codec-headers.txt".to_string(),
             "./usr/share/applications/dev.iris.app.desktop".to_string(),
             "./usr/share/metainfo/dev.iris.app.metainfo.xml".to_string(),
             "./etc/xdg/autostart/iris-autostart.desktop".to_string(),
@@ -626,18 +679,62 @@ fn portable_zip_modes() {
     let want = BTreeMap::from([
         ("iris/".to_string(), 0o40755),
         ("iris/iris.exe".to_string(), 0o100755),
+        ("iris/ffmpeg.exe".to_string(), 0o100755),
         ("iris/LICENSE-MIT".to_string(), 0o100644),
         ("iris/LICENSE-APACHE".to_string(), 0o100644),
         ("iris/Inter-OFL.txt".to_string(), 0o100644),
+        ("iris/licenses/".to_string(), 0o40755),
+        ("iris/licenses/ffmpeg/".to_string(), 0o40755),
+        ("iris/licenses/ffmpeg/FFmpeg.txt".to_string(), 0o100644),
+        (
+            "iris/licenses/ffmpeg/FFmpeg-LICENSE.txt".to_string(),
+            0o100644,
+        ),
+        (
+            "iris/licenses/ffmpeg/FFMPEG-SOURCE.txt".to_string(),
+            0o100644,
+        ),
+        ("iris/licenses/ffmpeg/x264.txt".to_string(), 0o100644),
+        ("iris/licenses/ffmpeg/libvpx.txt".to_string(), 0o100644),
+        ("iris/licenses/ffmpeg/Opus.txt".to_string(), 0o100644),
+        ("iris/licenses/ffmpeg/zlib.txt".to_string(), 0o100644),
+        (
+            "iris/licenses/ffmpeg/nv-codec-headers.txt".to_string(),
+            0o100644,
+        ),
+        ("iris/licenses/ffmpeg/LLVM.txt".to_string(), 0o100644),
+        (
+            "iris/licenses/ffmpeg/mingw-w64-runtime.txt".to_string(),
+            0o100644,
+        ),
     ]);
     for umask in UMASKS {
         let dir = tempfile::tempdir().expect("tempdir");
+        let ffmpeg = ffmpeg_fixture(
+            dir.path(),
+            "ffmpeg.exe",
+            &pe(PE_AMD64),
+            &[
+                "FFmpeg.txt",
+                "FFmpeg-LICENSE.txt",
+                "FFMPEG-SOURCE.txt",
+                "x264.txt",
+                "libvpx.txt",
+                "Opus.txt",
+                "zlib.txt",
+                "nv-codec-headers.txt",
+                "LLVM.txt",
+                "mingw-w64-runtime.txt",
+            ],
+        );
         let run = script(
             umask,
             "packaging/windows/build_portable.sh",
             &[
                 OsStr::new("--bin"),
                 exe.as_os_str(),
+                OsStr::new("--ffmpeg"),
+                ffmpeg.as_os_str(),
                 OsStr::new("--out"),
                 dir.path().as_os_str(),
                 OsStr::new("--version"),
@@ -657,6 +754,19 @@ fn app_bundle_modes_and_versions() {
     require(&["bash", "sed", "install", "grep"]);
     let dir = tempfile::tempdir().expect("tempdir");
     let bin = fixture(dir.path(), "iris", b"universal iris\n");
+    let ffmpeg = ffmpeg_fixture(
+        dir.path(),
+        "ffmpeg",
+        b"ffmpeg\n",
+        &[
+            "FFmpeg.txt",
+            "FFmpeg-LICENSE.txt",
+            "FFMPEG-SOURCE.txt",
+            "x264.txt",
+            "libvpx.txt",
+            "Opus.txt",
+        ],
+    );
     let want = BTreeMap::from([
         ("", 0o755),
         ("Contents", 0o755),
@@ -664,7 +774,15 @@ fn app_bundle_modes_and_versions() {
         ("Contents/PkgInfo", 0o644),
         ("Contents/MacOS", 0o755),
         ("Contents/MacOS/iris", 0o755),
+        ("Contents/MacOS/ffmpeg", 0o755),
         ("Contents/Resources", 0o755),
+        ("Contents/Resources/ffmpeg", 0o755),
+        ("Contents/Resources/ffmpeg/FFmpeg.txt", 0o644),
+        ("Contents/Resources/ffmpeg/FFmpeg-LICENSE.txt", 0o644),
+        ("Contents/Resources/ffmpeg/FFMPEG-SOURCE.txt", 0o644),
+        ("Contents/Resources/ffmpeg/x264.txt", 0o644),
+        ("Contents/Resources/ffmpeg/libvpx.txt", 0o644),
+        ("Contents/Resources/ffmpeg/Opus.txt", 0o644),
         ("Contents/Resources/iris.icns", 0o644),
         ("Contents/Resources/LICENSE-MIT", 0o644),
         ("Contents/Resources/LICENSE-APACHE", 0o644),
@@ -678,6 +796,8 @@ fn app_bundle_modes_and_versions() {
             &[
                 OsStr::new("--bin"),
                 bin.as_os_str(),
+                OsStr::new("--ffmpeg"),
+                ffmpeg.as_os_str(),
                 OsStr::new("--out"),
                 out.as_os_str(),
                 OsStr::new("--version"),
@@ -725,6 +845,163 @@ fn app_bundle_modes_and_versions() {
     }
 }
 
+/// WHY: install checks mount this verifier on its own, outside the
+/// repository. Sourcing packaging/lib.sh made it fail before it could
+/// inspect the installed runtime. This runs a relocated copy through
+/// argument/config checks to the first encode and checks staging cleanup.
+/// Real encode/decode behavior is covered by check_ffmpeg.sh itself.
+#[test]
+fn ffmpeg_verifier_runs_outside_the_repository() {
+    require(&["bash"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let script = dir.path().join("check_ffmpeg.sh");
+    std::fs::copy(Path::new(REPO).join("packaging/check_ffmpeg.sh"), &script)
+        .expect("copy verifier");
+    let ffmpeg = fixture(
+        dir.path(),
+        "ffmpeg",
+        b"#!/bin/sh\nif [ \"$1\" = -version ]; then\n  echo 'ffmpeg version test --enable-gpl'\nelif [ \"$2\" = -encoders ]; then\n  printf ' V.....D libx264\\n V.....D libx264rgb\\n V.....D libvpx-vp9\\n V.....D libopus\\n V.....D aac\\n V.....D h264_nvenc\\n'\nelif [ \"$2\" = -devices ]; then\n  printf ' D  pulse\\n'\nelse\n  printf '%s\\n' \"$*\" > \"$FAKE_FFMPEG_LOG\"\n  exit 42\nfi\n",
+    );
+    let log = dir.path().join("ffmpeg-args");
+    let out = Command::new("bash")
+        .arg(&script)
+        .arg(&ffmpeg)
+        .arg("linux")
+        .env("FAKE_FFMPEG_LOG", &log)
+        .current_dir(dir.path())
+        .output()
+        .expect("run relocated verifier");
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        std::fs::read_to_string(log)
+            .expect("first encode args")
+            .contains("-f lavfi"),
+        "the verifier failed before its first encode"
+    );
+    assert_eq!(
+        std::fs::read_dir(dir.path().join(".build-staging"))
+            .expect("staging root")
+            .count(),
+        0,
+        "the verifier left staging files"
+    );
+}
+
+/// WHY: the AppDir has a nested FFmpeg notice directory. A chmod glob
+/// meant for the top-level Iris notices also removed that directory's
+/// search permission, so appimagetool silently omitted every notice.
+/// This assembles the AppDir with a fake packager and checks every mode
+/// and the nested payload. It does not build the AppImage itself.
+#[test]
+fn appimage_appdir_modes_and_ffmpeg_notices() {
+    require(&["bash", "od", "tr", "cut", "find", "sort"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("repo");
+    for file in [
+        "packaging/lib.sh",
+        "packaging/linux/build_appimage.sh",
+        "packaging/linux/AppRun",
+        "packaging/linux/dev.iris.app.desktop",
+        "packaging/linux/dev.iris.app.metainfo.xml",
+        "LICENSE-MIT",
+        "LICENSE-APACHE",
+        "assets/fonts/Inter-OFL.txt",
+    ] {
+        let to = root.join(file);
+        std::fs::create_dir_all(to.parent().expect("parent")).expect("mkdir");
+        std::fs::copy(Path::new(REPO).join(file), &to).expect("copy");
+    }
+    for size in ICON_SIZES {
+        let file = format!("packaging/icons/iris-{size}.png");
+        let to = root.join(&file);
+        std::fs::create_dir_all(to.parent().expect("parent")).expect("mkdir icons");
+        std::fs::copy(Path::new(REPO).join(&file), &to).expect("copy icon");
+    }
+    let bin = fixture(dir.path(), "iris-x86_64", &elf(EM_X86_64));
+    let ffmpeg = ffmpeg_fixture(
+        dir.path(),
+        "ffmpeg",
+        &elf(EM_X86_64),
+        &["FFmpeg.txt", "FFMPEG-SOURCE.txt"],
+    );
+    let shim = dir.path().join("bin");
+    std::fs::create_dir(&shim).expect("mkdir shims");
+    fixture(
+        &shim,
+        "curl",
+        b"#!/bin/sh\nwhile [ $# -gt 1 ]; do [ \"$1\" = -o ] && out=$2; shift; done\necho runtime > \"$out\"\n",
+    );
+    fixture(
+        &shim,
+        "sha256sum",
+        b"#!/bin/sh\ncase \"${1##*/}\" in\nruntime-x86_64) hash=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d ;;\nruntime-aarch64) hash=00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444 ;;\n*) hash=0000000000000000000000000000000000000000000000000000000000000000 ;;\nesac\nprintf '%s  %s\\n' \"$hash\" \"$1\"\n",
+    );
+    let tool = fixture(
+        &shim,
+        "appimagetool",
+        b"#!/bin/sh\nwhile [ $# -gt 2 ]; do shift; done\nappdir=$1\nout=$2\nfind \"$appdir\" -mindepth 1 -printf '%y %m %P\\n' | sort > \"$APPDIR_REPORT\"\n: > \"$out\"\n",
+    );
+    let report = dir.path().join("appdir-modes");
+    let dist = dir.path().join("dist");
+    let path = format!(
+        "{}:{}",
+        shim.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = Command::new("bash")
+        .arg(root.join("packaging/linux/build_appimage.sh"))
+        .arg("--bin")
+        .arg(&bin)
+        .arg("--ffmpeg")
+        .arg(&ffmpeg)
+        .arg("--out")
+        .arg(&dist)
+        .arg("--appimagetool")
+        .arg(&tool)
+        .args(["--version", "0.1.0"])
+        .env("PATH", path)
+        .env("APPDIR_REPORT", &report)
+        .output()
+        .expect("assemble AppDir");
+    assert_success("assemble AppDir", &out);
+
+    let modes: BTreeMap<String, (char, u32)> = std::fs::read_to_string(&report)
+        .expect("read AppDir modes")
+        .lines()
+        .map(|line| {
+            let mut fields = line.split_whitespace();
+            let kind = fields.next().expect("type").chars().next().expect("kind");
+            let mode = u32::from_str_radix(fields.next().expect("mode"), 8).expect("octal");
+            let path = fields.next().expect("path").to_string();
+            assert!(fields.next().is_none(), "unexpected mode line: {line}");
+            (path, (kind, mode))
+        })
+        .collect();
+    for (path, (kind, mode)) in &modes {
+        let want = match kind {
+            'd' => 0o755,
+            'f' if ["AppRun", "usr/bin/iris", "usr/bin/ffmpeg"].contains(&path.as_str()) => 0o755,
+            'f' => 0o644,
+            'l' => continue,
+            other => panic!("unexpected AppDir entry {other} {path}"),
+        };
+        assert_eq!(*mode, want, "{kind} {path}");
+    }
+    for path in [
+        "usr/share/doc/iris/ffmpeg",
+        "usr/share/doc/iris/ffmpeg/FFmpeg.txt",
+        "usr/share/doc/iris/ffmpeg/FFMPEG-SOURCE.txt",
+    ] {
+        assert!(modes.contains_key(path), "AppDir lacks {path}");
+    }
+}
+
 /// WHY: the AppImage embeds the type2-runtime and is assembled by
 /// appimagetool, both downloaded while it builds. They came from the
 /// moving `continuous` releases with no checksum, so a release AppImage
@@ -765,6 +1042,20 @@ fn appimage_tool_downloads_are_pinned() {
     fixture(&riscv, "uname", b"#!/bin/sh\necho riscv64\n");
     let x86 = fixture(dir.path(), "iris-x86_64", &elf(EM_X86_64));
     let arm = fixture(dir.path(), "iris-aarch64", &elf(EM_AARCH64));
+    let ffmpeg_x86 = ffmpeg_fixture(
+        dir.path(),
+        "ffmpeg",
+        &elf(EM_X86_64),
+        &["FFmpeg.txt", "FFMPEG-SOURCE.txt"],
+    );
+    let ffmpeg_arm_root = dir.path().join("ffmpeg-arm");
+    std::fs::create_dir(&ffmpeg_arm_root).expect("mkdir arm runtime");
+    let ffmpeg_arm = ffmpeg_fixture(
+        &ffmpeg_arm_root,
+        "ffmpeg",
+        &elf(EM_AARCH64),
+        &["FFmpeg.txt", "FFMPEG-SOURCE.txt"],
+    );
     let host_path = std::env::var("PATH").unwrap_or_default();
     let dist = dir.path().join("dist");
 
@@ -778,6 +1069,12 @@ fn appimage_tool_downloads_are_pinned() {
         cmd.arg(root.join("packaging/linux/build_appimage.sh"))
             .arg("--bin")
             .arg(bin)
+            .arg("--ffmpeg")
+            .arg(if bin == arm.as_path() {
+                &ffmpeg_arm
+            } else {
+                &ffmpeg_x86
+            })
             .arg("--out")
             .arg(&dist)
             .args(["--version", "0.1.0"]);

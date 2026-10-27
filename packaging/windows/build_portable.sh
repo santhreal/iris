@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # build_portable.sh: builds the portable zip of iris for Windows.
 #
-#   packaging/windows/build_portable.sh --bin <path> --out <dir>
+#   packaging/windows/build_portable.sh --bin <path> --ffmpeg <dir> --out <dir>
 #       [--version <ver>] [--arch x86_64|aarch64] [--skip-sha]
 #
 #   --bin <path>      the iris.exe to package
+#   --ffmpeg <dir>    runtime from build_ffmpeg.sh (ffmpeg.exe + licenses/)
 #   --out <dir>       the directory the zip is written to
 #   --version <ver>   the iris version (default: Cargo.toml)
 #   --arch <arch>     x86_64 or aarch64 (default: iris.exe's); fails
@@ -14,8 +15,8 @@
 # Writes iris-{ver}-windows-{arch}-portable.zip (packaging/CONTRACT.md)
 # and its .sha256 sidecar. The zip holds one directory, iris, with
 # iris.exe (the updater reads iris\iris.exe,
-# src/bin/iris/sys/install/windows.rs), LICENSE-MIT, LICENSE-APACHE,
-# and Inter-OFL.txt.
+# src/bin/iris/sys/install/windows.rs), ffmpeg.exe, license notices,
+# and FFmpeg corresponding-source locations.
 set -euo pipefail
 # Zipped directories are 0755 and files 0644 whatever the caller's umask.
 umask 022
@@ -26,6 +27,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$REPO_ROOT/packaging/lib.sh"
 
 IRIS_BIN=""
+FFMPEG_DIR=""
 OUT_DIR=""
 VERSION=""
 ARCH=""
@@ -33,6 +35,7 @@ GEN_SHA=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin) IRIS_BIN=${2:?--bin needs a path}; shift 2 ;;
+    --ffmpeg) FFMPEG_DIR=${2:?--ffmpeg needs a directory}; shift 2 ;;
     --out) OUT_DIR=${2:?--out needs a directory}; shift 2 ;;
     --version) VERSION=${2:?--version needs a version}; shift 2 ;;
     --arch) ARCH=${2:?--arch needs x86_64 or aarch64}; shift 2 ;;
@@ -41,8 +44,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Error: unknown argument $1 (see --help)" >&2; exit 2 ;;
   esac
 done
-if [[ -z "$IRIS_BIN" || -z "$OUT_DIR" ]]; then
-  echo "Error: --bin and --out are required (see --help)" >&2
+if [[ -z "$IRIS_BIN" || -z "$FFMPEG_DIR" || -z "$OUT_DIR" ]]; then
+  echo "Error: --bin, --ffmpeg, and --out are required (see --help)" >&2
   exit 2
 fi
 if [[ ! -f "$IRIS_BIN" ]]; then
@@ -52,6 +55,8 @@ fi
 
 VERSION=${VERSION:-$(iris_cargo_version "$REPO_ROOT")}
 ARCH=$(iris_resolve_arch "$IRIS_BIN" "$ARCH")
+FFMPEG_BIN=$(iris_ffmpeg_bin "$FFMPEG_DIR" .exe)
+iris_resolve_arch "$FFMPEG_BIN" "$ARCH" >/dev/null
 
 mkdir -p "$OUT_DIR"
 ZIP_NAME="iris-${VERSION}-windows-${ARCH}-portable.zip"
@@ -61,8 +66,10 @@ rm -f "$ZIP_PATH" "$ZIP_PATH.sha256"
 
 STAGING_DIR=$(iris_staging_dir "$REPO_ROOT" portable)
 trap 'rm -rf "$STAGING_DIR"' EXIT
-mkdir "$STAGING_DIR/iris"
+mkdir -p "$STAGING_DIR/iris/licenses/ffmpeg"
 cp "$IRIS_BIN" "$STAGING_DIR/iris/iris.exe"
+cp "$FFMPEG_BIN" "$STAGING_DIR/iris/ffmpeg.exe"
+cp "$FFMPEG_DIR/licenses/"* "$STAGING_DIR/iris/licenses/ffmpeg/"
 iris_license_files "$REPO_ROOT" "$STAGING_DIR/iris"
 
 # The updater unpacks the zip with the tar.exe Windows ships (bsdtar),

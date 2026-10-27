@@ -116,6 +116,67 @@ iris_staging_dir() {
   mktemp -d "$1/.build-staging/$2.XXXXXX"
 }
 
+# iris_sha256_file FILE
+# Prints FILE's lowercase SHA-256.
+iris_sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# iris_fetch_sha256 URL SHA256 FILE
+# Downloads URL to FILE unless a cached FILE already has SHA256. The
+# download goes to a temporary sibling and replaces FILE only after its
+# hash matches. A rejected temporary file is deleted.
+iris_fetch_sha256() {
+  local url=$1 want=$2 file=$3 actual tmp
+  if [[ -f "$file" ]] && [[ "$(iris_sha256_file "$file")" == "$want" ]]; then
+    return 0
+  fi
+  rm -f "$file"
+  mkdir -p "$(dirname "$file")"
+  tmp="$file.part.$$"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp" "$url" || {
+      rm -f "$tmp"
+      return 1
+    }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --tries=3 --timeout=20 -O "$tmp" "$url" || {
+      rm -f "$tmp"
+      return 1
+    }
+  else
+    echo "Error: downloading $url requires curl or wget" >&2
+    return 1
+  fi
+  actual=$(iris_sha256_file "$tmp")
+  if [[ "$actual" != "$want" ]]; then
+    echo "Error: $url has SHA-256 $actual, not the pinned $want; deleted it" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$file"
+}
+
+# iris_ffmpeg_bin DIR [EXE_SUFFIX]
+# Validates a runtime directory from a platform build_ffmpeg.sh script
+# and prints its executable path. Every runtime ships the license and
+# the corresponding-source locations beside the license.
+iris_ffmpeg_bin() {
+  local dir=$1 bin="$1/ffmpeg${2:-}"
+  local file
+  for file in "$bin" "$dir/licenses/FFmpeg.txt" "$dir/licenses/FFMPEG-SOURCE.txt"; do
+    if [[ ! -f "$file" ]]; then
+      echo "Error: FFmpeg runtime $dir lacks ${file#"$dir"/}; run the platform runtime build first" >&2
+      return 1
+    fi
+  done
+  printf '%s\n' "$bin"
+}
+
 # iris_license_files REPO_ROOT DIR
 # Copies the license notices every package ships into DIR:
 # LICENSE-MIT and LICENSE-APACHE (iris), and Inter-OFL.txt (the SIL

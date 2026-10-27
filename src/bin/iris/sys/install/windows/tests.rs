@@ -4,11 +4,48 @@ use std::process::Command;
 use super::*;
 
 /// A zip at `dir\name` holding `entry` (`top\iris.exe`) with `body`,
-/// made with the tar.exe the updater unpacks it with.
+/// made with the tar.exe the updater unpacks it with. `with_runtime`
+/// adds the FFmpeg payload a current package requires.
 fn zip_of(dir: &Path, name: &str, top: &str, body: &[u8]) -> PathBuf {
+    zip_of_parts(dir, name, top, body, true)
+}
+
+fn zip_of_parts(dir: &Path, name: &str, top: &str, body: &[u8], with_runtime: bool) -> PathBuf {
+    zip_of_filtered(dir, name, top, body, with_runtime, None)
+}
+
+fn zip_without(dir: &Path, name: &str, omitted: &str) -> PathBuf {
+    zip_of_filtered(dir, name, ZIP_DIR, b"new", true, Some(omitted))
+}
+
+fn zip_of_filtered(
+    dir: &Path,
+    name: &str,
+    top: &str,
+    body: &[u8],
+    with_runtime: bool,
+    omitted: Option<&str>,
+) -> PathBuf {
     let src = dir.join("src");
+    let _ = std::fs::remove_dir_all(&src);
     std::fs::create_dir_all(src.join(top)).expect("mkdir");
     std::fs::write(src.join(top).join("iris.exe"), body).expect("write");
+    if with_runtime {
+        for required in RUNTIME_PAYLOAD {
+            if Some(required) == omitted {
+                continue;
+            }
+            let path = src.join(top).join(required);
+            std::fs::create_dir_all(path.parent().expect("payload parent")).expect("mkdir payload");
+            if required == "ffmpeg.exe" {
+                let mut ffmpeg = body.to_vec();
+                ffmpeg.extend_from_slice(b"-ffmpeg");
+                std::fs::write(path, ffmpeg).expect("write FFmpeg");
+            } else {
+                std::fs::write(path, body).expect("write notice");
+            }
+        }
+    }
     let zip = dir.join(name);
     let tar =
         Path::new(&std::env::var_os("SystemRoot").expect("SystemRoot")).join(r"System32\tar.exe");
@@ -70,13 +107,82 @@ fn a_portable_swap_puts_the_new_iris_in_place() {
     let zip = zip_of(dir.path(), "new.zip", ZIP_DIR, b"new");
     swap_portable(&zip, &exe).expect("swap");
     assert_eq!(std::fs::read(&exe).expect("read"), b"new");
+    assert_eq!(
+        std::fs::read(exe.with_file_name("ffmpeg.exe")).expect("read FFmpeg"),
+        b"new-ffmpeg"
+    );
+    assert_eq!(
+        std::fs::read(
+            exe.parent()
+                .unwrap()
+                .join("licenses/ffmpeg/FFMPEG-SOURCE.txt")
+        )
+        .expect("read source notice"),
+        b"new"
+    );
     assert_eq!(std::fs::read(aside(&exe)).expect("read"), b"old");
-    assert_eq!(names(exe.parent().unwrap()), ["iris.exe", "iris.exe.old"]);
+    assert_eq!(
+        names(exe.parent().unwrap()),
+        ["ffmpeg.exe", "iris.exe", "iris.exe.old", "licenses"]
+    );
     // A second update replaces the iris.exe.old the first one left.
     let zip = zip_of(dir.path(), "newer.zip", ZIP_DIR, b"newer");
     swap_portable(&zip, &exe).expect("second swap");
     assert_eq!(std::fs::read(&exe).expect("read"), b"newer");
+    assert_eq!(
+        std::fs::read(exe.with_file_name("ffmpeg.exe")).expect("read FFmpeg"),
+        b"newer-ffmpeg"
+    );
+    assert_eq!(
+        std::fs::read(
+            exe.parent()
+                .unwrap()
+                .join("licenses/ffmpeg/FFMPEG-SOURCE.txt")
+        )
+        .expect("read source notice"),
+        b"newer"
+    );
     assert_eq!(std::fs::read(aside(&exe)).expect("read"), b"new");
+}
+
+#[test]
+fn a_payload_failure_restores_the_previous_runtime() {
+    let (dir, exe) = install(b"old");
+    std::fs::write(exe.with_file_name("ffmpeg.exe"), b"old-ffmpeg").expect("write old FFmpeg");
+    // Directory creation for the nested notices fails after ffmpeg.exe
+    // has been replaced. The swap must put the old executable back.
+    std::fs::write(exe.parent().unwrap().join("licenses"), b"not a directory").expect("block");
+    let zip = zip_of(dir.path(), "new.zip", ZIP_DIR, b"new");
+    let error = swap_portable(&zip, &exe).expect_err("blocked license directory");
+    assert!(error.starts_with("update: create "), "{error}");
+    assert_eq!(std::fs::read(&exe).expect("read iris"), b"old");
+    assert_eq!(
+        std::fs::read(exe.with_file_name("ffmpeg.exe")).expect("read FFmpeg"),
+        b"old-ffmpeg"
+    );
+    assert_eq!(
+        std::fs::read(exe.parent().unwrap().join("licenses")).expect("read blocker"),
+        b"not a directory"
+    );
+    assert_eq!(
+        names(exe.parent().unwrap()),
+        ["ffmpeg.exe", "iris.exe", "licenses"]
+    );
+}
+
+#[test]
+fn a_swap_rejects_every_missing_runtime_file() {
+    for required in RUNTIME_PAYLOAD {
+        let (dir, exe) = install(b"old");
+        let zip = zip_without(dir.path(), "new.zip", required);
+        let error = swap_portable(&zip, &exe).expect_err(required);
+        assert!(
+            error.contains(&format!("holds no iris\\{required}")),
+            "{required}: {error}"
+        );
+        assert_eq!(std::fs::read(&exe).expect("read"), b"old");
+        assert_eq!(names(exe.parent().unwrap()), ["iris.exe"]);
+    }
 }
 
 /// The `iris --update` that swaps a portable iris runs the iris.exe it
@@ -99,7 +205,10 @@ fn a_portable_swap_replaces_a_running_iris() {
     running.wait().expect("wait");
     swapped.expect("swap over a running iris.exe");
     assert_eq!(std::fs::read(&exe).expect("read"), b"new");
-    assert_eq!(names(exe.parent().unwrap()), ["iris.exe", "iris.exe.old"]);
+    assert_eq!(
+        names(exe.parent().unwrap()),
+        ["ffmpeg.exe", "iris.exe", "iris.exe.old", "licenses"]
+    );
 }
 
 /// Each zip fails the swap, and the directory holds the old iris.exe
@@ -108,10 +217,12 @@ fn a_portable_swap_replaces_a_running_iris() {
 fn a_swap_that_fails_leaves_the_iris_alone() {
     let (dir, exe) = install(b"old");
     let wrong_dir = zip_of(dir.path(), "wrong.zip", "other", b"new");
+    let incomplete = zip_of_parts(dir.path(), "incomplete.zip", ZIP_DIR, b"new", false);
     let corrupt = dir.path().join("corrupt.zip");
     std::fs::write(&corrupt, b"PK\x03\x04 not a zip").expect("write");
     for (zip, want) in [
         (wrong_dir, "holds no iris\\iris.exe".to_string()),
+        (incomplete, "holds no iris\\ffmpeg.exe".to_string()),
         (
             corrupt.clone(),
             format!("update: unpack {}", corrupt.display()),

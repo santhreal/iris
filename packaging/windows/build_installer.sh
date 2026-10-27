@@ -2,12 +2,13 @@
 # build_installer.sh: builds the NSIS setup program of iris for Windows
 # with makensis and packaging/windows/iris.nsi.
 #
-#   packaging/windows/build_installer.sh --bin <path> --out <dir>
+#   packaging/windows/build_installer.sh --bin <path> --ffmpeg <dir> --out <dir>
 #       [--version <ver>] [--arch x86_64|aarch64] [--skip-sha]
 #   packaging/windows/build_installer.sh --check [--version <ver>]
 #       [--arch x86_64|aarch64]
 #
 #   --bin <path>      the iris.exe to package
+#   --ffmpeg <dir>    runtime from build_ffmpeg.sh (ffmpeg.exe + licenses/)
 #   --out <dir>       the directory the setup program is written to
 #   --version <ver>   the iris version (default: Cargo.toml)
 #   --arch <arch>     x86_64 or aarch64 (default: iris.exe's); fails
@@ -29,6 +30,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$REPO_ROOT/packaging/lib.sh"
 
 IRIS_BIN=""
+FFMPEG_DIR=""
 OUT_DIR=""
 VERSION=""
 ARCH=""
@@ -37,6 +39,7 @@ CHECK=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin) IRIS_BIN=${2:?--bin needs a path}; shift 2 ;;
+    --ffmpeg) FFMPEG_DIR=${2:?--ffmpeg needs a directory}; shift 2 ;;
     --out) OUT_DIR=${2:?--out needs a directory}; shift 2 ;;
     --version) VERSION=${2:?--version needs a version}; shift 2 ;;
     --arch) ARCH=${2:?--arch needs x86_64 or aarch64}; shift 2 ;;
@@ -61,10 +64,16 @@ if [[ "$CHECK" == true ]]; then
   esac
   IRIS_BIN="$STAGING_DIR/iris.exe"
   : >"$IRIS_BIN"
+  FFMPEG_DIR="$STAGING_DIR/ffmpeg"
+  mkdir -p "$FFMPEG_DIR/licenses"
+  : >"$FFMPEG_DIR/ffmpeg.exe"
+  FFMPEG_BIN="$FFMPEG_DIR/ffmpeg.exe"
+  : >"$FFMPEG_DIR/licenses/FFmpeg.txt"
+  : >"$FFMPEG_DIR/licenses/FFMPEG-SOURCE.txt"
   OUT_DIR="$STAGING_DIR"
 else
-  if [[ -z "$IRIS_BIN" || -z "$OUT_DIR" ]]; then
-    echo "Error: --bin and --out are required (see --help)" >&2
+  if [[ -z "$IRIS_BIN" || -z "$FFMPEG_DIR" || -z "$OUT_DIR" ]]; then
+    echo "Error: --bin, --ffmpeg, and --out are required (see --help)" >&2
     exit 2
   fi
   if [[ ! -f "$IRIS_BIN" ]]; then
@@ -72,8 +81,12 @@ else
     exit 1
   fi
   ARCH=$(iris_resolve_arch "$IRIS_BIN" "$ARCH")
-  # makensis resolves a relative File path from the directory of iris.nsi.
+  FFMPEG_BIN=$(iris_ffmpeg_bin "$FFMPEG_DIR" .exe)
+  iris_resolve_arch "$FFMPEG_BIN" "$ARCH" >/dev/null
+  # makensis resolves relative paths from the directory of iris.nsi.
   IRIS_BIN="$(cd "$(dirname "$IRIS_BIN")" && pwd)/$(basename "$IRIS_BIN")"
+  FFMPEG_DIR="$(cd "$FFMPEG_DIR" && pwd)"
+  FFMPEG_BIN=$(iris_ffmpeg_bin "$FFMPEG_DIR" .exe)
 fi
 
 if ! command -v makensis >/dev/null 2>&1; then
@@ -106,6 +119,8 @@ makensis \
   -DVERSION_QUAD="$VERSION_QUAD" \
   -DARCH="$ARCH" \
   -DBINARY_PATH="$(nsis_path "$IRIS_BIN")" \
+  -DFFMPEG_BIN="$(nsis_path "$FFMPEG_BIN")" \
+  -DFFMPEG_DIR="$(nsis_path "$FFMPEG_DIR")" \
   -DLICENSE_DIR="$(nsis_path "$LICENSE_DIR")" \
   -DICON_PATH="$(nsis_path "$REPO_ROOT/packaging/icons/iris.ico")" \
   -DOUTFILE="$(nsis_path "$SETUP_PATH")" \

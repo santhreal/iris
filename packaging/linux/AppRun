@@ -2,9 +2,10 @@
 # AppRun: the entry point of the iris AppImage (packaging/CONTRACT.md).
 #
 # The AppImage runtime runs this from the mounted AppDir with $APPIMAGE
-# and $APPDIR set. iris bundles no libraries, programs or data, so it
-# runs with the environment it was given: iris and every program it
-# starts keep the caller's LD_LIBRARY_PATH, PATH and XDG_DATA_DIRS.
+# and $APPDIR set. iris resolves its bundled FFmpeg beside this
+# executable, so AppRun does not add the mount to LD_LIBRARY_PATH, PATH
+# or XDG_DATA_DIRS. iris and every program it starts keep the caller's
+# environment; no path refers to a mount that exits with the daemon.
 #
 # With no arguments iris starts the background daemon; --home opens the
 # UI.

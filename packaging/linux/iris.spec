@@ -3,7 +3,7 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Screenshot and screen-recording utility
 
-License:        (MIT OR Apache-2.0) AND OFL-1.1
+License:        (MIT OR Apache-2.0) AND OFL-1.1 AND GPL-2.0-or-later AND BSD-3-Clause AND MIT
 URL:            https://github.com/santhreal/iris
 Source0:        %{name}-%{version}.tar.gz
 
@@ -30,26 +30,23 @@ Requires:       libwayland-client
 Requires:       vulkan-loader
 Requires:       libglvnd-egl
 Requires:       libglvnd-gles
-# Recording runs ffmpeg, which Fedora ships as ffmpeg-free and RPM
-# Fusion as ffmpeg: the path dependency accepts either.
-Recommends:     /usr/bin/ffmpeg
+# The bundled FFmpeg links PulseAudio and zlib.
+Requires:       pulseaudio-libs
+Requires:       zlib
 # iris --update runs dnf through pkexec.
 Recommends:     /usr/bin/pkexec
 Suggests:       tesseract
 
 # Disable automatic debuginfo generation when packaging pre-stripped binary
 %global debug_package %{nil}
-# The license files go to /usr/share/licenses/iris on every rpm build
-# host (some default to iris-{version}).
-%global _docdir_fmt %{name}
 
 %description
 iris is a screenshot and screen-recording tool for X11 and Wayland. A
 background daemon holds the global hotkeys and the tray icon. A capture
 freezes the screen for region selection, saves a PNG, copies it to the
 clipboard, and shows a thumbnail toast that opens the annotation editor.
-Recording runs ffmpeg; the text copy in the toast and the editor runs
-tesseract.
+Recording uses the bundled FFmpeg; the text copy in the toast and the
+editor runs tesseract.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -74,6 +71,10 @@ else
     exit 1
 fi
 
+# Install the bundled FFmpeg beside iris's private runtime directory.
+install -d %{buildroot}%{_libdir}/iris
+install -m 0755 ffmpeg %{buildroot}%{_libdir}/iris/ffmpeg
+
 # Install desktop files
 install -d %{buildroot}%{_datadir}/applications
 install -m 0644 packaging/linux/dev.iris.app.desktop %{buildroot}%{_datadir}/applications/dev.iris.app.desktop
@@ -92,6 +93,14 @@ for size in 16 24 32 48 64 128 256 512 1024; do
     install -D -m 0644 packaging/icons/iris-${size}.png %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps/%{name}.png
 done
 
+# Install license notices at their final paths. The special relative
+# %license form strips directory components, so the nested FFmpeg
+# directory uses absolute paths in %files instead.
+install -d %{buildroot}%{_licensedir}/%{name}/ffmpeg
+install -m 0644 LICENSE-MIT LICENSE-APACHE assets/fonts/Inter-OFL.txt \
+    %{buildroot}%{_licensedir}/%{name}/
+install -m 0644 ffmpeg-licenses/* %{buildroot}%{_licensedir}/%{name}/ffmpeg/
+
 %post
 touch --no-create %{_datadir}/icons/hicolor &>/dev/null || :
 update-desktop-database &>/dev/null || :
@@ -108,11 +117,17 @@ gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %files
 %{_bindir}/%{name}
+%{_libdir}/iris/ffmpeg
 %{_datadir}/applications/dev.iris.app.desktop
 %{_sysconfdir}/xdg/autostart/%{name}-autostart.desktop
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 %{_datadir}/metainfo/dev.iris.app.metainfo.xml
-%license LICENSE-MIT LICENSE-APACHE assets/fonts/Inter-OFL.txt
+%dir %{_licensedir}/%{name}
+%dir %{_licensedir}/%{name}/ffmpeg
+%license %{_licensedir}/%{name}/LICENSE-MIT
+%license %{_licensedir}/%{name}/LICENSE-APACHE
+%license %{_licensedir}/%{name}/Inter-OFL.txt
+%license %{_licensedir}/%{name}/ffmpeg/*
 
 %changelog
 * Mon Sep 21 2026 Santh <64453045+santhreal@users.noreply.github.com> - 0.1.0-1

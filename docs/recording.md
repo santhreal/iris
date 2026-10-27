@@ -241,11 +241,19 @@ When a recording finishes or fails, iris displays a corner notice card on the pr
 Before opening any picker, overlay, or indicator chip window, iris executes a pre-flight check for `ffmpeg`.
 
 Search path order:
-1. Directories in the process `PATH` environment variable.
-2. Platform-specific directories:
+1. The runtime bundled with the package:
+   - **deb**: `/usr/lib/iris/ffmpeg`
+   - **rpm**: `/usr/lib64/iris/ffmpeg`
+   - **AppImage**: `ffmpeg` beside `usr/bin/iris` in the mounted AppDir
+   - **macOS**: `iris.app/Contents/MacOS/ffmpeg`
+   - **Windows**: `ffmpeg.exe` beside `iris.exe`
+2. Directories in the process `PATH` environment variable.
+3. Platform-specific directories:
    - **macOS**: `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`.
    - **Windows**: Registry `Path` values under `HKEY_CURRENT_USER\\Environment` and `HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment` (with `%VAR%` variables expanded), and default Tesseract directories.
    - **Linux**: Process `PATH` directories.
+
+Release packages need no separate FFmpeg installation. A source build uses `ffmpeg` from `PATH`.
 
 If `ffmpeg` is not found, iris returns an error with platform installation instructions before opening any recording interface:
 - **Linux**: `ffmpeg is not installed: install the ffmpeg package (ffmpeg-free on Fedora)`
