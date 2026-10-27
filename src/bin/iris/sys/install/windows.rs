@@ -233,7 +233,7 @@ pub fn tidy() {
 }
 
 fn tidy_at(exe: &Path) {
-    if let Ok(staging) = staging(&exe) {
+    if let Ok(staging) = staging(exe) {
         recovery::tidy(&staging, &aside(exe), exe);
     }
 }
