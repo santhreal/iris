@@ -11,7 +11,7 @@ use std::time::Duration;
 /// The shared timing vocabulary. Every duration a surface animates
 /// over comes from here so the app accelerates and settles as one.
 pub const FADE: Duration = Duration::from_millis(140);
-pub const ENTER: Duration = Duration::from_millis(380);
+pub const ENTER: Duration = Duration::from_millis(280);
 
 /// Quadratic ease-out: the default curve for fades and slides.
 pub fn ease_out(t: f32) -> f32 {
@@ -67,7 +67,7 @@ pub struct Spring {
 }
 
 impl Spring {
-    const OMEGA: f32 = 28.0;
+    const OMEGA: f32 = 64.0;
 
     /// Advance toward `target` by `dt` seconds; returns the value.
     pub fn to(&mut self, target: f32, dt: f32) -> f32 {
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn integrator_reverses_mid_flight() {
         let mut s = Spring::default();
-        for _ in 0..30 {
+        for _ in 0..10 {
             s.to(1.0, 1.0 / 120.0);
         }
         let mid = s.value;
@@ -142,13 +142,20 @@ mod tests {
     fn integrator_matches_elapsed_time_across_frame_rates() {
         for dt in [1.0_f32 / 120.0, 1.0 / 60.0, 1.0 / 30.0, 0.05, 0.1, 0.2] {
             let mut s = Spring::default();
-            let steps = (0.2 / dt).round() as usize;
+            let steps = (0.1 / dt).round() as usize;
             for _ in 0..steps {
                 s.to(1.0, dt);
             }
             let elapsed = steps as f32 * dt;
-            let x = 28.0 * elapsed;
-            let expected = 1.0 - (1.0 + x) * (-x).exp();
+            let x = Spring::OMEGA * elapsed;
+            let decay = (-x).exp();
+            let unsnapped = 1.0 - (1.0 + x) * decay;
+            let velocity = Spring::OMEGA * Spring::OMEGA * elapsed * decay;
+            let expected = if (1.0 - unsnapped).abs() < 0.002 && velocity.abs() < 0.02 {
+                1.0
+            } else {
+                unsnapped
+            };
             assert!(
                 (s.value - expected).abs() < 0.000_01,
                 "dt={dt}: value={}, expected={expected}",
@@ -158,11 +165,11 @@ mod tests {
     }
 
     #[test]
-    fn integrator_settles_within_350ms_at_any_frame_rate() {
+    fn integrator_settles_within_200ms_at_any_frame_rate() {
         for dt in [1.0 / 120.0, 1.0 / 60.0, 1.0 / 30.0, 0.05, 0.2] {
             let mut s = Spring::default();
             let mut elapsed = 0.0;
-            while elapsed < 0.35 {
+            while elapsed < 0.2 {
                 s.to(1.0, dt);
                 elapsed += dt;
             }

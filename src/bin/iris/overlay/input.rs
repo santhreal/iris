@@ -72,7 +72,6 @@ impl Overlay {
         self.loupe_at = None;
         self.finishing = false;
         self.pending_finish = false;
-        self.opened = None;
         self.resize = None;
         self.moving = None;
         self.coord_at = None;
@@ -271,6 +270,12 @@ impl Overlay {
         })
         .detach();
         if show_toast {
+            // The flight paints only its card over the live desktop.
+            // The finalize task retains the pixel Arc; the full-screen
+            // atlas tile no longer needs to survive the selection UI.
+            if let Some(frame) = self.frame_img.take() {
+                crate::widgets::release_render(&frame, cx);
+            }
             // The toast lands on the monitor under the selection's
             // center, in that monitor's own bottom-right corner.
             let (fcx, fcy) = (

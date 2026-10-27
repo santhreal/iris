@@ -25,7 +25,7 @@ fn handles_are_corners_then_edges() {
 }
 
 // WHY: the capture flight hands the card to the toast once the card is
-// visually at rest, not when its 500ms clock ends. A criterion that
+// visually at rest, not when its clock ends. A criterion that
 // skips an edge (only the origin, not the size) cuts the flight while
 // the card still grows; one that never holds leaves the card parked
 // until the clock. Not covered: the toast's first-present timing

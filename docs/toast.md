@@ -15,7 +15,7 @@ Dimensions and styling:
 - Corner radius is 12.0 logical pixels.
 - Edge margin is 12.0 logical pixels from display boundaries.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.
-- Entrance: Slides in from beyond the display edge over 380 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
+- Entrance: Slides in from beyond the display edge over 280 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
 - On X11 with no compositing manager, the window shows only the card, with its corners cut to whole pixels and no shadow. The card appears at rest, stays in place during a dismiss swipe, and closes at once when dismissed or replaced. See [Pop-up Windows](platforms.md#linux-x11).
 
 ## Interaction and Actions

@@ -10,7 +10,7 @@ use crate::{flash, notice, overlay, pipeline, stage};
 /// Region capture: the overlay shells map at once, transparent over
 /// the live desktop with crosshair and window-snap already live. The
 /// grab and the per-monitor slices run behind them and each frozen
-/// frame fades in as it lands, so the keypress reads as instant even
+/// frame appears as it lands, so the keypress reads as instant even
 /// on a multi-4K setup where the grab takes half a second.
 pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
     let t0 = Instant::now();

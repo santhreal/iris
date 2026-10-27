@@ -29,9 +29,7 @@ mod view;
 pub use shell::{layout, open_shell, slice_frame_bgra, warmup};
 
 pub(super) const MIN_SIZE: f32 = 3.0;
-/// The dim layer fades in when the overlay appears.
-pub(super) const DIM_FADE: Duration = Duration::from_millis(180);
-/// The dim's opacity over the frozen frame once faded in.
+/// The dim's opacity over the frozen frame.
 pub(super) const DIM: f32 = 0.32;
 /// Window-snap reveal fades both ways, like macOS's highlight.
 pub(super) const HOVER_FADE: Duration = Duration::from_millis(90);
@@ -76,7 +74,7 @@ pub struct Overlay {
     mode: OverlayMode,
     /// None until the background grab lands: the window maps at once,
     /// transparent over the live desktop with crosshair and snap
-    /// already live, and the frozen frame fades in behind it.
+    /// already live, and the frozen frame and dim appear behind it.
     /// The frozen frame's pixel size; the pixels themselves live in
     /// `frame_img`'s BGRA buffer (the only CPU copy).
     frame_size: Option<(u32, u32)>,
@@ -114,8 +112,6 @@ pub struct Overlay {
     /// Enter landed before the background grab did: finish() defers
     /// here and set_frame() completes it once the frame exists.
     pending_finish: bool,
-    /// First-render clock: the dim layer fades in over DIM_FADE.
-    opened: Option<Instant>,
     /// Hover-snap fade-in clock for the current window.
     hover_in: Option<Instant>,
     /// The window the cursor just left, fading out.
@@ -189,12 +185,10 @@ impl Render for Overlay {
         }
         let (sx, sy) = Self::scale(window, self.view);
 
-        // Entrance: the dim fades in over the frozen frame. The frame
-        // itself is the desktop's own pixels, so only the dim moves.
-        let (dim, fading) = self.entrance_dim();
-        if fading {
-            window.request_animation_frame();
-        }
+        // Dim at once, including while the grab is in flight. The
+        // picker has immediate feedback without a full-screen entrance
+        // animation; the frozen frame then arrives under the same dim.
+        let dim = DIM;
 
         let mut root = div()
             .id("overlay")

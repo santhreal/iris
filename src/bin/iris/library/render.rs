@@ -2,11 +2,12 @@
 //! sections, the empty state, and the overlays over them (rubber band,
 //! preview, context menu, shortcuts sheet, status pill).
 
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 use gpui::*;
 
 use crate::icons::{self, Icon};
+use crate::motion::Spring;
 use crate::theme;
 use crate::widgets::{self, tip, ButtonStyle, Toolbar};
 
@@ -15,6 +16,38 @@ use super::{evict_thumbs, Library, MIN_SIZE, THUMB_KEEP_ROWS};
 
 /// Space between a day title's baseline row and the cards under it.
 const HEADER_PAD_B: f32 = 10.0;
+
+/// Advance every card spring from the previous moving frame. An idle
+/// interval is not animation time: `last_frame` is present only between
+/// consecutive frames with a live spring.
+fn advance_springs(
+    springs: &mut HashMap<usize, Spring>,
+    hovered: Option<usize>,
+    entry_count: usize,
+    last_frame: &mut Option<Instant>,
+    now: Instant,
+) -> bool {
+    let dt = (*last_frame)
+        .map(|t| (now - t).as_secs_f32())
+        .unwrap_or(1.0 / 60.0);
+    if let Some(h) = hovered {
+        springs.entry(h).or_default();
+    }
+    let mut live = false;
+    springs.retain(|i, s| {
+        if *i >= entry_count {
+            return false;
+        }
+        let target = if hovered == Some(*i) { 1.0 } else { 0.0 };
+        s.to(target, dt);
+        let settled = s.settled(target);
+        live |= !settled;
+        // A spring at rest off the card holds nothing.
+        !(settled && target == 0.0)
+    });
+    *last_frame = live.then_some(now);
+    live
+}
 
 impl Library {
     /// Rebuild the selection set and its toolbar label after a mutation
@@ -31,30 +64,13 @@ impl Library {
     /// Advance the hover springs by the frame delta; true while one is
     /// still moving.
     fn step_springs(&mut self) -> bool {
-        let now = Instant::now();
-        let dt = self
-            .last_frame
-            .map(|t| (now - t).as_secs_f32())
-            .unwrap_or(1.0 / 60.0);
-        self.last_frame = Some(now);
-        let n = self.listing.entries().len();
-        if let Some(h) = self.hovered {
-            self.springs.entry(h).or_default();
-        }
-        let hovered = self.hovered;
-        let mut live = false;
-        self.springs.retain(|i, s| {
-            if *i >= n {
-                return false;
-            }
-            let target = if hovered == Some(*i) { 1.0 } else { 0.0 };
-            s.to(target, dt);
-            let settled = s.settled(target);
-            live |= !settled;
-            // A spring at rest off the card holds nothing.
-            !(settled && target == 0.0)
-        });
-        live
+        advance_springs(
+            &mut self.springs,
+            self.hovered,
+            self.listing.entries().len(),
+            &mut self.last_frame,
+            Instant::now(),
+        )
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Toolbar {
@@ -390,4 +406,75 @@ pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, Sh
         ("Settings", crate::widgets::meta_shortcut!(",").into()),
         ("This sheet", "?".into()),
     ]
+}
+
+// WHY: the class closed here is "idle time becomes animation time".
+// Only consecutive moving frames may advance a pointer spring. These
+// tests cover both directions at the common stepping boundary: elapsed
+// time is retained while animating and discarded after an idle interval.
+// Not covered: GPUI frame scheduling and compositor delivery.
+#[cfg(test)]
+mod tests {
+    use std::prelude::v1::test;
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn consecutive_live_frames_use_elapsed_time() {
+        let start = Instant::now();
+        let mut springs = HashMap::new();
+        let mut last_frame = None;
+        assert!(advance_springs(
+            &mut springs,
+            Some(0),
+            1,
+            &mut last_frame,
+            start,
+        ));
+        let next = start + Duration::from_millis(100);
+        assert!(advance_springs(
+            &mut springs,
+            Some(0),
+            1,
+            &mut last_frame,
+            next,
+        ));
+        let mut expected = Spring::default();
+        expected.to(1.0, 1.0 / 60.0);
+        expected.to(1.0, 0.1);
+        assert!((springs[&0].value - expected.value).abs() < 0.000_001);
+        assert!((springs[&0].velocity - expected.velocity).abs() < 0.000_001);
+        assert_eq!(last_frame, Some(next));
+    }
+
+    #[test]
+    fn idle_clock_does_not_skip_the_next_hover() {
+        let start = Instant::now();
+        let mut springs = HashMap::new();
+        let mut last_frame = Some(start);
+        assert!(!advance_springs(
+            &mut springs,
+            None,
+            1,
+            &mut last_frame,
+            start,
+        ));
+        assert_eq!(last_frame, None);
+
+        let resumed = start + Duration::from_secs(30);
+        assert!(advance_springs(
+            &mut springs,
+            Some(0),
+            1,
+            &mut last_frame,
+            resumed,
+        ));
+        let mut expected = Spring::default();
+        expected.to(1.0, 1.0 / 60.0);
+        assert!((springs[&0].value - expected.value).abs() < 0.000_001);
+        assert!((springs[&0].velocity - expected.velocity).abs() < 0.000_001);
+        assert!(springs[&0].value < 0.5);
+        assert_eq!(last_frame, Some(resumed));
+    }
 }

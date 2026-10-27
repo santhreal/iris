@@ -3,7 +3,7 @@
 //! Raw capture pixels, aspect-true, at most 200x140 logical px and
 //! scaled to the display's device pixels, 12px corners,
 //! one soft deep shadow. It slides in from beyond the screen edge in
-//! 380ms with a hard deceleration and stops dead, sits for the
+//! 280ms with a hard deceleration and stops dead, sits for the
 //! configured duration (hovering suspends the clock), then accelerates
 //! back off the edge, fading in the last third. A flick toward the edge
 //! dismisses it 1:1 under the pointer; any other drag is a file

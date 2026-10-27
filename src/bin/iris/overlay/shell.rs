@@ -156,7 +156,6 @@ fn open_shell_opts(
                     loupe_scratch: Vec::new(),
                     finishing: false,
                     pending_finish: false,
-                    opened: None,
                     hover_in: None,
                     hover_out: None,
                     flight: None,

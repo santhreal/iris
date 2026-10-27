@@ -14,7 +14,7 @@ Trigger region capture using any of the following interfaces:
 - Home window: **New Screenshot** tile
 - System tray menu: **Capture**
 
-The region overlay freezes the screen into an image frame across all monitors and fades in a dimming layer over 180 milliseconds, peaking at 0.32 opacity.
+The region overlay applies a dimming layer at 0.32 opacity immediately and freezes the screen into an image frame across all monitors.
 
 Features in region capture mode:
 - **Crosshair coordinate readout**: Displays physical coordinates (`fx, fy`) adjacent to the cursor. The readout shifts position when approaching display boundaries.
@@ -78,4 +78,4 @@ When a capture commits, iris executes the following pipeline in order:
 6. **Disk Save**: Writes the encoded PNG into the reserved file. A failed write removes the partial file.
 7. **Pixel Stashing**: Caches decoded RGBA pixels in a process-wide single-slot memory cache so immediate thumbnail generation or annotation avoids re-decoding the saved file.
 8. **Library Registration**: Records image dimensions, file path, and creation timestamp into `library.json` and writes a cached thumbnail to disk.
-9. **Interactive Toast**: If `show_toast_after_capture` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), opens the toast stage. Region captures animate a flight from selection coordinates to the resting card position; fullscreen and window captures display the toast directly (see [toast.md#toast-notifications](toast.md#toast-notifications)).
+9. **Interactive Toast**: If `show_toast_after_capture` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), opens the toast stage. Region captures animate the capture card from selection coordinates to the resting card position over the live desktop; fullscreen and window captures display the toast directly (see [toast.md#toast-notifications](toast.md#toast-notifications)).

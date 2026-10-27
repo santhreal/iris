@@ -1,5 +1,6 @@
 //! The capture flight: the committed region springs from the selection
-//! rect to the toast's resting corner rect, then hands off to the toast.
+//! rect to the toast's resting corner rect over the live desktop, then
+//! hands off to the toast.
 
 use std::{
     path::PathBuf,
@@ -52,21 +53,18 @@ pub(super) fn flight_at_rest(from: (f32, f32, f32, f32), to: (f32, f32, f32, f32
 
 impl Overlay {
     /// The capture flight: the committed region springs from the
-    /// selection rect to the toast's corner rect while the dim lifts.
+    /// selection rect to the toast's corner rect over the live desktop.
     /// Once the card is at rest and the background finalize has landed,
     /// the toast opens underneath; the overlay keeps the card on screen
     /// until the toast has presented its first frame, then parks.
     pub(super) fn render_flight(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        const FLIGHT: Duration = Duration::from_millis(500);
+        const FLIGHT: Duration = Duration::from_millis(280);
         let f = self.flight.clone().expect("flight checked");
         let flown = f.started.elapsed().as_secs_f32();
         let t = (flown / crate::motion::tempo(FLIGHT).as_secs_f32()).min(1.0);
         let e = crate::motion::spring(t);
         // The clock's end bounds the flight whatever the curve does.
         let at_rest = t >= 1.0 || flight_at_rest(f.from, f.to, e);
-        // The dim lifts as the card leaves.
-        let lift = (flown / crate::motion::tempo(crate::motion::FADE).as_secs_f32()).min(1.0);
-        let dim = self.entrance_dim().0 * (1.0 - crate::motion::ease_out(lift));
         if at_rest {
             // Taken once: later frames of this session never reopen it.
             // Until then a slow finalize's notify re-renders this.
@@ -74,7 +72,7 @@ impl Overlay {
                 self.hand_off(landed, &f, window, cx);
             }
         }
-        if !at_rest || lift < 1.0 {
+        if !at_rest {
             window.request_animation_frame();
         }
         // The card lifts off the page: square and flat where it leaves
@@ -86,40 +84,24 @@ impl Overlay {
             (e, flight_rect(f.from, f.to, e))
         };
         let radius = px(stage::RADIUS * e);
-        div()
-            .size_full()
-            // The frozen frame: the desktop as it was.
-            .children(self.frame_img.clone().map(|i| {
-                img(ImageSource::Render(i))
-                    .size_full()
-                    .object_fit(ObjectFit::Fill)
-            }))
-            .children((dim > 0.0).then(|| {
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .bg(theme::alpha(theme::BG, dim))
-            }))
-            .child(
-                div()
-                    .absolute()
-                    .left(px(x))
-                    .top(px(y))
-                    .w(px(w.max(1.0)))
-                    .h(px(h.max(1.0)))
-                    .rounded(radius)
-                    .shadow(theme::card_shadow(e))
-                    .child(
-                        // The image rounds itself: a parent's rounded
-                        // overflow clip is a rectangle.
-                        img(ImageSource::Render(f.img.clone()))
-                            .size_full()
-                            .object_fit(ObjectFit::Fill)
-                            .rounded(radius),
-                    ),
-            )
+        div().size_full().child(
+            div()
+                .absolute()
+                .left(px(x))
+                .top(px(y))
+                .w(px(w.max(1.0)))
+                .h(px(h.max(1.0)))
+                .rounded(radius)
+                .shadow(theme::card_shadow(e))
+                .child(
+                    // The image rounds itself: a parent's rounded
+                    // overflow clip is a rectangle.
+                    img(ImageSource::Render(f.img.clone()))
+                        .size_full()
+                        .object_fit(ObjectFit::Fill)
+                        .rounded(radius),
+                ),
+        )
     }
 
     /// Open the landed toast and park this window once the toast is on
