@@ -71,6 +71,7 @@ iris_ffmpeg_source_component "$WORK" "$PREFIX" "$JOBS" ffmpeg-9.0.2 \
   --enable-libx264 \
   --enable-libvpx \
   --enable-libopus \
+  --enable-avfoundation \
   --enable-indev=avfoundation
 
 mkdir -p "$OUT_DIR"
