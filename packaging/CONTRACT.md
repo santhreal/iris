@@ -133,7 +133,8 @@ sources. x264, libvpx, and Opus are static; PulseAudio and zlib are
 declared system libraries. `packaging/macos/build_ffmpeg.sh --out
 <dir>` builds a static runtime from pinned sources on a native arm64
 or x86_64 Mac. The package workflow builds and checks both Mac
-architectures and combines them with `lipo`.
+architectures and combines them with `lipo`. iconv and zlib use the
+macOS system libraries.
 `packaging/windows/build_ffmpeg.sh --arch x86_64|aarch64 --out
 <dir>` cross-builds the Windows runtime on Linux from the same pinned
 sources plus zlib, with a pinned LLVM-MinGW toolchain. The package

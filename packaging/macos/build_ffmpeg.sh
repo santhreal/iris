@@ -59,6 +59,7 @@ iris_ffmpeg_source_build "$WORK" "$PREFIX" "$JOBS"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 iris_ffmpeg_source_component "$WORK" "$PREFIX" "$JOBS" ffmpeg-9.0.2 \
   --pkg-config-flags=--static \
+  --extra-ldflags=-liconv \
   --disable-autodetect \
   --disable-debug \
   --disable-doc \

@@ -493,6 +493,7 @@ jobs:
               cargo build --locked --release --bin iris
               packaging/linux/build_ffmpeg.sh --out ".build-staging/ffmpeg/linux-$ARCH"
               packaging/check_ffmpeg.sh ".build-staging/ffmpeg/linux-$ARCH/ffmpeg" linux
+              chown "$owner" .build-staging .build-staging/ffmpeg
               chown -R "$owner" target .build-staging/ffmpeg-source ".build-staging/ffmpeg/linux-$ARCH" /usr/local/cargo/registry /usr/local/cargo/git
             '
       # --arch fails the scripts when the binary is built for another
