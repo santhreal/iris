@@ -39,6 +39,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 - Library hover animations no longer skip after an idle window.
 - Concurrent captures and recordings reserve distinct output files instead of overwriting a file selected for the same timestamp.
+- A failed portable Windows update preserves and reports recovery files instead of deleting them during cleanup or a retry.
 
 ### Security
 

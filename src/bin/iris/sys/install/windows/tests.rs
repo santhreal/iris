@@ -171,6 +171,117 @@ fn a_payload_failure_restores_the_previous_runtime() {
 }
 
 #[test]
+fn a_failed_rollback_preserves_recovery_against_cleanup_and_retries() {
+    let (dir, exe) = install(b"old");
+    let app = exe.parent().expect("app directory");
+    let ffmpeg = exe.with_file_name("ffmpeg.exe");
+    let notice = app.join("licenses/ffmpeg/FFMPEG-SOURCE.txt");
+    std::fs::write(&ffmpeg, b"old-ffmpeg").expect("write old FFmpeg");
+    std::fs::create_dir_all(notice.parent().expect("notice directory")).expect("mkdir notices");
+    std::fs::write(&notice, b"old-notice").expect("write old notice");
+    let zip = zip_of(dir.path(), "new.zip", ZIP_DIR, b"new");
+
+    // ffmpeg.exe moves successfully. The next payload file fails to
+    // move in but restores its own backup. Restoring ffmpeg.exe then
+    // fails, leaving its only old copy under .iris-update\old.
+    recovery::inject_renames(&[false, false, false, true, false, true]);
+    let error = swap_portable(&zip, &exe).expect_err("injected rollback failure");
+    assert!(error.contains("recovery file remains at"), "{error}");
+    assert!(error.contains("recovery files remain"), "{error}");
+    assert!(
+        error.contains("restore them before running iris --update again"),
+        "{error}"
+    );
+    let staging = staging(&exe).expect("staging");
+    let backup = staging.join("old/ffmpeg.exe");
+    assert_eq!(
+        std::fs::read(&backup).expect("preserved backup"),
+        b"old-ffmpeg"
+    );
+    assert_eq!(
+        std::fs::read(&ffmpeg).expect("partially replaced FFmpeg"),
+        b"new-ffmpeg"
+    );
+    assert_eq!(
+        std::fs::read(&notice).expect("restored notice"),
+        b"old-notice"
+    );
+    assert_eq!(std::fs::read(&exe).expect("old iris"), b"old");
+
+    let error = writable(&staging, &exe).expect_err("readiness must preserve recovery");
+    assert!(
+        error.contains("recovery files from a previous update remain"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read(&backup).expect("backup after readiness"),
+        b"old-ffmpeg"
+    );
+    let error = swap_portable(&zip, &exe).expect_err("retry must preserve recovery");
+    assert!(
+        error.contains("recovery files from a previous update remain"),
+        "{error}"
+    );
+    tidy_at(&exe);
+    assert_eq!(
+        std::fs::read(&backup).expect("backup after tidy"),
+        b"old-ffmpeg"
+    );
+
+    // Once the caller restores the backup, ordinary startup cleanup
+    // removes the empty staging tree again.
+    std::fs::remove_file(&ffmpeg).expect("remove partially replaced FFmpeg");
+    std::fs::rename(&backup, &ffmpeg).expect("manual recovery");
+    tidy_at(&exe);
+    assert!(
+        !staging.exists(),
+        "completed recovery must not block cleanup"
+    );
+    assert_eq!(
+        std::fs::read(&ffmpeg).expect("manually restored FFmpeg"),
+        b"old-ffmpeg"
+    );
+}
+
+#[test]
+fn a_failed_executable_restore_preserves_the_aside_until_recovery() {
+    let (dir, exe) = install(b"old");
+    let zip = zip_of(dir.path(), "new.zip", ZIP_DIR, b"new");
+    let staging = staging(&exe).expect("staging");
+    let aside = aside(&exe);
+
+    // Every packaged file moves in. Moving the running executable
+    // aside succeeds, but both moving the new one in and restoring the
+    // old one fail. No payload backup remains, so the aside itself must
+    // keep staging, readiness, and startup cleanup in recovery mode.
+    let mut faults = vec![false; RUNTIME_PAYLOAD.len() + 1];
+    faults.extend([true, true]);
+    recovery::inject_renames(&faults);
+    let error = swap_portable(&zip, &exe).expect_err("injected executable restore failure");
+    assert!(error.contains("recovery file remains at"), "{error}");
+    assert!(error.contains("recovery files remain"), "{error}");
+    assert!(
+        !exe.exists(),
+        "the failed new move must not create iris.exe"
+    );
+    assert_eq!(std::fs::read(&aside).expect("old executable aside"), b"old");
+
+    let error = writable(&staging, &exe).expect_err("readiness must preserve the aside");
+    assert!(
+        error.contains("recovery files from a previous update remain"),
+        "{error}"
+    );
+    tidy_at(&exe);
+    assert_eq!(std::fs::read(&aside).expect("aside after tidy"), b"old");
+    assert!(staging.exists());
+
+    std::fs::rename(&aside, &exe).expect("manual executable recovery");
+    tidy_at(&exe);
+    assert_eq!(std::fs::read(&exe).expect("restored executable"), b"old");
+    assert!(!staging.exists());
+}
+
+#[test]
 fn a_swap_rejects_every_missing_runtime_file() {
     for required in RUNTIME_PAYLOAD {
         let (dir, exe) = install(b"old");
@@ -248,10 +359,10 @@ fn a_move_that_fails_puts_the_iris_back() {
 #[test]
 fn a_portable_iris_is_ready_only_where_it_can_write() {
     let (dir, exe) = install(b"old");
-    writable(&staging(&exe).expect("staging")).expect("a writable folder");
+    writable(&staging(&exe).expect("staging"), &exe).expect("a writable folder");
     assert_eq!(names(exe.parent().unwrap()), ["iris.exe"]);
     let gone = dir.path().join("gone").join("iris.exe");
-    let e = writable(&staging(&gone).expect("staging")).expect_err("no folder");
+    let e = writable(&staging(&gone).expect("staging"), &gone).expect_err("no folder");
     assert!(e.starts_with("update: cannot write "), "{e}");
     assert!(e.ends_with("or install it with the setup"), "{e}");
 }

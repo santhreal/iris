@@ -7,6 +7,8 @@ use std::path::Path;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(test, windows))]
+mod recovery;
 #[cfg(windows)]
 mod windows;
 

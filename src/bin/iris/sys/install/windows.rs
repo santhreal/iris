@@ -9,6 +9,8 @@ use std::process::{Command, Stdio};
 
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
+use super::recovery;
+
 /// Release asset suffix for an installed iris. `{arch}` is this
 /// build's architecture (`super::for_this_arch`).
 pub const SETUP_ASSET: &str = "windows-{arch}-setup.exe";
@@ -72,7 +74,7 @@ pub fn ready() -> Result<(), String> {
     if installed(&exe) {
         return Ok(());
     }
-    writable(&staging(&exe)?)
+    writable(&staging(&exe)?, &exe)
 }
 
 /// The directory beside `exe` a portable update unpacks into.
@@ -83,7 +85,8 @@ fn staging(exe: &Path) -> Result<PathBuf, String> {
 }
 
 /// Ok when `staging` can be created: create it and delete it again.
-fn writable(staging: &Path) -> Result<(), String> {
+fn writable(staging: &Path, exe: &Path) -> Result<(), String> {
+    recovery::refuse_recovery(staging, &aside(exe), exe)?;
     let _ = std::fs::remove_dir_all(staging);
     std::fs::create_dir(staging)
         .and_then(|()| std::fs::remove_dir(staging))
@@ -119,10 +122,11 @@ pub fn apply_file(file: &Path) -> Result<(), String> {
 /// Replace `exe` and its bundled files with the application in the
 /// portable zip `zip`: unpack the zip into a staging directory beside
 /// `exe`, replace the payload with rollback on failure, and rename the
-/// running iris.exe aside last. A failure leaves the old payload in
-/// place and deletes the staging directory.
+/// running iris.exe aside last. A failure restores the old payload.
+/// Staging and its recovery files remain if any restore fails.
 fn swap_portable(zip: &Path, exe: &Path) -> Result<(), String> {
     let staging = staging(exe)?;
+    recovery::refuse_recovery(&staging, &aside(exe), exe)?;
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir(&staging)
         .map_err(|e| format!("update: create {}: {e}", staging.display()))?;
@@ -130,8 +134,7 @@ fn swap_portable(zip: &Path, exe: &Path) -> Result<(), String> {
         let backup = staging.join("old");
         replace_payload(&new, exe, &backup)
     });
-    let _ = std::fs::remove_dir_all(&staging);
-    swapped
+    recovery::finish_swap(&staging, &aside(exe), exe, swapped)
 }
 
 /// Unpack `zip` into `into` with the tar.exe Windows ships (bsdtar,
@@ -181,101 +184,37 @@ fn unpack(zip: &Path, into: &Path) -> Result<PathBuf, String> {
 fn replace_payload(new: &Path, exe: &Path, backup: &Path) -> Result<(), String> {
     let root = new.parent().expect("unpack returns the payload iris.exe");
     let mut files = Vec::new();
-    payload_files(root, root, &mut files)?;
+    recovery::files_below(root, root, &mut files)?;
     files.sort();
     files.retain(|path| path != Path::new("iris.exe"));
     let app = exe.parent().expect("exe has a directory");
     let mut replaced = Vec::new();
     for relative in files {
         let target = app.join(&relative);
-        match replace_with_backup(&root.join(&relative), &target, &backup.join(&relative)) {
+        match recovery::replace_with_backup(&root.join(&relative), &target, &backup.join(&relative))
+        {
             Ok(old) => replaced.push((target, old)),
             Err(error) => {
-                rollback(&replaced);
-                return Err(error);
+                return Err(match recovery::rollback(&replaced) {
+                    Ok(()) => error,
+                    Err(recovery_error) => format!("{error}; {recovery_error}"),
+                });
             }
         }
     }
     if let Err(error) = replace(new, exe) {
-        rollback(&replaced);
-        return Err(error);
+        return Err(match recovery::rollback(&replaced) {
+            Ok(()) => error,
+            Err(recovery_error) => format!("{error}; {recovery_error}"),
+        });
     }
     Ok(())
-}
-
-/// List the regular files below `dir`, relative to `root`.
-fn payload_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| format!("update: read payload {}: {e}", dir.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("update: read payload {}: {e}", dir.display()))?;
-        let path = entry.path();
-        let kind = entry
-            .file_type()
-            .map_err(|e| format!("update: inspect payload {}: {e}", path.display()))?;
-        if kind.is_dir() {
-            payload_files(root, &path, out)?;
-        } else if kind.is_file() {
-            out.push(
-                path.strip_prefix(root)
-                    .expect("payload child")
-                    .to_path_buf(),
-            );
-        } else {
-            return Err(format!("update: payload {} is not a file", path.display()));
-        }
-    }
-    Ok(())
-}
-
-/// Move `new` to `target`, returning the previous target's backup.
-fn replace_with_backup(
-    new: &Path,
-    target: &Path,
-    backup: &Path,
-) -> Result<Option<PathBuf>, String> {
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("update: create {}: {e}", parent.display()))?;
-    }
-    if backup.exists() {
-        std::fs::remove_file(backup)
-            .map_err(|e| format!("update: remove old backup {}: {e}", backup.display()))?;
-    }
-    let old = if target.exists() {
-        if let Some(parent) = backup.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("update: create {}: {e}", parent.display()))?;
-        }
-        std::fs::rename(target, backup)
-            .map_err(|e| format!("update: move {} aside: {e}", target.display()))?;
-        Some(backup.to_path_buf())
-    } else {
-        None
-    };
-    if let Err(error) = std::fs::rename(new, target) {
-        if let Some(old) = &old {
-            let _ = std::fs::rename(old, target);
-        }
-        return Err(format!("update: replace {}: {error}", target.display()));
-    }
-    Ok(old)
-}
-
-/// Restore files replaced by `replace_payload` before an error.
-fn rollback(replaced: &[(PathBuf, Option<PathBuf>)]) {
-    for (target, old) in replaced.iter().rev() {
-        let _ = std::fs::remove_file(target);
-        if let Some(old) = old {
-            let _ = std::fs::rename(old, target);
-        }
-    }
 }
 
 /// Rename `exe` to iris.exe.old and move `new` to `exe`. When the move
 /// fails, `exe` is renamed back.
 fn replace(new: &Path, exe: &Path) -> Result<(), String> {
-    replace_with_backup(new, exe, &aside(exe)).map(|_| ())
+    recovery::replace_with_backup(new, exe, &aside(exe)).map(|_| ())
 }
 
 /// Where a portable update moves the running `exe`: iris.exe.old.
@@ -289,19 +228,23 @@ fn aside(exe: &Path) -> PathBuf {
 /// stays until the next start.
 pub fn tidy() {
     if let Ok(exe) = exe() {
-        let _ = std::fs::remove_file(aside(&exe));
-        if let Ok(staging) = staging(&exe) {
-            let _ = std::fs::remove_dir_all(staging);
-        }
+        tidy_at(&exe);
+    }
+}
+
+fn tidy_at(exe: &Path) {
+    if let Ok(staging) = staging(&exe) {
+        recovery::tidy(&staging, &aside(exe), exe);
     }
 }
 
 // WHY: the classes closed here are "a portable iris updates through the
 // installer, which installs a second copy elsewhere and leaves the
 // portable one old", "a portable update leaves an old or missing
-// bundled runtime", and "a failed portable swap leaves the old payload
-// replaced or a staging directory behind". Not covered: the relaunch,
-// and a rename Windows refuses because another program holds iris.exe
-// open.
+// bundled runtime", "a failed portable swap leaves the old payload
+// replaced or a staging directory behind", and "cleanup or a retry
+// deletes recovery files left by a failed rollback". Not covered: the
+// relaunch, and an actual rename Windows refuses because another
+// program holds iris.exe open.
 #[cfg(test)]
 mod tests;
