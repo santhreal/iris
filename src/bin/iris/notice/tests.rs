@@ -107,7 +107,7 @@ fn card_holds_its_text_and_buttons_with_no_slack() {
 
 #[test]
 fn detail_column_fits_a_recording_name_beside_both_buttons() {
-    // The longest name unique_recording_path makes, but the millis
+    // The longest name reserve_recording_path makes, but the millis
     // fallback: a date, a time, a 3-digit suffix, and the extension.
     let name = theme::advance_sum("2026-08-09_14-02-11_999.webm", theme::TEXT_SMALL);
     assert!(

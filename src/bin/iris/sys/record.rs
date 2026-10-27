@@ -27,7 +27,7 @@ use linux as native;
 /// The parameters every source shares: output path under the
 /// configured template, frame rate, mic default, container and codec.
 pub struct Params {
-    pub output: PathBuf,
+    pub output: iris_lib::output::ReservedFile,
     pub fps: u32,
     /// Whether the mic track starts on; never for a format without audio.
     pub mic: bool,
@@ -36,15 +36,15 @@ pub struct Params {
 }
 
 impl Params {
-    pub fn from_config(cfg: &Config) -> Self {
+    pub fn from_config(cfg: &Config) -> Result<Self, String> {
         let format = cfg.recording_format;
-        Self {
-            output: record::unique_recording_path(&cfg.recordings_dir, format.ext()),
+        Ok(Self {
+            output: record::reserve_recording_path(&cfg.recordings_dir, format.ext())?,
             fps: cfg.recording_fps,
             mic: cfg.record_mic_default && format.audio_codec().is_some(),
             format,
             encoder: cfg.recording_encoder,
-        }
+        })
     }
 
     /// The chip's mic button state: `None` hides it for a format without
@@ -62,8 +62,12 @@ impl Params {
     {
         codec::warm(self.format, self.encoder);
         let ended = crate::daemon::command_tx();
-        ActiveRecording::spawn(
-            self.output,
+        // Close the reservation handle before ffmpeg can open the output.
+        // If spawning the source itself fails, no recording owns the
+        // placeholder yet, so remove it here.
+        let output = self.output.keep();
+        let spawned = ActiveRecording::spawn(
+            output.clone(),
             self.fps,
             self.mic,
             self.format,
@@ -74,7 +78,11 @@ impl Params {
                     let _ = tx.unbounded_send(crate::daemon::Command::RecordingEnded);
                 }
             },
-        )
+        );
+        if spawned.is_err() {
+            let _ = std::fs::remove_file(&output);
+        }
+        spawned
     }
 }
 

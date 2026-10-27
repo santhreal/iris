@@ -226,7 +226,7 @@ Filenames follow the template:
 {YYYY}-{MM}-{DD}_{HH}-{MM}-{SS}.{ext}
 ```
 
-Generated from local clock time. If a file with that name exists, iris appends `_2`, `_3`, up to `_999`. If all 999 candidate files exist, iris appends the Unix epoch timestamp in milliseconds (`_{millis}.{ext}`).
+Generated from local clock time. If a file with that name exists, iris appends `_2`, `_3`, up to `_999`. If all 999 candidate files exist, iris appends the Unix epoch timestamp in milliseconds (`_{millis}.{ext}`). iris creates the selected file to reserve it before recording starts, so concurrent recordings use different paths. A recording that cannot start removes its empty file.
 
 ### Completion and Failure Notices
 

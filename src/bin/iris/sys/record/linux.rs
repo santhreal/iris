@@ -40,7 +40,7 @@ pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, S
         Some(picked),
     );
     let chip = follower.clone();
-    let output = p.output.clone();
+    let output = p.output.path().to_path_buf();
     let rec = p.spawn(move |spec| record::x11::record_window_follow(spec, follower))?;
     // A source that ends before a pick lands drops the sender unsent.
     cx.spawn(async move |cx| {

@@ -39,7 +39,7 @@ pub(super) fn toggle_recording(cx: &mut App) -> Result<(), String> {
         return Ok(());
     }
     source::ready()?;
-    let started = source::start_window(cx, Params::from_config(&Config::load()));
+    let started = source::start_window(cx, Params::from_config(&Config::load())?);
     // A source that fails after opening the chip leaves it on screen.
     let active = started.inspect_err(|_| chip::close(cx))?;
     *RECORDING.lock() = Some(active);
@@ -224,7 +224,7 @@ pub(super) fn record_region_start(
         width: w as u32,
         height: h as u32,
     };
-    let started = source::start_region(cx, Params::from_config(&Config::load()), rect);
+    let started = source::start_region(cx, Params::from_config(&Config::load())?, rect);
     let active = started.inspect_err(|_| chip::close(cx))?;
     *RECORDING.lock() = Some(active);
     Ok(())

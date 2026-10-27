@@ -9,7 +9,7 @@ use image::ImageEncoder;
 
 use iris_lib::capture::Frame;
 use iris_lib::sys::{capture, dragcopy};
-use iris_lib::{clipboard, config::Config, library, ocr};
+use iris_lib::{clipboard, config::Config, library, ocr, output};
 
 /// The most recent capture's decoded pixels, stashed so the editor
 /// skips re-decoding the PNG finalize just wrote. Single-slot: only
@@ -53,9 +53,9 @@ pub fn play_shutter_sound() {
     }
 }
 
-/// Save a frame under the config's screenshot template: placeholders
-/// {date} and {time}, numeric suffix on collision.
-fn unique_path(cfg: &Config) -> PathBuf {
+/// Reserve a frame's output under the config's screenshot template:
+/// placeholders {date} and {time}, numeric suffix on collision.
+fn reserve_capture(cfg: &Config) -> Result<output::ReservedFile, String> {
     // One clock read: separate date and time calls could straddle
     // midnight and write a name that never existed.
     let (y, mo, d, h, mi, s) = iris_lib::time::local_now();
@@ -63,17 +63,15 @@ fn unique_path(cfg: &Config) -> PathBuf {
         .screenshot_template
         .replace("{date}", &format!("{y:04}-{mo:02}-{d:02}"))
         .replace("{time}", &format!("{h:02}-{mi:02}-{s:02}"));
-    let path = cfg.screenshots_dir.join(format!("{name}.png"));
-    if !path.exists() {
-        return path;
-    }
-    for n in 2.. {
-        let candidate = cfg.screenshots_dir.join(format!("{name}-{n}.png"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!()
+    let paths = (1..=u64::MAX).map(|n| {
+        let filename = if n == 1 {
+            format!("{name}.png")
+        } else {
+            format!("{name}-{n}.png")
+        };
+        cfg.screenshots_dir.join(filename)
+    });
+    output::reserve(paths).map_err(|e| format!("save screenshot: {e}"))
 }
 
 /// Grab the whole virtual screen once. The overlay freezes this frame and
@@ -228,11 +226,6 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
     }
     std::fs::create_dir_all(&cfg.screenshots_dir)
         .map_err(|e| format!("create screenshots dir: {e}"))?;
-    let path = unique_path(&cfg);
-    // Stash the decoded pixels: the editor's annotate path re-reads
-    // and re-decodes the PNG just written, a ~100ms+ 4K decode the
-    // stash skips entirely.
-    stash_decoded(path.clone(), img.clone());
     // Fast PNG: Balanced deflate is ~3x slower than Fast on a 4K
     // frame, and a screenshot's redundancy means Fast still compresses
     // well. The capture is durable sooner and the toast's thumbnail
@@ -250,7 +243,13 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
         image::ExtendedColorType::Rgba8,
     )
     .map_err(|e| format!("encode screenshot: {e}"))?;
-    std::fs::write(&path, png.into_inner()).map_err(|e| format!("save screenshot: {e}"))?;
+    let path = reserve_capture(&cfg)?
+        .write_all(&png.into_inner())
+        .map_err(|e| format!("save screenshot: {e}"))?;
+    // Stash the decoded pixels only after the save succeeds: the
+    // editor's annotate path skips re-decoding the PNG just written,
+    // and no failed save leaves pixels cached for a missing file.
+    stash_decoded(path.clone(), img.clone());
     iris_lib::ilog!("iris: capture: png written in {:?}", t_png.elapsed());
     let entry = library::add(&path, &img)?;
     Ok((path, entry))
@@ -311,12 +310,49 @@ mod tests {
     fn unique_path_substitutes_template_and_suffixes() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = cfg_at(dir.path());
-        let first = unique_path(&cfg);
+        let first = reserve_capture(&cfg).unwrap().write_all(b"first").unwrap();
         assert!(first.to_string_lossy().ends_with(".png"));
         assert!(!first.to_string_lossy().contains('{'));
-        std::fs::write(&first, b"x").unwrap();
-        let second = unique_path(&cfg);
+        let second = reserve_capture(&cfg).unwrap().write_all(b"second").unwrap();
         assert_ne!(first, second);
+        assert!(second.to_string_lossy().ends_with("-2.png"));
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
+    }
+
+    #[test]
+    fn concurrent_capture_writes_never_share_a_path() {
+        const WRITERS: u8 = 8;
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = std::sync::Arc::new(Config {
+            screenshot_template: "capture".to_string(),
+            ..cfg_at(dir.path())
+        });
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS.into()));
+        let writers: Vec<_> = (0..WRITERS)
+            .map(|byte| {
+                let cfg = cfg.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    reserve_capture(&cfg)
+                        .and_then(|file| file.write_all(&[byte]))
+                        .map(|path| (path, byte))
+                })
+            })
+            .collect();
+        let mut saved: Vec<_> = writers
+            .into_iter()
+            .map(|writer| writer.join().unwrap().unwrap())
+            .collect();
+        saved.sort();
+        assert_eq!(saved.len(), usize::from(WRITERS));
+        for adjacent in saved.windows(2) {
+            assert_ne!(adjacent[0].0, adjacent[1].0);
+        }
+        for (path, byte) in saved {
+            assert_eq!(std::fs::read(path).unwrap(), [byte]);
+        }
     }
 
     #[test]

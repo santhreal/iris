@@ -9,6 +9,7 @@ pub mod history;
 pub mod library;
 pub mod log;
 pub mod ocr;
+pub mod output;
 pub mod par;
 pub mod pixel;
 pub mod record;

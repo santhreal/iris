@@ -269,23 +269,39 @@ impl Drop for ActiveRecording {
     }
 }
 
-/// Path for a new recording inside `dir`, using the {date}_{time} template
-/// and de-duplicating with a numeric suffix. `ext` is the container
-/// extension without a dot ("mp4", "gif", "webm").
-pub fn unique_recording_path(dir: &Path, ext: &str) -> PathBuf {
+/// Reserve the path for a new recording inside `dir`, using the
+/// {date}_{time} template and de-duplicating with a numeric suffix. `ext`
+/// is the container extension without a dot ("mp4", "gif", "webm").
+/// Dropping the reservation before `keep` removes its empty placeholder.
+pub fn reserve_recording_path(
+    dir: &Path,
+    ext: &str,
+) -> Result<crate::output::ReservedFile, String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("create recordings dir {}: {e}", dir.display()))?;
     let (y, mo, d, h, mi, s) = crate::time::local_now();
     let stem = format!("{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}");
-    let candidate = dir.join(format!("{stem}.{ext}"));
-    if !candidate.exists() {
-        return candidate;
-    }
-    for n in 2..1000 {
-        let candidate = dir.join(format!("{stem}_{n}.{ext}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    dir.join(format!("{stem}_{}.{ext}", crate::time::now_millis()))
+    reserve_recording_stem(dir, ext, &stem)
+}
+
+/// `reserve_recording_path` for a fixed stem, separated so contention
+/// tests cannot cross a one-second filename boundary.
+fn reserve_recording_stem(
+    dir: &Path,
+    ext: &str,
+    stem: &str,
+) -> Result<crate::output::ReservedFile, String> {
+    let numbered = (1..1000).map(|n| {
+        let filename = if n == 1 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}_{n}.{ext}")
+        };
+        dir.join(filename)
+    });
+    let fallback =
+        std::iter::once_with(|| dir.join(format!("{stem}_{}.{ext}", crate::time::now_millis())));
+    crate::output::reserve(numbered.chain(fallback)).map_err(|e| format!("record: {e}"))
 }
 
 #[cfg(test)]

@@ -45,13 +45,71 @@ fn probe(fps: u32, mic: bool, format: RecordingFormat) -> (ActiveRecording, mpsc
 }
 
 #[test]
-fn unique_path_dedupes_with_numeric_suffix() {
+fn recording_reservation_dedupes_with_numeric_suffix() {
     let dir = tempfile::tempdir().unwrap();
-    let first = unique_recording_path(dir.path(), "mp4");
-    std::fs::write(&first, b"x").unwrap();
-    let second = unique_recording_path(dir.path(), "mp4");
-    assert_ne!(first, second);
-    assert!(second.to_string_lossy().ends_with("_2.mp4"));
+    let stem = "2025-01-02_03-04-05";
+    let first = reserve_recording_stem(dir.path(), "mp4", stem).unwrap();
+    assert_eq!(first.path(), dir.path().join(format!("{stem}.mp4")));
+    let second = reserve_recording_stem(dir.path(), "mp4", stem).unwrap();
+    assert_eq!(second.path(), dir.path().join(format!("{stem}_2.mp4")));
+}
+
+#[test]
+fn concurrent_recording_reservations_get_every_distinct_name() {
+    const WRITERS: usize = 8;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let barrier = std::sync::Barrier::new(WRITERS);
+    let mut paths = std::thread::scope(|scope| {
+        let writers: Vec<_> = (0..WRITERS)
+            .map(|_| {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    reserve_recording_stem(root, "mp4", "capture")
+                        .map(crate::output::ReservedFile::keep)
+                })
+            })
+            .collect();
+        writers
+            .into_iter()
+            .map(|writer| writer.join().unwrap().unwrap())
+            .collect::<Vec<_>>()
+    });
+    paths.sort();
+    let names: Vec<_> = paths
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    let expected: Vec<_> = [
+        "capture.mp4",
+        "capture_2.mp4",
+        "capture_3.mp4",
+        "capture_4.mp4",
+        "capture_5.mp4",
+        "capture_6.mp4",
+        "capture_7.mp4",
+        "capture_8.mp4",
+    ]
+    .map(str::to_string)
+    .to_vec();
+    assert_eq!(names, expected);
+    for path in paths {
+        assert_eq!(std::fs::read(path).unwrap(), b"");
+    }
+}
+
+#[test]
+fn an_unstarted_recording_removes_its_reserved_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let recordings = dir.path().join("recordings");
+    let output = {
+        let reserved = reserve_recording_path(&recordings, "mp4").unwrap();
+        let output = reserved.path().to_path_buf();
+        assert!(output.is_file());
+        output
+    };
+    assert!(!output.exists());
 }
 
 #[test]

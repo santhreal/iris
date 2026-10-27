@@ -31,6 +31,10 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `check_for_updates = false` in `config.toml` turns off the background update check.
 - `update_channel = "beta"` in `config.toml` offers prereleases as well as stable releases.
 
+### Fixed
+
+- Concurrent captures and recordings reserve distinct output files instead of overwriting a file selected for the same timestamp.
+
 ### Security
 
 - Updates `rustls` to 0.23.46, `rustls-webpki` to 0.103.16, and `webpki-roots` to 1.0.10 to resolve six security advisories.
