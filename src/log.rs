@@ -5,7 +5,9 @@
 //!
 //! The libraries' records (the `log` crate's: GPUI's GPU and windowing
 //! failures, wgpu's, zbus's) at warning level and above are written as
-//! lines of their own, prefixed with the record's target.
+//! lines of their own, prefixed with the record's target. A panic on any
+//! thread is written as one line with its thread, location, and message
+//! before the default hook prints it to stderr.
 
 use parking_lot::Mutex;
 use std::io::{Seek, Write};
@@ -19,9 +21,9 @@ pub fn path() -> PathBuf {
     crate::dirs::log_file()
 }
 
-/// Open (and bound) the log file, and route the libraries' warnings and
-/// errors to it. Idempotent; called once at start. Failure is silent:
-/// stderr still carries every line.
+/// Open (and bound) the log file, route the libraries' warnings and
+/// errors to it, and journal panics to it. Idempotent; called once at
+/// start. Failure is silent: stderr still carries every line.
 pub fn init() {
     let p = path();
     if let Some(dir) = p.parent() {
@@ -46,6 +48,20 @@ pub fn init() {
     if log::set_logger(&RECORDS).is_ok() {
         log::set_max_level(RECORDS_LEVEL);
     }
+    install_panic_hook();
+}
+
+/// Chain [`journal_panic`] in front of the panic hook in place, once per
+/// process.
+fn install_panic_hook() {
+    static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+    PANIC_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            journal_panic(info);
+            previous(info);
+        }));
+    });
 }
 
 /// Write one line to stderr and the log file. Past the cap the file
@@ -59,7 +75,10 @@ pub fn line(msg: &str) {
 /// Write one line to the log file only: a degraded path the command
 /// still completes on, which a command line's output does not report.
 pub fn file_line(msg: &str) {
-    let mut guard = LOG_FILE.lock();
+    write_line(&mut LOG_FILE.lock(), msg);
+}
+
+fn write_line(guard: &mut Option<(std::fs::File, u64)>, msg: &str) {
     if let Some((f, len)) = guard.as_mut() {
         let now = crate::time::log_stamp();
         let line = format!("[{now}] {msg}\n");
@@ -73,6 +92,31 @@ pub fn file_line(msg: &str) {
         if f.write_all(line.as_bytes()).is_ok() {
             *len += line.len() as u64;
         }
+    }
+}
+
+/// Write a panic to the log file as one line. A panic raised while its
+/// own thread holds the file's lock, or while another thread does not
+/// release it, is not written: the wait is bounded so the hook cannot
+/// deadlock the panicking thread, and stderr still receives it.
+fn journal_panic(info: &std::panic::PanicHookInfo) {
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("unnamed");
+    let at = info
+        .location()
+        .map_or_else(|| "an unknown location".to_string(), |l| l.to_string());
+    let payload = info.payload();
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("a non-text payload");
+    let msg = format!(
+        "iris: panic on thread '{name}' at {at}: {}",
+        message.replace('\n', " ")
+    );
+    if let Some(mut guard) = LOG_FILE.try_lock_for(std::time::Duration::from_millis(200)) {
+        write_line(&mut guard, &msg);
     }
 }
 
@@ -111,3 +155,6 @@ macro_rules! ilog {
         $crate::log::line(&format!($($arg)*))
     };
 }
+
+#[cfg(test)]
+mod tests;

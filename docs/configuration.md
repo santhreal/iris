@@ -42,7 +42,7 @@ When `IRIS_HOME` is unset, default persistent directories resolve as follows:
 
 ### Log File
 
-The log file holds iris's diagnostic lines and the warnings and errors of the libraries iris runs on (GPUI, wgpu, zbus). Each line starts with the local time. On a library's line the time is followed by the library's module path and the record's level, as in `[14:02:11.482] wgpu_hal::vulkan: ERROR: ...`. Past 256 KiB the file restarts from empty.
+The log file holds iris's diagnostic lines and the warnings and errors of the libraries iris runs on (GPUI, wgpu, zbus). Each line starts with the local time. On a library's line the time is followed by the library's module path and the record's level, as in `[14:02:11.482] wgpu_hal::vulkan: ERROR: ...`. A panic on any thread writes one line with the thread, the source location, and the message, as in `[14:02:11.482] iris: panic on thread 'main' at src/bin/iris/editor/ops.rs:120:9: ...`. Past 256 KiB the file restarts from empty.
 
 ### Tilde Expansion
 

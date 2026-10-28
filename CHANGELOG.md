@@ -35,6 +35,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - An X11 window pick shows a card that states the click and the `Escape` key until the pick ends.
 - The AppImage adds its application menu entry and icon on each start, and turns on Start at login on its first start.
 - The macOS app turns on Start at login on its first start outside the disk image.
+- A panic on any thread writes its thread, source location, and message to `iris.log`.
 
 ### Changed
 
