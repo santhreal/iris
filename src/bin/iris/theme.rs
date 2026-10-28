@@ -349,4 +349,115 @@ mod tests {
             40.0
         );
     }
+
+    // WHY: the class closed here is "the UI sets a character the bundled
+    // faces lack". GPUI then draws it from whatever face the system has,
+    // which differs per platform, or as a missing-glyph box where none
+    // has it; the editor's text caret was U+258F, which Inter does not
+    // have. Every non-ASCII character in a string literal of the shipped
+    // source must be in each bundled face, so a new one turns this red.
+    // Not covered: text the UI does not spell in a literal, such as a
+    // file name or a user's annotation.
+    #[test]
+    fn every_bundled_face_has_every_character_the_source_spells() {
+        let faces: Vec<ab_glyph::FontRef> = FONT_FACES
+            .iter()
+            .map(|f| ab_glyph::FontRef::try_from_slice(f).unwrap())
+            .collect();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut missing = Vec::new();
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if name.ends_with(".rs")
+                    && name != "tests.rs"
+                    && !name.ends_with("_tests.rs")
+                {
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    for c in literal_chars(shipped(&source)).filter(|c| !c.is_ascii()) {
+                        use ab_glyph::Font as _;
+                        if faces.iter().any(|f| f.glyph_id(c).0 == 0) {
+                            missing.push(format!("{} U+{:04X} {c}", path.display(), c as u32));
+                        }
+                    }
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "characters the bundled faces lack:\n{}",
+            missing.join("\n")
+        );
+    }
+
+    /// The source before its test module, which ships nothing.
+    fn shipped(source: &str) -> &str {
+        source
+            .find("#[cfg(test)]\nmod tests {")
+            .map_or(source, |end| &source[..end])
+    }
+
+    /// The characters inside the string literals of Rust `source`, raw
+    /// strings included, skipping comments and character literals.
+    fn literal_chars(source: &str) -> impl Iterator<Item = char> + '_ {
+        let b = source.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                b'/' if b.get(i + 1) == Some(&b'/') => {
+                    i = source[i..].find('\n').map_or(b.len(), |n| i + n);
+                }
+                b'/' if b.get(i + 1) == Some(&b'*') => {
+                    i = source[i..].find("*/").map_or(b.len(), |n| i + n + 2);
+                }
+                // A character literal: 'x' or '\x...'. A lifetime has no
+                // closing quote within a character or escape.
+                b'\'' => {
+                    let rest = &source[i + 1..];
+                    let close = if rest.starts_with('\\') {
+                        rest[2..].find('\'').map(|n| n + 2)
+                    } else {
+                        rest.chars()
+                            .next()
+                            .filter(|c| rest[c.len_utf8()..].starts_with('\''))
+                            .map(char::len_utf8)
+                    };
+                    i += close.map_or(1, |n| n + 2);
+                }
+                b'r' if matches!(b.get(i + 1), Some(b'"' | b'#'))
+                    && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_')) =>
+                {
+                    let hashes = b[i + 1..].iter().take_while(|&&c| c == b'#').count();
+                    let open = i + 1 + hashes;
+                    if b.get(open) != Some(&b'"') {
+                        i += 1;
+                        continue;
+                    }
+                    let end = format!("\"{}", "#".repeat(hashes));
+                    let close = source[open + 1..]
+                        .find(&end)
+                        .map_or(b.len(), |n| open + 1 + n);
+                    out.extend(source[open + 1..close].chars());
+                    i = close + end.len();
+                }
+                b'"' => {
+                    let mut j = i + 1;
+                    while j < b.len() && b[j] != b'"' {
+                        j += if b[j] == b'\\' { 2 } else { 1 };
+                    }
+                    out.extend(source[i + 1..j.min(b.len())].chars());
+                    i = j + 1;
+                }
+                _ => i += 1,
+            }
+        }
+        out.into_iter()
+    }
 }

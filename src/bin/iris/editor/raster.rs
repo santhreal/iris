@@ -283,6 +283,16 @@ pub(crate) fn counter_label_at(p: (f32, f32), size: f32, label: &str) -> (f32, f
     )
 }
 
+/// The face's ascent-to-descent span in a line box at `size`: its offset
+/// from the box's top and its height. A line's glyphs and the text
+/// entry's caret both occupy it.
+pub(crate) fn glyph_span(size: f32) -> (f32, f32) {
+    use ab_glyph::ScaleFont as _;
+    let font = scaled(size);
+    let height = font.ascent() - font.descent();
+    ((TEXT_LINE * size - height) / 2.0, height)
+}
+
 /// Set `text` at `size` in a line box whose top-left is `at`, blending
 /// `px` over every covered pixel by coverage.
 pub(crate) fn draw_text(
@@ -299,8 +309,7 @@ pub(crate) fn draw_text(
     // as GPUI places them, rather than at a whole-pixel origin.
     use ab_glyph::ScaleFont as _;
     let font = scaled(size);
-    let (ascent, descent) = (font.ascent(), font.descent());
-    let baseline = at.1 + (TEXT_LINE * size - (ascent - descent)) / 2.0 + ascent;
+    let baseline = at.1 + glyph_span(size).0 + font.ascent();
     let iw = img.width() as i32;
     let ih = img.height() as i32;
     let mut pen = at.0;

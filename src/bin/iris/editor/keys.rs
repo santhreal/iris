@@ -27,8 +27,8 @@ impl Editor {
                 "backspace" => {
                     if let Some(entry) = &mut self.text_entry {
                         entry.buffer.pop();
-                        entry.caret = SharedString::from(format!("{}▏", entry.buffer));
                         entry.buffer_str = SharedString::from(entry.buffer.clone());
+                        self.caret_started = Instant::now();
                     }
                 }
                 _ => {
@@ -36,7 +36,6 @@ impl Editor {
                         if let Some(ch) = &ev.keystroke.key_char {
                             if let Some(entry) = &mut self.text_entry {
                                 entry.buffer.push_str(ch);
-                                entry.caret = SharedString::from(format!("{}▏", entry.buffer));
                                 entry.buffer_str = SharedString::from(entry.buffer.clone());
                                 self.caret_started = Instant::now();
                             }

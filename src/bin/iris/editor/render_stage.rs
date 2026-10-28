@@ -7,7 +7,7 @@ use iris_lib::history::Edit;
 
 use super::action::{hex_rgba, text_size, Tool};
 use super::paint::paint_action;
-use super::raster::{counter_label_at, TEXT_LINE};
+use super::raster::{counter_label_at, glyph_span, text_advance, TEXT_LINE};
 use super::Editor;
 use crate::theme;
 
@@ -155,21 +155,34 @@ impl Editor {
             let blink_on = (self.caret_started.elapsed().as_millis() % 1060) < 580;
             let p = entry.point;
             let size = text_size(base_w);
+            let top = p.1 - size;
             stage = stage.child(
                 div()
                     .absolute()
                     .left(px(p.0 * scale))
-                    .top(px((p.1 - size) * scale))
+                    .top(px(top * scale))
                     .text_color(hex_rgba(self.color))
                     .text_size(px(size * scale))
                     .line_height(px(TEXT_LINE * size * scale))
                     .font_weight(FontWeight::BOLD)
-                    .child(if blink_on {
-                        entry.caret.clone()
-                    } else {
-                        entry.buffer_str.clone()
-                    }),
+                    .child(entry.buffer_str.clone()),
             );
+            // The caret is a bar, not a glyph: no bundled face has one,
+            // and a fallback face differs per system or is missing. It
+            // sits a pixel past the advance, clear of a glyph with a
+            // narrow side bearing.
+            if blink_on {
+                let (offset, height) = glyph_span(size);
+                stage = stage.child(
+                    div()
+                        .absolute()
+                        .left(px((p.0 + text_advance(&entry.buffer, size)) * scale + 1.0))
+                        .top(px((top + offset) * scale))
+                        .w(px((size * scale * 0.08).clamp(1.5, 3.0)))
+                        .h(px(height * scale))
+                        .bg(hex_rgba(self.color)),
+                );
+            }
         }
 
         // Selection outline around the active action.
@@ -308,7 +321,6 @@ impl Editor {
                         this.text_entry = Some(super::action::TextEntry {
                             point: p,
                             buffer: String::new(),
-                            caret: "▏".into(),
                             buffer_str: "".into(),
                         });
                         this.caret_started = std::time::Instant::now();

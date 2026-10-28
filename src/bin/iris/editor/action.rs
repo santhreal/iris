@@ -123,7 +123,6 @@ pub(crate) type PathCache = (f32, usize, (f32, f32), (f32, f32), Rc<Vec<[f32; 6]
 pub(crate) struct TextEntry {
     pub(crate) point: (f32, f32),
     pub(crate) buffer: String,
-    pub(crate) caret: SharedString,
     pub(crate) buffer_str: SharedString,
 }
 
