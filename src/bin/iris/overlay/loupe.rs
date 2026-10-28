@@ -65,7 +65,9 @@ pub(super) fn loupe_image(
             tail[..row_px * 4].copy_from_slice(&head[row_start..row_start + row_px * 4]);
         }
     }
-    // Crosshair on the center pixel.
+    // Box the center pixel in a color that stands off it: a white box
+    // vanished on a white page.
+    let mark = reticle(center);
     let mid = LOUPE_PX / 2;
     let z = LOUPE_ZOOM;
     for i in 0..z {
@@ -76,7 +78,7 @@ pub(super) fn loupe_image(
             (mid + z / 2 - 1, mid - z / 2 + i),
         ] {
             let d = ((y * LOUPE_PX + x) * 4) as usize;
-            out[d..d + 4].copy_from_slice(&[255, 255, 255, 242]);
+            out[d..d + 4].copy_from_slice(&mark);
         }
     }
     // Straight into a RenderImage: this rebuilds on every drag
@@ -90,6 +92,18 @@ pub(super) fn loupe_image(
         center[0], center[1], center[2]
     ));
     (img, info)
+}
+
+/// The BGRA color of the box around the center pixel `rgb`: near black
+/// over a light pixel, white over a dark one, by relative luminance
+/// (ITU-R BT.709).
+fn reticle(rgb: [u8; 3]) -> [u8; 4] {
+    let [r, g, b] = rgb.map(f32::from);
+    if 0.2126 * r + 0.7152 * g + 0.0722 * b > 128.0 {
+        [0x16, 0x14, 0x14, 255]
+    } else {
+        [255, 255, 255, 255]
+    }
 }
 
 impl super::Overlay {
@@ -114,3 +128,10 @@ impl super::Overlay {
         }
     }
 }
+
+// WHY: the class closed here is "the loupe's center box does not show
+// over the pixel it marks": it was white whatever the pixel, so over a
+// white page the loupe showed no mark at all. Not covered: a pixel
+// whose neighbors and itself straddle the luminance threshold.
+#[cfg(test)]
+mod tests;
