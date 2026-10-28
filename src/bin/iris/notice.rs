@@ -89,12 +89,14 @@ pub fn failed(cx: &mut App, what: &str, err: &str) {
 
 /// The next step of an interaction waiting on input. The card stays
 /// until `end_guide` or a newer notice replaces it.
+#[cfg(target_os = "linux")]
 pub fn guide(cx: &mut App, title: &str, detail: &str) {
     show(cx, title, detail.to_string(), None, Kind::Guide);
 }
 
 /// The interaction a guide described ended: a live guide leaves. Any
 /// other live notice stays.
+#[cfg(target_os = "linux")]
 pub fn end_guide(cx: &mut App) {
     let live = *NOTICE.lock();
     if let Some(handle) = live {
