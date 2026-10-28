@@ -28,12 +28,14 @@ pub fn tidy() {
 }
 
 /// Give this install the desktop integration a package's installer
-/// writes: an AppImage's menu entry, and Start at login on its first
-/// start. The daemon runs this once it has started. Other installs
-/// have both from their installer.
+/// writes: an AppImage's menu entry, and Start at login on the first
+/// start of an AppImage or an iris.app. The daemon runs this once it
+/// has started. Other installs have both from their installer.
 pub fn integrate() {
     #[cfg(target_os = "linux")]
     linux::integrate();
+    #[cfg(target_os = "macos")]
+    macos::integrate();
 }
 
 /// The release asset suffix `kind` with `{arch}` replaced by this

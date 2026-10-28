@@ -346,8 +346,9 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
     // forwarded `--home` behind it. A capture before the warmup opens
     // a fresh shell. The install tidy runs after it: the `iris
     // --update` that started this daemon exits right after the start,
-    // and Windows deletes no file a process still runs. An AppImage's
-    // menu entry is written off the main thread after both.
+    // and Windows deletes no file a process still runs. The first-start
+    // integration of an AppImage or an iris.app runs off the main
+    // thread after both.
     cx.spawn(async move |cx| {
         cx.background_executor().timer(WARMUP_AFTER).await;
         cx.update(|cx| {

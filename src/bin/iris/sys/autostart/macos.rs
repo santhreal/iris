@@ -31,6 +31,13 @@ pub fn set(on: bool) -> Result<(), String> {
     set_at(&agent()?, &this_iris()?, on)
 }
 
+/// Whether this account holds a LaunchAgent for iris, for this iris or
+/// another copy: Start at login was turned on here, or a first start
+/// turned it on (`crate::sys::install::integrate`).
+pub fn chosen() -> bool {
+    agent().is_ok_and(|agent| agent.exists())
+}
+
 /// Whether the agent at `agent` runs `program`. A hand-installed copy
 /// of packaging/macos/dev.iris.app.plist counts when it names this
 /// program.

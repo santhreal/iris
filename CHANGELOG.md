@@ -34,6 +34,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The home window and the settings window's Shortcuts pane show a global hotkey that another program holds as unavailable, with the reason.
 - An X11 window pick shows a card that states the click and the `Escape` key until the pick ends.
 - The AppImage adds its application menu entry and icon on each start, and turns on Start at login on its first start.
+- The macOS app turns on Start at login on its first start outside the disk image.
 
 ### Changed
 

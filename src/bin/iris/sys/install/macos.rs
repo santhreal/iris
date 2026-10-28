@@ -66,6 +66,57 @@ pub fn ready() -> Result<(), String> {
     bundle().map(drop)
 }
 
+/// The file in the data directory whose presence records that an
+/// installed iris.app has started once.
+const STARTED: &str = "started";
+
+/// Turn on Start at login on the first start of an installed iris.app,
+/// as the Windows installer and a Linux package do, unless this account
+/// already holds a LaunchAgent for iris. A later start changes nothing,
+/// so turning Start at login off stays off.
+pub fn integrate() {
+    let (Ok(bundle), Some(data)) = (bundle(), iris_lib::dirs::data_dir()) else {
+        return;
+    };
+    match first_start(&bundle, &data.join(STARTED)) {
+        Ok(true) if !crate::sys::autostart::chosen() => {
+            if let Err(e) = crate::sys::autostart::set(true) {
+                iris_lib::ilog!("iris: {e}");
+            }
+        }
+        Ok(_) => {}
+        Err(e) => iris_lib::ilog!("iris: first start: {e}"),
+    }
+}
+
+/// True on the first start of the installed bundle `bundle`, the one
+/// that creates `marker`. A bundle on a disk image or a copy Gatekeeper
+/// translocated runs from a path that goes away: its starts are never a
+/// first, and leave `marker` for the installed copy.
+fn first_start(bundle: &Path, marker: &Path) -> Result<bool, String> {
+    let transient = bundle.starts_with("/Volumes")
+        || bundle
+            .components()
+            .any(|c| c.as_os_str() == "AppTranslocation");
+    if transient {
+        return Ok(false);
+    }
+    if let Some(dir) = marker.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    }
+    let created = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(marker);
+    match created {
+        Ok(_) => Ok(true),
+        // Only a file records a start: a directory of that name is an
+        // error.
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists && marker.is_file() => Ok(false),
+        Err(e) => Err(format!("create {}: {e}", marker.display())),
+    }
+}
+
 /// Replace the installed iris with the downloaded asset `file` and
 /// restart; returns only on failure.
 pub fn apply_file(file: &Path) -> Result<(), String> {

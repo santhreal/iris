@@ -236,3 +236,43 @@ fn a_busy_attach_is_tried_again_and_other_failures_are_not() {
         assert_eq!((ran, got), (runs, want), "{case}");
     }
 }
+
+// WHY: the class closed here is "an iris.app from the DMG never starts
+// at login, and turning it off does not stay off": a first start turns
+// it on, later starts and starts from a disk image or a translocated
+// copy do not. Not covered: the LaunchAgent the first start writes
+// (package.yml checks it on the bundle's daemon).
+#[test]
+fn only_the_first_start_of_an_installed_bundle_is_a_first() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let marker = dir.path().join("data/started");
+    for transient in [
+        "/Volumes/iris/iris.app",
+        "/private/var/folders/x/AppTranslocation/0A1B/d/iris.app",
+    ] {
+        assert_eq!(
+            first_start(Path::new(transient), &marker),
+            Ok(false),
+            "{transient}"
+        );
+        assert!(!marker.exists(), "{transient} left the marker");
+    }
+    let installed = Path::new("/Applications/iris.app");
+    assert_eq!(first_start(installed, &marker), Ok(true));
+    assert_eq!(first_start(installed, &marker), Ok(false));
+    assert_eq!(
+        first_start(Path::new("/Users/a/Applications/iris.app"), &marker),
+        Ok(false),
+        "a moved bundle is a later start"
+    );
+    let blocked = dir.path().join("file");
+    std::fs::write(&blocked, b"").expect("write");
+    let err = first_start(installed, &blocked.join("started")).expect_err("a file as the data dir");
+    assert!(err.starts_with("create "), "{err}");
+    let folder = dir.path().join("folder");
+    std::fs::create_dir(&folder).expect("mkdir");
+    assert!(
+        first_start(installed, &folder).is_err(),
+        "a directory records no start"
+    );
+}

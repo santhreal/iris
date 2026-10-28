@@ -137,7 +137,7 @@ cp -R /Volumes/iris/iris.app /Applications/
 hdiutil detach /Volumes/iris
 ```
 
-3. To start iris at login, turn on **Start iris at login** in the settings window (`/Applications/iris.app/Contents/MacOS/iris --settings`). Turning it on writes the LaunchAgent `~/Library/LaunchAgents/dev.iris.app.plist`, and turning it off deletes it ([Start at Login](configuration.md#start-at-login)).
+3. Start iris (`open /Applications/iris.app`). The first start of an `iris.app` outside the disk image turns on **Start iris at login** when `~/Library/LaunchAgents/dev.iris.app.plist` does not exist, and creates `~/Library/Application Support/dev.iris.app/started`. Later starts leave the setting as it is. Turning **Start iris at login** on writes the LaunchAgent, and turning it off deletes it ([Start at Login](configuration.md#start-at-login)).
 
 To uninstall, turn off **Start iris at login**, quit iris (`/Applications/iris.app/Contents/MacOS/iris --quit`), and delete `/Applications/iris.app`.
 
