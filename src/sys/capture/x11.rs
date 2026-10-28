@@ -6,7 +6,9 @@ use crate::capture::{CaptureBackend, Frame, WinRect};
 mod query;
 mod shm;
 
-pub use query::{active_window_rect, layout, list_top_level_windows, monitors, shared_conn};
+pub use query::{
+    active_window_rect, layout, list_top_level_windows, monitors, pointer, shared_conn,
+};
 pub(crate) use shm::shm_supported;
 use shm::try_shm_grab_into;
 

@@ -79,6 +79,15 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
     native::layout()
 }
 
+/// The pointer in root space, for an overlay that maps under a pointer
+/// that has not moved yet. Wayland gives clients no global pointer.
+pub fn pointer() -> Result<(i32, i32), String> {
+    #[cfg(target_os = "linux")]
+    return x11_only("the pointer position", x11::pointer);
+    #[cfg(not(target_os = "linux"))]
+    native::pointer()
+}
+
 /// The focused window's rect in root space, decorations included.
 /// X11 reads _NET_ACTIVE_WINDOW; Windows uses GetForegroundWindow;
 /// macOS takes the frontmost on-screen window.

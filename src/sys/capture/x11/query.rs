@@ -77,6 +77,18 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
     Ok((monitors, windows))
 }
 
+/// The pointer's position in root (frame) pixels.
+pub fn pointer() -> Result<(i32, i32), String> {
+    let (conn, screen_num) = shared_conn()?;
+    let root = conn.setup().roots[screen_num].root;
+    let reply = conn
+        .query_pointer(root)
+        .map_err(|e| format!("query_pointer: {e}"))?
+        .reply()
+        .map_err(|e| format!("query_pointer reply: {e}"))?;
+    Ok((i32::from(reply.root_x), i32::from(reply.root_y)))
+}
+
 /// Top-level windows in bottom-to-top stacking order (EWMH
 /// _NET_CLIENT_LIST_STACKING), minus this process's own windows (the
 /// frozen-frame overlay itself) and iconic/hidden ones. The overlay uses

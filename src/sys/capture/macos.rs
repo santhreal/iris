@@ -73,6 +73,8 @@ extern "C" {
     ) -> Ref;
     fn CGContextDrawImage(ctx: Ref, rect: CGRect, image: Ref);
     fn CGContextRelease(ctx: Ref);
+    fn CGEventCreate(source: Ref) -> Ref;
+    fn CGEventGetLocation(event: Ref) -> CGPoint;
     static kCGWindowLayer: CFTypeRef;
     static kCGWindowBounds: CFTypeRef;
     static kCGWindowOwnerPID: CFTypeRef;
@@ -263,6 +265,19 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
         .map(|&d| to_root(unsafe { CGDisplayBounds(d) }, scale))
         .collect();
     Ok((mons, windows(scale)?))
+}
+
+/// The pointer in root pixels: its global location in points, top-left
+/// origin, at the root scale.
+pub fn pointer() -> Result<(i32, i32), String> {
+    let scale = root_scale_of(&displays()?);
+    let event = unsafe { CGEventCreate(core::ptr::null_mut()) };
+    if event.is_null() {
+        return Err("CGEventCreate returned no event".to_string());
+    }
+    let at = unsafe { CGEventGetLocation(event) };
+    unsafe { CFRelease(event) };
+    Ok(((at.x * scale).round() as i32, (at.y * scale).round() as i32))
 }
 
 /// The frontmost normal window: the window list is ordered front to

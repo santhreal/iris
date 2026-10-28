@@ -4,12 +4,13 @@
 #![cfg(windows)]
 
 use crate::capture::{Frame, WinRect};
+use windows_sys::Win32::Foundation::POINT;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetWindowRect, IsWindowVisible,
+    EnumWindows, GetCursorPos, GetForegroundWindow, GetWindowRect, IsWindowVisible,
 };
 
 /// Root pixels per GPUI logical pixel: the system DPI over 96. GPUI
@@ -142,6 +143,15 @@ pub fn active_window_rect() -> Result<WinRect, String> {
         }
         Ok(rect_to_winrect(r))
     }
+}
+
+/// The pointer in physical desktop pixels.
+pub fn pointer() -> Result<(i32, i32), String> {
+    let mut p = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut p) } == 0 {
+        return Err("GetCursorPos failed".to_string());
+    }
+    Ok((p.x, p.y))
 }
 
 /// The whole virtual screen as BGRA, the layout GDI produces: the
