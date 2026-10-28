@@ -7,6 +7,7 @@ use iris_lib::history::Edit;
 
 use super::action::{hex_rgba, text_size, Tool};
 use super::paint::paint_action;
+use super::raster::{counter_label_at, TEXT_LINE};
 use super::Editor;
 use crate::theme;
 
@@ -102,21 +103,23 @@ impl Editor {
                             .top(px((p.1 - action.font_size) * scale))
                             .text_color(hex_rgba(action.color))
                             .text_size(px(action.font_size * scale))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .line_height(px(TEXT_LINE * action.font_size * scale))
+                            .font_weight(FontWeight::BOLD)
                             .child(text.clone()),
                     );
                 }
             } else if action.tool == Tool::Counter {
                 if let Some(p) = action.points.first() {
                     let num = action.step_label.clone();
-                    let nw = num.chars().count() as f32 * action.font_size * 0.6;
+                    let at = counter_label_at(*p, action.font_size, &num);
                     stage = stage.child(
                         div()
                             .absolute()
-                            .left(px((p.0 - nw / 2.0) * scale))
-                            .top(px((p.1 - action.font_size * 0.55) * scale))
-                            .text_color(theme::FG)
+                            .left(px(at.0 * scale))
+                            .top(px(at.1 * scale))
+                            .text_color(white())
                             .text_size(px(action.font_size * scale))
+                            .line_height(px(TEXT_LINE * action.font_size * scale))
                             .font_weight(FontWeight::BOLD)
                             .child(num),
                     );
@@ -159,6 +162,8 @@ impl Editor {
                     .top(px((p.1 - size) * scale))
                     .text_color(hex_rgba(self.color))
                     .text_size(px(size * scale))
+                    .line_height(px(TEXT_LINE * size * scale))
+                    .font_weight(FontWeight::BOLD)
                     .child(if blink_on {
                         entry.caret.clone()
                     } else {

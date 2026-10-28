@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use super::action::{Action, Tool};
 use super::raster::rasterize;
+use super::Editor;
 
 fn action(tool: Tool, points: Vec<(f32, f32)>, filled: bool) -> Action {
     Action {
@@ -79,6 +80,46 @@ fn text_action_paints_glyph_pixels() {
         .flat_map(|x| (0..40).map(move |y| (x, y)))
         .any(|(x, y)| img.get_pixel(x, y).0[3] > 0);
     assert!(painted, "text action must paint glyph pixels");
+}
+
+// WHY: the class closed here is "a text action's box is a guess at its
+// ink". The bbox, which places the selection outline, the hit test, and
+// the footprint a rebuild restores, took 0.6 em per character, so a wide
+// word ran past its outline and a narrow one sat in a box twice its
+// size. Each word here is set and its ink measured against the box: the
+// box encloses the ink and ends where the ink does, give or take the last
+// glyph's side bearing.
+// Not covered: fonts other than the bundled face, which is the only one
+// the save sets text in.
+#[test]
+fn a_text_box_encloses_its_ink_and_ends_with_it() {
+    const SIZE: f32 = 24.0;
+    const AT: (f32, f32) = (8.0, 40.0);
+    for word in ["WWW", "iii", "Ag", "mmm m", "17"] {
+        let mut img = image::RgbaImage::new(240, 80);
+        let mut a = action(Tool::Text, vec![AT], false);
+        a.text = Some(word.into());
+        a.font_size = SIZE;
+        rasterize(&mut img, &a, 1.0);
+        let (x, y, w, h) = Editor::compute_bbox(&a).unwrap();
+        let ink: Vec<(f32, f32)> = img
+            .enumerate_pixels()
+            .filter(|p| p.2 .0[3] > 0)
+            .map(|(x, y, _)| (x as f32, y as f32))
+            .collect();
+        let right = ink.iter().map(|p| p.0 + 1.0).fold(f32::MIN, f32::max);
+        for &(px, py) in &ink {
+            assert!(
+                px >= x - 1.0 && px + 1.0 <= x + w + 1.0 && py >= y && py + 1.0 <= y + h,
+                "{word:?} inks ({px}, {py}) outside its box ({x}, {y}, {w}, {h})"
+            );
+        }
+        assert!(
+            x + w - right < SIZE * 0.15,
+            "{word:?}'s box ends at {} with its ink ending at {right}",
+            x + w
+        );
+    }
 }
 
 #[test]

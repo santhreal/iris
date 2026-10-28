@@ -174,12 +174,12 @@ impl Editor {
             Tool::Text => {
                 let p = action.points.first()?;
                 let text = action.text.as_ref()?;
-                let w = text.chars().count() as f32 * action.font_size * 0.6;
+                let w = super::raster::text_advance(text, action.font_size);
                 Some((
                     p.0,
                     p.1 - action.font_size,
                     w.max(8.0),
-                    action.font_size * 1.25,
+                    action.font_size * super::raster::TEXT_LINE,
                 ))
             }
             Tool::Blur => Some(action.blur_rect),

@@ -200,7 +200,13 @@ pub(crate) fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: 
         }
         Tool::Text => {
             if let (Some(text), Some(p)) = (&action.text, action.points.first()) {
-                draw_text(img, *p, action.font_size, text, px);
+                draw_text(
+                    img,
+                    (p.0, p.1 - action.font_size),
+                    action.font_size,
+                    text,
+                    px,
+                );
             }
         }
         Tool::Blur => {}
@@ -209,12 +215,11 @@ pub(crate) fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: 
             if let Some(p) = action.points.first() {
                 let r = action.font_size * 0.9;
                 stamp(img, p.0, p.1, r, px);
-                let num = &action.step_label;
-                let nw = num.chars().count() as f32 * action.font_size * 0.6;
                 let white = image::Rgba([255, 255, 255, px.0[3]]);
+                let num = &action.step_label;
                 draw_text(
                     img,
-                    (p.0 - nw / 2.0, p.1 + action.font_size * 0.35),
+                    counter_label_at(*p, action.font_size, num),
                     action.font_size,
                     num,
                     white,
@@ -225,58 +230,105 @@ pub(crate) fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: 
     }
 }
 
+/// The height of a line of annotation text over its em. The canvas and
+/// the saved file both set a line in a box this tall and center the
+/// face's ascent and descent in it, as GPUI lays out a line, so the
+/// baseline lands on the same pixel in both.
+pub(crate) const TEXT_LINE: f32 = 1.25;
+
+/// The face annotations are set in: the bundled Inter Bold, parsed once
+/// per process. Embedded, so text bakes identically on every platform
+/// with no system font dependency.
+fn face() -> &'static ab_glyph::FontRef<'static> {
+    static FACE: std::sync::LazyLock<ab_glyph::FontRef<'static>> = std::sync::LazyLock::new(|| {
+        ab_glyph::FontRef::try_from_slice(crate::theme::FONT_BOLD_TTF)
+            .expect("bundled Inter Bold parses")
+    });
+    &FACE
+}
+
+/// The face scaled so its em is `size` pixels, as GPUI scales a font to
+/// its text size. A `PxScale` of `size` would make ascent minus descent
+/// `size` instead, about a sixth smaller for Inter.
+fn scaled(size: f32) -> ab_glyph::PxScaleFont<&'static ab_glyph::FontRef<'static>> {
+    use ab_glyph::Font as _;
+    let font = face();
+    let em = font.units_per_em().unwrap_or(font.height_unscaled());
+    font.into_scaled(size * font.height_unscaled() / em)
+}
+
+/// The horizontal advance of `text` at `size`, in pixels.
+pub(crate) fn text_advance(text: &str, size: f32) -> f32 {
+    use ab_glyph::ScaleFont as _;
+    let font = scaled(size);
+    let mut w = 0f32;
+    let mut last: Option<ab_glyph::GlyphId> = None;
+    for c in text.chars() {
+        let id = font.glyph_id(c);
+        if let Some(last) = last {
+            w += font.kern(last, id);
+        }
+        w += font.h_advance(id);
+        last = Some(id);
+    }
+    w
+}
+
+/// The top-left of a counter's label line box: centered on the disc's
+/// center `p` in both axes.
+pub(crate) fn counter_label_at(p: (f32, f32), size: f32, label: &str) -> (f32, f32) {
+    (
+        p.0 - text_advance(label, size) / 2.0,
+        p.1 - TEXT_LINE * size / 2.0,
+    )
+}
+
+/// Set `text` at `size` in a line box whose top-left is `at`, blending
+/// `px` over every covered pixel by coverage.
 pub(crate) fn draw_text(
     img: &mut image::RgbaImage,
-    p: (f32, f32),
+    at: (f32, f32),
     size: f32,
     text: &str,
     px: image::Rgba<u8>,
 ) {
-    // The bundled face, parsed once per process: rasterize replays this
-    // for every text action on every rebuild. Embedded, so text bakes
-    // identically on every platform with no system font dependency.
-    static FONT: std::sync::LazyLock<ab_glyph::FontRef<'static>> = std::sync::LazyLock::new(|| {
-        ab_glyph::FontRef::try_from_slice(crate::theme::FONT_BOLD_TTF)
-            .expect("bundled Inter Bold parses")
-    });
-    let font = &*FONT;
     // Inline of imageproc's draw_text_mut so the imageproc crate (and
-    // its nalgebra/rayon/rand tree) drops out of the build. Same
-    // semantics: advance by h_advance + kern, rasterize each outlined
-    // glyph, and blend every covered pixel by coverage over all four
-    // channels.
-    use ab_glyph::{Font as _, ScaleFont as _};
-    let scale = ab_glyph::PxScale::from(size);
-    let scaled = font.as_scaled(scale);
-    let x = p.0 as i32;
-    let y = (p.1 - size) as i32;
+    // its nalgebra/rayon/rand tree) drops out of the build: rasterize
+    // each outlined glyph and blend every covered pixel by coverage over
+    // all four channels. Glyphs sit at their exact fractional position,
+    // as GPUI places them, rather than at a whole-pixel origin.
+    use ab_glyph::ScaleFont as _;
+    let font = scaled(size);
+    let (ascent, descent) = (font.ascent(), font.descent());
+    let baseline = at.1 + (TEXT_LINE * size - (ascent - descent)) / 2.0 + ascent;
     let iw = img.width() as i32;
     let ih = img.height() as i32;
-    let mut w = 0f32;
+    let mut pen = at.0;
     let mut last: Option<ab_glyph::GlyphId> = None;
     for c in text.chars() {
-        let glyph_id = scaled.glyph_id(c);
-        let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(w, scaled.ascent()));
-        w += scaled.h_advance(glyph_id);
-        if let Some(g) = scaled.outline_glyph(glyph) {
-            if let Some(last) = last {
-                w += scaled.kern(glyph_id, last);
-            }
-            last = Some(glyph_id);
-            let bb = g.px_bounds();
-            g.draw(|gx, gy, gv| {
-                let image_x = gx as i32 + x + bb.min.x.round() as i32;
-                let image_y = gy as i32 + y + bb.min.y.round() as i32;
-                let gv = gv.clamp(0.0, 1.0);
-                if (0..iw).contains(&image_x) && (0..ih).contains(&image_y) {
-                    let dst = img.get_pixel_mut(image_x as u32, image_y as u32);
-                    let inv = 1.0 - gv;
-                    for ch in 0..4 {
-                        dst[ch] =
-                            (dst[ch] as f32 * inv + px[ch] as f32 * gv).clamp(0.0, 255.0) as u8;
-                    }
-                }
-            });
+        let id = font.glyph_id(c);
+        if let Some(last) = last {
+            pen += font.kern(last, id);
         }
+        let glyph = id.with_scale_and_position(font.scale(), ab_glyph::point(pen, baseline));
+        pen += font.h_advance(id);
+        last = Some(id);
+        let Some(g) = font.outline_glyph(glyph) else {
+            continue;
+        };
+        // `px_bounds` is whole pixels; coverage is relative to its min.
+        let bb = g.px_bounds();
+        g.draw(|gx, gy, gv| {
+            let image_x = gx as i32 + bb.min.x as i32;
+            let image_y = gy as i32 + bb.min.y as i32;
+            let gv = gv.clamp(0.0, 1.0);
+            if (0..iw).contains(&image_x) && (0..ih).contains(&image_y) {
+                let dst = img.get_pixel_mut(image_x as u32, image_y as u32);
+                let inv = 1.0 - gv;
+                for ch in 0..4 {
+                    dst[ch] = (dst[ch] as f32 * inv + px[ch] as f32 * gv).clamp(0.0, 255.0) as u8;
+                }
+            }
+        });
     }
 }
