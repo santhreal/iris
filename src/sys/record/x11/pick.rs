@@ -13,10 +13,12 @@ use super::mark::{connect, escape_keycodes, make_crosshair};
 use super::PickedWindow;
 
 /// Click-to-pick: grab pointer and keyboard, wait for a click (target) or
-/// Escape (cancel). Returns the top-level window under the click. The
-/// wait ends on X input or a ring of `wake`: a stop during the pick must
-/// end it, or the recording thread never joins and the daemon wedges on
-/// the next command.
+/// Escape (cancel). Returns the top-level window under the click. A click
+/// on an override-redirect window (a menu, a tooltip, iris's own guide
+/// card) picks nothing and the pick waits on. The wait ends on X input
+/// or a ring of `wake`: a stop during the pick must end it, or the
+/// recording thread never joins and the daemon wedges on the next
+/// command.
 pub(super) fn pick_window(stop: &Receiver<()>, wake: &Wake) -> Result<PickedWindow, String> {
     let (conn, screen_num) = connect()?;
     let root = conn.setup().roots[screen_num].root;
@@ -87,11 +89,21 @@ pub(super) fn pick_window(stop: &Receiver<()>, wake: &Wake) -> Result<PickedWind
                     }
                     win = tree.parent;
                 }
+                if popup(&conn, win)? {
+                    continue;
+                }
                 let geom = conn
                     .get_geometry(win)
                     .map_err(|e| e.to_string())?
                     .reply()
                     .map_err(|e| format!("get_geometry: {e}"))?;
+                crate::ilog!(
+                    "iris: record: picked window 0x{win:x} {}x{} at {},{}",
+                    geom.width,
+                    geom.height,
+                    ptr.root_x,
+                    ptr.root_y
+                );
                 break Ok(PickedWindow {
                     id: win,
                     width: u32::from(geom.width),
@@ -109,4 +121,15 @@ pub(super) fn pick_window(stop: &Receiver<()>, wake: &Wake) -> Result<PickedWind
     let _ = conn.ungrab_keyboard(CURRENT_TIME);
     let _ = conn.free_cursor(cursor);
     picked
+}
+
+/// True when `win` is override-redirect: a popup the window manager
+/// does not manage, never a recording target.
+fn popup(conn: &impl Connection, win: u32) -> Result<bool, String> {
+    let attrs = conn
+        .get_window_attributes(win)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| format!("get_window_attributes: {e}"))?;
+    Ok(attrs.override_redirect)
 }
