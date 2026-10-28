@@ -88,14 +88,16 @@ pub fn park_unmanaged(xid: u32) -> bool {
 }
 
 /// Bring the parked window `xid` back over the virtual screen: the
-/// union rect, mapped, raised, above, focused. A window manager keeps
-/// the window managed while it is minimized, and with none a map shows
-/// it at once, so the requests go out at once, from the calling thread.
+/// union rect, mapped, raised, above, focused, and taking input again
+/// (`cutout::pass_input`). A window manager keeps the window managed
+/// while it is minimized, and with none a map shows it at once, so the
+/// requests go out at once, from the calling thread.
 pub fn unpark_span(xid: u32, x: i32, y: i32, w: u32, h: u32) {
     let Ok((conn, screen)) = iris_lib::sys::capture::x11::shared_conn() else {
         return;
     };
     let root = conn.setup().roots[screen].root;
+    super::cutout::take_input(conn, xid);
     let _ = conn.configure_window(xid, &span(x, y, w, h));
     let _ = conn.map_window(xid);
     request_above(conn, root, xid);

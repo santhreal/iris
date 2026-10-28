@@ -57,7 +57,7 @@ impl Overlay {
         sx: f32,
         sy: f32,
     ) -> Stateful<Div> {
-        if !self.dragging && self.current.is_none() && self.hovered.is_none() {
+        if self.cursor_known && !self.dragging && self.current.is_none() && self.hovered.is_none() {
             let sf = window.scale_factor();
             let win = window.bounds().size;
             let (fx, fy) = self.frame_pos(sf, sx, sy, self.cursor.0, self.cursor.1);

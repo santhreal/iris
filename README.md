@@ -34,7 +34,7 @@ Release packages include FFmpeg. Source builds use `ffmpeg` from `PATH`.
    ```sh
    iris
    ```
-   The daemon runs in the background with a tray icon. The application menu entry on Linux and the Start menu shortcut on Windows run `iris --home`, which opens the home window. On macOS, opening iris.app while the daemon runs with no iris window open shows the home window.
+   The home window opens, and the daemon runs in the background with a tray icon. The application menu entry on Linux and the Start menu shortcut on Windows open the same window. On macOS, opening iris.app while the daemon runs with no iris window open shows the home window.
 2. Press `Print` (`F13` on macOS) or run `iris --capture` to open the region capture overlay.
 3. Click a window to capture it, or drag a rectangle and press `Enter`.
 4. Click the preview toast to open the annotation editor.

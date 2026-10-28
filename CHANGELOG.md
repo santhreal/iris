@@ -30,16 +30,27 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The daemon checks for a newer release about a minute after it starts and then once a day, and offers it in the tray menu, a notice, and the settings window's Updates pane.
 - `check_for_updates = false` in `config.toml` turns off the background update check.
 - `update_channel = "beta"` in `config.toml` offers prereleases as well as stable releases.
+- On Wayland the daemon binds the capture and record hotkeys through the GlobalShortcuts portal where the desktop provides it.
+- The home window and the settings window's Shortcuts pane show a global hotkey that another program holds as unavailable, with the reason.
+- An X11 window pick shows a card that states the click and the `Escape` key until the pick ends.
 
 ### Changed
 
 - Reduced capture-overlay, capture-toast, Library-opening, and wheel-scrolling latency.
+- A bare `iris` opens the home window; `iris --daemon` starts the daemon with no window.
+- The home window shows each shortcut as key caps, in a larger layout with a hairline window edge.
+- The daemon runs the command it started for, such as opening the home window, before it prepares the capture renderer, and skips that preparation while a recording runs.
+- An empty library shows no `0 captures` count, and its hint names the capture shortcut only while that shortcut is bound.
 
 ### Fixed
 
 - Library hover animations no longer skip after an idle window.
 - Concurrent captures and recordings reserve distinct output files instead of overwriting a file selected for the same timestamp.
 - A failed portable Windows update preserves and reports recovery files instead of deleting them during cleanup or a retry.
+- The New Screenshot and Record Window tiles close the home window before the capture starts, so it no longer appears in the frozen frame.
+- The capture overlay opens with the window under a resting pointer snapped and the pointer readout at the pointer, instead of waiting for the pointer to move.
+- An X11 window pick ignores a click on a menu, a tooltip, or an iris card.
+- An icon in a row whose text overflows keeps its size instead of shrinking to a sliver, as the folder glyph in the settings window's storage rows did.
 
 ### Security
 

@@ -7,6 +7,7 @@
 mod controls;
 mod field;
 mod image;
+mod keycaps;
 mod menu;
 mod resize;
 mod scroll;
@@ -38,6 +39,7 @@ pub(crate) use meta_shortcut;
 pub use self::controls::{push_button, segmented, toggle, ButtonStyle, Segment, SegmentStyle};
 pub use self::field::{folder_field, text_field, FieldState};
 pub use self::image::*;
+pub use self::keycaps::{chord_label, keycaps};
 pub use self::menu::{
     menu, menu_row, menu_separator, popup_button, popup_menu, MenuItem, MENU_PAD, MENU_RADIUS,
     MENU_ROW_H, MENU_W,
@@ -45,7 +47,7 @@ pub use self::menu::{
 pub use self::resize::resize_edges;
 pub use self::scroll::scroll_y;
 pub use self::tooltip::tip;
-pub use self::window_frame::{toolbar_bar, toolbar_frame, window_corner, Toolbar};
+pub use self::window_frame::{toolbar_bar, toolbar_frame, window_corner, window_edge, Toolbar};
 pub use self::window_move::{move_handle, Double};
 pub use self::window_open::open_window;
 

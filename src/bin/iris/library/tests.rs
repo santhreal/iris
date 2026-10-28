@@ -13,8 +13,9 @@ use super::layout::{
 };
 use super::listing::{ListPass, Listing};
 use super::preview::fit;
-use super::render::help_rows;
+use super::render::{empty_hint, help_rows};
 use super::{CARD_H, CARD_W, GAP, MIN_SIZE};
+use crate::sys::hotkeys::Binding;
 use crate::widgets::MENU_W;
 
 /// Sections of `sizes[d]` captures on day `TODAY - d`, and their layout
@@ -371,7 +372,8 @@ fn a_listing_is_unknown_until_the_store_answers() {
         Some(Vec::new())
     );
     assert!(listing.listed().is_some());
-    assert_eq!(*listing.count(), "0 captures");
+    // The empty state states it; the toolbar shows no "0 captures".
+    assert_eq!(*listing.count(), "");
     // The same answer again is not a new listing.
     let generation = listing.generation();
     assert_eq!(listing.set(Vec::new(), &mut Vec::new(), TODAY), None);
@@ -385,7 +387,7 @@ fn the_count_captions_and_sections_follow_the_listing() {
         (1, "1 capture"),
         (2, "2 captures"),
         (48, "48 captures"),
-        (0, "0 captures"),
+        (0, ""),
     ] {
         // Two captures a day, given oldest first: the store's order is
         // not the grid's.
@@ -645,4 +647,38 @@ fn the_shortcuts_sheet_shows_the_configured_global_hotkeys() {
         rows[11],
         ("Settings", crate::widgets::meta_shortcut!(",").into())
     );
+}
+
+// WHY: the class closed here is "the empty library points at a shortcut
+// that does nothing". The hint named the configured key whether or not
+// the daemon bound it, so a key another app holds, or none at all, read
+// as a working shortcut. A bound or still-binding key is named in its
+// display case; a refused or unset one sends the reader to the toolbar's
+// capture button. Not covered: the hint's paint.
+#[test]
+fn the_empty_hint_names_the_shortcut_only_while_it_works() {
+    let press = "Press Print to capture a region of the screen.";
+    let button = "Click New Screenshot in the toolbar to capture a region of the screen.";
+    for (keys, binding, want) in [
+        ("print", Some(Binding::Live), press),
+        ("Print", None, press),
+        (
+            "ctrl+shift+4",
+            Some(Binding::Live),
+            "Press Ctrl+Shift+4 to capture a region of the screen.",
+        ),
+        (
+            "Print",
+            Some(Binding::Refused("In use by another app".into())),
+            button,
+        ),
+        ("", Some(Binding::Unset), button),
+        ("  ", None, button),
+    ] {
+        assert_eq!(
+            empty_hint(keys, binding.clone()),
+            want,
+            "{keys:?} {binding:?}"
+        );
+    }
 }

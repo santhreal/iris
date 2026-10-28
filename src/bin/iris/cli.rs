@@ -179,6 +179,19 @@ impl Parsed {
     pub fn prints(&self) -> bool {
         !(self.cmds.is_empty() && self.local.is_empty() && self.errors.is_empty())
     }
+
+    /// What a process that became the daemon runs once it starts: the
+    /// line's commands, or home for a bare line, as a bare line
+    /// forwarded to a running daemon opens home. Opening iris.app or
+    /// running `iris` shows a window, not only a tray icon. `--daemon`,
+    /// the login item's line, runs nothing.
+    pub fn startup(self) -> Vec<Command> {
+        if self.daemon || !self.cmds.is_empty() {
+            self.cmds
+        } else {
+            vec![Command::Home]
+        }
+    }
 }
 
 pub fn parse(args: &[String]) -> Parsed {
@@ -256,8 +269,8 @@ fn file(v: &str) -> Result<(PathBuf, String), String> {
 pub fn usage() -> String {
     let mut out = String::from(
         "usage: iris [option]...\n\n\
-         With no option, iris starts the daemon, or opens the home window\n\
-         of the daemon already running.\n\noptions:\n",
+         With no option, iris opens the home window, starting the daemon\n\
+         first when none runs.\n\noptions:\n",
     );
     for opt in OPTS {
         let name = match opt.takes {

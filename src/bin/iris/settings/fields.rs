@@ -9,6 +9,7 @@ use iris_lib::config::Config;
 
 use super::panes::{Pane, Pick, Switch};
 use super::{Edit, Field, Settings};
+use crate::sys::hotkeys::{self, Binding, Chord};
 use crate::{theme, widgets};
 
 /// Field widths: a path or file name template, a number, a shortcut.
@@ -545,7 +546,22 @@ impl Settings {
                 this.begin_recording(field);
                 cx.notify();
             }));
-        row_shell(field.label(), with_reason(self.reason(field), input))
+        // A chord another app holds, or one this session cannot bind,
+        // reads as refused beside the chord until it is changed.
+        let refused = match field {
+            Field::CaptureHotkey => Some(Chord::Capture),
+            Field::RecordHotkey => Some(Chord::Record),
+            _ => None,
+        }
+        .filter(|_| self.recording != Some(field))
+        .and_then(
+            |chord| match hotkeys::binding(chord, chord.keys(&self.cfg)) {
+                Some(Binding::Refused(why)) => Some(why),
+                _ => None,
+            },
+        );
+        let reason = self.reason(field).or(refused.as_deref());
+        row_shell(field.label(), with_reason(reason, input))
     }
 
     pub(super) fn restore_row(&self, cx: &mut Context<Self>) -> Div {

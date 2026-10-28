@@ -106,6 +106,18 @@ pub fn span_after_map(window: &gpui::Window, x: i32, y: i32, w: u32, h: u32) {
     let _ = (window, x, y, w, h);
 }
 
+/// Send pointer input through the X11 `window` to the windows beneath
+/// it until `unpark_span` restores it. Elsewhere a no-op: only the X11
+/// overlay pool maps a window that is not in use.
+pub fn pass_input(window: &gpui::Window) {
+    #[cfg(target_os = "linux")]
+    if let Some(xid) = x11::xid(window) {
+        x11::pass_input(xid);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = window;
+}
+
 /// Take `window` off the screen and keep it for `unpark_span`: minimized
 /// through the window manager, or, on an X11 screen with no window
 /// manager to act on a minimize, unmapped.

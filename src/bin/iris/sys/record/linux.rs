@@ -26,7 +26,8 @@ pub(super) fn region_available() -> Result<(), String> {
 
 /// On X11 the chip opens once the pick lands, over the picked window:
 /// none shows while the pick waits for a click, and its clock starts
-/// with the recording.
+/// with the recording. A guide card states the click and the cancel
+/// key until the pick ends.
 pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, String> {
     if iris_lib::sys::session::wayland() {
         return p.spawn(record::wayland::record_window);
@@ -39,14 +40,23 @@ pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, S
         crate::sys::window::root_scale(cx),
         Some(picked),
     );
-    let chip = follower.clone();
+    // Weak: the recording thread holds the only strong reference, and
+    // with it the pick's sender. A pick that ends without landing drops
+    // both, and `landed` resolves unsent; a strong reference here would
+    // keep the sender, and the guide, alive for good.
+    let chip = Arc::downgrade(&follower);
     let output = p.output.path().to_path_buf();
     let rec = p.spawn(move |spec| record::x11::record_window_follow(spec, follower))?;
+    crate::notice::guide(cx, "Click a window to record it", "Press Esc to cancel.");
     // A source that ends before a pick lands drops the sender unsent.
     cx.spawn(async move |cx| {
-        if let Ok(rect) = landed.await {
-            cx.update(|cx| open_chip_over(cx, &output, rect, &monitors, &chip));
-        }
+        let landed = landed.await;
+        cx.update(|cx| {
+            crate::notice::end_guide(cx);
+            if let (Ok(rect), Some(chip)) = (landed, chip.upgrade()) {
+                open_chip_over(cx, &output, rect, &monitors, &chip);
+            }
+        });
     })
     .detach();
     Ok(rec)

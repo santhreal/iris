@@ -55,13 +55,13 @@ On Linux the daemon exits when its X server or Wayland compositor exits, as at t
 ### Invocations Without Running Daemon
 
 1. Bare invocation (`iris` without arguments):
-   The process takes the daemon claim and runs in the foreground as the daemon. It connects to the display, loads its fonts, registers the global hotkeys (none on Wayland), binds the single-instance IPC socket, and starts the system tray icon, in that order, before it opens any window. A hotkey pressed once the socket accepts connections reaches the daemon. A command, hotkey, or tray menu item that arrives during startup runs once startup completes. It does not open the home window. When another process holds the claim, the process waits up to 8 seconds for that daemon to bind the socket, transmits `--home`, and exits with status 0.
+   The process takes the daemon claim and runs in the foreground as the daemon. It connects to the display, loads its fonts, registers the global hotkeys, binds the single-instance IPC socket, and starts the system tray icon, in that order, before it opens any window. A hotkey pressed once the socket accepts connections reaches the daemon. A command, hotkey, or tray menu item that arrives during startup runs once startup completes. It then opens the home window. When another process holds the claim, the process waits up to 8 seconds for that daemon to bind the socket, transmits `--home`, and exits with status 0.
 2. Live-daemon-only commands (`--quit`, `--record-pause`, `--record-mic`):
    The client attempts to connect to the socket and does not spawn a daemon. When no daemon answers, `--quit` exits with status 0; `--record-pause` and `--record-mic` print `iris: no iris daemon is running` to standard error and exit with status 1.
 3. Other flagged commands (`--capture`, `--library`, `--settings`, etc.):
    The client starts a detached `iris --daemon` process. On Linux and macOS the daemon's standard streams are `/dev/null` and it runs in a process group of its own. On Windows the daemon has no console and inherits no handle from the client. A caller that reads the client's output to its end returns when the client exits. The client polls the IPC socket for up to 8 seconds. Once the socket accepts connections, the client transmits the options, each `<file>` as an absolute path, separated by newlines and exits with status 0. If the daemon process fails to start, the client takes the daemon claim, then runs the daemon and executes the commands in the foreground; when another process holds the claim, the client transmits the options once that daemon binds the socket. If the daemon does not bind the socket within 8 seconds, the client prints `iris: the daemon did not start within 8s; see <log file>` to standard error and exits with status 1.
 4. `iris --daemon`:
-   The process takes the daemon claim and runs in the foreground as the daemon, as a bare invocation does. On Windows it does not attach to the console of the terminal that started it. When another process holds the claim, it exits with status 0. The login autostart entries run `iris --daemon` ([Installation](install.md)).
+   The process takes the daemon claim and runs in the foreground as the daemon, as a bare invocation does, and opens no window. On Windows it does not attach to the console of the terminal that started it. When another process holds the claim, it exits with status 0. The login autostart entries run `iris --daemon` ([Installation](install.md)).
 
 ### Invocations With Running Daemon
 
@@ -84,7 +84,7 @@ A local command whose standard output cannot be written, such as a pipe whose re
 
 ## Window Manager and Compositor Keybindings
 
-On [Wayland](platforms.md#linux-wayland), X11 root-window global key grabs are unavailable. Wayland compositors must bind shortcuts to `iris` command invocations, which forward commands to the daemon over the IPC socket.
+On [Wayland](platforms.md#linux-wayland), X11 root-window global key grabs are unavailable. The daemon binds `capture_hotkey` and `record_hotkey` through the GlobalShortcuts portal where the desktop provides one. On a compositor without it, bind shortcuts to `iris` command invocations, which forward commands to the daemon over the IPC socket.
 
 ### Hyprland (`~/.config/hypr/hyprland.conf`)
 

@@ -58,7 +58,8 @@ impl Listing {
         &self.sections
     }
 
-    /// The toolbar count; empty until the first listing lands.
+    /// The toolbar count; empty until the first listing lands, and for
+    /// an empty listing.
     pub(super) fn count(&self) -> &SharedString {
         &self.count
     }
@@ -133,7 +134,10 @@ impl Listing {
             .unzip();
         self.today = today;
         self.sections = layout::sections(&self.days, today);
+        // An empty library shows its empty state, which states the
+        // count: the toolbar shows none.
         self.count = SharedString::from(match fresh.len() {
+            0 => String::new(),
             1 => "1 capture".to_owned(),
             n => format!("{n} captures"),
         });

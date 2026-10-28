@@ -6,7 +6,12 @@
 //! where no compositing manager ran. The class closed here is a parked
 //! overlay that stays on a screen with no window manager, after the
 //! warmup or after a capture, and a parked overlay that a capture then
-//! fails to bring back.
+//! fails to bring back. It also closes "the warm overlay takes input
+//! it was never shown for": the warmup maps the overlay over the whole
+//! screen before the park, and while mapped it took a click meant for
+//! Home, and a record pick's click resolved to it and recorded the
+//! invisible overlay. The warm overlay's input shape must be empty, and
+//! a capture must restore it.
 //!
 //! The case runs on a private Xvfb with no window manager. Not covered:
 //! the minimize through a window manager, which needs one running;
@@ -26,6 +31,7 @@ mod daemon;
 mod x11;
 
 use x11rb::connection::Connection;
+use x11rb::protocol::shape::{ConnectionExt as _, SK};
 
 use daemon::{enabled, xvfb, Daemon};
 use x11::{all_windows_of, focus, tap, windows_of};
@@ -35,6 +41,17 @@ const OVERLAY: &str = "Capture - iris";
 
 /// The keysym of `Escape`, which cancels a capture.
 const ESCAPE: u32 = 0xff1b;
+
+/// The rectangles of `window`'s input shape: none passes every click
+/// through, one is the default, the window's whole rect.
+fn input_shape(conn: &impl Connection, window: u32) -> usize {
+    conn.shape_get_rectangles(window, SK::INPUT)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .rectangles
+        .len()
+}
 
 #[test]
 fn a_parked_overlay_leaves_a_screen_with_no_window_manager() {
@@ -60,6 +77,11 @@ fn a_parked_overlay_leaves_a_screen_with_no_window_manager() {
         shown.is_empty(),
         "the warmup left the overlay mapped: {shown:x?}"
     );
+    assert_eq!(
+        input_shape(&conn, warm),
+        0,
+        "the warm overlay takes pointer input while it is not in use"
+    );
 
     for capture in 1..=2 {
         daemon.send(&["--capture"]);
@@ -75,6 +97,11 @@ fn a_parked_overlay_leaves_a_screen_with_no_window_manager() {
         assert_eq!(
             focused, warm,
             "capture {capture} opened another overlay window"
+        );
+        assert_ne!(
+            input_shape(&conn, warm),
+            0,
+            "capture {capture}'s overlay lets pointer input through"
         );
         tap(&conn, root, ESCAPE);
         daemon.until(&format!("capture {capture}'s overlay to park"), || {

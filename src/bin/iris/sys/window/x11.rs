@@ -9,7 +9,7 @@ mod fixup;
 mod present;
 mod wm_drag;
 
-pub use cutout::{compositor, Cutout};
+pub use cutout::{compositor, pass_input, Cutout};
 pub use fixup::{always_on_top_after_map, park_unmanaged, span_after_map, unpark_span};
 pub use present::PresentWatch;
 pub use wm_drag::{begin_wm_move, begin_wm_resize};

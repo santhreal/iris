@@ -99,7 +99,15 @@ pub struct Overlay {
     moving: Option<(f32, f32)>,
     current: Option<(f32, f32, f32, f32)>,
     hovered: Option<WinRect>,
+    /// The pointer in logical px, valid once `cursor_known`.
     cursor: (f32, f32),
+    /// The pointer in frame pixels when the session opened: the first
+    /// render places the cursor and the hover-snap there, so both are
+    /// right before the pointer moves.
+    seed: Option<(i32, i32)>,
+    /// False until the seed or a pointer move placed `cursor`: the
+    /// coordinate readout stays hidden instead of reading 0, 0.
+    cursor_known: bool,
     loupe: Option<(Arc<RenderImage>, SharedString)>,
     /// Frame pixel the loupe was last built for; a mousemove inside
     /// the same pixel skips the rebuild.
@@ -183,6 +191,7 @@ impl Render for Overlay {
         if self.flight.is_some() {
             return self.render_flight(window, cx).into_any_element();
         }
+        self.apply_seed(window);
         let (sx, sy) = Self::scale(window, self.view);
 
         // Dim at once, including while the grab is in flight. The
@@ -238,6 +247,8 @@ impl Render for Overlay {
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
                 this.cursor = (mx, my);
+                this.cursor_known = true;
+                this.seed = None;
                 let sf = window.scale_factor();
                 let (sx, sy) = Self::scale(window, this.view);
                 if let Some((ox, oy)) = this.moving {

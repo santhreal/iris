@@ -150,7 +150,7 @@ fn top_level_boxes(mut rest: &[u8]) -> Vec<String> {
 }
 
 /// Whether `tool` is a file in a directory on PATH.
-fn on_path(tool: &str) -> bool {
+pub fn on_path(tool: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
 }

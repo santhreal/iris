@@ -9,6 +9,10 @@
 //! it), and slides back out. A newer notice replaces it, and so does a
 //! toast that lands on it. A saved file offers Show in Folder. The
 //! window never takes focus.
+//!
+//! A guide is the one notice that does not time out: it states the
+//! next step of an interaction that is waiting on input (click a
+//! window to record it) and leaves when that interaction ends.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -59,18 +63,47 @@ const REPLACE_EXIT: Duration = Duration::from_millis(180);
 /// The live notice, so a newer one replaces it.
 static NOTICE: parking_lot::Mutex<Option<WindowHandle<Notice>>> = parking_lot::Mutex::new(None);
 
+/// What a card reports, which sets its glyph, its buttons, and how
+/// long it stays.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kind {
+    Saved,
+    Failure,
+    Update,
+    Guide,
+}
+
 /// A file was written: its name, and Show in Folder.
 pub fn saved(cx: &mut App, title: &str, path: &Path) {
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    show(cx, title, name, Some(path.to_path_buf()), false, false);
+    show(cx, title, name, Some(path.to_path_buf()), Kind::Saved);
 }
 
 /// `what` failed with `err`.
 pub fn failed(cx: &mut App, what: &str, err: &str) {
-    show(cx, what, one_paragraph(err), None, true, false);
+    show(cx, what, one_paragraph(err), None, Kind::Failure);
+}
+
+/// The next step of an interaction waiting on input. The card stays
+/// until `end_guide` or a newer notice replaces it.
+pub fn guide(cx: &mut App, title: &str, detail: &str) {
+    show(cx, title, detail.to_string(), None, Kind::Guide);
+}
+
+/// The interaction a guide described ended: a live guide leaves. Any
+/// other live notice stays.
+pub fn end_guide(cx: &mut App) {
+    let live = *NOTICE.lock();
+    if let Some(handle) = live {
+        let _ = handle.update(cx, |n, _, cx| {
+            if n.kind == Kind::Guide {
+                n.leave(REPLACE_EXIT, cx);
+            }
+        });
+    }
 }
 
 /// iris `version` is available: Install hands off the offered update.
@@ -80,8 +113,7 @@ pub fn update_available(cx: &mut App, version: &semver::Version) {
         &format!("iris {version} is available"),
         "Install it now, or later from the tray menu or Settings.".to_string(),
         None,
-        false,
-        true,
+        Kind::Update,
     );
 }
 
@@ -104,15 +136,8 @@ fn one_paragraph(err: &str) -> String {
     err.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn show(
-    cx: &mut App,
-    title: &str,
-    detail: String,
-    file: Option<PathBuf>,
-    failure: bool,
-    install: bool,
-) {
-    if let Err(e) = open(cx, title, detail, file, failure, install) {
+fn show(cx: &mut App, title: &str, detail: String, file: Option<PathBuf>, kind: Kind) {
+    if let Err(e) = open(cx, title, detail, file, kind) {
         iris_lib::ilog!("iris: notice: {e}");
     }
 }
@@ -123,9 +148,7 @@ pub struct Notice {
     /// Detail lines the card is sized for; 0 without a detail.
     lines: usize,
     file: Option<PathBuf>,
-    failure: bool,
-    /// The card offers Install for the update the daemon offers.
-    install: bool,
+    kind: Kind,
     height: f32,
     /// The card's rect on screen, for a landing toast's overlap test.
     card: Rect,
@@ -145,8 +168,18 @@ pub struct Notice {
 
 /// Width of the detail text beside the glyph and `buttons` buttons.
 fn text_width(buttons: usize) -> f32 {
-    let row = buttons as f32 * BUTTON + buttons.saturating_sub(1) as f32 * BUTTON_GAP;
-    W - 2.0 * (BORDER + PAD) - GLYPH - GAP - row - GAP
+    let row = match buttons {
+        0 => 0.0,
+        n => n as f32 * BUTTON + (n - 1) as f32 * BUTTON_GAP + GAP,
+    };
+    W - 2.0 * (BORDER + PAD) - GLYPH - GAP - row
+}
+
+/// The buttons on a card of `kind`: reveal with a file, install on an
+/// update, and close on all but a guide. A guide's pick grabs the
+/// pointer, so a button on it could never be pressed; Escape ends it.
+fn buttons(kind: Kind, file: bool) -> usize {
+    usize::from(file) + usize::from(kind == Kind::Update) + usize::from(kind != Kind::Guide)
 }
 
 /// Card height for `lines` detail lines.
@@ -204,8 +237,7 @@ fn open(
     title: &str,
     detail: String,
     file: Option<PathBuf>,
-    failure: bool,
-    install: bool,
+    kind: Kind,
 ) -> Result<(), String> {
     use iris_lib::config::ToastPosition;
     let cfg = iris_lib::config::Config::load();
@@ -218,12 +250,11 @@ fn open(
         ToastPosition::TopLeft | ToastPosition::TopRight
     );
     let hold = Duration::from_millis(u64::from(cfg.toast_duration_ms));
-    let hold = if failure || install {
-        hold.max(FAILURE_HOLD)
-    } else {
-        hold
+    let hold = match kind {
+        Kind::Failure | Kind::Update => hold.max(FAILURE_HOLD),
+        Kind::Saved | Kind::Guide => hold,
     };
-    let buttons = 1 + usize::from(file.is_some()) + usize::from(install);
+    let buttons = buttons(kind, file.is_some());
     // The detail wraps as GPUI's text element wraps it, measured before
     // layout, so the card height is known before the window opens.
     let lines = if detail.trim().is_empty() {
@@ -248,8 +279,7 @@ fn open(
         detail: SharedString::from(detail),
         lines,
         file,
-        failure,
-        install,
+        kind,
         height,
         card,
         inset: card.1 - win.1,
@@ -290,19 +320,21 @@ fn open(
     if let Some(previous) = previous {
         let _ = previous.update(cx, |n, _, cx| n.leave(REPLACE_EXIT, cx));
     }
-    handle
-        .update(cx, |n, _, cx| {
-            let wait = motion::tempo(motion::ENTER) + n.hold;
-            n.arm(wait, cx);
-        })
-        .map_err(|e| format!("arm notice dismiss: {e}"))?;
+    if kind != Kind::Guide {
+        handle
+            .update(cx, |n, _, cx| {
+                let wait = motion::tempo(motion::ENTER) + n.hold;
+                n.arm(wait, cx);
+            })
+            .map_err(|e| format!("arm notice dismiss: {e}"))?;
+    }
     Ok(())
 }
 
 impl Notice {
     /// Leave after `wait`, or later while the pointer rests on the card.
     fn arm(&mut self, wait: Duration, cx: &mut Context<Self>) {
-        if self.closing.is_some() {
+        if self.closing.is_some() || self.kind == Kind::Guide {
             return;
         }
         self.armed += 1;
@@ -382,12 +414,11 @@ impl Render for Notice {
                 r: theme::RADIUS_GROUP,
             }],
         );
-        let (glyph, tint) = if self.failure {
-            (Icon::Alert, theme::DANGER)
-        } else if self.install {
-            (Icon::Download, theme::ACCENT)
-        } else {
-            (Icon::Check, theme::FG)
+        let (glyph, tint) = match self.kind {
+            Kind::Failure => (Icon::Alert, theme::DANGER),
+            Kind::Update => (Icon::Download, theme::ACCENT),
+            Kind::Guide => (Icon::Record, theme::DANGER),
+            Kind::Saved => (Icon::Check, theme::FG),
         };
         let mut text = div()
             .flex()
@@ -425,7 +456,7 @@ impl Render for Notice {
         });
         // The install runs on a thread of its own; a failure arrives
         // through the command pump as a new notice.
-        let install = self.install.then(|| {
+        let install = (self.kind == Kind::Update).then(|| {
             icon_button("notice-install", Icon::Download, true, BUTTON)
                 .tooltip(crate::widgets::tip("Install", None))
                 .on_click(cx.listener(|n, _, _, cx| {
@@ -435,9 +466,11 @@ impl Render for Notice {
                     n.leave(EXIT, cx);
                 }))
         });
-        let close = icon_button("notice-close", Icon::Close, false, BUTTON)
-            .tooltip(crate::widgets::tip("Close", None))
-            .on_click(cx.listener(|n, _, _, cx| n.leave(EXIT, cx)));
+        let close = (self.kind != Kind::Guide).then(|| {
+            icon_button("notice-close", Icon::Close, false, BUTTON)
+                .tooltip(crate::widgets::tip("Close", None))
+                .on_click(cx.listener(|n, _, _, cx| n.leave(EXIT, cx)))
+        });
 
         let mut card = div()
             .id("notice")
@@ -462,15 +495,15 @@ impl Render for Notice {
                     .child(icon(glyph, tint, GLYPH)),
             )
             .child(text)
-            .child(
+            .children((buttons(self.kind, self.file.is_some()) > 0).then(|| {
                 div()
                     .flex()
                     .flex_none()
                     .gap(px(BUTTON_GAP))
                     .children(reveal)
                     .children(install)
-                    .child(close),
-            )
+                    .children(close)
+            }))
             .on_hover(cx.listener(|n, hovering: &bool, _, cx| {
                 n.hovered = *hovering;
                 if !*hovering {

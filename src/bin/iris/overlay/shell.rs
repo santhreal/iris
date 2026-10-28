@@ -14,6 +14,9 @@ pub struct ShellLayout {
     /// The virtual screen: every monitor's union, the shell's rect
     /// and the frozen frame's own extents.
     pub union: WinRect,
+    /// The pointer in frame pixels when the session opens; `None` where
+    /// the session has no global pointer (Wayland).
+    pub pointer: Option<(i32, i32)>,
 }
 
 pub fn layout() -> ShellLayout {
@@ -44,6 +47,7 @@ pub fn layout() -> ShellLayout {
         monitors,
         windows,
         union,
+        pointer: iris_lib::sys::capture::pointer().ok(),
     }
 }
 
@@ -68,7 +72,10 @@ pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Ove
 /// `prewarm` opens the shell unfocused so the daemon can park it into
 /// the pool without stealing input focus at startup. The window still
 /// maps (show:true) so GPUI builds its renderer; a `show:false` window
-/// never does and the pooled handle comes up dead.
+/// never does and the pooled handle comes up dead. Until the park takes
+/// it off the screen, input passes through it: a click meant for Home,
+/// or for the window a record pick waits on, reaches that window, and
+/// the restore takes input again.
 fn open_shell_opts(
     cx: &mut App,
     layout: &ShellLayout,
@@ -80,6 +87,7 @@ fn open_shell_opts(
     let focus = cx.focus_handle();
     let windows = layout.windows.clone();
     let monitors = layout.monitors.clone();
+    let seed = layout.pointer;
     let (ux, uy, uw, uh) = (
         layout.union.x,
         layout.union.y,
@@ -130,6 +138,11 @@ fn open_shell_opts(
             ..Default::default()
         },
         |window, cx| {
+            // First: GPUI mapped the window a moment ago, and until the
+            // shape lands a click on the screen lands on the shell.
+            if prewarm {
+                crate::sys::window::pass_input(window);
+            }
             crate::sys::window::span_after_map(window, ux, uy, uw, uh);
             cx.new(|_| {
                 let cfg = iris_lib::config::Config::load();
@@ -151,6 +164,8 @@ fn open_shell_opts(
                     current: None,
                     hovered: None,
                     cursor: (0.0, 0.0),
+                    seed,
+                    cursor_known: false,
                     loupe: None,
                     loupe_at: None,
                     loupe_scratch: Vec::new(),

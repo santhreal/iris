@@ -1,9 +1,12 @@
+mod portal;
+
 use futures::channel::mpsc::UnboundedSender;
 use iris_lib::config::Config;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
+use super::{Binding, NO_KEY, TAKEN, UNKNOWN_KEY};
 use crate::daemon::Command;
 
 /// Keysym values for the hotkey grammar (X11 keysym numbers).
@@ -107,6 +110,8 @@ pub(super) fn request_regrab() {
         unsafe {
             libc::write(fd, byte.as_ptr() as *const libc::c_void, 1);
         }
+    } else {
+        portal::request_regrab();
     }
 }
 
@@ -115,7 +120,8 @@ pub(super) fn request_regrab() {
 type Grabs = Vec<(u8, ModMask, Command)>;
 
 /// Replace every key grab `conn` holds on `root` with the configured
-/// hotkeys, each with the four NumLock/CapsLock variants.
+/// hotkeys, each with the four NumLock/CapsLock variants, and record
+/// each chord's outcome.
 fn grab_all(conn: &RustConnection, root: Window) -> Grabs {
     let locks = [
         ModMask::from(0u16),
@@ -127,16 +133,17 @@ fn grab_all(conn: &RustConnection, root: Window) -> Grabs {
     let _ = conn.ungrab_key(0u8, root, ModMask::from(0x8000u16));
     let mut grabbed = Grabs::new();
     let cfg = Config::load();
-    for (hotkey, cmd) in [
-        (&cfg.capture_hotkey, Command::Capture),
-        (&cfg.record_hotkey, Command::RecordToggle),
-    ] {
+    for (chord, hotkey) in super::configured(&cfg) {
+        if hotkey.is_empty() {
+            super::record(chord, hotkey, Binding::Unset);
+            continue;
+        }
         let Some((mods, keysym)) = parse_hotkey(hotkey) else {
-            iris_lib::ilog!("iris: cannot parse hotkey {hotkey:?}");
+            super::record(chord, hotkey, Binding::Refused(UNKNOWN_KEY.into()));
             continue;
         };
         let Some(keycode) = keymap.as_ref().and_then(|k| k.keycode_for(keysym)) else {
-            iris_lib::ilog!("iris: no keycode for hotkey keysym {keysym:#x}");
+            super::record(chord, hotkey, Binding::Refused(NO_KEY.into()));
             continue;
         };
         // Issue all four lock-variant grabs before checking any: a
@@ -155,15 +162,28 @@ fn grab_all(conn: &RustConnection, root: Window) -> Grabs {
                 )
             })
             .collect();
-        let ok = cookies.into_iter().all(|c| {
-            c.map_err(|e| e.to_string())
-                .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
-                .is_ok()
-        });
-        if ok {
-            grabbed.push((keycode, mods, cmd));
+        // Every cookie is checked, so a failed variant leaves no
+        // unread error behind for the event loop.
+        let failed = cookies
+            .into_iter()
+            .map(|c| {
+                c.map_err(|e| e.to_string())
+                    .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
+            })
+            .filter(Result::is_err)
+            .count();
+        if failed == 0 {
+            grabbed.push((keycode, mods, chord.command()));
+            super::record(chord, hotkey, Binding::Live);
         } else {
-            iris_lib::ilog!("iris: cannot grab hotkey keysym {keysym:#x}");
+            // BadAccess: another client holds the chord, typically
+            // the desktop's own screenshot or settings binding. The
+            // variants that did grab are released: a chord that fires
+            // only with NumLock on reads as broken.
+            for extra in locks {
+                let _ = conn.ungrab_key(keycode, root, mods | extra);
+            }
+            super::record(chord, hotkey, Binding::Refused(TAKEN.into()));
         }
     }
     let _ = conn.flush();
@@ -173,23 +193,26 @@ fn grab_all(conn: &RustConnection, root: Window) -> Grabs {
 /// Grab the configured hotkeys on the root window, then forward presses
 /// from a thread of their own. The grabs are in place when this
 /// returns: the daemon binds its socket after it, so a hotkey pressed
-/// once the socket accepts reaches the grab. Off an X11 session this
-/// does nothing: a Wayland session's `DISPLAY` is XWayland, which
-/// delivers keys only while an X11 client has the focus, and there the
-/// compositor binds `iris --capture` instead.
+/// once the socket accepts reaches the grab. Off an X11 session the
+/// chords bind through the GlobalShortcuts portal: a Wayland session's
+/// `DISPLAY` is XWayland, which delivers keys only while an X11 client
+/// has the focus.
 pub(super) fn spawn(tx: UnboundedSender<Command>) {
     if !iris_lib::sys::session::x11() {
+        portal::spawn(tx);
         return;
     }
     let Ok((conn, screen_num)) = x11rb::connect(None) else {
-        iris_lib::ilog!("iris: hotkeys: cannot connect to the X server");
+        super::refuse_all("Cannot reach the X server");
         return;
     };
     // Self-pipe: the read end joins the X fd in poll(), the write end
     // is published for request_regrab.
     let mut pipe_fds = [-1i32; 2];
     if unsafe { libc::pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-        iris_lib::ilog!("iris: hotkeys: {}", std::io::Error::last_os_error());
+        let err = std::io::Error::last_os_error();
+        iris_lib::ilog!("iris: hotkeys: {err}");
+        super::refuse_all(&format!("Hotkey listener failed: {err}"));
         return;
     }
     let root = conn.setup().roots[screen_num].root;

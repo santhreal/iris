@@ -88,6 +88,24 @@ impl Cutout {
     }
 }
 
+/// Send pointer input through window `xid` to the windows beneath it:
+/// an empty input shape. The server finds no window under the pointer
+/// where the input shape is empty, so a click and a pointer query both
+/// reach the window below. `take_input` ends it.
+pub fn pass_input(xid: u32) {
+    let Ok((conn, _)) = iris_lib::sys::capture::x11::shared_conn() else {
+        return;
+    };
+    let _ = conn.shape_rectangles(SO::SET, SK::INPUT, ClipOrdering::UNSORTED, xid, 0, 0, &[]);
+    let _ = conn.flush();
+}
+
+/// Return window `xid`'s input shape to its bounding shape, ending a
+/// `pass_input`. The caller flushes.
+pub(super) fn take_input(conn: &impl Connection, xid: u32) {
+    let _ = conn.shape_mask(SO::SET, SK::INPUT, xid, 0, 0, x11rb::NONE);
+}
+
 /// Append to `out` the device-pixel rectangles covering `areas`,
 /// window-local logical pixels at `scale` device pixels each. Each edge
 /// rounds to the nearest device pixel on its own, so two areas that

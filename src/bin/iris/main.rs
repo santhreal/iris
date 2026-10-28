@@ -100,7 +100,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let cmds = parsed.cmds;
+    let cmds = parsed.startup();
 
     // No thread starts before this: on a Wayland session gpui creates the
     // Vulkan instance with DISPLAY hidden from the drivers only while the

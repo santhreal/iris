@@ -38,6 +38,11 @@ pub(crate) fn command_tx() -> Option<UnboundedSender<Command>> {
     COMMAND_TX.get().cloned()
 }
 
+/// How long after the daemon starts the overlay warmup runs: past the
+/// first frame of a window the start opens, home on a launch, and of
+/// one a client that waited for the bind forwards.
+const WARMUP_AFTER: Duration = Duration::from_millis(400);
+
 /// One command line, forwarded to or invoked on the daemon.
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -73,6 +78,9 @@ pub enum Command {
     /// The capture store changed in this process: an open library
     /// window shows the change now.
     LibraryChanged,
+    /// The global hotkeys were registered again: open windows redraw
+    /// the shortcut state they show.
+    HotkeysBound,
     /// A thread with no window of its own failed at `what`: the daemon
     /// shows `err` in a notice.
     Failed {
@@ -107,6 +115,7 @@ impl Command {
             | Command::RecordStop
             | Command::RecordingEnded => "Recording failed",
             Command::LibraryChanged => "Library did not refresh",
+            Command::HotkeysBound => "Shortcuts did not refresh",
             Command::RecordPause => "Pause failed",
             Command::RecordMic => "Microphone toggle failed",
             Command::Home => "Home did not open",
@@ -154,6 +163,7 @@ pub fn live_daemon_only(cmds: &[Command]) -> bool {
             | Command::RecordRegion { .. }
             | Command::RecordingEnded
             | Command::LibraryChanged
+            | Command::HotkeysBound
             | Command::Failed { .. }
             | Command::UpdateOffer { .. }
             | Command::InstallUpdate => false,
@@ -225,6 +235,10 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         }
         Command::LibraryChanged => {
             library::store_changed(cx);
+            Ok(())
+        }
+        Command::HotkeysBound => {
+            cx.refresh_windows();
             Ok(())
         }
         Command::Failed { what, err } => {
@@ -326,13 +340,26 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
             let _ = tx.unbounded_send(Command::LibraryChanged);
         }
     });
-    // Warm the overlay pool: the first capture reuses a live window
-    // instead of paying GPUI's ~130ms renderer init on the hotkey.
-    overlay::warmup(cx);
-    // After the warmup: the `iris --update` that started this daemon
-    // exits right after the start, and Windows deletes no file a
-    // process still runs. One still running keeps it to the next start.
-    crate::sys::install::tidy();
+    // Warm the overlay pool once the start's own window is up: the
+    // warmup builds a renderer (~130ms on the main thread), and run
+    // inline it held back the home window a launch opens, and a
+    // forwarded `--home` behind it. A capture before the warmup opens
+    // a fresh shell. The install tidy runs after it: the `iris
+    // --update` that started this daemon exits right after the start,
+    // and Windows deletes no file a process still runs.
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(WARMUP_AFTER).await;
+        cx.update(|cx| {
+            // The shell maps over the whole screen before it parks, and
+            // a window pick waits on a click there: the first capture
+            // after the recording opens and pools the shell instead.
+            if RECORDING.lock().is_none() {
+                overlay::warmup(cx);
+            }
+            crate::sys::install::tidy();
+        });
+    })
+    .detach();
     // Command pump: tray + hotkey threads -> app dispatch. The
     // receiver is a stream, so a press dispatches the instant it
     // arrives instead of up to a poll interval late.

@@ -461,7 +461,8 @@ impl Render for Editor {
             .child(self.render_backdrop(chrome, cx))
             .child(stage)
             .child(self.render_topbar(topbar, window, cx))
-            .child(self.render_options(options, cx));
+            .child(self.render_options(options, cx))
+            .children(crate::widgets::window_edge(window, 12., chrome));
 
         self.render_menus_and_overlays(root, topbar, window, cx)
             .children(crate::widgets::resize_edges(window, MIN_SIZE))

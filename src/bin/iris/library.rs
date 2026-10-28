@@ -105,8 +105,6 @@ pub struct Library {
     /// The selection count label, rebuilt only when the selection
     /// changes: formatting it per frame is a String a frame.
     pub(super) sel_label: SharedString,
-    /// The empty state's hint line: the hotkey is fixed for the session.
-    pub(super) empty_hint: SharedString,
     pub(super) drag_fired: bool,
     pub(super) help: bool,
     pub(super) status: Option<String>,
@@ -174,10 +172,6 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     layout: layout::Layout::default(),
                     layout_key: (u64::MAX, 0.0),
                     sel_label: SharedString::from(""),
-                    empty_hint: SharedString::from(format!(
-                        "Press {} to capture a region of the screen.",
-                        cfg.capture_hotkey
-                    )),
                     selected: Vec::new(),
                     list_pass: listing::ListPass::default(),
                     folders: folders::Folders::Unwatched,

@@ -8,6 +8,7 @@ use gpui::*;
 
 use crate::icons::{self, Icon};
 use crate::motion::Spring;
+use crate::sys::hotkeys::{self, Binding, Chord};
 use crate::theme;
 use crate::widgets::{self, tip, ButtonStyle, Toolbar};
 
@@ -139,10 +140,7 @@ impl Library {
         )
         .trailing(
             widgets::icon_button("capture", Icon::Viewfinder, false, theme::TOOLBAR_CONTROL_H)
-                .tooltip(tip(
-                    "New Screenshot",
-                    Some(self.cfg.capture_hotkey.clone().into()),
-                ))
+                .tooltip(tip("New Screenshot", shortcut(&self.cfg)))
                 .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx))),
         )
     }
@@ -168,6 +166,8 @@ impl Library {
     }
 
     fn empty_state(&self) -> impl IntoElement {
+        let keys = Chord::Capture.keys(&self.cfg);
+        let hint = empty_hint(keys, hotkeys::binding(Chord::Capture, keys));
         div()
             .size_full()
             .flex()
@@ -189,7 +189,7 @@ impl Library {
                 div()
                     .text_size(px(theme::TEXT_BODY))
                     .text_color(theme::FG_DIM)
-                    .child(self.empty_hint.clone()),
+                    .child(hint),
             )
     }
 }
@@ -385,12 +385,36 @@ impl Render for Library {
     }
 }
 
+/// The capture shortcut a tooltip shows: none when no key is set.
+fn shortcut(cfg: &iris_lib::config::Config) -> Option<SharedString> {
+    let label = widgets::chord_label(Chord::Capture.keys(cfg));
+    (!label.is_empty()).then(|| label.into())
+}
+
+/// The empty library's next step: the capture shortcut while it is
+/// bound or still binding, else the toolbar's capture button.
+pub(super) fn empty_hint(keys: &str, binding: Option<Binding>) -> String {
+    match binding {
+        Some(Binding::Live) | None if !keys.trim().is_empty() => format!(
+            "Press {} to capture a region of the screen.",
+            widgets::chord_label(keys)
+        ),
+        _ => "Click New Screenshot in the toolbar to capture a region of the screen.".to_owned(),
+    }
+}
+
 /// The shortcuts sheet's rows: the global hotkeys as configured, then
 /// the library's own keys.
 pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, SharedString)> {
     vec![
-        ("New screenshot", cfg.capture_hotkey.clone().into()),
-        ("Record window", cfg.record_hotkey.clone().into()),
+        (
+            "New screenshot",
+            widgets::chord_label(&cfg.capture_hotkey).into(),
+        ),
+        (
+            "Record window",
+            widgets::chord_label(&cfg.record_hotkey).into(),
+        ),
         ("Open", "Return or click".into()),
         ("Quick Look", "Space".into()),
         ("Move selection", "Arrow keys".into()),

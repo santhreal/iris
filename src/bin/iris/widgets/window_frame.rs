@@ -125,6 +125,7 @@ pub fn toolbar_frame(
     let framed = crate::sys::window::platform_frame(window);
     let root = div()
         .size_full()
+        .relative()
         .font_family(theme::FONT)
         .rounded(window_corner(window, 12.))
         .overflow_hidden()
@@ -141,23 +142,49 @@ pub fn toolbar_frame(
         if framed {
             return root.child(content);
         }
-        return root.relative().child(content).child(
-            div()
-                .id("frame-toolbar")
-                .absolute()
-                .top_0()
-                .left_0()
-                .w_full()
-                .h(px(theme::TOOLBAR_H))
-                .flex()
-                .items_center()
-                .pl(px(DOT_INSET))
-                .child(move_handle(double))
-                .child(traffic_lights(resizable)),
-        );
+        return root
+            .child(content)
+            .child(
+                div()
+                    .id("frame-toolbar")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h(px(theme::TOOLBAR_H))
+                    .flex()
+                    .items_center()
+                    .pl(px(DOT_INSET))
+                    .child(move_handle(double))
+                    .child(traffic_lights(resizable)),
+            )
+            .children(window_edge(window, 12., 1.0));
     }
     root.child(toolbar_bar(window, toolbar, resizable))
         .child(content)
+        .children(window_edge(window, 12., 1.0))
+}
+
+/// The 1px rim of a client-drawn window, `radius` round, for the last
+/// child of a `relative` root: it lies over the content's edge pixels
+/// and takes no input, so the content keeps its layout and its hit
+/// areas. `opacity` scales it with chrome that fades. `None` under a
+/// platform frame, which draws its own border.
+pub fn window_edge(window: &Window, radius: f32, opacity: f32) -> Option<Div> {
+    if crate::sys::window::platform_frame(window) {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .inset_0()
+            .rounded(px(radius))
+            .border_1()
+            .border_color(theme::alpha(
+                theme::WINDOW_EDGE,
+                theme::WINDOW_EDGE.a * opacity,
+            )),
+    )
 }
 
 /// The TOOLBAR_H unified toolbar band on its own: the traffic lights

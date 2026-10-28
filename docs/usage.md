@@ -2,11 +2,11 @@
 
 ## Start iris
 
-Run `iris`. The daemon starts in the background and adds a tray icon. It holds the global hotkeys and runs every command. A second `iris` forwards its command to the running daemon and exits ([Process Model](cli.md#process-model-and-interprocess-communication)).
+Run `iris`. The home window opens, and the daemon starts in the background and adds a tray icon. The daemon holds the global hotkeys and runs every command. A second `iris` forwards its command to the running daemon and exits ([Process Model](cli.md#process-model-and-interprocess-communication)). `iris --daemon`, which the login autostart entries run, starts the daemon with no window.
 
 The application menu entry on Linux and the Start menu shortcut on Windows run `iris --home`, which opens the home window. On macOS, opening iris.app while the daemon runs with no iris window open shows the home window.
 
-The home window has three tiles, **New Screenshot**, **Record Window**, and **Library**, each with its shortcut under the title, and a gear in the toolbar that opens the settings window. `Tab`, `Shift+Tab`, and the left and right arrow keys select a tile, and `Enter` or `Space` runs the selected tile. `Ctrl+L` opens the library and `Ctrl+,` opens the settings window (`Cmd` on macOS). `Escape` or `Ctrl+W` closes the home window.
+The home window has three tiles, **New Screenshot**, **Record Window**, and **Library**, and a gear in the toolbar that opens the settings window. Under a tile's title, its global shortcut shows as key caps. A tile whose shortcut is unset shows **No shortcut**. A tile whose shortcut the daemon could not bind shows **Shortcut unavailable**, and pointing at it shows the reason, such as **In use by another app**. **New Screenshot** and **Record Window** close the home window before the capture or the window pick starts, so the home window is not in the picture. `Tab`, `Shift+Tab`, and the left and right arrow keys select a tile, and `Enter` or `Space` runs the selected tile. `Ctrl+L` opens the library and `Ctrl+,` opens the settings window (`Cmd` on macOS). `Escape` or `Ctrl+W` closes the home window.
 
 The tray menu holds the same actions:
 
@@ -25,8 +25,8 @@ To start the daemon at login, turn on **Start iris at login** in the settings wi
 
 ### First start per platform
 
-- **Linux (X11)**: iris grabs the capture and record hotkeys itself.
-- **Linux (Wayland)**: Wayland gives no client a global hotkey. Bind `iris --capture` and `iris --record-window` in the compositor's configuration ([Window Manager and Compositor Keybindings](cli.md#window-manager-and-compositor-keybindings)).
+- **Linux (X11)**: iris grabs the capture and record hotkeys itself. A key another program grabbed first, such as `Print` under GNOME, which binds it to its own screenshot tool, is not bound. The home window and the **Shortcuts** pane of the settings window show **In use by another app** for it; set another key there.
+- **Linux (Wayland)**: iris asks the desktop for the capture and record hotkeys through the GlobalShortcuts portal (`org.freedesktop.portal.GlobalShortcuts`). The desktop can show a dialog to confirm them on first use. A desktop with no GlobalShortcuts portal binds none; bind `iris --capture` and `iris --record-window` in the compositor's configuration instead ([Window Manager and Compositor Keybindings](cli.md#window-manager-and-compositor-keybindings)).
 - **macOS**: The first capture requests Screen Recording permission. Enable iris in System Settings > Privacy & Security > Screen Recording, then restart iris. The capture hotkey is `F13`: macOS keyboards have no `Print` key.
 - **Windows**: The tray icon is in the notification area, or in its overflow menu.
 
@@ -55,7 +55,7 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 ## Record the Screen
 
 1. Press `Ctrl+Shift+R`, click **Record Window**, click **Record window** in the tray menu, or run `iris --record-window`.
-2. On X11, click the window to record. On Wayland, pick it in the compositor's dialog. Windows and macOS record the whole desktop.
+2. On X11, click the window to record. A card in the toast corner reads **Click a window to record it** until the click, and `Escape` cancels. A click on a menu, a tooltip, or the card itself picks nothing. On Wayland, pick the window in the compositor's dialog. Windows and macOS record the whole desktop.
 3. A chip with a timer and pause, stop, and microphone buttons floats beside the recorded area (X11, Windows, and macOS). A GIF recording has no microphone button.
 4. Press `Ctrl+Shift+R` again, click the chip's stop button, or run `iris --record-window` to stop.
 

@@ -128,8 +128,9 @@ Triggered via the toast context menu (**Pin to screen**):
 A notice is a 380 logical pixel wide card in the toast corner of the primary display. It reports an outcome of a command whose trigger (a hotkey, the tray menu, the recording chip, or a forwarded command line) has already returned:
 - A saved recording: a check mark, the title, the file name, and a folder button that reveals the file in the system file manager (see [Reveal in Folder](#reveal-in-folder) and [recording.md](recording.md#completion-and-failure-notices)).
 - A failed command: an alert mark in red, the title, and the error on up to three lines, ending in an ellipsis when longer.
+- A window pick on X11: a record mark in red, **Click a window to record it**, and **Press Esc to cancel.** The card has no buttons: the pick holds the pointer. The card stays until the pick lands or is cancelled, then leaves.
 
-The title is 13 pixel semibold text on a 24 logical pixel line, centered on the 24×24 logical pixel buttons and the 18 pixel glyph beside it; the detail is 11 pixel text in the secondary color on 15 pixel lines. The **×** button at the card's right edge dismisses it. Resting the pointer on a button shows its name in a tooltip.
+The title is 13 pixel semibold text on a 24 logical pixel line, centered on the 24×24 logical pixel buttons and the 18 pixel glyph beside it; the detail is 11 pixel text in the secondary color on 15 pixel lines. The **×** button at the card's right edge dismisses a saved, failure, or update card. Resting the pointer on a button shows its name in a tooltip.
 
 Failure titles:
 
@@ -144,9 +145,10 @@ Failure titles:
 | `Pin failed` | Pinning a capture |
 | `Home did not open`, `Library did not open`, `Settings did not open`, `Editor did not open`, `Toast did not open`, `Recording chip did not open` | Opening that window |
 | `Quit failed` | `--quit` |
+| `Shortcuts did not refresh` | Redrawing the open windows after the global hotkeys bind |
 
 Timing and placement:
-- The card slides in from beyond the screen edge and stays for `toast_duration_ms` (default: 5000 milliseconds). A failure stays for at least 8000 milliseconds. On X11 with no compositing manager, the card has no shadow, appears at rest, and closes at once, as the toast's.
+- The card slides in from beyond the screen edge and stays for `toast_duration_ms` (default: 5000 milliseconds). A failure stays for at least 8000 milliseconds. A window pick card stays until the pick ends. On X11 with no compositing manager, the card has no shadow, appears at rest, and closes at once, as the toast's.
 - Hovering the pointer over the card pauses auto-dismissal. Moving the pointer off restarts the full duration.
 - A newer notice replaces the card, and so does a toast that lands on it.
 - A notice that would cover a toast resting in the same corner stacks beyond the toast card: above it in a bottom corner, below it in a top corner.

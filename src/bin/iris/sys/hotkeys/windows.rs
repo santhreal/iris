@@ -21,6 +21,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_HOTKEY,
 };
 
+use super::{Binding, TAKEN, UNKNOWN_KEY};
 use crate::daemon::Command;
 
 /// `WM_APP` offset that means "reload config and re-register".
@@ -135,12 +136,13 @@ pub(super) fn spawn(tx: UnboundedSender<Command>) {
                 }
             }
             let cfg = Config::load();
-            for (hotkey, cmd) in [
-                (&cfg.capture_hotkey, Command::Capture),
-                (&cfg.record_hotkey, Command::RecordToggle),
-            ] {
+            for (chord, hotkey) in super::configured(&cfg) {
+                if hotkey.is_empty() {
+                    super::record(chord, hotkey, Binding::Unset);
+                    continue;
+                }
                 let Some((mods, vk)) = parse_hotkey(hotkey) else {
-                    iris_lib::ilog!("iris: cannot parse hotkey {hotkey:?}");
+                    super::record(chord, hotkey, Binding::Refused(UNKNOWN_KEY.into()));
                     continue;
                 };
                 let id = *next_id;
@@ -150,9 +152,12 @@ pub(super) fn spawn(tx: UnboundedSender<Command>) {
                 let ok =
                     unsafe { RegisterHotKey(core::ptr::null_mut(), id, mods | MOD_NOREPEAT, vk) };
                 if ok == 0 {
-                    iris_lib::ilog!("iris: cannot register hotkey {hotkey:?}");
+                    // ERROR_HOTKEY_ALREADY_REGISTERED: another app
+                    // holds the chord.
+                    super::record(chord, hotkey, Binding::Refused(TAKEN.into()));
                 } else {
-                    registered.push((id, cmd));
+                    registered.push((id, chord.command()));
+                    super::record(chord, hotkey, Binding::Live);
                 }
             }
         };

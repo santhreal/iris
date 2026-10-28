@@ -80,6 +80,28 @@ impl Overlay {
         self.hover_in = None;
         self.hover_out = None;
         self.flight = None;
+        self.seed = layout.pointer;
+        self.cursor_known = false;
+    }
+
+    /// Place the cursor and the hover-snap at the session's opening
+    /// pointer, once, on the first render. Root pixels map to logical
+    /// through the scale factor alone: the shell spans the virtual
+    /// screen 1:1, and its bounds may not have caught up with a span
+    /// requested this tick.
+    pub(super) fn apply_seed(&mut self, window: &Window) {
+        let Some((px_, py_)) = self.seed.take() else {
+            return;
+        };
+        let sf = window.scale_factor();
+        let (mx, my) = (
+            (px_ - self.origin.0) as f32 / sf,
+            (py_ - self.origin.1) as f32 / sf,
+        );
+        self.cursor = (mx, my);
+        self.cursor_known = true;
+        self.hovered = self.window_at(mx, my, sf, 1.0, 1.0);
+        self.hover_in = self.hovered.map(|_| Instant::now());
     }
 
     /// Set what a committed selection does, and the hint that shows it.

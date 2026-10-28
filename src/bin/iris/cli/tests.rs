@@ -146,6 +146,28 @@ fn the_daemon_option_takes_no_other_option() {
     }
 }
 
+/// WHY: a bare `iris` that found no daemon became one and opened
+/// nothing, so a first launch of iris.app or of `iris` in a terminal
+/// showed no window. A bare line opens home whether it forwards or
+/// starts the daemon; `--daemon`, the login item's line, opens nothing;
+/// a flagged line runs its own commands and no home.
+#[test]
+fn a_daemon_start_runs_home_only_for_a_bare_line() {
+    let names = |line: &[&str]| -> Vec<String> {
+        parse(&argv(line))
+            .startup()
+            .iter()
+            .map(|c| format!("{c:?}"))
+            .collect()
+    };
+    assert_eq!(names(&[]), ["Home"]);
+    assert_eq!(names(&["-psn_0_12345"]), ["Home"]);
+    assert!(names(&["--daemon"]).is_empty());
+    assert_eq!(names(&["--capture"]), ["Capture"]);
+    assert_eq!(names(&["--library", "--settings"]), ["Library", "Settings"]);
+    assert_eq!(names(&["--home"]), ["Home"]);
+}
+
 /// A daemon prints nothing: on Windows one attached to the console of
 /// the terminal that started it would print there and end when that
 /// terminal closes. A bare line and a lone `--daemon` run a daemon;

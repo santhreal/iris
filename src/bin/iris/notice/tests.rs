@@ -121,6 +121,25 @@ fn detail_column_fits_a_recording_name_beside_both_buttons() {
     );
 }
 
+/// WHY: a guide's pick grabs the pointer, so a button on its card could
+/// never be pressed. The class closed is "a card shows a control that
+/// cannot work": every kind is enumerated, and a guide's detail takes
+/// the whole width beside the glyph, with no gap left for a row.
+#[test]
+fn a_guide_card_has_no_buttons_and_its_detail_takes_the_row() {
+    for (kind, file, want) in [
+        (Kind::Saved, true, 2),
+        (Kind::Saved, false, 1),
+        (Kind::Failure, false, 1),
+        (Kind::Update, false, 2),
+        (Kind::Guide, false, 0),
+    ] {
+        assert_eq!(buttons(kind, file), want, "{kind:?} with file {file}");
+    }
+    assert_eq!(text_width(0), W - 2.0 * (BORDER + PAD) - GLYPH - GAP);
+    assert_eq!(text_width(1), text_width(0) - BUTTON - GAP);
+}
+
 #[test]
 fn overlap_needs_shared_area() {
     let a = (0.0, 0.0, 10.0, 10.0);

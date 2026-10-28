@@ -65,12 +65,15 @@ pub enum Icon {
     Sliders,
 }
 
-/// A `size`px square canvas that paints `kind` in `color`.
-pub fn icon(kind: Icon, color: Rgba, size: f32) -> impl IntoElement {
+/// A `size`px square canvas that paints `kind` in `color`. It neither
+/// grows nor shrinks: in a row whose text overflows, a shrinkable
+/// canvas collapsed toward zero width and painted a sliver.
+pub fn icon(kind: Icon, color: Rgba, size: f32) -> Canvas<()> {
     canvas(
         move |_, _, _| (),
         move |bounds, (), window, _| paint_icon(kind, bounds, color, window),
     )
+    .flex_none()
     .w(px(size))
     .h(px(size))
 }
@@ -119,4 +122,27 @@ pub(super) fn store_tris(kind: Icon, s: f32, tris: Vec<[f32; 6]>) -> std::sync::
         }
     }
     tris
+}
+
+// WHY: the class closed here is "a glyph shrinks in a row with no room
+// left". A canvas in a flex row shrank like text, so a folder glyph
+// beside an overflowing path in the settings window painted a sliver.
+// `icon` is the one constructor every glyph goes through, and its box
+// neither grows nor shrinks. Not covered: a caller that wraps the glyph
+// in a box of its own that shrinks.
+#[cfg(test)]
+mod tests {
+    use std::prelude::v1::test;
+
+    use super::*;
+
+    #[test]
+    fn an_icon_keeps_its_size_in_a_full_row() {
+        let mut glyph = icon(Icon::Folder, crate::theme::FG, 16.);
+        let style = glyph.style();
+        assert_eq!(style.flex_shrink, Some(0.));
+        assert_eq!(style.flex_grow, Some(0.));
+        assert_eq!(style.size.width, Some(px(16.).into()));
+        assert_eq!(style.size.height, Some(px(16.).into()));
+    }
 }

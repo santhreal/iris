@@ -277,9 +277,12 @@ impl Daemon {
     }
 
     /// Start the daemon with `session` setting its display variables, and
-    /// return without waiting for its socket; see [`Daemon::bound`].
+    /// return without waiting for its socket; see [`Daemon::bound`]. It
+    /// runs as `iris --daemon`, which opens no window: a bare `iris`
+    /// opens home.
     pub fn spawn(dir: &Path, session: impl FnOnce(&mut Command)) -> Daemon {
         let mut cmd = iris(dir);
+        cmd.arg("--daemon");
         let out = std::fs::File::create(dir.join("daemon.log")).unwrap();
         session(&mut cmd);
         let child = cmd

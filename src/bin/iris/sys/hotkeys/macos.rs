@@ -16,6 +16,7 @@ use futures::channel::mpsc::UnboundedSender;
 use iris_lib::config::Config;
 use parking_lot::Mutex;
 
+use super::{Binding, TAKEN, UNKNOWN_KEY};
 use crate::daemon::Command;
 
 // ---- Carbon FFI ------------------------------------------------------
@@ -232,12 +233,13 @@ fn register_all() {
     state.map.clear();
     let target = unsafe { GetApplicationEventTarget() };
     let cfg = Config::load();
-    for (hotkey, cmd) in [
-        (&cfg.capture_hotkey, Command::Capture),
-        (&cfg.record_hotkey, Command::RecordToggle),
-    ] {
+    for (chord, hotkey) in super::configured(&cfg) {
+        if hotkey.is_empty() {
+            super::record(chord, hotkey, Binding::Unset);
+            continue;
+        }
         let Some((mods, code)) = parse_hotkey(hotkey) else {
-            iris_lib::ilog!("iris: cannot parse hotkey {hotkey:?}");
+            super::record(chord, hotkey, Binding::Refused(UNKNOWN_KEY.into()));
             continue;
         };
         let id = state.next_id;
@@ -249,10 +251,13 @@ fn register_all() {
         let mut out: EventHotKeyRef = core::ptr::null_mut();
         let status = unsafe { RegisterEventHotKey(code, mods, hkid, target, 0, &mut out) };
         if status != NO_ERR {
-            iris_lib::ilog!("iris: cannot register hotkey {hotkey:?} (status {status})");
+            // eventHotKeyExistsErr: another app holds the chord.
+            iris_lib::ilog!("iris: RegisterEventHotKey {hotkey:?}: status {status}");
+            super::record(chord, hotkey, Binding::Refused(TAKEN.into()));
         } else {
             state.refs.push(HotKeyRef(out));
-            state.map.push((id, cmd));
+            state.map.push((id, chord.command()));
+            super::record(chord, hotkey, Binding::Live);
         }
     }
 }
@@ -325,6 +330,7 @@ pub(super) fn spawn(tx: UnboundedSender<Command>) {
         );
         if status != NO_ERR {
             iris_lib::ilog!("iris: cannot install hotkey handler (status {status})");
+            super::refuse_all("Hotkey listener failed");
             return;
         }
     }
