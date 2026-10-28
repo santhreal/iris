@@ -261,15 +261,21 @@ impl Editor {
         );
     }
 
+    /// The image rect `edit` can change: the footprint of the action it
+    /// adds or removes, or of both places of the action it moves. `None`
+    /// means it could change anything.
+    pub(crate) fn edit_region(edit: &Edit<Action>) -> Option<(f32, f32, f32, f32)> {
+        match edit {
+            Edit::Add(a) | Edit::Remove(_, a) => Self::footprint(a),
+            Edit::Move(_, old, new) => Some(Self::union_rect(
+                Self::footprint(old)?,
+                Self::footprint(new)?,
+            )),
+        }
+    }
+
     pub(crate) fn rebuild_for_edit(&mut self, edit: &Edit<Action>) {
-        let region = match edit {
-            Edit::Add(a) | Edit::Remove(_, a) => a.bbox,
-            Edit::Move(_, old, new) => match (old.bbox, new.bbox) {
-                (Some(a), Some(b)) => Some(Self::union_rect(a, b)),
-                _ => None,
-            },
-        };
-        match region {
+        match Self::edit_region(edit) {
             Some(r) => self.rebuild_dirty(r),
             None => self.rebuild_all(),
         }

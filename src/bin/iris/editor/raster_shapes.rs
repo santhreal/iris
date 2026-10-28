@@ -249,8 +249,8 @@ pub(crate) fn stroke_polyline(
         // Translucent stroke (highlight): adjacent capsules overlap
         // at every joint, and two blends compound both the alpha and
         // the RGB toward the stroke color; a corner reads as a
-        // darker dot in the saved PNG while the canvas tessellates
-        // the polyline once and shows a uniform wash. Stamp each
+        // darker dot in the saved PNG while the canvas fills the
+        // polyline's coverage once and shows a uniform wash. Stamp each
         // segment's coverage into a mask over the stroke's bbox,
         // then blend every covered pixel exactly once.
         let r = (w / 2.0).max(0.5);
@@ -302,6 +302,15 @@ pub(crate) fn stroke_polyline(
     }
 }
 
+/// The back corners of the arrowhead on a stroke of width `w` from `a` to
+/// its tip `b`, in image pixels. The head is `w` plus 14 px long and
+/// opens 0.45 rad to each side of the stroke.
+pub(crate) fn arrow_wings(a: (f32, f32), b: (f32, f32), w: f32) -> [(f32, f32); 2] {
+    let head = 14.0 + w;
+    let angle = (b.1 - a.1).atan2(b.0 - a.0);
+    [angle - 0.45, angle + 0.45].map(|t| (b.0 - head * t.cos(), b.1 - head * t.sin()))
+}
+
 pub(crate) fn stamp_arrow_head(
     img: &mut image::RgbaImage,
     a: (f32, f32),
@@ -309,16 +318,7 @@ pub(crate) fn stamp_arrow_head(
     w: f32,
     px: image::Rgba<u8>,
 ) {
-    let head = 14.0 + w;
-    let angle = (b.1 - a.1).atan2(b.0 - a.0);
-    let p1 = (
-        b.0 - head * (angle - 0.45).cos(),
-        b.1 - head * (angle - 0.45).sin(),
-    );
-    let p2 = (
-        b.0 - head * (angle + 0.45).cos(),
-        b.1 - head * (angle + 0.45).sin(),
-    );
+    let [p1, p2] = arrow_wings(a, b, w);
     fill_triangle(img, b, p1, p2, px);
 }
 

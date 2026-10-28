@@ -4,6 +4,7 @@ use std::{rc::Rc, sync::Arc};
 
 use gpui::*;
 
+use super::raster_shapes::arrow_wings;
 use super::Editor;
 use crate::icons::Icon;
 
@@ -191,8 +192,18 @@ impl Editor {
                 if action.points.is_empty() {
                     return None;
                 }
+                // An arrowhead reaches past its points to each side.
+                let head = match (action.tool, action.points.first(), action.points.last()) {
+                    (Tool::Arrow, Some(&a), Some(&b)) => Some(arrow_wings(a, b, action.width)),
+                    _ => None,
+                };
                 let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                for &(x, y) in action.points.iter() {
+                for (x, y) in action
+                    .points
+                    .iter()
+                    .copied()
+                    .chain(head.into_iter().flatten())
+                {
                     x0 = x0.min(x);
                     y0 = y0.min(y);
                     x1 = x1.max(x);

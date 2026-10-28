@@ -12,7 +12,7 @@ mod tessellate;
 
 pub(crate) use tessellate::{
     push_disc, push_ellipse_fill, push_filled_triangle, push_quad, push_rect_fill, push_ring,
-    push_segment, TriRecorder,
+    push_segment, TriRecorder, TriSink,
 };
 
 // Some variants are only drawn by the Linux recording chip; the enum is

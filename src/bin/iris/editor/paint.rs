@@ -5,9 +5,10 @@ use std::rc::Rc;
 use gpui::*;
 
 use super::action::{hex_rgba, Action, Tool};
+use super::raster_shapes::arrow_wings;
 use crate::icons::{
     self, push_disc, push_ellipse_fill, push_filled_triangle, push_rect_fill, push_ring,
-    push_segment,
+    push_segment, TriSink,
 };
 use crate::theme;
 
@@ -50,7 +51,7 @@ pub(crate) fn paint_action(
             if (*kscale, *klen, *kfirst, *klast) == fingerprint {
                 let mut path = Path::new(point(px(ox), px(oy)));
                 stamp_tris(&mut path, cached, ox, oy);
-                window.paint_path(path, color);
+                paint_stroke(path, color, window);
                 return;
             }
             // Incremental: a growing pen/highlight stroke keeps its scale
@@ -74,7 +75,7 @@ pub(crate) fn paint_action(
                 *klast = fingerprint.3;
                 let mut path = Path::new(point(px(ox), px(oy)));
                 stamp_tris(&mut path, tris, ox, oy);
-                window.paint_path(path, color);
+                paint_stroke(path, color, window);
                 return;
             }
         }
@@ -83,78 +84,7 @@ pub(crate) fn paint_action(
     // Cache miss: tessellate at origin (0,0) into the recorder, then
     // stamp at this paint's origin.
     let mut rec = icons::TriRecorder(Vec::new());
-    let mut path = &mut rec;
-
-    match action.tool {
-        Tool::Pen | Tool::Highlight => {
-            if action.points.len() == 1 {
-                push_disc(&mut path, s(action.points[0]), w / 2.0);
-            } else {
-                for seg in action.points.windows(2) {
-                    push_segment(&mut path, s(seg[0]), s(seg[1]), w);
-                }
-            }
-        }
-        Tool::Line => {
-            if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
-                push_segment(&mut path, s(*a), s(*b), w);
-            }
-        }
-        Tool::Arrow => {
-            if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
-                let (a, b) = (s(*a), s(*b));
-                push_segment(&mut path, a, b, w);
-                let head = px(14.0) + px(w);
-                let angle =
-                    (f32::from(b.y) - f32::from(a.y)).atan2(f32::from(b.x) - f32::from(a.x));
-                let h: f32 = head.into();
-                let p1 = point(
-                    b.x - px(h * (angle - 0.45).cos()),
-                    b.y - px(h * (angle - 0.45).sin()),
-                );
-                let p2 = point(
-                    b.x - px(h * (angle + 0.45).cos()),
-                    b.y - px(h * (angle + 0.45).sin()),
-                );
-                push_filled_triangle(&mut path, b, p1, p2);
-            }
-        }
-        Tool::Ellipse => {
-            if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
-                let (a, b) = (s(*a), s(*b));
-                let cx = (f32::from(a.x) + f32::from(b.x)) / 2.0;
-                let cy = (f32::from(a.y) + f32::from(b.y)) / 2.0;
-                let rx = (f32::from(b.x) - f32::from(a.x)).abs() / 2.0;
-                let ry = (f32::from(b.y) - f32::from(a.y)).abs() / 2.0;
-                if rx > 0.0 && ry > 0.0 {
-                    if action.filled {
-                        push_ellipse_fill(&mut path, point(px(cx), px(cy)), rx, ry);
-                    } else {
-                        push_ring(&mut path, point(px(cx), px(cy)), rx, ry, w);
-                    }
-                }
-            }
-        }
-        Tool::Rect => {
-            if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
-                let (a, b) = (s(*a), s(*b));
-                if action.filled {
-                    push_rect_fill(&mut path, a, b);
-                } else {
-                    push_segment(&mut path, a, point(b.x, a.y), w);
-                    push_segment(&mut path, point(b.x, a.y), b, w);
-                    push_segment(&mut path, b, point(a.x, b.y), w);
-                    push_segment(&mut path, point(a.x, b.y), a, w);
-                }
-            }
-        }
-        Tool::Counter => {
-            if let Some(p) = action.points.first() {
-                push_disc(&mut path, s(*p), action.font_size * 0.9 * scale);
-            }
-        }
-        _ => {}
-    }
+    tessellate(action, scale, &mut rec);
     let tris = Rc::new(rec.0);
     let mut path = Path::new(point(px(ox), px(oy)));
     stamp_tris(&mut path, &tris, ox, oy);
@@ -165,7 +95,89 @@ pub(crate) fn paint_action(
         fingerprint.3,
         tris,
     ));
-    window.paint_path(path, color);
+    paint_stroke(path, color, window);
+}
+
+/// Tessellate `action` into `path` at stage origin (0, 0), with image
+/// pixels scaled by `scale`. Every size is in image pixels, as in the
+/// saved file's raster, so the canvas shows the shape the file gets at
+/// any zoom.
+pub(crate) fn tessellate(action: &Action, scale: f32, path: &mut impl TriSink) {
+    let w = action.width * scale;
+    let s = |p: (f32, f32)| point(px(p.0 * scale), px(p.1 * scale));
+    let ends = || Some((s(*action.points.first()?), s(*action.points.last()?)));
+    match action.tool {
+        Tool::Pen | Tool::Highlight => {
+            if let [p] = action.points[..] {
+                push_disc(path, s(p), w / 2.0);
+            } else {
+                for seg in action.points.windows(2) {
+                    push_segment(path, s(seg[0]), s(seg[1]), w);
+                }
+            }
+        }
+        Tool::Line => {
+            if let Some((a, b)) = ends() {
+                push_segment(path, a, b, w);
+            }
+        }
+        Tool::Arrow => {
+            if let (Some(&a), Some(&b)) = (action.points.first(), action.points.last()) {
+                push_segment(path, s(a), s(b), w);
+                let [p1, p2] = arrow_wings(a, b, action.width);
+                push_filled_triangle(path, s(b), s(p1), s(p2));
+            }
+        }
+        Tool::Ellipse => {
+            if let Some((a, b)) = ends() {
+                let cx = (f32::from(a.x) + f32::from(b.x)) / 2.0;
+                let cy = (f32::from(a.y) + f32::from(b.y)) / 2.0;
+                let rx = (f32::from(b.x) - f32::from(a.x)).abs() / 2.0;
+                let ry = (f32::from(b.y) - f32::from(a.y)).abs() / 2.0;
+                if rx > 0.0 && ry > 0.0 {
+                    if action.filled {
+                        push_ellipse_fill(path, point(px(cx), px(cy)), rx, ry);
+                    } else {
+                        push_ring(path, point(px(cx), px(cy)), rx, ry, w);
+                    }
+                }
+            }
+        }
+        Tool::Rect => {
+            if let Some((a, b)) = ends() {
+                if action.filled {
+                    push_rect_fill(path, a, b);
+                } else {
+                    push_segment(path, a, point(b.x, a.y), w);
+                    push_segment(path, point(b.x, a.y), b, w);
+                    push_segment(path, b, point(a.x, b.y), w);
+                    push_segment(path, point(a.x, b.y), a, w);
+                }
+            }
+        }
+        Tool::Counter => {
+            if let Some(p) = action.points.first() {
+                push_disc(path, s(*p), action.font_size * 0.9 * scale);
+            }
+        }
+        Tool::Select | Tool::Text | Tool::Blur | Tool::Crop => {}
+    }
+}
+
+/// Paint `path` in `color`. The path rasterizer blends each triangle over
+/// the last, and a stroke's path is a quad and two round caps per
+/// segment, which overlap at every joint and all along a densely sampled
+/// stroke. In an opaque color the overlaps do not show. In a translucent
+/// one (the highlight) they add up toward the opaque color, so the path
+/// is drawn white as a clip instead and the color fills it once, the one
+/// blend the saved file makes.
+fn paint_stroke(path: Path<Pixels>, color: Rgba, window: &mut Window) {
+    if color.a >= 1.0 {
+        window.paint_path(path, color);
+        return;
+    }
+    let bounds = path.bounds;
+    window.with_clip_path(path, |window| window.paint_quad(fill(bounds, color)));
 }
 
 /// Re-stamp recorded triangles at paint offset (ox, oy): the cached

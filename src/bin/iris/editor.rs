@@ -27,6 +27,8 @@ use iris_lib::history::Edit;
 mod action;
 #[cfg(test)]
 mod dirty_tests;
+#[cfg(test)]
+mod geometry_tests;
 mod keys;
 mod ops;
 mod paint;
