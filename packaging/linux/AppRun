@@ -7,6 +7,6 @@
 # or XDG_DATA_DIRS. iris and every program it starts keep the caller's
 # environment; no path refers to a mount that exits with the daemon.
 #
-# With no arguments iris starts the background daemon; --home opens the
-# UI.
+# With no arguments iris opens the home window and starts the
+# background daemon; --daemon starts the daemon with no window.
 exec "$(dirname "$(readlink -f "$0")")/usr/bin/iris" "$@"

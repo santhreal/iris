@@ -2,6 +2,7 @@
 //! rpm, each installed over the installed package by its package
 //! manager (`package`).
 
+mod menu;
 mod package;
 
 use std::path::{Path, PathBuf};
@@ -55,6 +56,18 @@ fn asset_of(package: Package) -> String {
         Package::Deb => DEB_ASSET,
         Package::Rpm => RPM_ASSET,
     })
+}
+
+/// The menu entry and first-start Start at login of the AppImage this
+/// iris runs from (`menu`). A package install has both from its
+/// package.
+pub fn integrate() {
+    let Ok(exe) = crate::sys::exe::this() else {
+        return;
+    };
+    if let Some(image) = crate::sys::exe::appimage(&exe) {
+        menu::integrate(&image, &exe);
+    }
 }
 
 /// Ok when this install can replace itself: an AppImage in a directory

@@ -168,6 +168,59 @@ fn a_daemon_start_runs_home_only_for_a_bare_line() {
     assert_eq!(names(&["--home"]), ["Home"]);
 }
 
+/// WHY: an update restarted the daemon as a bare `iris`, and a bare
+/// line opens home, so every update opened the home window. Each line
+/// that starts iris in the background is parsed here: `DAEMON_LINE`,
+/// which a client and an update spawn, the Windows installer's `/RUN`
+/// start and Run value, and the Linux and macOS login entries, read
+/// from the packaging files. None prints or opens a window. Not
+/// covered: a spawn that passes arguments of its own instead of
+/// `DAEMON_LINE`.
+#[test]
+fn every_background_start_opens_no_window() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let read = |p: &str| std::fs::read_to_string(root.join(p)).expect(p);
+    let words = |s: &str| s.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+    let mut lines = vec![("DAEMON_LINE".to_string(), argv(DAEMON_LINE))];
+    for l in read("packaging/windows/iris.nsi").lines().map(str::trim) {
+        let background =
+            l.starts_with("Exec '") || l.starts_with("WriteRegStr HKCU \"${RUN_KEY}\" \"iris\"");
+        if let Some(cmd) = l.split('\'').nth(1).filter(|_| background) {
+            let args = cmd.strip_prefix("\"$INSTDIR\\iris.exe\"").expect(l);
+            lines.push((l.to_string(), words(args)));
+        }
+    }
+    assert_eq!(
+        lines.len(),
+        3,
+        "the installer's /RUN start and Run value: {lines:?}"
+    );
+    let desktop = read("packaging/linux/iris-autostart.desktop");
+    let exec = desktop
+        .lines()
+        .find_map(|l| l.strip_prefix("Exec="))
+        .expect("Exec");
+    let args = exec.strip_prefix("iris").expect(exec);
+    lines.push((exec.to_string(), words(args)));
+    let plist = read("packaging/macos/dev.iris.app.plist");
+    let array = plist
+        .split("<key>ProgramArguments</key>")
+        .nth(1)
+        .and_then(|rest| rest.split("</array>").next())
+        .expect("ProgramArguments");
+    let args = array
+        .split("<string>")
+        .skip(2)
+        .map(|s| s.split("</string>").next().unwrap_or_default().to_string())
+        .collect();
+    lines.push(("ProgramArguments".to_string(), args));
+    for (source, args) in lines {
+        let p = parse(&args);
+        assert!(!p.prints(), "{source}: {args:?} prints");
+        assert!(p.startup().is_empty(), "{source}: {args:?} opens a window");
+    }
+}
+
 /// A daemon prints nothing: on Windows one attached to the console of
 /// the terminal that started it would print there and end when that
 /// terminal closes. A bare line and a lone `--daemon` run a daemon;

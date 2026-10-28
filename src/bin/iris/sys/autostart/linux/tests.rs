@@ -132,7 +132,7 @@ fn exec_quotes_the_program_as_one_argument() {
     }
     let e = exec_arg(Path::new("/a\nb")).expect_err("newline");
     assert!(
-        e.ends_with("holds a control character, which an Exec line cannot"),
+        e.ends_with("holds a control character, which a desktop entry cannot"),
         "{e}"
     );
     use std::os::unix::ffi::OsStrExt;

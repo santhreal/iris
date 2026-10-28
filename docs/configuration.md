@@ -59,8 +59,8 @@ recording_fps = 30
 recording_format = "mp4"
 recording_encoder = "auto"
 show_toast_after_capture = true
-capture_hotkey = "Print"
-record_hotkey = "Ctrl+Shift+R"
+capture_hotkey = "Ctrl+Print"
+record_hotkey = "Ctrl+Shift+Print"
 flash_on_capture = true
 sound_on_capture = true
 toast_click_action = "markup"
@@ -146,10 +146,10 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 
 ### Keyboard
 
-- `capture_hotkey` (String, default: `"Print"`):
-  Global hotkey chord to open the region capture overlay. macOS keyboards have no Print Screen key; on macOS, `Print` binds `F13`.
-- `record_hotkey` (String, default: `"Ctrl+Shift+R"`):
-  Global hotkey chord to toggle window or screen recording.
+- `capture_hotkey` (String, default: `"Ctrl+Print"`):
+  Global hotkey chord to open the region capture overlay. macOS keyboards have no Print Screen key; on macOS, `Print` binds `F13`. The default leaves `Print`, `Shift+Print`, and `Alt+Print` to the desktop's own screenshot tool.
+- `record_hotkey` (String, default: `"Ctrl+Shift+Print"`):
+  Global hotkey chord to toggle window or screen recording. A global hotkey takes the chord from every application.
 - `cancel_keybind` (String, default: `"Escape"`):
   Key to cancel overlay selection, recording pick mode, or editor changes.
 - `confirm_keybind` (String, default: `"Enter"`):
@@ -206,6 +206,6 @@ When `config.toml` cannot be written, the error shows in the window and the valu
 | macOS | `~/Library/LaunchAgents/dev.iris.app.plist` | Writes a LaunchAgent that runs this binary with `--daemon` at load, in the GUI session | Deletes the LaunchAgent |
 | Windows | Value `iris` of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | Writes `"<path of iris.exe>" --daemon` | Deletes the value |
 
-On Linux, a package's `/etc/xdg/autostart` entry reads on for a deb or rpm install and off for an AppImage, which the package entry does not start. An entry with `Hidden=true` or `X-GNOME-Autostart-enabled=false` reads off. On Windows, a Run value that Task Manager's **Startup apps** list turned off reads off, and writing or deleting the Run value deletes Task Manager's setting.
+On Linux, a package's `/etc/xdg/autostart` entry reads on for a deb or rpm install and off for an AppImage, which the package entry does not start. The first start of an AppImage turns the switch on when this account has no entry of its own ([AppImage](install.md#appimage)). An entry with `Hidden=true` or `X-GNOME-Autostart-enabled=false` reads off. On Windows, a Run value that Task Manager's **Startup apps** list turned off reads off, and writing or deleting the Run value deletes Task Manager's setting.
 
 Changes apply at the next login. The switch does not start or stop the running daemon.

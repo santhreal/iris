@@ -284,3 +284,77 @@ fn each_config_file_loads_its_own_values_whatever_its_stamp() {
         );
     }
 }
+
+// WHY: the class closed here is "a default global hotkey belongs to
+// someone else": `Print` never bound under GNOME or with the Windows 11
+// Snipping Tool, and the grab of `Ctrl+Shift+R` took hard reload from
+// every browser. Each row is a chord a stock desktop or a common app
+// holds; a default that matches one fails. Not covered: chords a user
+// or a less common desktop binds.
+#[test]
+fn the_default_hotkeys_avoid_chords_desktops_and_apps_hold() {
+    const CTRL: u8 = 1;
+    const SHIFT: u8 = 2;
+    const ALT: u8 = 4;
+    const SUPER: u8 = 8;
+    let held: &[(&str, u8, &str)] = &[
+        (
+            "print",
+            0,
+            "GNOME screenshot UI, Windows 11 Snipping Tool, KDE Spectacle",
+        ),
+        ("print", SHIFT, "GNOME screenshot, KDE full-screen capture"),
+        ("print", ALT, "GNOME window screenshot, Windows window copy"),
+        (
+            "print",
+            SUPER,
+            "KDE window capture, Windows screenshot to file",
+        ),
+        ("print", SUPER | SHIFT, "KDE region capture"),
+        ("print", SUPER | CTRL, "KDE monitor capture"),
+        ("print", SUPER | ALT, "Windows Game Bar screenshot"),
+        ("r", CTRL | SHIFT | ALT, "GNOME screencast"),
+        (
+            "r",
+            SUPER | SHIFT,
+            "Windows 11 Snipping Tool recording, KDE region recording",
+        ),
+        ("r", SUPER | ALT, "Windows Game Bar recording"),
+        ("s", SUPER | SHIFT, "Windows Snipping Tool"),
+        ("3", SUPER | SHIFT, "macOS screenshot"),
+        ("4", SUPER | SHIFT, "macOS region screenshot"),
+        ("5", SUPER | SHIFT, "macOS screenshot toolbar"),
+        ("r", CTRL, "browser reload"),
+        ("r", CTRL | SHIFT, "browser hard reload, editor refactor"),
+        ("s", CTRL | SHIFT, "Save As"),
+        ("p", CTRL | SHIFT, "command palette, private window"),
+        ("f5", 0, "reload"),
+        ("f5", CTRL, "hard reload"),
+    ];
+    let cfg = Config::default();
+    let defaults = [
+        ("capture_hotkey", &cfg.capture_hotkey),
+        ("record_hotkey", &cfg.record_hotkey),
+    ];
+    for (field, chord) in defaults {
+        for &(key, mods, holder) in held {
+            let pressed = |m| mods & m != 0;
+            assert!(
+                !keybind_matches(
+                    chord,
+                    key,
+                    pressed(CTRL),
+                    pressed(SHIFT),
+                    pressed(ALT),
+                    pressed(SUPER)
+                ),
+                "{field} {chord:?} is held by {holder}"
+            );
+        }
+    }
+    assert_ne!(
+        cfg.capture_hotkey.to_ascii_lowercase(),
+        cfg.record_hotkey.to_ascii_lowercase(),
+        "one press would run both commands"
+    );
+}

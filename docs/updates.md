@@ -76,7 +76,7 @@ The offer is the update the last recorded check found, when its version is newer
 1. It checks that this install can replace itself. An install that cannot fails here, before anything is downloaded ([Platform Update Mechanisms](#platform-update-mechanisms)).
 2. It downloads the asset and verifies it ([Verification](#verification)).
 3. It sends `--quit` to the running daemon and waits up to 60 seconds for it to exit. A quitting daemon saves its recording before it exits.
-4. It replaces the installed iris with the download and starts the new iris.
+4. It replaces the installed iris with the download and starts the new iris as the daemon, `iris --daemon`, which opens no window.
 
 When the daemon still runs 60 seconds after `--quit`, `iris --update` installs nothing, prints `update: the running iris still answers 60 s after --quit; nothing was installed, run iris --update again once it exits`, and exits with status 1.
 

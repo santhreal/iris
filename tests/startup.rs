@@ -100,8 +100,9 @@ use xproxy::{Event, Proxy};
 /// start runs.
 const START: &str = "iris: daemon start";
 
-/// The keysym of `Print`, the default `capture_hotkey`.
-const PRINT: u32 = 0xff61;
+/// The keysyms of `Ctrl+Print`, the default `capture_hotkey`:
+/// `Control_L` and `Print`.
+const CTRL_PRINT: [u32; 2] = [0xffe3, 0xff61];
 
 /// The title of the capture overlay's window.
 const OVERLAY: &str = "Capture - iris";
@@ -152,7 +153,7 @@ fn a_hotkey_pressed_once_the_socket_accepts_opens_the_overlay() {
     let daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
     });
-    x11::tap(&conn, root, PRINT);
+    x11::chord(&conn, root, &CTRL_PRINT);
     // The warmup's window opens unfocused and stays so; only a capture
     // gives the overlay the focus, once its frame lands.
     daemon.until("the overlay to take the focus", || {

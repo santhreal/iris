@@ -33,11 +33,13 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - On Wayland the daemon binds the capture and record hotkeys through the GlobalShortcuts portal where the desktop provides it.
 - The home window and the settings window's Shortcuts pane show a global hotkey that another program holds as unavailable, with the reason.
 - An X11 window pick shows a card that states the click and the `Escape` key until the pick ends.
+- The AppImage adds its application menu entry and icon on each start, and turns on Start at login on its first start.
 
 ### Changed
 
 - Reduced capture-overlay, capture-toast, Library-opening, and wheel-scrolling latency.
 - A bare `iris` opens the home window; `iris --daemon` starts the daemon with no window.
+- The default capture hotkey is `Ctrl+Print` and the default record hotkey is `Ctrl+Shift+Print`.
 - The home window shows each shortcut as key caps, in a larger layout with a hairline window edge.
 - The daemon runs the command it started for, such as opening the home window, before it prepares the capture renderer, and skips that preparation while a recording runs.
 - An empty library shows no `0 captures` count, and its hint names the capture shortcut only while that shortcut is bound.

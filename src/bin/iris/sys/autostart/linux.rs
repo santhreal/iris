@@ -6,6 +6,8 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use crate::sys::xdg::exec_arg;
+
 /// The entry's name: the one the deb and the rpm install in
 /// /etc/xdg/autostart (packaging/linux/iris-autostart.desktop).
 const ENTRY: &str = "iris-autostart.desktop";
@@ -65,7 +67,10 @@ impl Iris {
             None => (exe, true),
         };
         Ok(Self {
-            exec: format!("{} --daemon", exec_arg(&program)?),
+            exec: format!(
+                "{} --daemon",
+                exec_arg(&program).map_err(|e| format!("start at login: {e}"))?
+            ),
             packaged,
         })
     }
@@ -97,6 +102,13 @@ fn enabled_in(places: &Places, iris: &Iris) -> bool {
             .is_some_and(|text| Entry::parse(&text).starts)
 }
 
+/// Whether this account holds an autostart entry of its own: Start at
+/// login was turned on or off here, or a first start of an AppImage
+/// turned it on (`crate::sys::install::integrate`).
+pub fn chosen() -> bool {
+    Places::of_this_account().is_ok_and(|places| places.user.join(ENTRY).exists())
+}
+
 fn set_in(places: &Places, iris: &Iris, on: bool) -> Result<(), String> {
     let user = places.user.join(ENTRY);
     if on {
@@ -123,19 +135,8 @@ fn entry(exec: &str) -> String {
     )
 }
 
-/// Write `text` to `path` through a sibling a desktop does not read
-/// (no .desktop suffix) and one rename, so a session that starts
-/// meanwhile reads the old entry or the new one.
 fn write(path: &Path, text: &str) -> Result<(), String> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let staged = dir.join(format!(".{ENTRY}.new"));
-    std::fs::create_dir_all(dir)
-        .and_then(|()| std::fs::write(&staged, text))
-        .and_then(|()| std::fs::rename(&staged, path))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&staged);
-            format!("start at login: write {}: {e}", path.display())
-        })
+    crate::sys::xdg::write(path, text.as_bytes()).map_err(|e| format!("start at login: {e}"))
 }
 
 /// What an autostart entry does, from its `[Desktop Entry]` group.
@@ -168,40 +169,6 @@ impl<'a> Entry<'a> {
         }
         entry
     }
-}
-
-/// `program` as one quoted `Exec` argument (Desktop Entry
-/// Specification, "The Exec key"). In a quoted argument `"`, `` ` ``,
-/// and `$` take a backslash and a backslash takes another; the string
-/// escape rule then doubles every backslash. `%` doubles.
-fn exec_arg(program: &Path) -> Result<String, String> {
-    let text = program.to_str().ok_or_else(|| {
-        format!(
-            "start at login: {} is not UTF-8, which a desktop entry holds",
-            program.display()
-        )
-    })?;
-    let mut arg = String::with_capacity(text.len() + 2);
-    arg.push('"');
-    for c in text.chars() {
-        match c {
-            '"' | '`' | '$' => {
-                arg.push_str(r"\\");
-                arg.push(c);
-            }
-            '\\' => arg.push_str(r"\\\\"),
-            '%' => arg.push_str("%%"),
-            c if c.is_control() => {
-                return Err(format!(
-                    "start at login: {} holds a control character, which an Exec line cannot",
-                    program.display()
-                ))
-            }
-            c => arg.push(c),
-        }
-    }
-    arg.push('"');
-    Ok(arg)
 }
 
 // WHY: the classes closed here are "Start at login reads on for an

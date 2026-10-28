@@ -195,7 +195,11 @@ fn a_recorded_shortcut_applies_unless_its_partner_holds_it() {
     // cancel and confirm together. Case differs in a hand-edited file.
     let pairs = [
         (Field::RecordHotkey, Field::CaptureHotkey, "ctrl+shift+3"),
-        (Field::CaptureHotkey, Field::RecordHotkey, "Ctrl+Shift+R"),
+        (
+            Field::CaptureHotkey,
+            Field::RecordHotkey,
+            "ctrl+shift+print",
+        ),
         (Field::ConfirmKeybind, Field::CancelKeybind, "Escape"),
         (Field::CancelKeybind, Field::ConfirmKeybind, "Enter"),
     ];

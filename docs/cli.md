@@ -102,7 +102,7 @@ bind = CTRL, Print, exec, iris --capture-window
 bind = ALT, Print, exec, iris --delay 5
 
 # Toggle window recording
-bind = CTRL SHIFT, R, exec, iris --record-window
+bind = CTRL SHIFT, Print, exec, iris --record-window
 
 # Record selected region
 bind = CTRL ALT, R, exec, iris --record-region
@@ -120,7 +120,7 @@ bind = $mainMod, L, exec, iris --library
 bindsym Print exec iris --capture
 bindsym Shift+Print exec iris --capture-fullscreen
 bindsym Mod1+Print exec iris --capture-window
-bindsym Ctrl+Shift+r exec iris --record-window
+bindsym Ctrl+Shift+Print exec iris --record-window
 bindsym Ctrl+Mod1+r exec iris --record-region
 bindsym Mod4+l exec iris --library
 ```
@@ -131,7 +131,7 @@ bindsym Mod4+l exec iris --library
 bindsym Print exec --no-startup-id iris --capture
 bindsym Shift+Print exec --no-startup-id iris --capture-fullscreen
 bindsym Mod1+Print exec --no-startup-id iris --capture-window
-bindsym Ctrl+Shift+r exec --no-startup-id iris --record-window
+bindsym Ctrl+Shift+Print exec --no-startup-id iris --record-window
 bindsym Ctrl+Mod1+r exec --no-startup-id iris --record-region
 bindsym Mod4+l exec --no-startup-id iris --library
 ```
@@ -152,7 +152,7 @@ alt + Print
     iris --capture-window
 
 # Record window toggle
-ctrl + shift + r
+ctrl + shift + Print
     iris --record-window
 
 # Record region

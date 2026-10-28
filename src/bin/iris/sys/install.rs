@@ -27,6 +27,15 @@ pub fn tidy() {
     windows::tidy();
 }
 
+/// Give this install the desktop integration a package's installer
+/// writes: an AppImage's menu entry, and Start at login on its first
+/// start. The daemon runs this once it has started. Other installs
+/// have both from their installer.
+pub fn integrate() {
+    #[cfg(target_os = "linux")]
+    linux::integrate();
+}
+
 /// The release asset suffix `kind` with `{arch}` replaced by this
 /// build's architecture, `std::env::consts::ARCH`. Asset names in
 /// packaging/CONTRACT.md use the same names: `x86_64`, `aarch64`.
@@ -45,14 +54,16 @@ fn in_contract(suffix: &str) -> bool {
         .any(|l| l.starts_with(&line))
 }
 
-/// Start the new binary at `exe` and exit this process. The daemon is
-/// already stopped (see `update::apply`), so the fresh `iris` binds the
-/// socket and becomes the daemon rather than forwarding to a stale
-/// instance. It starts detached, as a client starts the daemon: closing
-/// the terminal `iris --update` ran in does not end it. An installed
-/// Windows iris does not come here: its installer starts iris (`/RUN`).
+/// Start the new binary at `exe` as the daemon and exit this process.
+/// The daemon is already stopped (see `update::apply`), so the fresh
+/// `iris` binds the socket and becomes the daemon rather than
+/// forwarding to a stale instance. It opens no window, as the daemon it
+/// replaces had none open. It starts detached, as a client starts the
+/// daemon: closing the terminal `iris --update` ran in does not end it.
+/// An installed Windows iris does not come here: its installer starts
+/// iris (`/RUN`).
 fn relaunch(exe: &Path) -> ! {
-    if let Err(e) = crate::sys::detach::spawn(exe, &[]) {
+    if let Err(e) = crate::sys::detach::spawn(exe, crate::cli::DAEMON_LINE) {
         iris_lib::ilog!("iris: start the updated daemon {}: {e}", exe.display());
     }
     std::process::exit(0);

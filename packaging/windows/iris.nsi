@@ -234,15 +234,15 @@ Function un.onInit
     SetRegView 64
 FunctionEnd
 
-; With /RUN, start $INSTDIR\iris.exe: the new one after a successful
-; installation, the one found in place after a failed one. It starts with
-; no option: an iris.exe found in place may predate --daemon.
+; With /RUN, start $INSTDIR\iris.exe as the daemon: the new one after a
+; successful installation, the one found in place after a failed one.
+; Both open no window, as the daemon the update stopped had none open.
 Function StartIfRequested
     ${GetParameters} $R0
     ClearErrors
     ${GetOptions} $R0 "/RUN" $R1
     ${IfNot} ${Errors}
-        Exec '"$INSTDIR\iris.exe"'
+        Exec '"$INSTDIR\iris.exe" --daemon'
     ${EndIf}
 FunctionEnd
 

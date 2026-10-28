@@ -80,7 +80,7 @@ For unattended installation, append the `/S` flag:
 iris-<ver>-windows-<arch>-setup.exe /S
 ```
 
-To start iris when the installation ends, append `/RUN`. The installer starts iris whether the installation succeeded or failed:
+To start iris when the installation ends, append `/RUN`. The installer runs `iris.exe --daemon`, which opens no window, whether the installation succeeded or failed:
 
 ```cmd
 iris-<ver>-windows-<arch>-setup.exe /S /RUN
@@ -224,7 +224,11 @@ chmod +x iris-<ver>-linux-<arch>.AppImage
 ./iris-<ver>-linux-<arch>.AppImage
 ```
 
-To start the AppImage at login, turn on **Start iris at login** in the settings window. Turning it on writes `~/.config/autostart/iris-autostart.desktop` running the AppImage's path with `--daemon` ([Start at Login](configuration.md#start-at-login)). Turn it off before moving or deleting the AppImage.
+The first start of the AppImage writes the application menu entry `~/.local/share/applications/dev.iris.app.desktop` (`$XDG_DATA_HOME/applications`), with its icon at `~/.local/share/icons/hicolor/256x256/apps/dev.iris.app.png`, and turns on **Start iris at login** unless this account already has an autostart entry for iris. The entry runs the AppImage's path and hides from the menu once that path is gone (`TryExec`). Each start rewrites the entry and the icon when they differ, so the entry follows a moved AppImage once it runs again.
+
+Turning on **Start iris at login** writes `~/.config/autostart/iris-autostart.desktop` running the AppImage's path with `--daemon` ([Start at Login](configuration.md#start-at-login)). Turn it off before moving or deleting the AppImage.
+
+To remove the AppImage, turn off **Start iris at login**, quit iris, and delete the AppImage and the two files above.
 
 ## From Source
 

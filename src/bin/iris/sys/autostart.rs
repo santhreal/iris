@@ -23,7 +23,7 @@ mod macos;
 mod windows;
 
 #[cfg(target_os = "linux")]
-pub use linux::{enabled, set};
+pub use linux::{chosen, enabled, set};
 #[cfg(target_os = "macos")]
 pub use macos::{enabled, set};
 #[cfg(windows)]

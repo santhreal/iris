@@ -71,21 +71,39 @@ pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
 /// Press and release the first key that produces `keysym`, through
 /// XTest, with no modifier held.
 pub fn tap(conn: &impl Connection, root: u32, keysym: u32) {
+    chord(conn, root, &[keysym]);
+}
+
+/// Press the first key that produces each of `keysyms` in order, then
+/// release them in reverse order, through XTest: `[CONTROL_L, PRINT]`
+/// is Ctrl+Print.
+pub fn chord(conn: &impl Connection, root: u32, keysyms: &[u32]) {
     let (low, high) = (conn.setup().min_keycode, conn.setup().max_keycode);
     let map = conn
         .get_keyboard_mapping(low, high - low + 1)
         .unwrap()
         .reply()
         .unwrap();
-    let at = map
-        .keysyms
+    let keycodes: Vec<u8> = keysyms
         .iter()
-        .position(|&k| k == keysym)
-        .unwrap_or_else(|| panic!("no key produces keysym {keysym:#x}"));
-    let keycode = low + (at / usize::from(map.keysyms_per_keycode)) as u8;
-    for kind in [xproto::KEY_PRESS_EVENT, xproto::KEY_RELEASE_EVENT] {
+        .map(|&keysym| {
+            let at = map
+                .keysyms
+                .iter()
+                .position(|&k| k == keysym)
+                .unwrap_or_else(|| panic!("no key produces keysym {keysym:#x}"));
+            low + (at / usize::from(map.keysyms_per_keycode)) as u8
+        })
+        .collect();
+    let fake = |kind, keycode| {
         conn.xtest_fake_input(kind, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)
             .unwrap();
+    };
+    for &keycode in &keycodes {
+        fake(xproto::KEY_PRESS_EVENT, keycode);
+    }
+    for &keycode in keycodes.iter().rev() {
+        fake(xproto::KEY_RELEASE_EVENT, keycode);
     }
     conn.flush().unwrap();
 }

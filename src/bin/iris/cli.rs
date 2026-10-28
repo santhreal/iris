@@ -47,6 +47,11 @@ const HELP_SHORT: &str = "-h";
 /// Runs the daemon in this process.
 const DAEMON: &str = "--daemon";
 
+/// The arguments of a daemon started in the background: by a client
+/// that found none, and by an update that restarts it. It opens no
+/// window, as the login item's line opens none.
+pub const DAEMON_LINE: &[&str] = &[DAEMON];
+
 const OPTS: &[Opt] = &[
     Opt {
         flag: "--capture",

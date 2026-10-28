@@ -9,13 +9,13 @@ iris records selected windows, screen regions, or displays using platform captur
 ### Window Recording
 
 Start window recording through any of the following triggers:
-- Keybind: `Ctrl+Shift+R` (configured by `record_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
+- Keybind: `Ctrl+Shift+Print` (configured by `record_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
 - Command-line interface: `iris --record-window` (see [cli.md#command-reference](cli.md#command-reference))
 - Home window: **Record Window** tile
 - System tray menu: **Record window**
 
 Stop an active recording through any of the following triggers:
-- Press `Ctrl+Shift+R` (or the configured `record_hotkey`)
+- Press `Ctrl+Shift+Print` (or the configured `record_hotkey`)
 - Run `iris --record-window`
 - Click **Record window** in the system tray menu
 - Click **Record Window** in the Home window

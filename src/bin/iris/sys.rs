@@ -17,6 +17,7 @@
 //! Windows command line to its terminal; both are empty elsewhere.
 //! `autostart`, `hotkeys`, `install`, `record`, `reveal`, `sound`,
 //! `tray`, `watch`, and `window` have a per-OS implementation each.
+//! `xdg` writes Linux desktop entries.
 
 pub mod alloc;
 pub mod console;
@@ -33,3 +34,5 @@ pub mod sound;
 pub mod tray;
 pub mod watch;
 pub mod window;
+#[cfg(target_os = "linux")]
+pub mod xdg;

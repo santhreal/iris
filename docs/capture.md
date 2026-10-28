@@ -9,7 +9,7 @@ iris provides region, fullscreen, active-window, and timed capture modes.
 ### Region Capture
 
 Trigger region capture using any of the following interfaces:
-- Keybind: `Print` (configured by `capture_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
+- Keybind: `Ctrl+Print` (configured by `capture_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
 - Command-line interface: `iris --capture` (see [cli.md#command-reference](cli.md#command-reference))
 - Home window: **New Screenshot** tile
 - System tray menu: **Capture**
