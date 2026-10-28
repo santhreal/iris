@@ -3,7 +3,7 @@
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    self, AtomEnum, ConnectionExt as _, CreateWindowAux, MapState, WindowClass,
+    self, AtomEnum, ConnectionExt as _, CreateWindowAux, ImageFormat, MapState, WindowClass,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 
@@ -49,6 +49,34 @@ pub fn focus(conn: &impl Connection) -> u32 {
     conn.get_input_focus().unwrap().reply().unwrap().focus
 }
 
+/// The client area of `window` as it shows on the screen: its width,
+/// its height, and its rows of [b, g, r] pixels.
+pub fn client(conn: &impl Connection, root: u32, window: u32) -> (usize, usize, Vec<[u8; 3]>) {
+    let at = conn
+        .translate_coordinates(window, root, 0, 0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let size = conn.get_geometry(window).unwrap().reply().unwrap();
+    let image = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            root,
+            at.dst_x,
+            at.dst_y,
+            size.width,
+            size.height,
+            !0,
+        )
+        .unwrap()
+        .reply()
+        .unwrap();
+    let (w, h) = (usize::from(size.width), usize::from(size.height));
+    assert_eq!(image.data.len(), w * h * 4, "depth {}", image.depth);
+    let px = image.data.chunks(4).map(|p| [p[0], p[1], p[2]]).collect();
+    (w, h, px)
+}
+
 /// Move the pointer to `at` and click the first button, through XTest.
 pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
     conn.xtest_fake_input(
@@ -65,6 +93,42 @@ pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
         conn.xtest_fake_input(kind, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)
             .unwrap();
     }
+    conn.flush().unwrap();
+}
+
+/// Press the first button at `from`, move the pointer to `to` in steps
+/// of `step` pixels with a pause after each, and release, through
+/// XTest. The pause lets the client read each motion on its own.
+pub fn drag(conn: &impl Connection, root: u32, from: (i16, i16), to: (i16, i16), step: i16) {
+    let motion = |at: (i16, i16)| {
+        conn.xtest_fake_input(
+            xproto::MOTION_NOTIFY_EVENT,
+            0,
+            x11rb::CURRENT_TIME,
+            root,
+            at.0,
+            at.1,
+            0,
+        )
+        .unwrap();
+        conn.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    };
+    let button = |kind| {
+        conn.xtest_fake_input(kind, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)
+            .unwrap();
+    };
+    motion(from);
+    button(xproto::BUTTON_PRESS_EVENT);
+    let (dx, dy) = (i32::from(to.0 - from.0), i32::from(to.1 - from.1));
+    let steps = (dx.abs().max(dy.abs()) / i32::from(step.max(1))).max(1);
+    for i in 1..=steps {
+        motion((
+            from.0 + (dx * i / steps) as i16,
+            from.1 + (dy * i / steps) as i16,
+        ));
+    }
+    button(xproto::BUTTON_RELEASE_EVENT);
     conn.flush().unwrap();
 }
 
