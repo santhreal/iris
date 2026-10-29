@@ -42,8 +42,8 @@ pub use self::field::{edit_line, folder_field, text_field, FieldState};
 pub use self::image::*;
 pub use self::keycaps::{chord_label, keycaps};
 pub use self::menu::{
-    hover_row, menu, menu_at, menu_key, menu_row, menu_separator, popup_button, popup_menu,
-    MenuItem, MenuKey, MENU_PAD, MENU_RADIUS, MENU_ROW_H, MENU_W,
+    hover_row, menu, menu_at, menu_key, menu_separator, popup_button, popup_menu, MenuItem,
+    MenuKey, MENU_PAD, MENU_RADIUS, MENU_ROW_H, MENU_W,
 };
 pub use self::resize::resize_edges;
 pub use self::scroll::scroll_y;

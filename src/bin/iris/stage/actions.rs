@@ -7,7 +7,11 @@ use std::{
 };
 
 use super::*;
-use crate::{icons::Icon, motion, pipeline, widgets::tip};
+use crate::{
+    icons::Icon,
+    motion, pipeline,
+    widgets::{tip, MENU_PAD, MENU_ROW_H, MENU_W},
+};
 
 impl ToastStage {
     /// Build the stage from an already-scaled thumbnail. The scaling
@@ -254,11 +258,11 @@ impl ToastStage {
         }
     }
 
-    /// Right-click context menu, macOS style: Markup, Copy, Copy Text,
-    /// Pin to Screen, Move to Trash, Close. Fades in over 120ms rising
-    /// 3px, or shows at once on a screen that does not blend the window;
-    /// shares the exit opacity so it never outlives the card it belongs
-    /// to. Returns the menu and the area it paints in the window.
+    /// Right-click context menu, macOS style: the rows of `ToastRow`.
+    /// Fades in over 120ms rising 3px, or shows at once on a screen
+    /// that does not blend the window; shares the exit opacity so it
+    /// never outlives the card it belongs to. Returns the menu and the
+    /// area it paints in the window.
     pub(super) fn render_menu(
         &mut self,
         opacity: f32,
@@ -278,8 +282,8 @@ impl ToastStage {
         let area = crate::sys::window::Rounded {
             x: menu_x,
             y: menu_y + 3.0 * (1.0 - motion::ease_out_cubic(mt)),
-            w: crate::widgets::MENU_W,
-            h: 6.0 * crate::widgets::MENU_ROW_H + 10.0,
+            w: MENU_W,
+            h: MENU_H,
             r: crate::widgets::MENU_RADIUS,
         };
         let mut menu = crate::widgets::menu()
@@ -287,58 +291,34 @@ impl ToastStage {
             .left(px(area.x))
             .top(px(area.y))
             .opacity(mt * opacity);
-        menu = menu.child(crate::widgets::menu_row("toast-markup", "Markup").on_click(
-            cx.listener(|stage, _, window, cx| {
-                cx.stop_propagation();
-                stage.menu_at = None;
-                stage.hand_off_to_editor(window, cx);
-            }),
-        ));
-        menu = menu.child(
-            crate::widgets::menu_row("toast-copy", "Copy").on_click(cx.listener(
-                |stage, _, _, cx| {
+        for row in ToastRow::ALL {
+            let mut item = crate::widgets::MenuItem::new(row.id(), row.label());
+            if row == ToastRow::Trash {
+                item = item.destructive();
+            }
+            menu = menu.child(item.into_row().on_click(cx.listener(
+                move |stage, _, window, cx| {
                     cx.stop_propagation();
                     stage.menu_at = None;
-                    stage.copy_image(cx);
+                    stage.run_menu_row(row, window, cx);
                 },
-            )),
-        );
-        menu = menu.child(crate::widgets::menu_row("toast-ocr", "Copy Text").on_click(
-            cx.listener(|stage, _, _window, cx| {
-                cx.stop_propagation();
-                stage.menu_at = None;
-                stage.copy_text(cx);
-            }),
-        ));
-        menu = menu.child(
-            crate::widgets::menu_row("toast-pin", "Pin to Screen").on_click(cx.listener(
-                |stage, _, _window, cx| {
-                    cx.stop_propagation();
-                    stage.menu_at = None;
-                    crate::pin::open(cx, &stage.path, stage.pin_over);
-                    stage.begin_close(cx);
-                },
-            )),
-        );
-        menu = menu.child(
-            crate::widgets::menu_row("toast-delete", "Move to Trash").on_click(cx.listener(
-                |stage, _, _, cx| {
-                    cx.stop_propagation();
-                    stage.menu_at = None;
-                    stage.delete_capture(cx);
-                },
-            )),
-        );
-        menu = menu.child(
-            crate::widgets::menu_row("toast-close", "Close").on_click(cx.listener(
-                |stage, _, _, cx| {
-                    cx.stop_propagation();
-                    stage.menu_at = None;
-                    stage.begin_close(cx);
-                },
-            )),
-        );
+            )));
+        }
         Some((menu, area))
+    }
+
+    fn run_menu_row(&mut self, row: ToastRow, window: &mut Window, cx: &mut Context<Self>) {
+        match row {
+            ToastRow::Markup => self.hand_off_to_editor(window, cx),
+            ToastRow::Copy => self.copy_image(cx),
+            ToastRow::CopyText => self.copy_text(cx),
+            ToastRow::Pin => {
+                crate::pin::open(cx, &self.path, self.pin_over);
+                self.begin_close(cx);
+            }
+            ToastRow::Trash => self.delete_capture(cx),
+            ToastRow::Close => self.begin_close(cx),
+        }
     }
 
     /// The hover actions: one frosted capsule centered over the card's
@@ -436,6 +416,66 @@ impl ToastStage {
                 .child(capsule),
         )
     }
+}
+
+/// A row of the toast's context menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum ToastRow {
+    Markup,
+    Copy,
+    CopyText,
+    Pin,
+    Trash,
+    Close,
+}
+
+impl ToastRow {
+    /// The rows, top to bottom.
+    pub(super) const ALL: [ToastRow; 6] = [
+        ToastRow::Markup,
+        ToastRow::Copy,
+        ToastRow::CopyText,
+        ToastRow::Pin,
+        ToastRow::Trash,
+        ToastRow::Close,
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            ToastRow::Markup => "toast-markup",
+            ToastRow::Copy => "toast-copy",
+            ToastRow::CopyText => "toast-ocr",
+            ToastRow::Pin => "toast-pin",
+            ToastRow::Trash => "toast-delete",
+            ToastRow::Close => "toast-close",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ToastRow::Markup => "Markup",
+            ToastRow::Copy => "Copy",
+            ToastRow::CopyText => "Copy Text",
+            ToastRow::Pin => "Pin to Screen",
+            ToastRow::Trash => "Move to Trash",
+            ToastRow::Close => "Close",
+        }
+    }
+}
+
+/// The context menu's height.
+pub(super) const MENU_H: f32 = ToastRow::ALL.len() as f32 * MENU_ROW_H + 2.0 * MENU_PAD;
+/// Space kept between the context menu and the window's edge.
+pub(super) const MENU_EDGE: f32 = 2.0;
+
+/// Where the context menu opened at window point `at` goes in a
+/// `win` (width, height) window: at the pointer, moved left and up to
+/// stay MENU_EDGE inside the window.
+pub(super) fn menu_place(at: (f32, f32), win: (f32, f32)) -> (f32, f32) {
+    (
+        at.0.min(win.0 - MENU_W - MENU_EDGE).max(MENU_EDGE),
+        at.1.min(win.1 - MENU_H - MENU_EDGE).max(MENU_EDGE),
+    )
 }
 
 /// Edge of one capsule button: 24, a form control's height; the glyph

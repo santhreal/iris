@@ -32,6 +32,18 @@ pub fn card_rest_rect(disp_w: f32, disp_h: f32, img_w: u32, img_h: u32) -> (f32,
     }
 }
 
+/// The toast window's size for a card of `card` (width, height): the
+/// card with its shadow's bleed and the screen margin, and at least
+/// the context menu with `MENU_EDGE` around it, so the menu of a card
+/// from a wide or tall capture is not cut off by the window's edge.
+pub(super) fn window_size(card: (f32, f32)) -> (f32, f32) {
+    let room = |side: f32| side + 2.0 * actions::MENU_EDGE;
+    (
+        (card.0 + BLEED + MARGIN).max(room(crate::widgets::MENU_W)),
+        (card.1 + BLEED + MARGIN).max(room(actions::MENU_H)),
+    )
+}
+
 /// The live toast's card rect while it rests in its corner, as its
 /// last render saw it. A render publishes it, so a notice opened from
 /// inside the toast's own update reads it without leasing the toast.
@@ -206,7 +218,8 @@ fn open_toast_window(
     let (w, h) = stage.thumb.dims;
 
     let cfg = iris_lib::config::Config::load();
-    let win_size = size(px(w + BLEED + MARGIN), px(h + BLEED + MARGIN));
+    let (win_w, win_h) = window_size((w, h));
+    let win_size = size(px(win_w), px(win_h));
     let screen = anchor.or_else(|| crate::sys::window::primary_monitor_rect(cx));
     stage.pin_over = source.or(screen);
     let origin = match screen {

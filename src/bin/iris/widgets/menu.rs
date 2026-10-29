@@ -42,10 +42,6 @@ fn menu_panel() -> Div {
         .font_family(theme::FONT)
 }
 
-pub fn menu_row(id: &'static str, label: &'static str) -> Stateful<Div> {
-    MenuItem::new(id, label).into_row()
-}
-
 /// One menu row: a label, optionally a checkmark column, a shortcut
 /// column, and the destructive or disabled style. Build with the
 /// methods, then `into_row` and attach `on_click`.

@@ -163,3 +163,45 @@ fn status_holds_the_slot_off_pointer_while_busy_and_through_the_hold() {
     // A running action (OCR) keeps its "Reading text" line up.
     assert!(status_holds_slot(true, true, true, stale));
 }
+
+// WHY: the class closed here is "the toast's context menu cut off by
+// its own window". The window was the card plus its bleed and margin,
+// so the card of a wide capture (a short card) or a tall one (a narrow
+// card) had a window smaller than the menu, and the menu opened past
+// its edge. Every card size the toast can have and a right click at
+// each of the card's corners must place the whole menu inside the
+// window. A card whose window already holds the menu keeps that window,
+// so the transparent area around a common capture's card does not
+// grow. Not covered: the menu's paint, and a toast window the platform
+// sizes differently than asked.
+#[test]
+fn the_toast_menu_fits_its_window_for_every_card_size() {
+    use crate::widgets::MENU_W;
+    use actions::{menu_place, MENU_EDGE, MENU_H};
+    for w in (1..=MAX_W as u32).step_by(3) {
+        for h in (1..=MAX_H as u32).step_by(3) {
+            let card = (w as f32, h as f32);
+            let win = window::window_size(card);
+            // The card rests in the window's bottom-right corner; the
+            // other corners mirror it.
+            let (x0, y0) = (win.0 - MARGIN - card.0, win.1 - MARGIN - card.1);
+            for at in [
+                (x0, y0),
+                (x0 + card.0, y0),
+                (x0, y0 + card.1),
+                (win.0 - MARGIN, win.1 - MARGIN),
+            ] {
+                let (mx, my) = menu_place(at, win);
+                assert!(
+                    mx >= MENU_EDGE
+                        && my >= MENU_EDGE
+                        && mx + MENU_W <= win.0 - MENU_EDGE
+                        && my + MENU_H <= win.1 - MENU_EDGE,
+                    "card {card:?}: a menu opened at {at:?} lands at ({mx}, {my}) in a {win:?} window"
+                );
+            }
+        }
+    }
+    // A 16:9 capture's card already holds the menu.
+    assert_eq!(window::window_size((200.0, 113.0)), (256.0, 169.0));
+}

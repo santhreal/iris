@@ -321,11 +321,10 @@ impl Render for ToastStage {
                     stage.swallow_click = false;
                     if let Some((mx, my)) = stage.menu_at {
                         let (px_, py_): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
-                        let menu_h = 6.0 * crate::widgets::MENU_ROW_H + 10.0;
                         let inside = px_ >= mx
                             && px_ <= mx + crate::widgets::MENU_W
                             && py_ >= my
-                            && py_ <= my + menu_h;
+                            && py_ <= my + actions::MENU_H;
                         if !inside {
                             stage.menu_at = None;
                             stage.menu_opened = None;
@@ -480,15 +479,11 @@ impl Render for ToastStage {
                 )
                 .on_mouse_down(
                     MouseButton::Right,
-                    cx.listener(|stage, ev: &MouseDownEvent, _, cx| {
-                        let menu_h = 6.0 * crate::widgets::MENU_ROW_H + 10.0;
-                        let win_w = stage.thumb.dims.0 + BLEED + MARGIN;
-                        let win_h = stage.thumb.dims.1 + BLEED + MARGIN;
-                        let mx: f32 = ev.position.x.into();
-                        let my: f32 = ev.position.y.into();
-                        stage.menu_at = Some((
-                            mx.min(win_w - crate::widgets::MENU_W - 2.0).max(2.0),
-                            my.min(win_h - menu_h - 2.0).max(2.0),
+                    cx.listener(|stage, ev: &MouseDownEvent, window, cx| {
+                        let win = window.viewport_size();
+                        stage.menu_at = Some(actions::menu_place(
+                            (ev.position.x.into(), ev.position.y.into()),
+                            (win.width.into(), win.height.into()),
                         ));
                         stage.menu_opened = None;
                         cx.notify();
