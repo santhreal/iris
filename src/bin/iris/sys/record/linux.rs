@@ -74,9 +74,12 @@ fn open_chip_over(
     monitors: &[WinRect],
     follower: &XcbChip,
 ) {
-    let (mic, paused) = match crate::daemon::RECORDING.lock().as_ref() {
-        Some(rec) if rec.output == output && !rec.ended() => (rec.mic(), rec.paused()),
-        _ => return,
+    let state = crate::daemon::RECORDING.with(|rec| match rec {
+        Some(rec) if rec.output == output && !rec.ended() => Some((rec.mic(), rec.paused())),
+        _ => None,
+    });
+    let Some((mic, paused)) = state else {
+        return;
     };
     match chip::open(cx, mic, Some(rect), monitors) {
         Ok(xid) => {

@@ -16,7 +16,6 @@ use std::time::Duration;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::StreamExt;
 use gpui::*;
-use iris_lib::record;
 
 use crate::{chip, library, overlay, settings, stage};
 
@@ -25,8 +24,9 @@ mod recording;
 
 /// The daemon's live recording, if any: one at a time. The record
 /// thread owns the border strips; the chip window is a GPUI surface.
-pub(crate) static RECORDING: parking_lot::Mutex<Option<record::ActiveRecording>> =
-    parking_lot::Mutex::new(None);
+/// The tray menu's record row follows it.
+pub(crate) static RECORDING: recording::Live =
+    recording::Live::new(crate::sys::tray::set_recording);
 
 /// The daemon's command channel, installed by `start`.
 pub(crate) static COMMAND_TX: std::sync::OnceLock<UnboundedSender<Command>> =
@@ -142,7 +142,7 @@ impl Command {
             | Command::RecordRegionPick
             | Command::RecordRegion { .. } => true,
             // Starts a recording when none is live, else stops it.
-            Command::RecordToggle => RECORDING.lock().is_none(),
+            Command::RecordToggle => !RECORDING.active(),
             // Its card counts down first; the capture it sends reads.
             Command::Delayed(_)
             | Command::Home
@@ -261,20 +261,18 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::RecordRegionPick => recording::record_region_pick(cx),
         Command::RecordRegion { x, y, w, h } => recording::record_region_start(cx, *x, *y, *w, *h),
         Command::RecordPause => {
-            let paused = RECORDING
-                .lock()
-                .as_mut()
-                .ok_or("no recording is active")?
-                .toggle_pause();
+            let paused = RECORDING.with(|rec| {
+                rec.map(|rec| rec.toggle_pause())
+                    .ok_or("no recording is active")
+            })?;
             chip::set_paused(cx, paused);
             Ok(())
         }
         Command::RecordMic => {
-            let on = RECORDING
-                .lock()
-                .as_mut()
-                .ok_or("no recording is active")?
-                .toggle_mic()?;
+            let on = RECORDING.with(|rec| {
+                rec.ok_or("no recording is active".to_string())
+                    .and_then(|rec| rec.toggle_mic())
+            })?;
             chip::set_mic(cx, on);
             Ok(())
         }
@@ -405,7 +403,7 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
             // The shell maps over the whole screen before it parks, and
             // a window pick waits on a click there: the first capture
             // after the recording opens and pools the shell instead.
-            if RECORDING.lock().is_none() {
+            if !RECORDING.active() {
                 overlay::warmup(cx);
             }
             crate::sys::install::tidy();

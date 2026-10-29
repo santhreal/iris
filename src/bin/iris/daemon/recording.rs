@@ -11,6 +11,9 @@ use crate::{chip, notice, overlay, pipeline};
 
 use super::RECORDING;
 
+mod live;
+pub(crate) use live::Live;
+
 /// Recordings stopped and still flushing: ffmpeg's trailer and the
 /// segment join run on these threads after the chip closes.
 static FLUSHING: parking_lot::Mutex<Vec<JoinHandle<()>>> = parking_lot::Mutex::new(Vec::new());
@@ -20,7 +23,7 @@ static FLUSHING: parking_lot::Mutex<Vec<JoinHandle<()>>> = parking_lot::Mutex::n
 /// server went away: the segments are joined into the output file
 /// last, so an exit before a flush ends loses the recording.
 pub(super) fn save_before_exit() {
-    let active = RECORDING.lock().take();
+    let active = RECORDING.take();
     if let Some(rec) = active {
         log_result(&rec.stop());
     }
@@ -33,7 +36,7 @@ pub(super) fn save_before_exit() {
 /// One action for the record hotkey/tray/CLI: stop when active, start
 /// the platform's default recording when idle.
 pub(super) fn toggle_recording(cx: &mut App) -> Result<(), String> {
-    let active = RECORDING.lock().take();
+    let active = RECORDING.take();
     if let Some(rec) = active {
         finish(cx, rec);
         return Ok(());
@@ -42,14 +45,14 @@ pub(super) fn toggle_recording(cx: &mut App) -> Result<(), String> {
     let started = source::start_window(cx, Params::from_config(&Config::load())?);
     // A source that fails after opening the chip leaves it on screen.
     let active = started.inspect_err(|_| chip::close(cx))?;
-    *RECORDING.lock() = Some(active);
+    RECORDING.set(active);
     Ok(())
 }
 
 /// Stop the live recording, and never start one: a click on the chip's
 /// stop button can land after the recording ended on its own.
 pub(super) fn stop(cx: &mut App) -> Result<(), String> {
-    let rec = RECORDING.lock().take().ok_or("no recording is active")?;
+    let rec = RECORDING.take().ok_or("no recording is active")?;
     finish(cx, rec);
     Ok(())
 }
@@ -59,7 +62,7 @@ pub(super) fn stop(cx: &mut App) -> Result<(), String> {
 /// collect and report it. The notice of a recording already stopped
 /// finds a newer recording, or none, and leaves it be.
 pub(super) fn collect_ended(cx: &mut App) {
-    let ended = RECORDING.lock().take_if(|rec| rec.ended());
+    let ended = RECORDING.take_if(|rec| rec.ended());
     if let Some(rec) = ended {
         finish(cx, rec);
     }
@@ -116,7 +119,7 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
     // Fail before the overlay opens when the picked rect has no source.
     source::ready()?;
     source::region_available()?;
-    if RECORDING.lock().is_some() {
+    if RECORDING.active() {
         return Err("a recording is already active".to_string());
     }
     // The encoder probes run while the rect is dragged, not after.
@@ -212,7 +215,7 @@ pub(super) fn record_region_start(
     w: i32,
     h: i32,
 ) -> Result<(), String> {
-    if RECORDING.lock().is_some() {
+    if RECORDING.active() {
         return Err("a recording is already active".to_string());
     }
     if w <= 0 || h <= 0 {
@@ -226,6 +229,6 @@ pub(super) fn record_region_start(
     };
     let started = source::start_region(cx, Params::from_config(&Config::load())?, rect);
     let active = started.inspect_err(|_| chip::close(cx))?;
-    *RECORDING.lock() = Some(active);
+    RECORDING.set(active);
     Ok(())
 }

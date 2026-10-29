@@ -13,7 +13,8 @@ The tray menu holds the same actions:
 | Item | Action |
 | --- | --- |
 | **Capture** | Open the region capture overlay |
-| **Record window** | Start a window recording, or stop the one in progress |
+| **Record window** | Start a window recording; shown while no recording runs |
+| **Stop recording** | Stop the recording in progress; shown in place of **Record window** while a recording runs |
 | **Library** | Open the capture library |
 | **Settings** | Open the settings window |
 | **Install iris** *version* | Download, verify, and install the update the last check found; shown only while one is available ([Updates](updates.md)) |

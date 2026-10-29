@@ -1,22 +1,28 @@
-//! The tray item's answer to a primary click, read over a private
-//! session bus.
+//! The tray item's answer to a primary click and its menu during a
+//! recording, read over a private session bus.
 //!
-//! WHY: the class closed here is "a primary click on the tray icon opens
-//! nothing on Linux". On a primary click a panel reads the
+//! WHY: two classes close here. "A primary click on the tray icon opens
+//! nothing on Linux": on a primary click a panel reads the
 //! StatusNotifierItem's `ItemIsMenu` property and calls its `Activate`
 //! method: Plasma 6.4 and later open the menu when `ItemIsMenu` is true,
 //! and GNOME's AppIndicator extension and Plasma before 6.4 open it when
 //! `Activate` fails with `UnknownMethod`. The item reported false and
 //! answered `Activate` with success, so a primary click opened nothing,
-//! where on Windows and macOS it opens the menu. The case starts the
-//! daemon on a private Xvfb and a private dbus-daemon and reads both
+//! where on Windows and macOS it opens the menu. The first case starts
+//! the daemon on a private Xvfb and a private dbus-daemon and reads both
 //! answers from the item.
+//! "The tray menu does not follow the recording": the menu offered
+//! **Record window** while a recording ran, and that row stopped it.
+//! The second case starts a window recording, reads **Stop recording**
+//! in the menu the item serves, clicks it through the menu's `Event`
+//! method, and reads the recording saved and **Record window** back.
 //!
-//! Not covered: the menu a panel draws from the item's dbusmenu (its rows
-//! are the table in src/bin/iris/sys/tray.rs, covered by its unit
-//! tests); a panel itself; Windows and macOS. The case runs only with
-//! `IRIS_X11_TEST_DISPLAY` set and needs Xvfb and dbus-daemon; without
-//! them it prints that it did not run.
+//! Not covered: a panel itself; a recording that ends on its own, whose
+//! end takes the same path (`daemon::recording::Live`, covered by its
+//! unit test); Windows and macOS, which draw from the same table. The
+//! cases run only with `IRIS_X11_TEST_DISPLAY` set and need Xvfb and
+//! dbus-daemon, and the second needs ffmpeg; without them they print
+//! that they did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -24,15 +30,91 @@
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
 mod daemon;
+// The other test files use the rest of the helpers.
+#[allow(dead_code)]
+#[path = "support/recording.rs"]
+mod recording;
+// The other test files use the rest of the helpers.
+#[allow(dead_code)]
+#[path = "support/x11.rs"]
+mod x11;
+
+use std::collections::HashMap;
 
 use daemon::{enabled, session_bus, xvfb, Daemon};
-use zbus::zvariant::OwnedValue;
+use recording::Recording;
+use zbus::zvariant::{OwnedValue, Value};
 
 /// The StatusNotifierItem interface, and the prefix of the bus name the
 /// item takes: `<ITEM>-<pid>-<n>`.
 const ITEM: &str = "org.kde.StatusNotifierItem";
 /// The item's object path.
 const PATH: &str = "/StatusNotifierItem";
+/// The menu's interface and object path.
+const MENU: &str = "com.canonical.dbusmenu";
+const MENU_PATH: &str = "/MenuBar";
+/// The menu's item labels with no update offered.
+const IDLE: [&str; 5] = ["Capture", "Record window", "Library", "Settings", "Quit"];
+const RECORDING: [&str; 5] = ["Capture", "Stop recording", "Library", "Settings", "Quit"];
+
+/// A connection to the private bus at `address`.
+fn connect(address: &str) -> zbus::Connection {
+    zbus::block_on(zbus::connection::Builder::address(address).unwrap().build()).unwrap()
+}
+
+/// The bus name `daemon`'s tray item takes, once it takes it.
+fn tray_item(daemon: &Daemon, bus: &zbus::Connection) -> String {
+    let prefix = format!("{ITEM}-{}-", daemon.pid());
+    daemon.until("the tray item to take its bus name", || {
+        let reply = zbus::block_on(bus.call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "ListNames",
+            &(),
+        ))
+        .unwrap();
+        let names: Vec<String> = reply.body().deserialize().unwrap();
+        names.into_iter().find(|name| name.starts_with(&prefix))
+    })
+}
+
+/// The menu's labelled items in order, with their menu ids.
+fn menu(bus: &zbus::Connection, item: &str) -> Vec<(i32, String)> {
+    let reply = zbus::block_on(bus.call_method(
+        Some(item),
+        MENU_PATH,
+        Some(MENU),
+        "GetGroupProperties",
+        &(Vec::<i32>::new(), vec!["label"]),
+    ))
+    .unwrap();
+    let mut items: Vec<(i32, HashMap<String, OwnedValue>)> = reply.body().deserialize().unwrap();
+    items.sort_by_key(|(id, _)| *id);
+    items
+        .into_iter()
+        .filter_map(|(id, mut props)| {
+            let label = String::try_from(props.remove("label")?).ok()?;
+            (!label.is_empty()).then_some((id, label))
+        })
+        .collect()
+}
+
+/// Wait until the menu's labels are `want`, and return the menu.
+fn menu_is(
+    daemon: &Daemon,
+    bus: &zbus::Connection,
+    item: &str,
+    want: [&str; 5],
+) -> Vec<(i32, String)> {
+    daemon.until(&format!("the tray menu to read {want:?}"), || {
+        let menu = menu(bus, item);
+        menu.iter()
+            .map(|(_, label)| label.as_str())
+            .eq(want)
+            .then_some(menu)
+    })
+}
 
 #[test]
 fn a_primary_click_on_the_tray_icon_opens_its_menu() {
@@ -52,26 +134,8 @@ fn a_primary_click_on_the_tray_icon_opens_its_menu() {
             .env_remove("WAYLAND_DISPLAY")
             .env("DBUS_SESSION_BUS_ADDRESS", &address);
     });
-    let bus = zbus::block_on(
-        zbus::connection::Builder::address(address.as_str())
-            .unwrap()
-            .build(),
-    )
-    .unwrap();
-
-    let prefix = format!("{ITEM}-{}-", daemon.pid());
-    let item = daemon.until("the tray item to take its bus name", || {
-        let reply = zbus::block_on(bus.call_method(
-            Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",
-            Some("org.freedesktop.DBus"),
-            "ListNames",
-            &(),
-        ))
-        .unwrap();
-        let names: Vec<String> = reply.body().deserialize().unwrap();
-        names.into_iter().find(|name| name.starts_with(&prefix))
-    });
+    let bus = connect(&address);
+    let item = tray_item(&daemon, &bus);
 
     let reply = zbus::block_on(bus.call_method(
         Some(item.as_str()),
@@ -103,4 +167,41 @@ fn a_primary_click_on_the_tray_icon_opens_its_menu() {
              AppIndicator extension and Plasma before 6.4 open no menu on a primary click"
         ),
     }
+}
+
+#[test]
+fn the_tray_menu_offers_stop_while_a_recording_runs() {
+    let case = "the_tray_menu_offers_stop_while_a_recording_runs";
+    if !enabled() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let Some((_bus, address)) = session_bus(case, dir.path()) else {
+        return;
+    };
+    let Some(rec) = Recording::start_with(case, |cmd| {
+        cmd.env("DBUS_SESSION_BUS_ADDRESS", &address);
+    }) else {
+        return;
+    };
+    let bus = connect(&address);
+    let item = tray_item(&rec.daemon, &bus);
+    let shown = menu_is(&rec.daemon, &bus, &item, RECORDING);
+    let stop = shown[1].0;
+    zbus::block_on(bus.call_method(
+        Some(item.as_str()),
+        MENU_PATH,
+        Some(MENU),
+        "Event",
+        &(stop, "clicked", Value::from(0i32), 0u32),
+    ))
+    .unwrap();
+    rec.daemon.until("the recording to be saved", || {
+        rec.daemon
+            .log()
+            .contains("iris: recording saved")
+            .then_some(())
+    });
+    rec.saved();
+    menu_is(&rec.daemon, &bus, &item, IDLE);
 }

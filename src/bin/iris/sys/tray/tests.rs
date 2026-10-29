@@ -7,7 +7,9 @@
 
 use futures::channel::mpsc;
 
-use super::{command, drawn, pick, rows, set_offer, Drawn, Row, MENU, TX, UPDATE_LABEL};
+use super::{
+    command, drawn, pick, rows, set_offer, set_recording, Drawn, Row, When, MENU, TX, UPDATE_LABEL,
+};
 
 fn debug(cmd: Option<crate::daemon::Command>) -> String {
     format!("{cmd:?}")
@@ -58,6 +60,7 @@ fn a_pick_sends_the_command_and_a_separator_sends_nothing() {
 }
 
 /// Each label runs the command its usage-chapter row describes, the
+/// record row gives way to the stop row while a recording runs, the
 /// install row sits with Settings, and Quit sits alone below the
 /// separator.
 #[test]
@@ -65,7 +68,11 @@ fn each_label_runs_its_documented_command() {
     let menu: Vec<String> = MENU
         .iter()
         .map(|row| match row {
-            Row::Item { label, command } => format!("{label}: {command:?}"),
+            Row::Item {
+                label,
+                command,
+                when,
+            } => format!("{label}: {command:?} ({when:?})"),
             Row::Update => format!("{UPDATE_LABEL} <version>: InstallUpdate"),
             Row::Separator => "---".into(),
         })
@@ -73,25 +80,38 @@ fn each_label_runs_its_documented_command() {
     assert_eq!(
         menu,
         [
-            "Capture: Capture",
-            "Record window: RecordToggle",
-            "Library: Library",
-            "Settings: Settings",
+            "Capture: Capture (Always)",
+            "Record window: RecordToggle (Idle)",
+            "Stop recording: RecordStop (Recording)",
+            "Library: Library (Always)",
+            "Settings: Settings (Always)",
             "Install iris <version>: InstallUpdate",
             "---",
-            "Quit: Quit",
+            "Quit: Quit (Always)",
         ]
+    );
+    assert!(
+        !MENU.iter().any(|row| matches!(
+            row,
+            Row::Item {
+                when: When::Recording,
+                command: crate::daemon::Command::RecordToggle,
+                ..
+            }
+        )),
+        "a row drawn while recording never starts one"
     );
 }
 
-/// What a platform draws: every row but the install row while no update
-/// is offered, the install row with the offered version while one is,
-/// and each drawn row under its `MENU` id either way, so a click on a
-/// menu drawn before an offer changed still sends that row's command.
-/// The one test that sets the offer: the others read `MENU`, not
-/// `drawn`.
+/// What a platform draws: the record row while no recording runs and the
+/// stop row while one does, every row but the install row while no
+/// update is offered, the install row with the offered version while one
+/// is, and each drawn row under its `MENU` id in every state, so a click
+/// on a menu drawn before a state changed still sends that row's
+/// command. The one test that sets the offer and the recording state:
+/// the others read `MENU`, not `drawn`.
 #[test]
-fn the_install_row_is_drawn_only_while_an_update_is_offered() {
+fn the_drawn_rows_follow_the_offer_and_the_recording() {
     let labels = |rows: Vec<(usize, Drawn)>| -> Vec<(usize, String)> {
         rows.into_iter()
             .map(|(id, row)| match row {
@@ -103,25 +123,47 @@ fn the_install_row_is_drawn_only_while_an_update_is_offered() {
     let plain: Vec<(usize, String)> = [
         (1, "Capture"),
         (2, "Record window"),
-        (3, "Library"),
-        (4, "Settings"),
-        (6, "---"),
-        (7, "Quit"),
+        (4, "Library"),
+        (5, "Settings"),
+        (7, "---"),
+        (8, "Quit"),
     ]
     .into_iter()
     .map(|(id, label)| (id, label.to_string()))
     .collect();
+    let recording = |rows: &[(usize, String)]| -> Vec<(usize, String)> {
+        let mut rows = rows.to_vec();
+        rows[1] = (3, "Stop recording".to_string());
+        rows
+    };
 
     set_offer(None);
-    assert_eq!(labels(drawn()), plain, "no offer");
+    set_recording(false);
+    assert_eq!(labels(drawn()), plain, "no offer, no recording");
+
+    set_recording(true);
+    assert_eq!(labels(drawn()), recording(&plain), "a recording");
+    assert_eq!(
+        debug(command(3)),
+        debug(Some(crate::daemon::Command::RecordStop))
+    );
+    set_recording(true);
+    assert_eq!(labels(drawn()), recording(&plain), "a second start");
 
     let version = semver::Version::parse("2.1.0-beta.3").unwrap();
     set_offer(Some(&version));
     let mut offered = plain.clone();
-    offered.insert(4, (5, "Install iris 2.1.0-beta.3".to_string()));
+    offered.insert(4, (6, "Install iris 2.1.0-beta.3".to_string()));
+    assert_eq!(
+        labels(drawn()),
+        recording(&offered),
+        "an offer during a recording"
+    );
+
+    set_recording(false);
     assert_eq!(labels(drawn()), offered, "an offer of {version}");
     assert_eq!(
-        debug(command(5)),
+        debug(command(6)),
         debug(Some(crate::daemon::Command::InstallUpdate))
     );
 

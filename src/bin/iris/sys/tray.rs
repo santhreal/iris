@@ -6,9 +6,11 @@
 //! Windows through `Shell_NotifyIcon`, macOS through `NSStatusItem`.
 //! A platform module draws the rows from `drawn` and reports a click
 //! with `pick`. The install row is drawn only while the daemon has an
-//! update to offer (`set_offer`).
+//! update to offer (`set_offer`), the record row only while no recording
+//! runs, and the stop row only while one does (`set_recording`).
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use futures::channel::mpsc::UnboundedSender;
@@ -38,6 +40,7 @@ enum Row {
     Item {
         label: &'static str,
         command: Command,
+        when: When,
     },
     /// `Install iris {version}` while an update is offered, sending
     /// `Command::InstallUpdate`; not drawn otherwise.
@@ -45,29 +48,49 @@ enum Row {
     Separator,
 }
 
+/// When an item row is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum When {
+    Always,
+    /// While no recording runs.
+    Idle,
+    /// While a recording runs.
+    Recording,
+}
+
 /// The tray menu, top to bottom.
 const MENU: &[Row] = &[
     Row::Item {
         label: "Capture",
         command: Command::Capture,
+        when: When::Always,
     },
     Row::Item {
         label: "Record window",
         command: Command::RecordToggle,
+        when: When::Idle,
+    },
+    Row::Item {
+        label: "Stop recording",
+        command: Command::RecordStop,
+        when: When::Recording,
     },
     Row::Item {
         label: "Library",
         command: Command::Library,
+        when: When::Always,
     },
     Row::Item {
         label: "Settings",
         command: Command::Settings,
+        when: When::Always,
     },
     Row::Update,
     Row::Separator,
     Row::Item {
         label: "Quit",
         command: Command::Quit,
+        when: When::Always,
     },
 ];
 
@@ -76,6 +99,9 @@ const UPDATE_LABEL: &str = "Install iris";
 
 /// The version the install row offers; `None` hides the row.
 static OFFER: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+
+/// Whether a recording runs: it selects the record or the stop row.
+static RECORDING: AtomicBool = AtomicBool::new(false);
 
 /// One row as a platform draws it now.
 enum Drawn {
@@ -94,13 +120,22 @@ fn rows() -> impl Iterator<Item = (usize, &'static Row)> {
 }
 
 /// The rows to draw now, with their ids: every row of `MENU` but the
-/// install row while no update is offered.
+/// install row while no update is offered and the item rows whose
+/// `When` does not hold.
 fn drawn() -> Vec<(usize, Drawn)> {
     let offer = OFFER.lock().clone();
+    let recording = RECORDING.load(Ordering::Acquire);
     rows()
         .filter_map(|(id, row)| {
             let drawn = match row {
-                Row::Item { label, .. } => Drawn::Item(Cow::Borrowed(*label)),
+                Row::Item { label, when, .. } => {
+                    let shown = match when {
+                        When::Always => true,
+                        When::Idle => !recording,
+                        When::Recording => recording,
+                    };
+                    shown.then_some(Drawn::Item(Cow::Borrowed(*label)))?
+                }
                 Row::Update => {
                     Drawn::Item(Cow::Owned(format!("{UPDATE_LABEL} {}", offer.as_ref()?)))
                 }
@@ -147,6 +182,18 @@ pub fn set_offer(version: Option<&semver::Version>) {
             return;
         }
         *offer = version;
+    }
+    // Windows draws the menu on each click and reads `drawn` then.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    imp::redraw();
+}
+
+/// Draw the stop row while a recording runs and the record row while
+/// none does. Call it on the daemon's main thread: macOS draws the menu
+/// there.
+pub fn set_recording(on: bool) {
+    if RECORDING.swap(on, Ordering::AcqRel) == on {
+        return;
     }
     // Windows draws the menu on each click and reads `drawn` then.
     #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -31,6 +31,14 @@ impl Recording {
     /// window through `--record-window` and a click on it. `None`,
     /// printed, when a tool the case needs is missing.
     pub fn start(case: &str) -> Option<Recording> {
+        Self::start_with(case, |_| {})
+    }
+
+    /// `start`, with `session` adding to the daemon's environment.
+    pub fn start_with(
+        case: &str,
+        session: impl FnOnce(&mut std::process::Command),
+    ) -> Option<Recording> {
         if !enabled() {
             return None;
         }
@@ -63,6 +71,7 @@ impl Recording {
         let dir = tempfile::tempdir().unwrap();
         let daemon = Daemon::start(dir.path(), |cmd| {
             cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+            session(cmd);
         });
         daemon.send(&["--record-window"]);
         // The pick takes the window under a click once it grabs the
