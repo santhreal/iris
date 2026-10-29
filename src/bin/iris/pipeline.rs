@@ -56,13 +56,8 @@ pub fn play_shutter_sound() {
 /// Reserve a frame's output under the config's screenshot template:
 /// placeholders {date} and {time}, numeric suffix on collision.
 fn reserve_capture(cfg: &Config) -> Result<output::ReservedFile, String> {
-    // One clock read: separate date and time calls could straddle
-    // midnight and write a name that never existed.
-    let (y, mo, d, h, mi, s) = iris_lib::time::local_now();
-    let name = cfg
-        .screenshot_template
-        .replace("{date}", &format!("{y:04}-{mo:02}-{d:02}"))
-        .replace("{time}", &format!("{h:02}-{mi:02}-{s:02}"));
+    let name =
+        iris_lib::config::expand_template(&cfg.screenshot_template, iris_lib::time::local_now());
     let paths = (1..=u64::MAX).map(|n| {
         let filename = if n == 1 {
             format!("{name}.png")

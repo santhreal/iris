@@ -571,3 +571,41 @@ fn install_runs_once_and_offers_itself_again_when_it_fails() {
     );
     assert_eq!(offered(&s.release), "installing");
 }
+
+// WHY: the class closed here is "the file name preview disagrees with
+// what Settings saves": a template Settings rejects on commit shows no
+// preview, and one it accepts shows the name a capture taken at that
+// moment gets, every placeholder expanded. Not covered: the preview's
+// place in the row, which the docshots show.
+#[test]
+#[serial_test::serial]
+fn the_template_preview_shows_a_name_only_for_a_template_settings_saves() {
+    let _home = temp_home();
+    let now = (2024, 1, 2, 3, 4, 5);
+    let cases: [(&str, Option<&str>); 9] = [
+        (
+            iris_lib::config::DEFAULT_TEMPLATE,
+            Some("2024-01-02_03-04-05.png"),
+        ),
+        ("shot {time}", Some("shot 03-04-05.png")),
+        ("{date}{date}", Some("2024-01-022024-01-02.png")),
+        ("{time} \u{e9}", Some("03-04-05 \u{e9}.png")),
+        ("", None),
+        ("no_tokens_here", None),
+        ("a/{date}", None),
+        ("{date}:{time}", None),
+        ("{date}\u{1}x", None),
+    ];
+    let mut s = settings(Release::None);
+    for (template, name) in cases {
+        assert_eq!(
+            fields::template_preview(template, now).as_deref(),
+            name,
+            "{template:?}"
+        );
+        edit(&mut s, Field::Template, template);
+        assert_eq!(s.blur(), name.is_some(), "{template:?} commits");
+        s.editing = None;
+        s.rejected = None;
+    }
+}

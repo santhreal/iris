@@ -87,24 +87,53 @@ fn row_shell(label: &'static str, control: impl IntoElement) -> Div {
         .child(control)
 }
 
-/// A control with the reason its last value was rejected beside it.
-fn with_reason(reason: Option<&str>, control: impl IntoElement) -> Div {
+/// A control with a note beside it: the reason its last value was
+/// rejected, or what the value does.
+fn with_note(note: Option<(SharedString, Rgba)>, control: impl IntoElement) -> Div {
     div()
         .flex()
         .items_center()
         .gap(px(8.))
         .min_w_0()
-        .children(reason.map(|r| {
+        .children(note.map(|(text, color)| {
             div()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_size(px(theme::TEXT_SMALL))
-                .text_color(theme::DANGER)
-                .child(SharedString::from(r.to_owned()))
+                .text_color(color)
+                .child(text)
         }))
         .child(control)
+}
+
+/// A rejection reason as a note.
+fn reason_note(reason: Option<&str>) -> Option<(SharedString, Rgba)> {
+    reason.map(|r| (SharedString::from(r.to_owned()), theme::DANGER))
+}
+
+/// Ok when Settings accepts `text` as the screenshot file name
+/// template, else the correction to make.
+fn typed_template(text: &str) -> Result<(), String> {
+    iris_lib::config::check_template(text)?;
+    if !text.contains("{date}") && !text.contains("{time}") {
+        return Err("Include {date} or {time}".into());
+    }
+    Ok(())
+}
+
+/// The file name a screenshot taken at `now` gets under `template`, or
+/// None for a template Settings rejects.
+pub(super) fn template_preview(
+    template: &str,
+    now: (i32, u32, u32, u32, u32, u32),
+) -> Option<String> {
+    typed_template(template).ok()?;
+    Some(format!(
+        "{}.png",
+        iris_lib::config::expand_template(template, now)
+    ))
 }
 
 impl Settings {
@@ -178,10 +207,7 @@ impl Settings {
             Field::ScreenshotsDir => self.cfg.screenshots_dir = typed_dir(text)?,
             Field::RecordingsDir => self.cfg.recordings_dir = typed_dir(text)?,
             Field::Template => {
-                iris_lib::config::check_template(text)?;
-                if !text.contains("{date}") && !text.contains("{time}") {
-                    return Err("Include {date} or {time}".into());
-                }
+                typed_template(text)?;
                 self.cfg.screenshot_template = text.to_string();
             }
             Field::Fps => {
@@ -520,6 +546,14 @@ impl Settings {
             ),
             None => (self.field_text(field), widgets::FieldState::Rest),
         };
+        // The template field shows the file name a capture taken now
+        // gets, from the typed text while it is open.
+        let note = reason_note(reason).or_else(|| {
+            (field == Field::Template)
+                .then(|| template_preview(text.trim(), iris_lib::time::local_now()))
+                .flatten()
+                .map(|name| (SharedString::from(name), theme::FG_DIM))
+        });
         let input = widgets::text_field(field.id(), text, state)
             .w(px(width))
             .flex_shrink_0()
@@ -527,7 +561,7 @@ impl Settings {
                 this.begin_edit(field);
                 cx.notify();
             }));
-        with_reason(reason, input)
+        with_note(note, input)
     }
 
     pub(super) fn text_row(&self, field: Field, cx: &mut Context<Self>) -> Div {
@@ -592,7 +626,7 @@ impl Settings {
             },
         );
         let reason = self.reason(field).or(refused.as_deref());
-        row_shell(field.label(), with_reason(reason, input))
+        row_shell(field.label(), with_note(reason_note(reason), input))
     }
 
     pub(super) fn restore_row(&self, cx: &mut Context<Self>) -> Div {

@@ -199,6 +199,16 @@ pub fn check_template(template: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `template` with `{date}` as `YYYY-MM-DD` and `{time}` as `HH-MM-SS`
+/// at `now`, a `time::local_now` reading: the stem of a capture's file
+/// name. One reading serves both, so a name never straddles midnight.
+pub fn expand_template(template: &str, now: (i32, u32, u32, u32, u32, u32)) -> String {
+    let (y, mo, d, h, mi, s) = now;
+    template
+        .replace("{date}", &format!("{y:04}-{mo:02}-{d:02}"))
+        .replace("{time}", &format!("{h:02}-{mi:02}-{s:02}"))
+}
+
 impl Config {
     fn path() -> Option<PathBuf> {
         crate::dirs::config_file()

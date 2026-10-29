@@ -279,8 +279,8 @@ pub fn reserve_recording_path(
 ) -> Result<crate::output::ReservedFile, String> {
     std::fs::create_dir_all(dir)
         .map_err(|e| format!("create recordings dir {}: {e}", dir.display()))?;
-    let (y, mo, d, h, mi, s) = crate::time::local_now();
-    let stem = format!("{y:04}-{mo:02}-{d:02}_{h:02}-{mi:02}-{s:02}");
+    let stem =
+        crate::config::expand_template(crate::config::DEFAULT_TEMPLATE, crate::time::local_now());
     reserve_recording_stem(dir, ext, &stem)
 }
 
