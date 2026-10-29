@@ -32,6 +32,12 @@
 //! re-added the file's library entry at the top with the save's time.
 //! It saves over the older of two stored captures and reads the store.
 //!
+//! One case closes "Copy Image copies the image without its marks": the
+//! Copy menu's Copy Image read the file on disk, which holds no mark
+//! until Done saves it. The case draws the rectangle, types a label it
+//! leaves open, runs Copy Image, and reads the PNG on the clipboard and
+//! the file's modification time.
+//!
 //! Not covered: the two flips, which go through the rotation's path;
 //! redo after a rotation or Clear, which goes through the crop's swap;
 //! the Library's context menu, whose keys `widgets::menu_key` runs as
@@ -59,7 +65,8 @@ use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, entries, store, stored, xvfb_sized, Daemon, Server};
 use x11::{
-    chord, click, client, clipboard_owner, clipboard_text, drag, extent, tap, windows_of, wm_close,
+    chord, click, client, clipboard, clipboard_owner, clipboard_text, drag, extent, tap,
+    windows_of, wm_close,
 };
 
 const SCREEN: &str = "1280x1024x24";
@@ -78,9 +85,13 @@ const SHIFT: u32 = 0xffe1;
 const UP: u32 = 0xff52;
 const DOWN: u32 = 0xff54;
 const SPACE: u32 = 0x20;
+const T: u32 = 0x74;
+const A: u32 = 0x61;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
+/// Where a label is typed, in image pixels.
+const LABEL: (f32, f32) = (380.0, 280.0);
 /// The More menu's geometry, from `theme` and `widgets::menu`: the
 /// menu drops 4 px under the 28 px button centered in the 52 px toolbar,
 /// is snapped 8 px inside the window's right edge, and is 168 px wide
@@ -270,9 +281,15 @@ impl Session {
         self.daemon.settle();
     }
 
-    /// Open the Copy menu: the Copy button's chevron is the first light
-    /// pixels left of the 28 px More button.
+    /// Open the Copy menu.
     fn open_copy(&self) {
+        click(&self.conn, self.root, self.copy_button());
+        self.daemon.settle();
+    }
+
+    /// The Copy button's chevron: the first light pixels left of the
+    /// 28 px More button.
+    fn copy_button(&self) -> (i16, i16) {
         let more = self.more_button();
         let (w, _, px) = self.canvas();
         let mid = &px[TOOLBAR_MID * w..(TOOLBAR_MID + 1) * w];
@@ -281,15 +298,10 @@ impl Session {
             .rev()
             .find(|&x| mid[x].iter().all(|&c| c > 150))
             .expect("the Copy button is left of the More button");
-        click(
-            &self.conn,
-            self.root,
-            (
-                self.at.0 + chevron as i16 - 2,
-                self.at.1 + TOOLBAR_MID as i16,
-            ),
-        );
-        self.daemon.settle();
+        (
+            self.at.0 + chevron as i16 - 2,
+            self.at.1 + TOOLBAR_MID as i16,
+        )
     }
 
     /// Whether the image stands on its side: taller than wide.
@@ -605,5 +617,68 @@ fn a_save_keeps_the_capture_in_its_place_in_the_library() {
             .collect::<Vec<_>>(),
         taken,
         "the library after the save: its order and the capture times"
+    );
+}
+
+#[test]
+fn copy_image_copies_the_marks_drawn_before_it() {
+    let Some(session) = Session::open("copy_image_copies_the_marks_drawn_before_it") else {
+        return;
+    };
+    session.draw(R, RECT);
+    // A label still being typed when Copy Image runs. The caret blinks
+    // while it is open, so the daemon does not go idle until the copy
+    // commits it: the steps wait on the screen instead.
+    let (conn, root) = (&session.conn, session.root);
+    tap(conn, root, T);
+    session.daemon.settle();
+    let copy = session.copy_button();
+    click(conn, root, session.screen_at(LABEL));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    tap(conn, root, A);
+    tap(conn, root, A);
+    let (lx, ly) = session.screen_at(LABEL);
+    let (lx, ly) = ((lx - session.at.0) as usize, (ly - session.at.1) as usize);
+    session
+        .daemon
+        .until("the label to show as it is typed", || {
+            let (w, _, px) = session.canvas();
+            let shown = (lx..lx + 40)
+                .flat_map(|x| (ly.saturating_sub(20)..ly + 20).map(move |y| (x, y)))
+                .filter(|&(x, y)| {
+                    let [b, g, r] = px[y * w + x];
+                    red([r, g, b])
+                })
+                .count();
+            (shown > 10).then_some(())
+        });
+    // Copy Image is the Copy menu's first row.
+    click(conn, root, copy);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    tap(conn, root, DOWN);
+    tap(conn, root, RETURN);
+    let copied = session
+        .daemon
+        .until("Copy Image to put a PNG on the clipboard", || {
+            let png = clipboard(&session.conn, session.root, b"image/png")?;
+            Some(image::load_from_memory(&png).ok()?.to_rgb8())
+        });
+    assert_original(&copied, "the copied image");
+    let (x, y) = (LABEL.0 as u32, LABEL.1 as u32);
+    let label = (x..x + 60)
+        .flat_map(|px| (y.saturating_sub(30)..y + 30).map(move |py| (px, py)))
+        .filter(|&(px, py)| red(copied.get_pixel(px, py).0))
+        .count();
+    assert!(
+        label > 20,
+        "the copied image holds {label} red pixels of the label typed at {LABEL:?}"
+    );
+    assert_eq!(
+        std::fs::metadata(&session.file)
+            .unwrap()
+            .modified()
+            .unwrap(),
+        session.written,
+        "Copy Image saved the file"
     );
 }

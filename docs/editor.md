@@ -108,9 +108,9 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 ## Copy Controls
 
 - **Copy Text** (More menu): Runs Tesseract OCR on the image file on a background thread, copies extracted text to the clipboard, and displays the character count in a status pill.
-- **Copy** (toolbar): Opens a menu with three export options. Each reads the image file on disk, so markup not yet saved with **Done** is not included:
-  - **Copy Image**: Reads the image file from disk and copies its decoded pixels to the system clipboard.
-  - **Copy File**: Copies the file to the system clipboard in platform file-list format for pasting into file managers.
+- **Copy** (toolbar): Opens a menu with three export options:
+  - **Copy Image**: Copies the image as shown, markup included, to the system clipboard. An active text entry is committed first.
+  - **Copy File**: Copies the file to the system clipboard in platform file-list format for pasting into file managers. The file holds markup once **Done** saves it.
   - **Copy Path**: Copies the canonical absolute path string of the image file to the system clipboard.
 
 ## Window

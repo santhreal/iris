@@ -305,8 +305,15 @@ pub fn wm_close(conn: &impl Connection, window: u32) {
 /// or None when no client owns the selection, the owner offers no text,
 /// or it does not answer within 2 s.
 pub fn clipboard_text(conn: &impl Connection, root: u32) -> Option<String> {
+    String::from_utf8(clipboard(conn, root, b"UTF8_STRING")?).ok()
+}
+
+/// The CLIPBOARD selection converted to `target`, read through a scratch
+/// window in one property, or None when no client owns the selection,
+/// the owner offers no `target`, or it does not answer within 2 s.
+pub fn clipboard(conn: &impl Connection, root: u32, target: &[u8]) -> Option<Vec<u8>> {
     let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
-    let (clipboard, utf8, slot) = (atom(b"CLIPBOARD"), atom(b"UTF8_STRING"), atom(b"IRIS_TEST"));
+    let (clipboard, target, slot) = (atom(b"CLIPBOARD"), atom(target), atom(b"IRIS_TEST"));
     let window = conn.generate_id().unwrap();
     conn.create_window(
         x11rb::COPY_DEPTH_FROM_PARENT,
@@ -322,11 +329,11 @@ pub fn clipboard_text(conn: &impl Connection, root: u32) -> Option<String> {
         &CreateWindowAux::new(),
     )
     .unwrap();
-    conn.convert_selection(window, clipboard, utf8, slot, x11rb::CURRENT_TIME)
+    conn.convert_selection(window, clipboard, target, slot, x11rb::CURRENT_TIME)
         .unwrap();
     conn.flush().unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    let mut text = None;
+    let mut value = None;
     while std::time::Instant::now() < deadline {
         match conn.poll_for_event().unwrap() {
             Some(x11rb::protocol::Event::SelectionNotify(e)) if e.requestor == window => {
@@ -336,7 +343,7 @@ pub fn clipboard_text(conn: &impl Connection, root: u32) -> Option<String> {
                         .unwrap()
                         .reply()
                         .unwrap();
-                    text = String::from_utf8(reply.value).ok();
+                    value = Some(reply.value);
                 }
                 break;
             }
@@ -346,7 +353,7 @@ pub fn clipboard_text(conn: &impl Connection, root: u32) -> Option<String> {
     }
     conn.destroy_window(window).unwrap();
     conn.flush().unwrap();
-    text
+    value
 }
 
 /// The window that owns the CLIPBOARD selection, or `x11rb::NONE`.

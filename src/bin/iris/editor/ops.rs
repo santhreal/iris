@@ -422,13 +422,22 @@ impl Editor {
     pub(crate) fn copy_variant(&mut self, variant: &str, cx: &mut Context<Self>) {
         self.copy_menu = false;
         let path = self.path.clone();
+        // Copy Image takes the image as shown, marks and all, as the
+        // save does. Before the image decodes the file is that image.
+        let shown = (variant == "image" && self.base_ready).then(|| {
+            self.commit_text(true);
+            self.commit_current();
+            Arc::clone(&self.composite)
+        });
         let variant = variant.to_string();
-        // The image variant decodes a PNG; keep that off the UI thread.
+        // The image variants encode or decode a PNG; keep that off the
+        // UI thread.
         let task = cx.background_executor().spawn(async move {
-            match variant.as_str() {
-                "image" => pipeline::copy_image_file(&path),
-                "file" => pipeline::copy_file(&path),
-                "path" => pipeline::copy_path_text(&path),
+            match (variant.as_str(), shown) {
+                ("image", Some(img)) => pipeline::copy_image(&img),
+                ("image", None) => pipeline::copy_image_file(&path),
+                ("file", _) => pipeline::copy_file(&path),
+                ("path", _) => pipeline::copy_path_text(&path),
                 _ => Err("unknown copy variant".to_string()),
             }
         });
