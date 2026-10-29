@@ -1,9 +1,12 @@
 use super::{
     drag_region,
     flight::{flight_at_rest, flight_rect},
-    hint, Overlay, OverlayMode,
+    hint,
+    input::frame_rect,
+    Overlay, OverlayMode,
 };
 use crate::pipeline::Region;
+use iris_lib::capture::WinRect;
 
 // WHY: the committed-selection handle layout is a fixed contract:
 // 4 corners then 4 edges, each centered on the point it drags. A
@@ -165,5 +168,65 @@ fn the_hint_names_the_configured_keys_and_what_confirm_does() {
         (OverlayMode::RecordPick, "Ctrl+Enter record   Ctrl+C cancel"),
     ] {
         assert_eq!(hint(&cfg, mode).as_ref(), want, "{mode:?}");
+    }
+}
+
+// WHY: the class closed here is "a selection crops pixels other than
+// the ones under it". The frozen frame starts at the virtual screen's
+// origin, which is negative on Windows and macOS with a monitor left of
+// or above the primary, and the selection added that origin a second
+// time: a drag on the left monitor cropped nothing, one on the primary
+// cropped the left monitor, and the loupe magnified the wrong pixels. A
+// monitor taken to the window by `to_logical` and back by `frame_rect`
+// and `frame_pos` lands on its own pixels in the frame, at every
+// origin and scale. Not covered: each platform's grab, which must start
+// its frame at the same origin, and the toast's host monitor, which
+// needs a live overlay window.
+#[test]
+fn a_monitor_maps_onto_its_own_frame_pixels_at_every_origin() {
+    let mon = |x, y, width, height| WinRect {
+        x,
+        y,
+        width,
+        height,
+    };
+    let layouts = [
+        vec![mon(0, 0, 2560, 1440)],
+        // Windows and macOS: a monitor left of, or above, the primary.
+        vec![mon(0, 0, 1920, 1080), mon(-1280, 200, 1280, 800)],
+        vec![mon(0, 0, 1920, 1080), mon(0, -1080, 1920, 1080)],
+        // X11: the left monitor off, the root left at its old size.
+        vec![mon(1920, 0, 1920, 1080)],
+    ];
+    for sf in [1.0, 1.25, 2.0] {
+        for monitors in &layouts {
+            let union = WinRect::union(monitors).unwrap();
+            let origin = (union.x, union.y);
+            let view = (union.width, union.height);
+            for m in monitors {
+                let logical = Overlay::to_logical(origin, m, sf, 1.0, 1.0);
+                let r = frame_rect(sf, (1.0, 1.0), view, logical);
+                let want = (m.x - origin.0, m.y - origin.1);
+                assert_eq!(
+                    r,
+                    Region {
+                        x: want.0 as u32,
+                        y: want.1 as u32,
+                        width: m.width,
+                        height: m.height,
+                    },
+                    "monitor at ({}, {}), scale {sf}",
+                    m.x,
+                    m.y
+                );
+                assert_eq!(
+                    Overlay::frame_pos(sf, 1.0, 1.0, logical.0, logical.1),
+                    (i64::from(want.0), i64::from(want.1)),
+                    "monitor at ({}, {}), scale {sf}",
+                    m.x,
+                    m.y
+                );
+            }
+        }
     }
 }

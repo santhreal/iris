@@ -6,15 +6,16 @@ pub(super) const LOUPE_SRC: u32 = 19; // source pixels across the loupe
 pub(super) const LOUPE_ZOOM: u32 = 8;
 pub(super) const LOUPE_PX: u32 = LOUPE_SRC * LOUPE_ZOOM;
 
-/// BMP for the monitor slices, written straight from the frame: a
-/// 32bpp BI_RGB header plus bottom-up BGRA rows. One pass over the
-/// cursor, plus the crosshair-free info line (coords + hex).
+/// The loupe over frame pixel (`fx`, `fy`) of a `width` x `height`
+/// BGRA frame, and its info line: the pixel's root coordinates (the
+/// frame pixel plus `origin`, the virtual screen's top-left corner) and
+/// its hex color.
 pub(super) fn loupe_image(
     img: &Arc<RenderImage>,
     width: u32,
     height: u32,
-    fx: i64,
-    fy: i64,
+    (fx, fy): (i64, i64),
+    origin: (i32, i32),
     scratch: &mut Vec<u8>,
 ) -> (Arc<RenderImage>, SharedString) {
     let bgra = img.as_bytes(0).unwrap_or(&[]);
@@ -88,8 +89,12 @@ pub(super) fn loupe_image(
         .expect("loupe buffer size");
     let img = Arc::new(RenderImage::new([image::Frame::new(buf)]));
     let info = SharedString::from(format!(
-        "{fx}, {fy}  #{:02x}{:02x}{:02x}",
-        center[0], center[1], center[2]
+        "{}, {}  #{:02x}{:02x}{:02x}",
+        fx + i64::from(origin.0),
+        fy + i64::from(origin.1),
+        center[0],
+        center[1],
+        center[2]
     ));
     (img, info)
 }
@@ -118,7 +123,7 @@ impl super::Overlay {
         if let (Some(img), Some((w, h))) = (&self.frame_img, self.frame_size) {
             let img = img.clone();
             let (w, h) = (w, h);
-            let built = loupe_image(&img, w, h, fx, fy, &mut self.loupe_scratch);
+            let built = loupe_image(&img, w, h, (fx, fy), self.origin, &mut self.loupe_scratch);
             // The previous loupe's atlas tile goes with it: a drag
             // mints one per mousemove.
             let old = self.loupe.replace(built);

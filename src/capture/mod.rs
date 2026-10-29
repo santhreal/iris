@@ -33,6 +33,23 @@ impl WinRect {
             })
             .or(monitors.first())
     }
+
+    /// The smallest rect that holds every rect in `rects`: over the
+    /// monitors, the virtual screen. None when `rects` is empty.
+    pub fn union(rects: &[WinRect]) -> Option<WinRect> {
+        rects.iter().copied().reduce(|u, m| {
+            let x0 = u.x.min(m.x);
+            let y0 = u.y.min(m.y);
+            let x1 = (u.x + u.width as i32).max(m.x + m.width as i32);
+            let y1 = (u.y + u.height as i32).max(m.y + m.height as i32);
+            WinRect {
+                x: x0,
+                y: y0,
+                width: (x1 - x0) as u32,
+                height: (y1 - y0) as u32,
+            }
+        })
+    }
 }
 
 pub trait CaptureBackend {
@@ -42,7 +59,8 @@ pub trait CaptureBackend {
 
 // WHY: the class closed here is "a window placed for a rect lands on
 // the wrong monitor": the recording chip picks the rect's monitor
-// through `host`. Not covered: monitor enumeration itself, which the
+// through `host`, and the overlay's shell and frozen frame both span
+// `union`. Not covered: monitor enumeration itself, which the
 // per-platform backends own.
 #[cfg(test)]
 mod tests {
@@ -86,5 +104,17 @@ mod tests {
         let nowhere = rect(-800, -500, 100, 100);
         assert_eq!(host_x(nowhere, &MONITORS), Some(0));
         assert_eq!(host_x(nowhere, &[]), None);
+    }
+
+    #[test]
+    fn union_spans_every_monitor_from_the_top_left_one() {
+        let span = |rects: &[WinRect]| WinRect::union(rects).map(|u| (u.x, u.y, u.width, u.height));
+        assert_eq!(span(&MONITORS), Some((-800, 0, 1800, 1000)));
+        assert_eq!(span(&MONITORS[..1]), Some((0, 0, 1000, 1000)));
+        assert_eq!(
+            span(&[rect(1920, 0, 1920, 1080)]),
+            Some((1920, 0, 1920, 1080))
+        );
+        assert_eq!(span(&[]), None);
     }
 }

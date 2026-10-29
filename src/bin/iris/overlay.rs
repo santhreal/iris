@@ -322,7 +322,7 @@ impl Render for Overlay {
                     // The loupe tracks the edge being dragged so a
                     // resize lands on the exact pixel, same as the
                     // initial drag.
-                    let (fx, fy) = this.frame_pos(sf, sx, sy, mx, my);
+                    let (fx, fy) = Overlay::frame_pos(sf, sx, sy, mx, my);
                     this.update_loupe(fx, fy, cx);
                     cx.notify();
                     return;
@@ -345,7 +345,7 @@ impl Render for Overlay {
                         region.width as f32,
                         region.height as f32,
                     ));
-                    let (fx, fy) = this.frame_pos(sf, sx, sy, mx, my);
+                    let (fx, fy) = Overlay::frame_pos(sf, sx, sy, mx, my);
                     this.update_loupe(fx, fy, cx);
                 } else {
                     // Releasing the tile matters: a bare None drop

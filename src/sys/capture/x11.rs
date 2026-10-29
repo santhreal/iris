@@ -14,9 +14,9 @@ use shm::try_shm_grab_into;
 
 /// X11 full-screen capture via GetImage on the root window.
 ///
-/// The root window spans the whole virtual screen, so one grab covers every
-/// monitor; the frozen frame's coordinates match root coordinates, which is
-/// what the overlay selection reports back.
+/// The grab covers the virtual screen: the union of the RandR monitors.
+/// Frame pixel (0, 0) is its top-left corner, as on Windows and macOS,
+/// and the overlay's shell spans the same rect.
 pub struct X11Backend;
 
 impl X11Backend {
@@ -27,43 +27,7 @@ impl X11Backend {
 
 impl CaptureBackend for X11Backend {
     fn grab_screen(&self) -> Result<Frame, String> {
-        let (conn, screen_num) = shared_conn()?;
-        let screen = &conn.setup().roots[screen_num];
-        let root = screen.root;
-
-        let geom = conn
-            .get_geometry(root)
-            .map_err(|e| format!("X11 get_geometry: {e}"))?
-            .reply()
-            .map_err(|e| format!("X11 get_geometry reply: {e}"))?;
-        let width = u32::from(geom.width);
-        let height = u32::from(geom.height);
-
-        let pixels = width as usize * height as usize;
-        // Uninit capacity, not a zeroed vec: the grab writes every byte
-        // and a 33MB memset before a 33MB fill is a wasted pass. On
-        // failure the buffer drops without ever being read.
-        let mut rgba: Vec<u8> = Vec::with_capacity(pixels * 4);
-        // The grab writes every byte before any read.
-        #[allow(clippy::uninit_vec)]
-        unsafe {
-            rgba.set_len(pixels * 4)
-        };
-        let full = GrabRect {
-            x: 0,
-            y: 0,
-            width: geom.width,
-            height: geom.height,
-        };
-        let depth = grab_pixels_into(&conn, root, full, &mut rgba, false)?;
-
-        if depth != 24 {
-            return Err(format!(
-                "unsupported root depth {}; only 24-bit TrueColor is implemented",
-                depth
-            ));
-        }
-
+        let (width, height, rgba) = grab_virtual_screen(false)?;
         Ok(Frame {
             width,
             height,
@@ -72,41 +36,73 @@ impl CaptureBackend for X11Backend {
     }
 }
 
-/// Grab the whole root into a fresh BGRA buffer: the overlay's
+/// Grab the virtual screen into a fresh BGRA buffer: the overlay's
 /// GPU-bound frame consumes BGRA, so this skips the RGBA intermediate
 /// and the second swizzle `slice_frame` would otherwise run. Same
 /// SHM/GetImage path as `grab_screen`, only the output order differs.
 pub fn grab_screen_bgra() -> Result<(u32, u32, Vec<u8>), String> {
+    grab_virtual_screen(true)
+}
+
+/// The virtual screen's pixels, BGRA when `bgra`, RGBA otherwise.
+fn grab_virtual_screen(bgra: bool) -> Result<(u32, u32, Vec<u8>), String> {
     let (conn, screen_num) = shared_conn()?;
-    let screen = &conn.setup().roots[screen_num];
-    let root = screen.root;
+    let root = conn.setup().roots[screen_num].root;
+    // The root's current size: the connection setup holds the size at
+    // connect time, and the shared connection outlives a RandR resize.
     let geom = conn
         .get_geometry(root)
         .map_err(|e| format!("X11 get_geometry: {e}"))?
         .reply()
         .map_err(|e| format!("X11 get_geometry reply: {e}"))?;
-    let width = u32::from(geom.width);
-    let height = u32::from(geom.height);
+    let rect = virtual_screen(&monitors().unwrap_or_default(), (geom.width, geom.height));
+    let (width, height) = (u32::from(rect.width), u32::from(rect.height));
     let pixels = width as usize * height as usize;
-    let mut bgra: Vec<u8> = Vec::with_capacity(pixels * 4);
+    // Uninit capacity, not a zeroed vec: the grab writes every byte
+    // and a 33MB memset before a 33MB fill is a wasted pass. On
+    // failure the buffer drops without ever being read.
+    let mut out: Vec<u8> = Vec::with_capacity(pixels * 4);
     #[allow(clippy::uninit_vec)] // the grab writes every byte
     unsafe {
-        bgra.set_len(pixels * 4)
+        out.set_len(pixels * 4)
     };
-    let full = GrabRect {
-        x: 0,
-        y: 0,
-        width: geom.width,
-        height: geom.height,
-    };
-    let depth = grab_pixels_into(&conn, root, full, &mut bgra, true)?;
+    let depth = grab_pixels_into(&conn, root, rect, &mut out, bgra)?;
     if depth != 24 {
         return Err(format!(
             "unsupported root depth {}; only 24-bit TrueColor is implemented",
             depth
         ));
     }
-    Ok((width, height, bgra))
+    Ok((width, height, out))
+}
+
+/// The union of `monitors` inside a root of size `root`: the rect the
+/// overlay's shell spans. A root larger than its monitors (one switched
+/// off without shrinking the screen) is grabbed only where a monitor
+/// shows it. No monitor, or none inside the root, grabs the whole root.
+fn virtual_screen(monitors: &[WinRect], root: (u16, u16)) -> GrabRect {
+    let whole = GrabRect {
+        x: 0,
+        y: 0,
+        width: root.0,
+        height: root.1,
+    };
+    let Some(u) = WinRect::union(monitors) else {
+        return whole;
+    };
+    let (rw, rh) = (i32::from(root.0), i32::from(root.1));
+    let (x0, y0) = (u.x.clamp(0, rw), u.y.clamp(0, rh));
+    let x1 = (u.x + u.width as i32).clamp(0, rw);
+    let y1 = (u.y + u.height as i32).clamp(0, rh);
+    if x1 <= x0 || y1 <= y0 {
+        return whole;
+    }
+    GrabRect {
+        x: x0 as i16,
+        y: y0 as i16,
+        width: (x1 - x0) as u16,
+        height: (y1 - y0) as u16,
+    }
 }
 
 /// Grab one rect of the root window into a fresh RGBA buffer: the
@@ -309,7 +305,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::convert_frame;
+    use super::{convert_frame, virtual_screen};
+    use crate::capture::WinRect;
 
     /// Pin the channel-order math for every (bpp, bgra) combination.
     /// A swapped R/B is invisible to a dimension check, so assert the
@@ -362,5 +359,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// WHY: the frozen frame's pixel (0, 0) is the overlay shell's
+    /// origin, the monitors' union. A root grabbed whole past a monitor
+    /// that does not start at its corner shifted every crop by the gap.
+    /// Not covered: the RandR query feeding `monitors`.
+    #[test]
+    fn the_grab_spans_the_monitors_inside_the_root() {
+        let mon = |x, y, width, height| WinRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let grab = |monitors: &[WinRect]| {
+            let r = virtual_screen(monitors, (3840, 1080));
+            (r.x, r.y, r.width, r.height)
+        };
+        let both = [mon(0, 0, 1920, 1080), mon(1920, 0, 1920, 1080)];
+        assert_eq!(grab(&both), (0, 0, 3840, 1080));
+        // The left monitor off, the root left at its old size.
+        assert_eq!(grab(&both[1..]), (1920, 0, 1920, 1080));
+        // A monitor past the root's edge is grabbed only inside it.
+        assert_eq!(grab(&[mon(3000, 500, 1920, 1080)]), (3000, 500, 840, 580));
+        assert_eq!(grab(&[]), (0, 0, 3840, 1080));
+        assert_eq!(grab(&[mon(4000, 0, 100, 100)]), (0, 0, 3840, 1080));
     }
 }

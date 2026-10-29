@@ -60,7 +60,10 @@ impl Overlay {
         if self.cursor_known && !self.dragging && self.current.is_none() && self.hovered.is_none() {
             let sf = window.scale_factor();
             let win = window.bounds().size;
-            let (fx, fy) = self.frame_pos(sf, sx, sy, self.cursor.0, self.cursor.1);
+            // The readout states root coordinates: the frame pixel
+            // plus the virtual screen's origin.
+            let (fx, fy) = Self::frame_pos(sf, sx, sy, self.cursor.0, self.cursor.1);
+            let (fx, fy) = (fx + i64::from(self.origin.0), fy + i64::from(self.origin.1));
             if self.coord_at != Some((fx, fy)) {
                 self.coord_at = Some((fx, fy));
                 self.coord_label = SharedString::from(format!("{fx}, {fy}"));

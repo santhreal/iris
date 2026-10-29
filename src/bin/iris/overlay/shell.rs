@@ -23,26 +23,12 @@ pub fn layout() -> ShellLayout {
     // Linux Wayland has no window list or client placement: the capture
     // layer reports an error there and the shell opens fullscreen.
     let (monitors, windows) = iris_lib::sys::capture::layout().unwrap_or((Vec::new(), Vec::new()));
-    let union = monitors.iter().skip(1).fold(
-        monitors.first().copied().unwrap_or(WinRect {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-        }),
-        |u, m| {
-            let x0 = u.x.min(m.x);
-            let y0 = u.y.min(m.y);
-            let x1 = (u.x + u.width as i32).max(m.x + m.width as i32);
-            let y1 = (u.y + u.height as i32).max(m.y + m.height as i32);
-            WinRect {
-                x: x0,
-                y: y0,
-                width: (x1 - x0) as u32,
-                height: (y1 - y0) as u32,
-            }
-        },
-    );
+    let union = WinRect::union(&monitors).unwrap_or(WinRect {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+    });
     ShellLayout {
         monitors,
         windows,

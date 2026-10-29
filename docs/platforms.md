@@ -19,7 +19,7 @@ Windows 11 on Arm also runs the x86_64 build under emulation. An update installs
 | **Region Capture** | Root window grab via MIT-SHM (`x11rb`) | Frozen-frame overlay over portal capture | Win32 GDI `BitBlt` (`CAPTUREBLT`) | CoreGraphics `CGWindowListCreateImage` |
 | **Window Hover Snap** | Supported (`_NET_CLIENT_LIST_STACKING`) | Unsupported (compositor security blocks tree) | Supported (`EnumWindows`) | Supported (`CGWindowListCopyWindowInfo`) |
 | **Active-Window Capture** | Supported (`_NET_ACTIVE_WINDOW`) | Unsupported (compositor security blocks query) | Supported (`GetForegroundWindow`) | Supported (Frontmost normal-layer window) |
-| **Fullscreen Capture** | Supported (Root window via MIT-SHM) | Supported (`org.freedesktop.portal.Screenshot`) | Supported (Virtual screen union via GDI `BitBlt`) | Supported (Display union `CGWindowListCreateImage`) |
+| **Fullscreen Capture** | Supported (RandR monitor union via MIT-SHM) | Supported (`org.freedesktop.portal.Screenshot`) | Supported (Virtual screen union via GDI `BitBlt`) | Supported (Display union `CGWindowListCreateImage`) |
 | **Window Recording** | Supported (XComposite redirect + MIT-SHM) | Supported (`org.freedesktop.portal.ScreenCast` + PipeWire) | Unsupported (Records primary desktop via `gdigrab`) | Unsupported (Records main desktop via `avfoundation`) |
 | **Region Recording** | Supported (Root window via MIT-SHM) | Unsupported (Portal cannot name rect) | Supported (`ffmpeg -f gdigrab`) | Supported (`ffmpeg -f avfoundation -vf crop`) |
 | **Recording Chip** | Supported (Positioned by XID; outside frame) | Disabled | Supported (`SetWindowDisplayAffinity`) | Supported (`NSWindowSharingNone`) |
@@ -36,7 +36,7 @@ Windows 11 on Arm also runs the x86_64 build under emulation. An update installs
 
 ## Linux (X11)
 
-- **Screen Capture**: Uses the X11 Shared Memory Extension (MIT-SHM) via `x11rb` to read frame buffers from the root window, falling back to `GetImage`.
+- **Screen Capture**: Uses the X11 Shared Memory Extension (MIT-SHM) via `x11rb` to read the root window over the union of the RandR monitors, falling back to `GetImage`.
 - **Window Hierarchy and Snap**: Queries EWMH `_NET_CLIENT_LIST_STACKING`, falling back to root `query_tree`. Reads `_NET_WM_PID` to exclude iris windows and `_NET_WM_STATE` to exclude `_NET_WM_STATE_HIDDEN`. Active-window capture queries `_NET_ACTIVE_WINDOW`.
 - **Recording**: Window recording redirects the target window via XComposite (`composite_redirect_window`) and captures its named pixmap via MIT-SHM. Red border strips (`#f7768e`) with empty XFixes input shapes outline the window. A tracking thread follows `ConfigureNotify` events to move the border strips and reposition the floating indicator chip by XID (`configure_window`). Region recording captures root window rectangles via MIT-SHM.
 - **Global Hotkeys**: Registers passive root key grabs via `grab_key` (`xcb_grab_key`) across modifier lock combinations. A grab another client holds fails with `BadAccess`; the daemon releases the lock combinations it did grab for that chord and reports the chord as in use by another app.

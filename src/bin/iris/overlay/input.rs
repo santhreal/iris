@@ -158,40 +158,23 @@ impl Overlay {
         )
     }
 
-    /// A logical-px rect to frame pixels, intersected with the frame:
-    /// a negative origin (a monitor left of or above the primary) or a
-    /// drag that overshot the edge must not saturate `as u32` into a
-    /// crop anchored at the frame's corner.
+    /// A logical-px rect to frame pixels, intersected with the frame.
+    /// Frame pixel (0, 0) is the window's own top-left corner, the
+    /// virtual screen's origin in root space. A drag that overshot the
+    /// edge must not saturate `as u32` into a crop anchored at the
+    /// frame's corner.
     pub(super) fn rect_to_frame(
         window: &Window,
-        origin: (i32, i32),
         view: (u32, u32),
         rect: (f32, f32, f32, f32),
     ) -> Region {
-        let sf = window.scale_factor();
         let (sx, sy) = Self::scale(window, view);
-        let fx0 = origin.0 as f32 + rect.0 * sf * sx;
-        let fy0 = origin.1 as f32 + rect.1 * sf * sy;
-        let fx1 = fx0 + rect.2 * sf * sx;
-        let fy1 = fy0 + rect.3 * sf * sy;
-        let x0 = fx0.clamp(0.0, view.0 as f32);
-        let y0 = fy0.clamp(0.0, view.1 as f32);
-        let x1 = fx1.clamp(0.0, view.0 as f32);
-        let y1 = fy1.clamp(0.0, view.1 as f32);
-        Region {
-            x: x0 as u32,
-            y: y0 as u32,
-            width: (x1 - x0).max(0.0) as u32,
-            height: (y1 - y0).max(0.0) as u32,
-        }
+        frame_rect(window.scale_factor(), (sx, sy), view, rect)
     }
 
     /// Frame-pixel coordinates of a logical cursor position.
-    pub(super) fn frame_pos(&self, sf: f32, sx: f32, sy: f32, lx: f32, ly: f32) -> (i64, i64) {
-        (
-            self.origin.0 as i64 + (lx * sf * sx) as i64,
-            self.origin.1 as i64 + (ly * sf * sy) as i64,
-        )
+    pub(super) fn frame_pos(sf: f32, sx: f32, sy: f32, lx: f32, ly: f32) -> (i64, i64) {
+        ((lx * sf * sx) as i64, (ly * sf * sy) as i64)
     }
 
     pub(super) fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -211,7 +194,7 @@ impl Overlay {
             return;
         };
         self.finishing = true;
-        let region = Self::rect_to_frame(window, self.origin, self.view, (x, y, w, h));
+        let region = Self::rect_to_frame(window, self.view, (x, y, w, h));
         if region.width == 0 || region.height == 0 {
             // The selection intersected no frame pixels (fully off the
             // union edge): nothing to crop or record.
@@ -299,29 +282,21 @@ impl Overlay {
                 crate::widgets::release_render(&frame, cx);
             }
             // The toast lands on the monitor under the selection's
-            // center, in that monitor's own bottom-right corner.
-            let (fcx, fcy) = (
-                region.x as f32 + region.width as f32 / 2.0,
-                region.y as f32 + region.height as f32 / 2.0,
-            );
+            // center, in that monitor's own bottom-right corner. The
+            // selection in root space: the frame plus the origin.
+            let root = WinRect {
+                x: region.x as i32 + self.origin.0,
+                y: region.y as i32 + self.origin.1,
+                width: region.width,
+                height: region.height,
+            };
             let (sx, sy) = Self::scale(window, self.view);
-            let host = self
-                .monitors
-                .iter()
-                .find(|m| {
-                    fcx >= m.x as f32
-                        && fcx < (m.x + m.width as i32) as f32
-                        && fcy >= m.y as f32
-                        && fcy < (m.y + m.height as i32) as f32
-                })
-                .or_else(|| self.monitors.first())
-                .copied()
-                .unwrap_or(iris_lib::capture::WinRect {
-                    x: self.origin.0,
-                    y: self.origin.1,
-                    width: self.view.0,
-                    height: self.view.1,
-                });
+            let host = root.host(&self.monitors).copied().unwrap_or(WinRect {
+                x: self.origin.0,
+                y: self.origin.1,
+                width: self.view.0,
+                height: self.view.1,
+            });
             let (mx, my, mw, mh) = Self::to_logical(self.origin, &host, sf, sx, sy);
             let r = stage::card_rest_rect(mw, mh, cw, ch);
             let rest = (mx + r.0, my + r.1, r.2, r.3);
@@ -337,10 +312,10 @@ impl Overlay {
                     host.height as f32 / sf,
                 ),
                 source: (
-                    region.x as f32 / sf,
-                    region.y as f32 / sf,
-                    region.width as f32 / sf,
-                    region.height as f32 / sf,
+                    root.x as f32 / sf,
+                    root.y as f32 / sf,
+                    root.width as f32 / sf,
+                    root.height as f32 / sf,
                 ),
             });
             self.current = None;
@@ -523,5 +498,29 @@ impl Overlay {
             ));
         }
         cx.notify();
+    }
+}
+
+/// `rect` in logical px to frame pixels at scale factor `sf` and the
+/// window-to-frame `scale`, intersected with a frame of size `view`.
+pub(super) fn frame_rect(
+    sf: f32,
+    scale: (f32, f32),
+    view: (u32, u32),
+    rect: (f32, f32, f32, f32),
+) -> Region {
+    let fx0 = rect.0 * sf * scale.0;
+    let fy0 = rect.1 * sf * scale.1;
+    let fx1 = fx0 + rect.2 * sf * scale.0;
+    let fy1 = fy0 + rect.3 * sf * scale.1;
+    let x0 = fx0.clamp(0.0, view.0 as f32);
+    let y0 = fy0.clamp(0.0, view.1 as f32);
+    let x1 = fx1.clamp(0.0, view.0 as f32);
+    let y1 = fy1.clamp(0.0, view.1 as f32);
+    Region {
+        x: x0 as u32,
+        y: y0 as u32,
+        width: (x1 - x0).max(0.0) as u32,
+        height: (y1 - y0).max(0.0) as u32,
     }
 }
