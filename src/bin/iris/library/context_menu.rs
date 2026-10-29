@@ -21,6 +21,7 @@ pub(super) struct ContextMenu {
 pub(super) enum MenuRow {
     Open,
     QuickLook,
+    Pin,
     Copy,
     Reveal,
     Trash,
@@ -28,9 +29,10 @@ pub(super) enum MenuRow {
 
 impl MenuRow {
     /// The rows, top to bottom.
-    pub(super) const ALL: [MenuRow; 5] = [
+    pub(super) const ALL: [MenuRow; 6] = [
         MenuRow::Open,
         MenuRow::QuickLook,
+        MenuRow::Pin,
         MenuRow::Copy,
         MenuRow::Reveal,
         MenuRow::Trash,
@@ -40,6 +42,7 @@ impl MenuRow {
         match self {
             MenuRow::Open => "menu-open",
             MenuRow::QuickLook => "menu-preview",
+            MenuRow::Pin => "menu-pin",
             MenuRow::Copy => "menu-copy",
             MenuRow::Reveal => "menu-reveal",
             MenuRow::Trash => "menu-trash",
@@ -50,6 +53,7 @@ impl MenuRow {
         match self {
             MenuRow::Open => "Open",
             MenuRow::QuickLook => "Quick Look",
+            MenuRow::Pin => "Pin to Screen",
             MenuRow::Copy => "Copy",
             MenuRow::Reveal => REVEAL_LABEL,
             MenuRow::Trash => "Move to Trash",
@@ -60,6 +64,7 @@ impl MenuRow {
         match self {
             MenuRow::Open => Some("Return"),
             MenuRow::QuickLook => Some("Space"),
+            MenuRow::Pin => None,
             MenuRow::Copy => Some(crate::widgets::meta_shortcut!("C")),
             MenuRow::Reveal => None,
             MenuRow::Trash => Some("Delete"),
@@ -146,6 +151,19 @@ impl Library {
         match row {
             MenuRow::Open => self.open_entry(index, window, cx),
             MenuRow::QuickLook => self.open_preview(index, cx),
+            MenuRow::Pin => {
+                if let Some(e) = self.listing.entries().get(index) {
+                    // Over the library window, which the pin opens above.
+                    let b = window.bounds();
+                    let over: crate::pin::Over = (
+                        b.origin.x.into(),
+                        b.origin.y.into(),
+                        b.size.width.into(),
+                        b.size.height.into(),
+                    );
+                    crate::pin::open(cx, &e.path, Some(over));
+                }
+            }
             MenuRow::Copy => self.copy_selection(cx),
             MenuRow::Reveal => {
                 if let Some(e) = self.listing.entries().get(index) {

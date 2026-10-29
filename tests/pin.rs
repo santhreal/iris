@@ -2,14 +2,16 @@
 //! second pin opened on the same pixel as the first and hid it. A pin
 //! opens centered on the screen rect its capture came from, so a pin at
 //! native scale covers those pixels exactly, and a pin that would open
-//! on another pin's origin steps down and right. The case pins two
-//! region captures of one rect through the toast's context menu. Not
+//! on another pin's origin steps down and right. The first case pins
+//! two region captures of one rect through the toast's context menu;
+//! the second pins a library capture twice through the card's context
+//! menu, which opens each pin centered on the library window. Not
 //! covered: a pin scaled down to its 720x540 cap, a window capture's
 //! pin, a pin with no rect (a toast forwarded with `--toast`), which
 //! `src/bin/iris/pin/tests.rs` places; a window manager that places
 //! windows itself; Wayland, where the compositor places every window.
-//! The case runs only with `IRIS_X11_TEST_DISPLAY` set and needs `Xvfb`;
-//! without it the case prints that it did not run.
+//! The cases run only with `IRIS_X11_TEST_DISPLAY` set and need `Xvfb`;
+//! without it a case prints that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -23,10 +25,11 @@ mod daemon;
 mod x11;
 
 use x11rb::connection::Connection;
+use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
-use daemon::{enabled, entries, xvfb_sized, Daemon};
-use x11::{click, click_with, drag, paint_root, rect, tap, windows_of};
+use daemon::{enabled, entries, store, xvfb_sized, Daemon};
+use x11::{click, click_with, client, drag, extent, move_to, paint_root, rect, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 /// The root window's colour, 0xRRGGBB.
@@ -34,7 +37,9 @@ const DESKTOP: u32 = 0x5b7fa6;
 const TOAST: &str = "Screenshot - iris";
 const OVERLAY: &str = "Capture - iris";
 const PIN: &str = "Pin - iris";
+const LIBRARY: &str = "Library - iris";
 const RETURN: u32 = 0xff0d;
+const DOWN: u32 = 0xff54;
 
 /// The selection both captures drag, corner to corner.
 const FROM: (i16, i16) = (200, 200);
@@ -43,7 +48,7 @@ const TO: (i16, i16) = (520, 440);
 /// The toast's card sits BLEED in from its window's top-left corner.
 /// Its context menu is MENU_W wide, MENU_PAD above its first row, rows
 /// MENU_ROW_H tall, ROWS of them, and stays 2 px inside the window
-/// (theme::CARD_BLEED, widgets::menu). Pin to screen is row PIN_ROW.
+/// (theme::CARD_BLEED, widgets::menu). Pin to Screen is row PIN_ROW.
 const BLEED: i16 = 44;
 const MENU_W: i16 = 168;
 const MENU_PAD: i16 = 5;
@@ -53,6 +58,92 @@ const PIN_ROW: i16 = 3;
 
 /// The pins' step down and right (pin::CASCADE).
 const CASCADE: i16 = 24;
+
+/// The library capture's one color, [r, g, b, a], and its size.
+const CAPTURE: [u8; 4] = [40, 90, 200, 255];
+const CAPTURE_SIZE: (u32, u32) = (64, 48);
+/// The library card menu's Pin to Screen row: Open, Quick Look, Pin.
+const LIBRARY_PIN_ROW: usize = 3;
+
+#[test]
+fn a_library_pin_opens_over_the_library_and_a_second_one_cascades() {
+    let case = "a_library_pin_opens_over_the_library_and_a_second_one_cascades";
+    if !enabled() {
+        return;
+    }
+    // A screen the library window fits, so its pixels read back.
+    let Some((_xvfb, display)) = xvfb_sized(case, "1600x1200x24") else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    let shot = dir.path().join("shots").join("one.png");
+    std::fs::create_dir_all(shot.parent().unwrap()).unwrap();
+    image::RgbaImage::from_pixel(CAPTURE_SIZE.0, CAPTURE_SIZE.1, image::Rgba(CAPTURE))
+        .save(&shot)
+        .unwrap();
+    store(dir.path(), &[shot]);
+    daemon.send(&["--library"]);
+    let library = daemon.until("the library window to map", || {
+        windows_of(&conn, root, LIBRARY).first().copied()
+    });
+    let [r, g, b, _] = CAPTURE;
+    let (left, top, right, bottom) = daemon.until("the card's thumbnail to draw", || {
+        extent(&client(&conn, root, library), [r, g, b])
+    });
+    daemon.settle();
+    let (lx, ly, lw, lh) = rect(&conn, root, library);
+    let at = conn
+        .translate_coordinates(library, root, 0, 0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let card = (
+        at.dst_x + ((left + right) / 2) as i16,
+        at.dst_y + ((top + bottom) / 2) as i16,
+    );
+    let centered = |offset: i16, extent: u16, size: u32| {
+        offset + ((f32::from(extent) - size as f32) / 2.0).round() as i16
+    };
+    let first = (
+        centered(lx, lw, CAPTURE_SIZE.0),
+        centered(ly, lh, CAPTURE_SIZE.1),
+    );
+    let mut pins: Vec<u32> = Vec::new();
+    for n in 0..2i16 {
+        click_with(&conn, root, card, 3);
+        daemon.settle();
+        // The pointer leaves the menu, so only the keys light a row.
+        move_to(&conn, root, (at.dst_x + 4, at.dst_y + 4));
+        daemon.settle();
+        for _ in 0..LIBRARY_PIN_ROW {
+            tap(&conn, root, DOWN);
+        }
+        daemon.settle();
+        tap(&conn, root, RETURN);
+        let pin = daemon.until(&format!("library pin {n} to open"), || {
+            windows_of(&conn, root, PIN)
+                .into_iter()
+                .find(|w| !pins.contains(w))
+        });
+        daemon.settle();
+        let (x, y, w, h) = rect(&conn, root, pin);
+        let want = (first.0 + n * CASCADE, first.1 + n * CASCADE);
+        assert_eq!(
+            ((x, y), (u32::from(w), u32::from(h))),
+            (want, CAPTURE_SIZE),
+            "library pin {n} opened at {:?}, {w}x{h}, not at {want:?} over the library at \
+             {:?}",
+            (x, y),
+            (lx, ly, lw, lh)
+        );
+        pins.push(pin);
+    }
+}
 
 #[test]
 fn a_pin_opens_over_its_capture_and_a_second_one_cascades() {

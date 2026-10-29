@@ -17,7 +17,7 @@ use std::process::Command;
 pub enum Tool {
     /// Recording (every platform) and the NVENC probe.
     Ffmpeg,
-    /// OCR for "Copy text".
+    /// OCR for "Copy Text".
     Tesseract,
 }
 

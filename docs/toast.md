@@ -80,7 +80,7 @@ When an action produces feedback, a status line takes the capsule's place over t
 
 ## OCR Text Extraction
 
-Trigger OCR text extraction via the **Copy text (OCR)** item in the right-click context menu:
+Trigger OCR text extraction via the **Copy Text** item in the right-click context menu:
 - Sets the status line to `"Reading text…"` and holds the auto-dismiss timer open.
 - Executes `tesseract <source> stdout` as a background process.
 - Requires Tesseract installed on the host system. Missing binary errors report platform installation instructions:
@@ -97,8 +97,8 @@ Right-clicking the toast card opens a context menu that fades in over 140 millis
 Menu choices in order:
 1. **Markup**: Opens the annotation editor over the capture.
 2. **Copy**: Copies raw image pixels to the system clipboard.
-3. **Copy text (OCR)**: Extracts text using Tesseract and copies it to the clipboard.
-4. **Pin to screen**: Spawns an independent always-on-top reference window and dismisses the toast.
+3. **Copy Text**: Extracts text using Tesseract OCR and copies it to the clipboard.
+4. **Pin to Screen**: Opens the capture in a [pinned window](#pinned-windows) and dismisses the toast.
 5. **Move to Trash**: Moves the PNG file to the system trash, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
 6. **Close**: Dismisses the toast card immediately.
 
@@ -111,10 +111,10 @@ Platform implementations for folder reveal:
 
 ## Pinned Windows
 
-Triggered via the toast context menu (**Pin to screen**):
+Triggered via the toast context menu (**Pin to Screen**) or the library's card context menu (**Pin to Screen**):
 - Displays the capture in a borderless window with 8.0 logical pixel rounded corners and no shadow. On X11 with no compositing manager, the window manager frames the window and its corners are square.
 - Scales the image aspect-true to fit within 720×540 logical pixels.
-- Opens centered on the screen rect the capture came from: the selection of a region capture, or the window of a window capture. A pin at native scale covers those pixels. A full-screen capture, or a toast opened with `--toast`, pins at the center of the toast's monitor. A pin that would open at another pin's origin opens 24 logical pixels down and right of it.
+- Opens centered on the screen rect the capture came from: the selection of a region capture, or the window of a window capture. A pin at native scale covers those pixels. A full-screen capture, or a toast opened with `--toast`, pins at the center of the toast's monitor, and a library capture at the center of the library window. A pin that would open at another pin's origin opens 24 logical pixels down and right of it.
 - Always-on-top status: On X11, assigns `_NET_WM_STATE_ABOVE` via a client message.
 - Window movement: Click and drag anywhere on the image delegates movement to the window manager:
   - **Linux Wayland**: Calls `window.start_window_move()` (`xdg_toplevel.move`).

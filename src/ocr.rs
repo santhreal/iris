@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::tools::Tool;
 
 /// Recognize text in the image at `path`. Shared by the editor's
-/// Copy text action and the toast's Copy text menu row.
+/// Copy Text action and the toast's Copy Text menu row.
 pub fn recognize_text(source: &Path) -> Result<String, String> {
     if !source.exists() {
         return Err(format!("image does not exist: {}", source.display()));

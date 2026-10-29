@@ -254,11 +254,11 @@ impl ToastStage {
         }
     }
 
-    /// Right-click context menu, macOS style: Markup, Copy, Copy text,
-    /// Pin, Delete, Close. Fades in over 120ms rising 3px, or shows at
-    /// once on a screen that does not blend the window; shares the exit
-    /// opacity so it never outlives the card it belongs to. Returns the
-    /// menu and the area it paints in the window.
+    /// Right-click context menu, macOS style: Markup, Copy, Copy Text,
+    /// Pin to Screen, Move to Trash, Close. Fades in over 120ms rising
+    /// 3px, or shows at once on a screen that does not blend the window;
+    /// shares the exit opacity so it never outlives the card it belongs
+    /// to. Returns the menu and the area it paints in the window.
     pub(super) fn render_menu(
         &mut self,
         opacity: f32,
@@ -303,17 +303,15 @@ impl ToastStage {
                 },
             )),
         );
+        menu = menu.child(crate::widgets::menu_row("toast-ocr", "Copy Text").on_click(
+            cx.listener(|stage, _, _window, cx| {
+                cx.stop_propagation();
+                stage.menu_at = None;
+                stage.copy_text(cx);
+            }),
+        ));
         menu = menu.child(
-            crate::widgets::menu_row("toast-ocr", "Copy text (OCR)").on_click(cx.listener(
-                |stage, _, _window, cx| {
-                    cx.stop_propagation();
-                    stage.menu_at = None;
-                    stage.copy_text(cx);
-                },
-            )),
-        );
-        menu = menu.child(
-            crate::widgets::menu_row("toast-pin", "Pin to screen").on_click(cx.listener(
+            crate::widgets::menu_row("toast-pin", "Pin to Screen").on_click(cx.listener(
                 |stage, _, _window, cx| {
                     cx.stop_propagation();
                     stage.menu_at = None;
