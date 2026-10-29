@@ -10,10 +10,28 @@ use crate::icons::Icon;
 
 /// Markup colors are user content, not UI chrome: the monochrome
 /// register governs the interface, the palette governs what you draw.
-pub(crate) const COLORS: [&str; 11] = [
-    "#f5f5f7", "#9c9ca2", "#6b6b71", "#3a3a3f", "#141416", "#ff453a", "#ff9f0a", "#ffd60a",
-    "#30d158", "#0a84ff", "#bf5af2",
+/// Each color and the name its swatch's tooltip shows, in swatch order.
+pub(crate) const COLORS: [(&str, &str); 11] = [
+    ("#f5f5f7", "White"),
+    ("#9c9ca2", "Light Gray"),
+    ("#6b6b71", "Gray"),
+    ("#3a3a3f", "Dark Gray"),
+    ("#141416", "Black"),
+    ("#ff453a", "Red"),
+    ("#ff9f0a", "Orange"),
+    ("#ffd60a", "Yellow"),
+    ("#30d158", "Green"),
+    ("#0a84ff", "Blue"),
+    ("#bf5af2", "Purple"),
 ];
+
+/// The markup color after `color` in swatch order, or before it with
+/// `forward` false, wrapping at either end: what `]` and `[` select.
+pub(crate) fn step_color(color: &str, forward: bool) -> &'static str {
+    let at = COLORS.iter().position(|&(c, _)| c == color);
+    let ix = crate::widgets::ring_step(at, COLORS.len(), forward).unwrap_or(0);
+    COLORS[ix].0
+}
 
 pub(crate) fn hex_rgba(hex: &str) -> Rgba {
     let v = u32::from_str_radix(&hex[1..], 16).unwrap_or(0xffffff);

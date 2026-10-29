@@ -5,7 +5,7 @@ use std::time::Instant;
 use gpui::*;
 use iris_lib::history::Edit;
 
-use super::action::tool_for_key;
+use super::action::{step_color, tool_for_key};
 use super::Editor;
 use crate::widgets;
 
@@ -126,6 +126,9 @@ impl Editor {
             }
             "1" | "2" | "3" => {
                 self.stroke = key.as_bytes()[0] - b'1';
+            }
+            "[" | "]" if !meta => {
+                self.color = step_color(self.color, key == "]");
             }
             // Zoom: 0 fits, +/- step, space+drag pans.
             "0" => {

@@ -18,6 +18,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The annotation editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops.
 - Undo and redo in the editor cover crops, rotations, flips, and Clear Markup, and undoing a crop or transformation restores the previous image with its annotations editable.
 - The arrow keys move the editor's selected annotation or pending crop box by 1 pixel, or 10 with `Shift`, and `Ctrl+C` or `Cmd+C` copies the image as shown.
+- `[` and `]` in the editor select the previous or next markup color, and each color swatch shows its name in a tooltip.
 - `Ctrl+V` or `Cmd+V` in the editor's text entry and in a Settings text field appends the clipboard's text as one line.
 - `Ctrl+Backspace` or `Option+Backspace` in the editor's text entry and in a Settings text field deletes the last word, and `Cmd+Backspace` deletes the whole text.
 - `Up`, `Down`, `Return`, and `Space` move through and choose from an open menu: a Settings pop-up, the editor's Copy and More menus, and the Library's context menu.

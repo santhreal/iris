@@ -335,8 +335,9 @@ fn pixelate_region_respects_offsets_and_leaves_outside() {
 // through tool_for_key, so one table backs both. A tool whose key is
 // missing, shared, or mapped to another tool fails here, as does a tool
 // key that collides with the editor's other unmodified keys (F fill,
-// 1 to 3 stroke, 0 zoom) or with the Ctrl chords' letters. C is the
-// exception: C alone picks Crop and Ctrl+C copies, as in the library.
+// 1 to 3 stroke, [ and ] color, 0 zoom) or with the Ctrl chords'
+// letters. C is the exception: C alone picks Crop and Ctrl+C copies, as
+// in the library.
 #[test]
 fn every_tool_key_selects_its_tool_and_no_key_is_shared() {
     use super::action::{tool_for_key, TOOLS};
@@ -353,8 +354,32 @@ fn every_tool_key_selects_its_tool_and_no_key_is_shared() {
         );
     }
     for key in [
-        "f", "1", "2", "3", "0", "space", "enter", "escape", "z", "s", "w", "y",
+        "f", "1", "2", "3", "[", "]", "0", "space", "enter", "escape", "z", "s", "w", "y",
     ] {
         assert_eq!(tool_for_key(key), None, "{key}");
     }
+}
+
+// WHY: `]` and `[` walk the swatches in the order the options bar shows
+// them and wrap at both ends, as Tab does across controls. A step that
+// skips a swatch, runs the wrong way, stops at an end, or loses an
+// unknown color (one no swatch shows) fails here. The key binding
+// itself is covered by the X11 test in tests/history.rs.
+#[test]
+fn color_keys_walk_the_swatches_in_order_and_wrap() {
+    use super::action::{step_color, COLORS};
+    let n = COLORS.len();
+    for (i, (c, name)) in COLORS.into_iter().enumerate() {
+        assert_eq!(step_color(c, true), COLORS[(i + 1) % n].0, "after {name}");
+        assert_eq!(
+            step_color(c, false),
+            COLORS[(i + n - 1) % n].0,
+            "before {name}"
+        );
+    }
+    assert_eq!(step_color("#123456", true), COLORS[0].0);
+    assert_eq!(step_color("#123456", false), COLORS[n - 1].0);
+    let names: std::collections::HashSet<_> = COLORS.iter().map(|c| c.1).collect();
+    let hexes: std::collections::HashSet<_> = COLORS.iter().map(|c| c.0).collect();
+    assert_eq!((names.len(), hexes.len()), (n, n), "a swatch is shared");
 }

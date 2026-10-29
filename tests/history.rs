@@ -140,6 +140,8 @@ const MENU: u32 = 0xff67;
 const SLASH: u32 = 0x2f;
 const DELETE: u32 = 0xffff;
 const W: u32 = 0x77;
+const BRACKET_LEFT: u32 = 0x5b;
+const BRACKET_RIGHT: u32 = 0x5d;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -772,6 +774,50 @@ fn the_shortcut_sheet_holds_the_keys_meant_for_the_image() {
                 .is_empty()
                 .then_some(())
         });
+}
+
+// WHY: `]` and `[` step the markup color through the swatches, so a
+// rectangle drawn after `] ] [` from the default red is orange in the
+// saved file. A binding that ignores either key, runs the wrong way,
+// or changes only the swatch and not the color the next mark takes
+// saves another color here. The order and the wrap at both ends are
+// covered by the color_keys_walk_the_swatches_in_order_and_wrap unit
+// test.
+#[test]
+fn bracket_keys_step_the_color_the_next_mark_takes() {
+    let Some(session) = Session::open("bracket_keys_step_the_color_the_next_mark_takes") else {
+        return;
+    };
+    // With no window manager the keyboard follows the pointer.
+    move_to(
+        &session.conn,
+        session.root,
+        session.screen_at((300.0, 300.0)),
+    );
+    session.daemon.settle();
+    for key in [BRACKET_RIGHT, BRACKET_RIGHT, BRACKET_LEFT] {
+        session.keys(&[key]);
+    }
+    session.draw(R, RECT);
+    let saved = session.save();
+    // `#ff9f0a`, and `#ff453a` for the default red, over the image.
+    let orange = |[r, g, b]: [u8; 3]| r > 230 && (140..180).contains(&g) && b < 40;
+    let red = |[r, g, _]: [u8; 3]| r > 230 && g < 100;
+    let y = ((RECT[0].1 + RECT[1].1) / 2.0) as u32;
+    let row: Vec<[u8; 3]> = (0..saved.width())
+        .map(|x| saved.get_pixel(x, y).0)
+        .collect();
+    let near = |edge: f32| (0..row.len()).any(|x| orange(row[x]) && (x as f32 - edge).abs() <= 2.0);
+    assert_eq!(
+        (
+            near(RECT[0].0),
+            near(RECT[1].0),
+            row.iter().any(|&p| red(p))
+        ),
+        (true, true, false),
+        "the rectangle drawn after ] ] [: orange at its left side, at its \
+         right side, and red anywhere on the row"
+    );
 }
 
 /// Wait for the editor to close and the daemon to finish what the close

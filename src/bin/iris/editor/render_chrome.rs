@@ -102,6 +102,7 @@ pub(super) fn help_rows() -> Vec<(&'static str, SharedString)> {
         ("Tools", "V P L A E R T H B C N".into()),
         ("Fill shapes", "F".into()),
         ("Stroke width", "1 / 2 / 3".into()),
+        ("Color", "[ / ]".into()),
         ("Zoom fit / in / out", "0 / + / -".into()),
         ("Pan", "Space + drag".into()),
         ("Save and close", save_close.into()),
@@ -426,7 +427,7 @@ impl Editor {
             })),
         );
         bar = bar.child(div().w(px(1.)).h(px(20.)).mx(px(8.)).bg(theme::HAIRLINE));
-        for c in COLORS {
+        for (c, name) in COLORS {
             let active = c == self.color;
             bar = bar.child(
                 div()
@@ -445,6 +446,7 @@ impl Editor {
                         theme::alpha(theme::ACCENT, 0.0)
                     })
                     .cursor_pointer()
+                    .tooltip(tip(name, None))
                     .child(
                         div()
                             .w(px(16.))
@@ -529,7 +531,7 @@ mod shortcut_tests {
         );
         let rows = super::help_rows();
         let (save_close, undo_redo) = super::chord_labels(cfg!(target_os = "macos"));
-        assert_eq!(rows[5], ("Save and close", save_close.into()));
-        assert_eq!(rows[7], ("Undo / Redo", undo_redo.into()));
+        assert_eq!(rows[6], ("Save and close", save_close.into()));
+        assert_eq!(rows[8], ("Undo / Redo", undo_redo.into()));
     }
 }

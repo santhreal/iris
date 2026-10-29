@@ -332,7 +332,7 @@ pub fn open(
                 current: None,
                 tool: Tool::Pen,
                 stroke: 1,
-                color: COLORS[5],
+                color: COLORS[5].0,
                 text_entry: None,
                 caret_started: Instant::now(),
                 caret_timer: false,
