@@ -74,8 +74,11 @@ fn a_panic_on_any_thread_is_written_to_the_log() {
             .lines()
             .find(|l| l.contains(&format!("panic on thread '{thread}'")))
             .unwrap_or_else(|| panic!("no line for the panic on '{thread}' in:\n{log}"));
+        // `file!()` is the path the panic's location reports, with the
+        // platform's separators.
+        let at = format!("at {}:", file!());
         assert!(
-            line.contains("at src/log/tests.rs:") && line.ends_with(message),
+            line.contains(&at) && line.ends_with(message),
             "the panic on '{thread}' is written as {line:?}"
         );
     }
