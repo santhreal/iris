@@ -23,11 +23,13 @@
 //! - AppImage tools: appimagetool and the type2-runtime came from the
 //!   moving `continuous` releases unchecked; both are now tagged
 //!   releases checked against recorded hashes.
+//! - DMG: one transient `hdiutil create` "Resource busy" failed the
+//!   macOS build; that error alone is retried, bounded.
 //!
 //! Not covered: building the rpm and the AppImage (rpmbuild and the real
 //! tool downloads are not on the test runners; the package workflow
-//! builds and install-checks both), the DMG (hdiutil or genisoimage), and
-//! the NSIS installer (makensis).
+//! builds and install-checks both), the DMG image itself (hdiutil or
+//! genisoimage), and the NSIS installer (makensis).
 
 #![cfg(target_os = "linux")]
 
@@ -1119,6 +1121,107 @@ fn source_download_bounds_persistent_tls_eof() {
         0,
         "a failed download left a final or partial payload"
     );
+}
+
+/// WHY: `hdiutil create` fails with "Resource busy" when another process
+/// holds the staged files or a disk image device for a moment, as on a
+/// shared macOS runner, and that one error failed the whole DMG build.
+/// make_dmg.sh now retries that error alone, at most five attempts with
+/// a growing pause, and fails at once on any other error. These cases run
+/// the script with an `hdiutil` and a `sleep` on PATH that follow a script
+/// of results and log every call. They do not run the real hdiutil.
+fn dmg_case(results: &str) -> (Output, String, String, PathBuf, tempfile::TempDir) {
+    require(&["bash", "sed", "wc"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let shim = dir.path().join("bin");
+    std::fs::create_dir(&shim).expect("mkdir shims");
+    fixture(
+        &shim,
+        "hdiutil",
+        br#"#!/bin/sh
+for last; do :; done
+n=$(($(wc -l <"$HDIUTIL_LOG") + 1))
+printf '%s\n' "$n" >>"$HDIUTIL_LOG"
+result=$(printf '%s\n' $HDIUTIL_RESULTS | sed -n "${n}p")
+case $result in
+  ok) : >"$last"; echo "created: $last" ;;
+  busy) echo "hdiutil: create failed - Resource busy" >&2; exit 1 ;;
+  *) echo "hdiutil: create failed - No space left on device" >&2; exit 1 ;;
+esac
+"#,
+    );
+    fixture(
+        &shim,
+        "sleep",
+        b"#!/bin/sh\nprintf '%s\\n' \"$1\" >>\"$SLEEP_LOG\"\n",
+    );
+    let app = dir.path().join("iris.app");
+    let macos = app.join("Contents/MacOS");
+    std::fs::create_dir_all(&macos).expect("mkdir app bundle");
+    fixture(&macos, "iris", b"#!/bin/sh\n");
+    let out_dir = dir.path().join("out");
+    let (calls, sleeps) = (dir.path().join("calls"), dir.path().join("sleeps"));
+    std::fs::write(&calls, b"").expect("create call log");
+    std::fs::write(&sleeps, b"").expect("create sleep log");
+    let out = bash(
+        "022",
+        "export PATH=\"$1:$PATH\" HDIUTIL_LOG=\"$2\" SLEEP_LOG=\"$3\" HDIUTIL_RESULTS=\"$4\"\n\
+         exec bash packaging/macos/make_dmg.sh --app \"$5\" --out \"$6\" --version 0.1.0 --skip-sha",
+        &[
+            shim.as_os_str(),
+            calls.as_os_str(),
+            sleeps.as_os_str(),
+            OsStr::new(results),
+            app.as_os_str(),
+            out_dir.as_os_str(),
+        ],
+    );
+    let calls = std::fs::read_to_string(&calls).expect("call log");
+    let sleeps = std::fs::read_to_string(&sleeps).expect("sleep log");
+    let dmg = out_dir.join("iris-0.1.0-macos-universal.dmg");
+    (out, calls, sleeps, dmg, dir)
+}
+
+#[test]
+fn dmg_build_recovers_after_a_busy_resource() {
+    let (out, calls, sleeps, dmg, _dir) = dmg_case("busy busy ok");
+    assert_success("build the DMG after two busy attempts", &out);
+    assert_eq!(calls, "1\n2\n3\n");
+    assert_eq!(sleeps, "1\n2\n");
+    assert!(dmg.is_file(), "no disk image at {}", dmg.display());
+}
+
+#[test]
+fn dmg_build_fails_at_once_on_another_error() {
+    let (out, calls, sleeps, dmg, _dir) = dmg_case("full ok");
+    assert!(!out.status.success(), "a full disk unexpectedly succeeded");
+    assert_eq!(
+        calls, "1\n",
+        "an error other than a busy resource was retried"
+    );
+    assert_eq!(sleeps, "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("No space left on device")
+            && stderr.contains("Error: hdiutil create failed after 1 attempt(s)"),
+        "the failure does not show hdiutil's error and the attempts:\n{stderr}"
+    );
+    assert!(!dmg.exists(), "a failed build left {}", dmg.display());
+}
+
+#[test]
+fn dmg_build_bounds_a_persistent_busy_resource() {
+    let (out, calls, sleeps, dmg, _dir) = dmg_case("busy busy busy busy busy ok");
+    assert!(!out.status.success(), "a sixth attempt was made");
+    assert_eq!(calls, "1\n2\n3\n4\n5\n");
+    assert_eq!(sleeps, "1\n2\n3\n4\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Resource busy")
+            && stderr.contains("Error: hdiutil create failed after 5 attempt(s)"),
+        "the failure does not show hdiutil's error and the attempts:\n{stderr}"
+    );
+    assert!(!dmg.exists(), "a failed build left {}", dmg.display());
 }
 
 /// WHY: the FFmpeg source came from ffmpeg.org alone. When ffmpeg.org

@@ -65,7 +65,19 @@ if command -v hdiutil >/dev/null 2>&1; then
   if command -v SetFile >/dev/null 2>&1; then
     SetFile -a C "$STAGING_DIR" 2>/dev/null || true
   fi
-  hdiutil create -volname iris -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH"
+  # hdiutil fails with "Resource busy" while another process holds the
+  # staged files or a disk image device; retry that error only, bounded.
+  attempt=1
+  until out=$(hdiutil create -volname iris -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH" 2>&1); do
+    printf '%s\n' "$out" >&2
+    if [[ "$out" != *"Resource busy"* || $attempt -ge 5 ]]; then
+      echo "Error: hdiutil create failed after $attempt attempt(s)" >&2
+      exit 1
+    fi
+    sleep "$attempt"
+    attempt=$((attempt + 1))
+  done
+  printf '%s\n' "$out"
 elif command -v genisoimage >/dev/null 2>&1; then
   genisoimage -V iris -D -R -apple -no-pad -o "$DMG_PATH" "$STAGING_DIR"
 elif command -v mkisofs >/dev/null 2>&1; then
