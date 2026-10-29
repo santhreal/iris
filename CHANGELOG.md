@@ -15,6 +15,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The annotation editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops.
 - Undo and redo in the editor cover crops, rotations, flips, and Clear Markup, and undoing a crop or transformation restores the previous image with its annotations editable.
 - `Ctrl+V` or `Cmd+V` in the editor's text entry and in a Settings text field appends the clipboard's text as one line.
+- `Ctrl+Backspace` or `Option+Backspace` in the editor's text entry and in a Settings text field deletes the last word, and `Cmd+Backspace` deletes the whole text.
 - Window and region recording through ffmpeg writes MP4, GIF, or WebM, with pause, a microphone toggle, and an indicator chip that is excluded from the recording where the platform allows it.
 - The capture library shows every capture in a thumbnail grid with multiple selection, file drag-out, copy, and reveal in the file manager.
 - The library has keyboard navigation, a context menu on each card, and a Quick Look preview on `Space`.

@@ -151,17 +151,26 @@ pub fn folder_field(
 }
 
 /// Apply a key press to the buffer of a one-line text entry: Backspace
-/// removes the last character, Ctrl+V or Cmd+V appends the text
-/// `clipboard` returns as one line, and a key that types a character
-/// without Ctrl or Cmd appends it. Returns whether the key edited the
-/// buffer; the caller restarts its caret or clears a rejection.
+/// removes the last character, Ctrl+Backspace or Alt+Backspace the last
+/// word (`pop_word`), and Cmd+Backspace the whole line; Ctrl+V or Cmd+V
+/// appends the text `clipboard` returns as one line, and a key that
+/// types a character without Ctrl or Cmd appends it. Returns whether
+/// the key edited the buffer; the caller restarts its caret or clears a
+/// rejection.
 pub fn edit_line(
     buffer: &mut String,
     keystroke: &Keystroke,
     clipboard: impl FnOnce() -> Option<String>,
 ) -> bool {
-    let meta = keystroke.modifiers.control || keystroke.modifiers.platform;
+    let mods = &keystroke.modifiers;
+    let meta = mods.control || mods.platform;
     match keystroke.key.as_str() {
+        "backspace" if mods.platform => {
+            let edited = !buffer.is_empty();
+            buffer.clear();
+            edited
+        }
+        "backspace" if mods.control || mods.alt => pop_word(buffer),
         "backspace" => buffer.pop().is_some(),
         "v" if meta => clipboard().is_some_and(|text| push_one_line(buffer, &text)),
         _ => match (&keystroke.key_char, meta) {
@@ -172,6 +181,22 @@ pub fn edit_line(
             _ => false,
         },
     }
+}
+
+/// Remove the last word of `buffer` and what follows it: the trailing
+/// run of characters that are not letters or digits, then the run of
+/// letters and digits before it, as readline's `backward-kill-word`.
+/// Returns whether anything was removed.
+fn pop_word(buffer: &mut String) -> bool {
+    let len = buffer.len();
+    let word_end = buffer
+        .trim_end_matches(|c: char| !c.is_alphanumeric())
+        .len();
+    let start = buffer[..word_end]
+        .trim_end_matches(char::is_alphanumeric)
+        .len();
+    buffer.truncate(start);
+    start < len
 }
 
 /// Append pasted `text` to `buffer` as one line: each line break or tab
@@ -283,6 +308,51 @@ mod tests {
                 after(start, &keystroke, clipboard),
                 (buffer.to_string(), edited),
                 "{start:?} + {keystroke:?} with {clipboard:?}"
+            );
+        }
+    }
+
+    /// Backspace with Ctrl or Alt removes the last word and what follows
+    /// it, a word being letters and digits; with Cmd it removes the line.
+    /// A plain Backspace removes one character, whatever it is.
+    #[test]
+    fn a_modified_backspace_removes_the_last_word_or_the_line() {
+        let backspace = |control, alt, platform| Keystroke {
+            modifiers: Modifiers {
+                control,
+                alt,
+                platform,
+                ..Modifiers::default()
+            },
+            key: "backspace".into(),
+            key_char: None,
+        };
+        let (plain, ctrl, alt, cmd) = (
+            backspace(false, false, false),
+            backspace(true, false, false),
+            backspace(false, true, false),
+            backspace(false, false, true),
+        );
+        let cases = [
+            ("hello world", &ctrl, "hello ", true),
+            ("hello world", &alt, "hello ", true),
+            ("hello world  ", &ctrl, "hello ", true),
+            ("~/Pictures/Screenshots/", &ctrl, "~/Pictures/", true),
+            ("{date}_{time}", &alt, "{date}_{", true),
+            ("naïve café", &ctrl, "naïve ", true),
+            ("shot2024", &ctrl, "", true),
+            ("--- ", &ctrl, "", true),
+            ("", &ctrl, "", false),
+            ("ab cd", &cmd, "", true),
+            ("", &cmd, "", false),
+            ("café", &plain, "caf", true),
+        ];
+        for (start, keystroke, buffer, edited) in cases {
+            assert_eq!(
+                after(start, keystroke, None),
+                (buffer.to_string(), edited),
+                "{start:?} + {:?}",
+                keystroke.modifiers
             );
         }
     }

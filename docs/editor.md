@@ -59,7 +59,7 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 
 - Type characters to append them to the text buffer.
 - `Ctrl+V` or `Cmd+V` appends the clipboard's text. A label is one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed.
-- `Backspace` deletes the preceding character.
+- `Backspace` deletes the preceding character. `Ctrl+Backspace` (`Option+Backspace` on macOS) deletes the last word, a run of letters and digits, with the spaces and punctuation after it, and `Cmd+Backspace` on macOS deletes the whole label.
 - `Enter` commits the text to the canvas.
 - `Escape` cancels text entry and discards uncommitted buffer text.
 - Clicking the backdrop outside the canvas commits non-empty text.
