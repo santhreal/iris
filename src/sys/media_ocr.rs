@@ -21,9 +21,7 @@ pub(crate) fn recognize_text(source: &Path) -> Result<String, String> {
     let img = within(img, OcrEngine::MaxImageDimension().map_err(failed)?);
     let (w, h) = img.dimensions();
     let mut bgra = img.into_raw();
-    for px in bgra.chunks_exact_mut(4) {
-        px.swap(0, 2);
-    }
+    crate::pixel::swap_rb_in_place(&mut bgra);
     let buffer = CryptographicBuffer::CreateFromByteArray(&bgra).map_err(failed)?;
     let bitmap =
         SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, w as i32, h as i32)
