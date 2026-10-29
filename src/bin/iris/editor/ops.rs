@@ -379,6 +379,17 @@ impl Editor {
         self.begin_close(window, cx);
     }
 
+    /// A close from the close control or the window manager: save and
+    /// close, as `Ctrl+W` does. An editor whose image never decoded has
+    /// nothing to save and closes.
+    pub(crate) fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.base_ready {
+            self.finish(window, cx);
+        } else {
+            self.begin_close(window, cx);
+        }
+    }
+
     pub(crate) fn copy_text_ocr(&mut self, cx: &mut Context<Self>) {
         let path = self.path.clone();
         // Tesseract takes hundreds of ms on a large capture; run it

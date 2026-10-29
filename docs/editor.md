@@ -90,13 +90,14 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 
 ## Save and Discard
 
-- **Save and close** (`Ctrl+S`, `Cmd+S`, `Ctrl+W`, `Cmd+W`, `Enter` without active crop, or **Done**):
+- **Save and close** (`Ctrl+S`, `Cmd+S`, `Ctrl+W`, `Cmd+W`, `Enter` without active crop, **Done**, the close control, or the window manager's close):
   1. Commits any active text entry and in-progress drawing action.
   2. Encodes the composite RGBA image to PNG bytes on a background thread.
   3. Overwrites the original image file at its path on disk.
   4. Generates a fresh thumbnail and updates the library entry in `library.json`.
   5. Copies the composite image pixels to the system clipboard.
   6. Initiates a 160 ms fade outro and closes the editor window.
+- Before the image finishes decoding, the close control and the window manager's close close the editor without saving, and the other save keys and **Done** report that the image is still decoding.
 - **Discard changes** (`Escape`, or **Discard** in the More menu):
   - Pressing `Escape` when the shortcut sheet, the Copy or More menu, an active crop rectangle, or a selected action is open dismisses that overlay or selection.
   - Pressing `Escape` with no active overlay or selection, or clicking **Discard**, fades out the window over 160 ms and closes it without writing changes to disk and without prompting for confirmation.

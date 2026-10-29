@@ -109,6 +109,9 @@ pub struct Settings {
     pub(super) scroll: ScrollHandle,
     /// An update check started in this window is running.
     pub(super) checking: bool,
+    /// What a close from the close control or the window manager runs:
+    /// `close`. None outside a window.
+    pub(super) on_close: Option<widgets::OnClose>,
 }
 
 impl Settings {
@@ -128,6 +131,7 @@ impl Settings {
             focus,
             scroll: ScrollHandle::new(),
             checking: false,
+            on_close: None,
         }
     }
 
@@ -145,6 +149,13 @@ impl Settings {
             window.resize(size(px(panes::WIDTH), px(pane.height())));
         }
         true
+    }
+
+    /// Close the window, applying the edit that is open first, as a click
+    /// elsewhere would. A rejected value is dropped with the window.
+    pub(super) fn close(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
+        self.blur();
+        window.remove_window();
     }
 }
 
@@ -205,13 +216,15 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     }
                 })
                 .detach();
-                Settings::new(
+                let mut settings = Settings::new(
                     Config::load(),
                     crate::sys::autostart::enabled(),
                     app::offered_release(),
                     Some(focus),
                 )
-                .with_last_checked()
+                .with_last_checked();
+                settings.on_close = Some(widgets::close_route(window, cx, Settings::close));
+                settings
             })
         },
     )
@@ -318,7 +331,11 @@ impl Render for Settings {
             .on_key_down(cx.listener(Self::on_key))
             .child(widgets::toolbar_frame(
                 window,
-                widgets::Toolbar::default().center(tabs),
+                widgets::Toolbar {
+                    on_close: self.on_close.clone(),
+                    ..widgets::Toolbar::default()
+                }
+                .center(tabs),
                 false,
                 content,
             ));

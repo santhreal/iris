@@ -33,7 +33,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{chord, click, client, windows_of};
+use x11::{chord, click, client, control_left_of, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 const SETTINGS: &str = "Settings - iris";
@@ -115,31 +115,14 @@ fn a_pop_up_opens_with_its_selected_row_over_its_button() {
         ((h as f32 - CAPTURE_H * scale).abs() < 1.0).then_some(scale)
     });
     daemon.settle();
-    // The button: the run of non-card pixels left of the card's right
-    // padding on the row's center line.
+    // The button: the control left of the card's right padding on the
+    // row's center line.
     let y = (DISMISS_Y * scale) as usize;
     let (left, right) = {
         let (w, _, px) = client(&conn, root, settings);
         let row = &px[y * w..(y + 1) * w];
-        let card = row[w / 2];
-        let right = (0..w - (INSET * scale) as usize - 1)
-            .rev()
-            .find(|&x| row[x] != card)
-            .expect("the Dismiss after row has a button");
-        let mut left = right;
-        let mut gap = 0;
-        for x in (0..right).rev() {
-            if row[x] == card {
-                gap += 1;
-                if gap == 8 {
-                    break;
-                }
-            } else {
-                gap = 0;
-                left = x;
-            }
-        }
-        (left, right)
+        control_left_of(row, row[w / 2], w - (INSET * scale) as usize - 1)
+            .expect("the Dismiss after row has a button")
     };
     assert!(
         (right - left) as f32 >= BUTTON_W * scale - 2.0,

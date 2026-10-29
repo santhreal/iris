@@ -181,14 +181,14 @@ The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`C
 | **Shortcuts** | Global hotkeys for a new screenshot and recording; the selection overlay's cancel and confirm keys |
 | **Updates** | Automatic update checks, update channel, the running version, the time of the last check, **Check Now**, and **Install** once a check finds a newer release (see [Updates](updates.md#settings)) |
 
-Press `Ctrl+W` (`Cmd+W` on macOS) or `Escape` to close the window. Drag the toolbar to move it.
+Press `Ctrl+W` (`Cmd+W` on macOS) or `Escape`, or click the close control, to close the window. Drag the toolbar to move it.
 
 ### Applying Changes
 
 Each change writes `config.toml` through `Config::store` at once, and the in-memory configuration cache updates with the directories expanded. The window has no Save button.
 
 - A switch or pop-up button applies on click.
-- A text field applies on `Enter`, on a click elsewhere in the window, on a tab change, and when the window loses focus. `Escape` discards the typed text. A directory must be an absolute path or start with `~`, the file name template must include `{date}` or `{time}`, and frames per second must be an integer from 1 to 120. A rejected value stays in the field with the reason beside it, and the window keeps the current tab until the value is corrected or discarded.
+- A text field applies on `Enter`, on a click elsewhere in the window, on a tab change, when the window loses focus, and when the window closes by `Ctrl+W`, the close control, or the window manager. `Escape` discards the typed text. A directory must be an absolute path or start with `~`, the file name template must include `{date}` or `{time}`, and frames per second must be an integer from 1 to 120. A rejected value stays in the field with the reason beside it, and the window keeps the current tab until the value is corrected or discarded. Closing the window drops a rejected value.
 - In a text field, `Backspace` deletes the last character and `Ctrl+V` (`Cmd+V` on macOS) appends the clipboard's text as one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed.
 - **Choose…** opens the system folder picker. When the picker cannot open, the path field opens for typing and the error shows in the window.
 - A shortcut field records the next key combination pressed while it is selected, `Escape` included. A combination that the other global hotkey, or the other overlay key, already holds is rejected with the name of the shortcut that holds it, and recording continues. A changed global hotkey re-registers in the running daemon at once.

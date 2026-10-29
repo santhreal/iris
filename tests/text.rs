@@ -33,7 +33,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{click, client, tap, windows_of};
+use x11::{click, client, extent, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 /// The editor's title on `plain.png`.
@@ -165,15 +165,8 @@ fn the_saved_file_sets_text_and_counters_as_the_canvas_does() {
         windows_of(&conn, root, EDITOR).first().copied()
     });
     let (origin, scale) = daemon.until("the editor to draw the image", || {
-        let (w, _, px) = client(&conn, root, editor);
-        let bgr = [IMAGE[2], IMAGE[1], IMAGE[0]];
-        let (mut left, mut top, mut right) = (usize::MAX, usize::MAX, 0);
-        for (i, _) in px.iter().enumerate().filter(|&(_, &p)| p == bgr) {
-            left = left.min(i % w);
-            top = top.min(i / w);
-            right = right.max(i % w);
-        }
-        let scale = (right + 1).saturating_sub(left) as f32 / SIZE.0 as f32;
+        let (left, top, right, _) = extent(&client(&conn, root, editor), IMAGE)?;
+        let scale = (right + 1 - left) as f32 / SIZE.0 as f32;
         (scale > 0.25).then_some(((left, top), scale))
     });
     daemon.settle();

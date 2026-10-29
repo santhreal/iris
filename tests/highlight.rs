@@ -33,7 +33,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{client, drag, tap, windows_of};
+use x11::{client, drag, extent, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 /// The editor's title on `plain.png`.
@@ -72,8 +72,10 @@ fn a_highlight_on_the_canvas_blends_its_color_once() {
     let editor = daemon.until("the editor to open", || {
         windows_of(&conn, root, EDITOR).first().copied()
     });
+    // The image, once it spans 200 by 100 px.
     let (left, top, right, bottom) = daemon.until("the editor to draw the image", || {
-        image_extent(&client(&conn, root, editor))
+        extent(&client(&conn, root, editor), IMAGE)
+            .filter(|&(left, top, right, bottom)| right - left >= 200 && bottom - top >= 100)
     });
     daemon.settle();
     let at = conn
@@ -127,25 +129,4 @@ fn a_highlight_on_the_canvas_blends_its_color_once() {
         row.len(),
         &off[..off.len().min(8)]
     );
-}
-
-/// The left, top, right and bottom of the pixels of the image's color in
-/// the window `(w, h, px)`, once they span 200 by 100 px.
-fn image_extent(
-    &(w, h, ref px): &(usize, usize, Vec<[u8; 3]>),
-) -> Option<(usize, usize, usize, usize)> {
-    let bgr = [IMAGE[2], IMAGE[1], IMAGE[0]];
-    let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
-    for y in 0..h {
-        for x in 0..w {
-            if px[y * w + x] == bgr {
-                left = left.min(x);
-                top = top.min(y);
-                right = right.max(x);
-                bottom = bottom.max(y);
-            }
-        }
-    }
-    (right.saturating_sub(left) >= 200 && bottom.saturating_sub(top) >= 100)
-        .then_some((left, top, right, bottom))
 }

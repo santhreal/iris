@@ -47,7 +47,9 @@ pub use self::menu::{
 pub use self::resize::resize_edges;
 pub use self::scroll::scroll_y;
 pub use self::tooltip::tip;
-pub use self::window_frame::{toolbar_bar, toolbar_frame, window_corner, window_edge, Toolbar};
+pub use self::window_frame::{
+    close_route, toolbar_bar, toolbar_frame, window_corner, window_edge, OnClose, Toolbar,
+};
 pub use self::window_move::{move_handle, Double};
 pub use self::window_open::open_window;
 

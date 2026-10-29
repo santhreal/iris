@@ -145,6 +145,9 @@ pub struct Editor {
     pub(crate) space_pan: bool,
     /// Rect/Ellipse fill toggle for new shapes.
     pub(crate) fill: bool,
+    /// What a close from the close control or the window manager runs:
+    /// `close`.
+    pub(crate) on_close: crate::widgets::OnClose,
 }
 
 /// The editor window's minimum logical size, where its resize stops:
@@ -301,8 +304,9 @@ pub fn open(
             tabbing_identifier: None,
             ..Default::default()
         },
-        |_, cx| {
-            cx.new(|_| Editor {
+        |window, cx| {
+            cx.new(|cx| Editor {
+                on_close: crate::widgets::close_route(window, cx, Editor::close),
                 dims: SharedString::from(format!("{bw} × {bh}")),
                 filename: SharedString::from(filename),
                 path: path.to_path_buf(),

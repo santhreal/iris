@@ -30,7 +30,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{chord, click, client, tap, windows_of};
+use x11::{chord, click, client, control_left_of, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 const SETTINGS: &str = "Settings - iris";
@@ -98,30 +98,15 @@ fn a_paste_into_a_settings_field_writes_the_clipboard_as_one_line() {
         windows_of(&conn, root, SETTINGS).first().copied()
     });
     daemon.settle();
-    // The field: the run of non-card pixels left of the card's right
-    // padding on the row's center line.
+    // The field: the control left of the card's right padding on the
+    // row's center line.
     let (w, _, px) = client(&conn, root, settings);
     let scale = w as f32 / WIDTH;
     let y = (TEMPLATE_Y * scale) as usize;
     let row = &px[y * w..(y + 1) * w];
     let card = row[w / 2 - (40.0 * scale) as usize];
-    let right = (0..w - (INSET * scale) as usize - 1)
-        .rev()
-        .find(|&x| row[x] != card)
+    let (left, right) = control_left_of(row, card, w - (INSET * scale) as usize - 1)
         .expect("the File name row has a field");
-    let mut left = right;
-    let mut gap = 0;
-    for x in (0..right).rev() {
-        if row[x] == card {
-            gap += 1;
-            if gap == 8 {
-                break;
-            }
-        } else {
-            gap = 0;
-            left = x;
-        }
-    }
     assert!(
         (right - left) as f32 >= FIELD_W * scale - 4.0,
         "the File name field spans {left}..={right}: it is {FIELD_W} px wide"

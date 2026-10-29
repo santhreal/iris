@@ -2,6 +2,8 @@
 //! that is the window's title bar, and the macOS window controls, or a
 //! square root with no controls under a platform frame.
 
+use std::rc::Rc;
+
 use gpui::*;
 
 use super::{move_handle, Double};
@@ -31,11 +33,41 @@ fn win_dot(id: &'static str, color: Rgba) -> Stateful<Div> {
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
+/// What the close control runs. A window that has work to finish on
+/// close (a save, a typed value) runs the same handler from its close
+/// shortcut and from the window manager's close.
+pub type OnClose = Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// Route every close of `window` through `f` on the view behind `cx`:
+/// the returned handler is for the close control (`Toolbar::on_close`)
+/// and the close shortcut, and the window manager's close runs it too.
+/// `f` removes the window when it is done, at once or after its outro;
+/// a window whose view is gone closes at once.
+pub fn close_route<V: 'static>(
+    window: &Window,
+    cx: &mut Context<V>,
+    f: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
+) -> OnClose {
+    let f = Rc::new(f);
+    let view = cx.entity().downgrade();
+    let (wm_f, wm_view) = (f.clone(), view.clone());
+    window.on_window_should_close(cx, move |window, cx| {
+        wm_view
+            .update(cx, |view, cx| wm_f(view, window, cx))
+            .is_err()
+    });
+    Rc::new(move |window, cx| {
+        if view.update(cx, |view, cx| f(view, window, cx)).is_err() {
+            window.remove_window();
+        }
+    })
+}
+
 /// The three window controls, macOS order and register: close,
 /// minimize, zoom. Every Normal window offers the same controls in the
 /// same place. A fixed-size window gets a dimmed, inert zoom control,
-/// as on macOS.
-fn traffic_lights(resizable: bool) -> Div {
+/// as on macOS. Close runs `on_close`, or removes the window.
+fn traffic_lights(resizable: bool, on_close: Option<OnClose>) -> Div {
     let zoom = if resizable {
         win_dot("win-zoom", theme::WIN_ZOOM)
             .on_click(|_, window, _| crate::sys::window::zoom_control(window))
@@ -53,22 +85,27 @@ fn traffic_lights(resizable: bool) -> Div {
         .flex_shrink_0()
         .items_center()
         .gap(px(DOT_GAP))
-        .child(
-            win_dot("win-close", theme::WIN_CLOSE).on_click(|_, window, _| window.remove_window()),
-        )
+        .child(win_dot("win-close", theme::WIN_CLOSE).on_click(
+            move |_, window, cx| match &on_close {
+                Some(close) => close(window, cx),
+                None => window.remove_window(),
+            },
+        ))
         .child(win_dot("win-min", theme::WIN_MIN).on_click(|_, window, _| window.minimize_window()))
         .child(zoom)
 }
 
 /// What a unified toolbar holds besides the window controls: a title
 /// with an optional caption line under it at the leading edge, an
-/// optional element centered in the window, and a trailing cluster.
+/// optional element centered in the window, a trailing cluster, and
+/// what the close control runs.
 #[derive(Default)]
 pub struct Toolbar {
     pub title: SharedString,
     pub caption: Option<SharedString>,
     pub center: Option<AnyElement>,
     pub trailing: Vec<AnyElement>,
+    pub on_close: Option<OnClose>,
 }
 
 impl Toolbar {
@@ -91,6 +128,11 @@ impl Toolbar {
 
     pub fn trailing(mut self, el: impl IntoElement) -> Self {
         self.trailing.push(el.into_any_element());
+        self
+    }
+
+    pub fn on_close(mut self, on_close: OnClose) -> Self {
+        self.on_close = Some(on_close);
         self
     }
 
@@ -156,7 +198,7 @@ pub fn toolbar_frame(
                     .items_center()
                     .pl(px(DOT_INSET))
                     .child(move_handle(double))
-                    .child(traffic_lights(resizable)),
+                    .child(traffic_lights(resizable, toolbar.on_close)),
             )
             .children(window_edge(window, 12., 1.0));
     }
@@ -205,6 +247,7 @@ pub fn toolbar_bar(window: &Window, toolbar: Toolbar, resizable: bool) -> Statef
         caption,
         center,
         trailing,
+        on_close,
     } = toolbar;
     let mut cluster = div()
         .flex_1()
@@ -247,7 +290,7 @@ pub fn toolbar_bar(window: &Window, toolbar: Toolbar, resizable: bool) -> Statef
         .flex()
         .items_center()
         .gap(px(AFTER_DOTS - DOT_INSET - 3.0 * DOT - 2.0 * DOT_GAP))
-        .children((!framed).then(|| traffic_lights(resizable)))
+        .children((!framed).then(|| traffic_lights(resizable, on_close)))
         .child(titles);
     div()
         .id("frame-toolbar")

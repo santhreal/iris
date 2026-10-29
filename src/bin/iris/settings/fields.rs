@@ -380,8 +380,7 @@ impl Settings {
         }
         let meta = ks.modifiers.control || ks.modifiers.platform;
         if meta && ks.key == "w" {
-            self.blur();
-            window.remove_window();
+            self.close(window, cx);
             return;
         }
         if let Some(pane) = Pane::for_key(&ks.key).filter(|_| meta) {

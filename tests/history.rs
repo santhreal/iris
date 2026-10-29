@@ -38,7 +38,7 @@ use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, xvfb_sized, Daemon, Server};
-use x11::{chord, click, client, drag, tap, windows_of};
+use x11::{chord, click, client, drag, extent, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 /// The editor's title on `plain.png`.
@@ -113,25 +113,6 @@ struct Session {
     _xvfb: Server,
 }
 
-/// The left, top, width, and height of the image's color in a client
-/// capture.
-fn image_extent((w, _, px): &(usize, usize, Vec<[u8; 3]>)) -> (usize, usize, usize, usize) {
-    let bgr = [IMAGE[2], IMAGE[1], IMAGE[0]];
-    let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
-    for (i, _) in px.iter().enumerate().filter(|&(_, &p)| p == bgr) {
-        left = left.min(i % w);
-        top = top.min(i / w);
-        right = right.max(i % w);
-        bottom = bottom.max(i / w);
-    }
-    (
-        left,
-        top,
-        (right + 1).saturating_sub(left),
-        (bottom + 1).saturating_sub(top),
-    )
-}
-
 impl Session {
     fn open(case: &str) -> Option<Session> {
         if !enabled() {
@@ -154,8 +135,8 @@ impl Session {
             windows_of(&conn, root, EDITOR).first().copied()
         });
         let (origin, scale) = daemon.until("the editor to draw the image", || {
-            let (left, top, w, _) = image_extent(&client(&conn, root, editor));
-            let scale = w as f32 / SIZE.0 as f32;
+            let (left, top, right, _) = extent(&client(&conn, root, editor), IMAGE)?;
+            let scale = (right + 1 - left) as f32 / SIZE.0 as f32;
             (scale > 0.25).then_some(((left, top), scale))
         });
         daemon.settle();
@@ -356,8 +337,8 @@ fn undo_turns_a_rotated_image_and_its_marks_back() {
     session
         .daemon
         .until("Rotate Right to stand the image on its side", || {
-            let (_, _, w, h) = image_extent(&session.canvas());
-            (h > w).then_some(())
+            let (left, top, right, bottom) = extent(&session.canvas(), IMAGE)?;
+            (bottom - top > right - left).then_some(())
         });
     session.keys(&[CONTROL, Z]);
     assert_original(&session.save(), "after undoing the rotation");

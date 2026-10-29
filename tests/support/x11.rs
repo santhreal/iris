@@ -77,6 +77,45 @@ pub fn client(conn: &impl Connection, root: u32, window: u32) -> (usize, usize, 
     (w, h, px)
 }
 
+/// The left, top, right, and bottom pixels, inclusive, of color `[r, g,
+/// b]` in a client capture (`client`), or `None` when it shows none.
+pub fn extent(
+    (w, _, px): &(usize, usize, Vec<[u8; 3]>),
+    [r, g, b]: [u8; 3],
+) -> Option<(usize, usize, usize, usize)> {
+    let mut found = None;
+    for (i, _) in px.iter().enumerate().filter(|&(_, &p)| p == [b, g, r]) {
+        let (x, y) = (i % w, i / w);
+        let (left, top, right, bottom) = found.get_or_insert((x, y, x, y));
+        *left = (*left).min(x);
+        *top = (*top).min(y);
+        *right = (*right).max(x);
+        *bottom = (*bottom).max(y);
+    }
+    found
+}
+
+/// The pixel span of the control that ends nearest left of `before` on
+/// one row of pixels: from the first pixel unlike `ground` to the left
+/// edge of the run before 8 pixels of `ground`, its label ink included.
+/// `None` when the row is `ground` up to `before`.
+pub fn control_left_of(row: &[[u8; 3]], ground: [u8; 3], before: usize) -> Option<(usize, usize)> {
+    let right = (0..before).rev().find(|&x| row[x] != ground)?;
+    let (mut left, mut gap) = (right, 0);
+    for x in (0..right).rev() {
+        if row[x] == ground {
+            gap += 1;
+            if gap == 8 {
+                break;
+            }
+        } else {
+            gap = 0;
+            left = x;
+        }
+    }
+    Some((left, right))
+}
+
 /// Move the pointer to `at` and click the first button, through XTest.
 pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
     conn.xtest_fake_input(
@@ -169,6 +208,22 @@ pub fn chord(conn: &impl Connection, root: u32, keysyms: &[u32]) {
     for &keycode in keycodes.iter().rev() {
         fake(xproto::KEY_RELEASE_EVENT, keycode);
     }
+    conn.flush().unwrap();
+}
+
+/// Ask `window` to close as a window manager does when its close button
+/// is pressed: a `WM_PROTOCOLS` client message holding
+/// `WM_DELETE_WINDOW`.
+pub fn wm_close(conn: &impl Connection, window: u32) {
+    let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
+    let event = xproto::ClientMessageEvent::new(
+        32,
+        window,
+        atom(b"WM_PROTOCOLS"),
+        [atom(b"WM_DELETE_WINDOW"), x11rb::CURRENT_TIME, 0, 0, 0],
+    );
+    conn.send_event(false, window, xproto::EventMask::NO_EVENT, event)
+        .unwrap();
     conn.flush().unwrap();
 }
 
