@@ -190,6 +190,9 @@ pub(crate) struct TextEntry {
     pub(crate) point: (f32, f32),
     pub(crate) buffer: String,
     pub(crate) buffer_str: SharedString,
+    /// The text mark this entry reopened, hidden while it is open; None
+    /// for a new label.
+    pub(crate) edits: Option<usize>,
 }
 
 /// One step of the editor's history.
@@ -303,14 +306,21 @@ impl Editor {
 
     /// Topmost action whose bbox contains `p`, for the Select tool.
     pub(crate) fn hit_action(&self, p: (f32, f32)) -> Option<usize> {
-        for (i, action) in self.actions.borrow().iter().enumerate().rev() {
-            let Some((x, y, w, h)) = action.bbox else {
-                continue;
-            };
-            if p.0 >= x && p.0 <= x + w && p.1 >= y && p.1 <= y + h {
-                return Some(i);
-            }
-        }
-        None
+        self.hit(p, |_| true)
+    }
+
+    /// Topmost text mark whose bbox contains `p`, for reopening it.
+    pub(crate) fn hit_text(&self, p: (f32, f32)) -> Option<usize> {
+        self.hit(p, |a| a.tool == Tool::Text)
+    }
+
+    fn hit(&self, p: (f32, f32), take: impl Fn(&Action) -> bool) -> Option<usize> {
+        let actions = self.actions.borrow();
+        actions.iter().rposition(|a| {
+            take(a)
+                && a.bbox.is_some_and(|(x, y, w, h)| {
+                    p.0 >= x && p.0 <= x + w && p.1 >= y && p.1 <= y + h
+                })
+        })
     }
 }

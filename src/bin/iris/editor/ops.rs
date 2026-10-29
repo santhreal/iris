@@ -5,7 +5,9 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use gpui::*;
 use iris_lib::history::{self, Edit};
 
-use super::action::{stroke_base, text_size, Action, Scene, Step, Tool, Transform, STROKE_MULT};
+use super::action::{
+    stroke_base, text_size, Action, Scene, Step, TextEntry, Tool, Transform, STROKE_MULT,
+};
 use super::raster::{pixelate_region_bgra, png_bytes, rasterize};
 use super::Editor;
 use crate::pipeline;
@@ -142,7 +144,11 @@ impl Editor {
         history::apply_inverse(&mut self.actions.borrow_mut(), edit);
     }
 
+    /// Undo the last step. An open text entry settles first: a label
+    /// being typed, or a change to a reopened one, is the step undone,
+    /// and no step shifts the mark a reopened entry stands for.
     pub(crate) fn undo(&mut self, cx: &mut Context<Self>) {
+        self.commit_text(true);
         let Some(step) = self.undos.pop() else {
             return;
         };
@@ -162,6 +168,7 @@ impl Editor {
     }
 
     pub(crate) fn redo(&mut self, cx: &mut Context<Self>) {
+        self.commit_text(true);
         let Some(step) = self.redos.pop() else {
             return;
         };
@@ -231,7 +238,9 @@ impl Editor {
     }
 
     /// Remove every committed action, as one undoable step.
+    /// An open text entry settles first, as for Undo.
     pub(crate) fn clear(&mut self) {
+        self.commit_text(true);
         if self.actions.borrow().is_empty() {
             return;
         }
@@ -669,14 +678,20 @@ impl Editor {
         let Some(entry) = self.text_entry.take() else {
             return;
         };
-        let value = entry.buffer.trim().to_string();
+        let value = entry.buffer.trim();
+        if let Some(i) = entry.edits {
+            if keep {
+                self.settle_text_edit(i, value);
+            }
+            return;
+        }
         if keep && !value.is_empty() {
             let mut action = Action {
                 tool: Tool::Text,
                 color: self.color,
                 width: stroke_base(self.img_w()),
                 points: Rc::new(vec![entry.point]),
-                text: Some(SharedString::from(value)),
+                text: Some(SharedString::from(value.to_string())),
                 font_size: text_size(self.img_w()),
                 filled: false,
                 blur_patch: None,
@@ -691,6 +706,57 @@ impl Editor {
             self.push_edit(Edit::Add(action.clone()));
             self.actions.borrow_mut().push(action);
         }
+    }
+
+    /// Reopen text mark `i` for typing: its text in an entry at its
+    /// point, in its color. The mark is hidden while the entry is open,
+    /// and committing the entry replaces it.
+    pub(crate) fn edit_text(&mut self, i: usize) {
+        let entry = {
+            let actions = self.actions.borrow();
+            let Some(a) = actions.get(i).filter(|a| a.tool == Tool::Text) else {
+                return;
+            };
+            let (Some(text), Some(&point)) = (a.text.clone(), a.points.first()) else {
+                return;
+            };
+            self.color = a.color;
+            TextEntry {
+                point,
+                buffer: text.to_string(),
+                buffer_str: text,
+                edits: Some(i),
+            }
+        };
+        self.selected = None;
+        self.move_drag = None;
+        self.text_entry = Some(entry);
+        self.caret_started = Instant::now();
+    }
+
+    /// Settle reopened text mark `i` with `value`: an empty value
+    /// removes the mark, and a new text or color replaces it, each as
+    /// one undo step. The same text in the same color leaves it.
+    fn settle_text_edit(&mut self, i: usize, value: &str) {
+        let Some(old) = self.actions.borrow().get(i).cloned() else {
+            return;
+        };
+        let edit = if value.is_empty() {
+            self.actions.borrow_mut().remove(i);
+            Edit::Remove(i, old)
+        } else {
+            if old.text.as_deref() == Some(value) && old.color == self.color {
+                return;
+            }
+            let mut new = old.clone();
+            new.text = Some(SharedString::from(value.to_string()));
+            new.color = self.color;
+            new.bbox = Self::compute_bbox(&new);
+            self.actions.borrow_mut()[i] = new.clone();
+            Edit::Move(i, old, new)
+        };
+        self.rebuild_for_edit(&edit);
+        self.push_edit(edit);
     }
 
     /// The centered fit origin for a given scale, before pan. Split out

@@ -144,6 +144,10 @@ const BRACKET_LEFT: u32 = 0x5b;
 const BRACKET_RIGHT: u32 = 0x5d;
 const F: u32 = 0x66;
 const THREE: u32 = 0x33;
+const B: u32 = 0x62;
+const BACKSPACE: u32 = 0xff08;
+const D: u32 = 0x64;
+const E: u32 = 0x65;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -355,6 +359,12 @@ impl Session {
     /// Open the More menu and run `item`.
     fn more(&self, item: MenuItem) {
         self.open_more();
+        click(&self.conn, self.root, self.more_row(item));
+        self.daemon.settle();
+    }
+
+    /// The center of row `item` in the open More menu.
+    fn more_row(&self, item: MenuItem) -> (i16, i16) {
         let w = self.canvas().0 as i16;
         let y = MENU_TOP
             + MENU_PAD
@@ -362,8 +372,68 @@ impl Session {
             + item.separators * MENU_SEPARATOR
             + MENU_ROW / 2;
         let x = w - MENU_CENTER_FROM_RIGHT;
-        click(&self.conn, self.root, (self.at.0 + x, self.at.1 + y));
-        self.daemon.settle();
+        (self.at.0 + x, self.at.1 + y)
+    }
+
+    /// The Undo and Redo buttons' centers. Ink is any pixel off the
+    /// bar's fill in its middle rows; left of Copy's chevron, the runs
+    /// of inked columns over 9 px apart are the Copy label, then the
+    /// Redo and Undo glyphs.
+    fn history_buttons(&self) -> [(i16, i16); 2] {
+        let chevron = (self.copy_button().0 - self.at.0) as usize;
+        let (w, _, px) = self.canvas();
+        let inked = |x: usize| {
+            (TOOLBAR_MID - 7..=TOOLBAR_MID + 7)
+                .any(|y| px[y * w + x].iter().any(|&c| c.abs_diff(43) > 24))
+        };
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for x in (0..chevron).rev().filter(|&x| inked(x)) {
+            match runs.last_mut() {
+                Some(run) if run.0 - x <= 9 => run.0 = x,
+                _ => runs.push((x, x)),
+            }
+        }
+        let label = runs.iter().position(|r| r.1 - r.0 > 20);
+        let glyphs = label.and_then(|i| runs.get(i + 1..i + 3));
+        let Some(&[redo, undo]) = glyphs else {
+            panic!("the Copy label, Redo, and Undo left of Copy's chevron: {runs:?}");
+        };
+        assert!(
+            redo.1 - redo.0 <= 18 && undo.1 - undo.0 <= 18,
+            "Redo and Undo are 16 px glyphs: {runs:?}"
+        );
+        [undo, redo].map(|(left, right)| {
+            (
+                self.at.0 + ((left + right) / 2) as i16,
+                self.at.1 + TOOLBAR_MID as i16,
+            )
+        })
+    }
+
+    /// With the Text tool, type `keysyms` as a label at LABEL and
+    /// commit it with Return. The caret blinks while the entry is open,
+    /// so the keys go in on a pause rather than on an idle daemon.
+    fn label(&self, keysyms: &[u32]) {
+        self.keys(&[T]);
+        click(&self.conn, self.root, self.screen_at(LABEL));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        for &keysym in keysyms {
+            tap(&self.conn, self.root, keysym);
+        }
+        self.keys(&[RETURN]);
+    }
+
+    /// The rightmost canvas column the red of a label at LABEL reaches.
+    fn label_end(&self) -> Option<usize> {
+        let (lx, ly) = self.screen_at(LABEL);
+        let (lx, ly) = ((lx - self.at.0) as usize, (ly - self.at.1) as usize);
+        let (w, _, px) = self.canvas();
+        (lx - 2..lx + 120).rev().find(|&x| {
+            (ly - 25..ly + 8).any(|y| {
+                let [b, g, r] = px[y * w + x];
+                red([r, g, b])
+            })
+        })
     }
 
     /// Open the Copy menu.
@@ -971,6 +1041,136 @@ fn copy_image_copies_the_marks_drawn_before_it() {
             .unwrap(),
         session.written,
         "Copy Image saved the file"
+    );
+}
+
+// WHY: a committed label reopens for typing on a Text tool press or a
+// Select tool double-click. A change commits as one undo step in the
+// label's place, an emptied label is removed, and Escape or no change
+// leaves the label as it was. A reopen that adds a second label, keeps
+// the old one drawn under the entry, loses the label on Escape, or
+// folds the change into another step shows another label here.
+#[test]
+fn a_label_reopens_for_editing_as_one_undo_step() {
+    let Some(session) = Session::open("a_label_reopens_for_editing_as_one_undo_step") else {
+        return;
+    };
+    let (conn, root) = (&session.conn, session.root);
+    let lx = (session.screen_at(LABEL).0 - session.at.0) as usize;
+    let right = || session.label_end();
+    let inside = session.screen_at((LABEL.0 + 3.0, LABEL.1 - 5.0));
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
+    session.label(&[A, B]);
+    let ab = right();
+    // A Text tool press on the label reopens it.
+    click(conn, root, inside);
+    pause();
+    tap(conn, root, C);
+    session.keys(&[RETURN]);
+    let abc = right();
+    click(conn, root, inside);
+    pause();
+    tap(conn, root, Z);
+    tap(conn, root, Z);
+    session.keys(&[ESCAPE]);
+    let escaped = right();
+    // A Select tool double-click reopens it; emptied, it goes.
+    session.keys(&[V]);
+    click(conn, root, inside);
+    click(conn, root, inside);
+    pause();
+    for _ in 0..3 {
+        tap(conn, root, BACKSPACE);
+    }
+    session
+        .daemon
+        .until("Backspace to empty the reopened label", || {
+            right().is_none_or(|x| x < lx + 8).then_some(())
+        });
+    session.keys(&[RETURN]);
+    let removed = right();
+    session.keys(&[CONTROL, Z]);
+    let undone = right();
+    session.keys(&[CONTROL, Z]);
+    let undone_twice = right();
+    assert_eq!(
+        (
+            abc > ab.map(|x| x + 2),
+            escaped == abc,
+            removed,
+            undone == abc,
+            undone_twice == ab,
+        ),
+        (true, true, None, true, true),
+        "the label's right end typed as ab ({ab:?}), reopened to abc ({abc:?}), \
+         after Escape ({escaped:?}), emptied, after Undo ({undone:?}), and \
+         after a second Undo ({undone_twice:?})"
+    );
+}
+
+// WHY: Undo, Redo, and Clear Markup settle a reopened label before
+// they change the marks. One that runs past the open entry undoes,
+// redoes, or clears the mark under it and leaves the entry on screen,
+// standing for a mark that is gone.
+#[test]
+fn undo_redo_and_clear_markup_commit_a_reopened_label_first() {
+    let Some(session) = Session::open("undo_redo_and_clear_markup_commit_a_reopened_label_first")
+    else {
+        return;
+    };
+    let (conn, root) = (&session.conn, session.root);
+    let [undo, redo] = session.history_buttons();
+    let inside = session.screen_at((LABEL.0 + 3.0, LABEL.1 - 5.0));
+    let reopen = |keysym: u32| {
+        click(conn, root, inside);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        tap(conn, root, keysym);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    };
+    session.label(&[A, B]);
+    let ab = session.label_end();
+    // The toolbar's Undo settles the reopened abc, then undoes it.
+    reopen(C);
+    click(conn, root, undo);
+    session.daemon.until("Undo to settle abc and undo it", || {
+        (session.label_end() == ab).then_some(())
+    });
+    session.keys(&[CONTROL, SHIFT, Z]);
+    let abc = session.label_end();
+    // Clear Markup settles the reopened abcd, then clears it. The
+    // caret blinks under the menu, so the daemon never goes idle.
+    reopen(D);
+    click(conn, root, session.more_button());
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    click(conn, root, session.more_row(CLEAR));
+    session
+        .daemon
+        .until("Clear Markup to settle abcd and clear it", || {
+            session.label_end().is_none().then_some(())
+        });
+    session.keys(&[CONTROL, Z]);
+    let abcd = session.label_end();
+    // The toolbar's Redo settles the reopened abcde: a new step, so
+    // nothing is left to redo and the Clear Markup undone stays undone.
+    reopen(E);
+    click(conn, root, redo);
+    session
+        .daemon
+        .until("Redo to settle abcde and redo nothing", || {
+            (session.label_end() > abcd.map(|x| x + 2)).then_some(())
+        });
+    session.keys(&[CONTROL, Z]);
+    let undone = session.label_end();
+    assert_eq!(
+        (
+            abc > ab.map(|x| x + 2),
+            abcd > abc.map(|x| x + 2),
+            undone == abcd,
+        ),
+        (true, true, true),
+        "the label's right end typed as ab ({ab:?}), after Redo ({abc:?}), \
+         after the Undo of Clear Markup ({abcd:?}), and after the Undo of \
+         abcde ({undone:?})"
     );
 }
 

@@ -80,7 +80,15 @@ impl Editor {
             .size_full(),
         );
         let cur = self.current.as_ref().map(|rc| rc.borrow());
-        for action in self.actions.borrow().iter().chain(cur.as_deref()) {
+        // A reopened label shows as its entry, not as the mark.
+        let reopened = self.text_entry.as_ref().and_then(|e| e.edits);
+        for (i, action) in self
+            .actions
+            .borrow()
+            .iter()
+            .chain(cur.as_deref())
+            .enumerate()
+        {
             if action.tool == Tool::Blur {
                 if let Some(patch) = &action.blur_patch {
                     let (x, y, w, h) = action.blur_rect;
@@ -94,7 +102,7 @@ impl Editor {
                             .child(img(ImageSource::Render(patch.clone())).size_full()),
                     );
                 }
-            } else if action.tool == Tool::Text {
+            } else if action.tool == Tool::Text && reopened != Some(i) {
                 if let (Some(text), Some(p)) = (&action.text, action.points.first()) {
                     stage = stage.child(
                         div()
@@ -296,6 +304,14 @@ impl Editor {
                     let p = this.to_image(ev.position, window);
                     if this.tool == Tool::Select {
                         this.commit_text(true);
+                        // A double-click on a label reopens it.
+                        if ev.click_count >= 2 {
+                            if let Some(i) = this.hit_text(p) {
+                                this.edit_text(i);
+                                cx.notify();
+                                return;
+                            }
+                        }
                         this.select(this.hit_action(p));
                         if let Some(i) = this.selected {
                             if let Some(a) = this.actions.borrow().get(i) {
@@ -306,12 +322,20 @@ impl Editor {
                         }
                     } else if this.tool == Tool::Text {
                         this.commit_text(true);
-                        this.text_entry = Some(super::action::TextEntry {
-                            point: p,
-                            buffer: String::new(),
-                            buffer_str: "".into(),
-                        });
-                        this.caret_started = std::time::Instant::now();
+                        // A press on a label reopens it; anywhere else
+                        // starts a new one.
+                        match this.hit_text(p) {
+                            Some(i) => this.edit_text(i),
+                            None => {
+                                this.text_entry = Some(super::action::TextEntry {
+                                    point: p,
+                                    buffer: String::new(),
+                                    buffer_str: "".into(),
+                                    edits: None,
+                                });
+                                this.caret_started = std::time::Instant::now();
+                            }
+                        }
                     } else if this.tool == Tool::Crop {
                         this.commit_text(true);
                         // Hit-test handles first; inside rect starts a

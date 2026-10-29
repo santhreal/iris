@@ -70,6 +70,8 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 - Clicking the canvas or switching tools commits non-empty text before beginning the new action.
 - Empty text buffers produce no committed action.
 
+Clicking a committed label with the Text tool, or double-clicking it with the Select tool, reopens it for typing in its color with the caret after its text. `Enter` or a click elsewhere replaces the label as one undo step, an emptied label is removed, and `Escape` leaves the label as it was. Undo, Redo, and Clear Markup commit an open label first.
+
 ## Navigation and Canvas Controls
 
 - **Zoom to fit (`0`)**: Resets zoom to 1.0 (fit-to-window scale) and resets pan offset to `(0, 0)`.
