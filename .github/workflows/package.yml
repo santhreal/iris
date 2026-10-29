@@ -31,6 +31,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # iris_fetch_sha256 rehashes every restored archive and downloads
+      # a mismatched one again, so the cache only skips the network.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build-staging/ffmpeg-source
+          key: ffmpeg-source-${{ github.job }}-${{ matrix.arch }}-${{ hashFiles('packaging/ffmpeg_source.sh', 'packaging/windows/build_ffmpeg.sh') }}
       - name: Build and verify the native runtime
         run: |
           command -v nasm >/dev/null || brew install nasm
@@ -207,6 +213,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The cache holds the source archives and the cross toolchain.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build-staging/ffmpeg-source
+          key: ffmpeg-source-${{ github.job }}-${{ matrix.arch }}-${{ hashFiles('packaging/ffmpeg_source.sh', 'packaging/windows/build_ffmpeg.sh') }}
       - name: Install the cross-build tools
         run: sudo apt-get update && sudo apt-get install -y nasm pkg-config
       - name: Build the pinned source runtime
@@ -482,6 +493,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: package-linux-${{ matrix.arch }}-bookworm
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build-staging/ffmpeg-source
+          key: ffmpeg-source-${{ github.job }}-${{ matrix.arch }}-${{ hashFiles('packaging/ffmpeg_source.sh', 'packaging/windows/build_ffmpeg.sh') }}
       # The binary builds on Debian 12, so it links no glibc symbol
       # version newer than that release has, and the packages run on
       # the oldest glibc that holds every version it uses: 2.35 (Ubuntu
