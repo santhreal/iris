@@ -303,12 +303,18 @@ impl Editor {
                     // the Text tool opens below.
                     cx.stop_propagation();
                     let p = this.to_image(ev.position, window);
+                    // A press on the open entry's text moves its caret
+                    // there and keeps the entry open.
+                    if this.press_entry(p) {
+                        cx.notify();
+                        return;
+                    }
                     if this.tool == Tool::Select {
                         this.commit_text(true);
                         // A double-click on a label reopens it.
                         if ev.click_count >= 2 {
                             if let Some(i) = this.hit_text(p) {
-                                this.edit_text(i);
+                                this.edit_text(i, p);
                                 cx.notify();
                                 return;
                             }
@@ -326,7 +332,7 @@ impl Editor {
                         // A press on a label reopens it; anywhere else
                         // starts a new one.
                         match this.hit_text(p) {
-                            Some(i) => this.edit_text(i),
+                            Some(i) => this.edit_text(i, p),
                             None => {
                                 this.text_entry = Some(super::action::TextEntry {
                                     point: p,

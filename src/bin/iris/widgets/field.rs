@@ -1,5 +1,6 @@
 //! Text fields and the folder field.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -77,14 +78,73 @@ pub fn ring_step(from: Option<usize>, n: usize, forward: bool) -> Option<usize> 
     })
 }
 
+/// Where a text field's text starts on screen and the style it is
+/// shaped in, recorded each frame the field is drawn, for placing the
+/// caret at a click ([`TextOrigin::place`]).
+#[derive(Clone, Default)]
+pub struct TextOrigin(Rc<RefCell<Option<DrawnText>>>);
+
+/// The left edge of a field's text in the window and its text style.
+#[derive(Clone)]
+struct DrawnText {
+    left: Pixels,
+    style: TextStyle,
+}
+
+impl TextOrigin {
+    /// A zero-width element that records the origin where it is laid
+    /// out, ahead of the field's text.
+    fn probe(&self) -> impl IntoElement {
+        let drawn = self.0.clone();
+        canvas(
+            move |bounds, window, _| {
+                *drawn.borrow_mut() = Some(DrawnText {
+                    left: bounds.left(),
+                    style: window.text_style(),
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .w(px(0.))
+        .h(px(0.))
+        .flex_shrink_0()
+    }
+
+    /// Move the caret of `line`, the field's text, to the character
+    /// boundary nearest where `click` pressed. A keyboard click, or a
+    /// field not yet drawn, leaves the caret.
+    pub fn place(&self, line: &mut Line, click: &ClickEvent, window: &Window) {
+        let at = match click {
+            ClickEvent::Mouse(e) => e.down.position,
+            ClickEvent::Touch(e) => e.position,
+            ClickEvent::Keyboard(_) => return,
+        };
+        let Some(DrawnText { left, style }) = self.0.borrow().clone() else {
+            return;
+        };
+        let text = SharedString::from(line.text().to_string());
+        let shaped = window.text_system().shape_line(
+            text.clone(),
+            style.font_size.to_pixels(window.rem_size()),
+            &[style.to_run(text.len())],
+            None,
+        );
+        line.place(f32::from(at.x - left), |s| {
+            f32::from(shaped.x_for_index(s.len()))
+        });
+    }
+}
+
 /// Single-line text field box, CONTROL_H tall: a dark fill with a 1px
 /// inner border, and a caret while editing. The caller draws the ring
 /// of `state` ([`FieldState::ring`]) with [`ringed`], has the text
-/// buffer, and commits it (Return or blur).
+/// buffer, and commits it (Return or blur). With `origin`, the field
+/// records where its text starts.
 pub fn text_field(
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
     state: FieldState,
+    origin: Option<&TextOrigin>,
 ) -> Stateful<Div> {
     let border = match state {
         FieldState::Rest => theme::FIELD_BORDER,
@@ -109,7 +169,8 @@ pub fn text_field(
         } else {
             theme::FG
         })
-        .cursor_text();
+        .cursor_text()
+        .children(origin.map(TextOrigin::probe));
     let text = text.into();
     let FieldState::Editing { caret, .. } = state else {
         return el.child(text);
@@ -242,6 +303,25 @@ impl Line {
     /// The text before and after the caret.
     pub fn split(&self) -> (&str, &str) {
         self.text.split_at(self.caret)
+    }
+
+    /// Move the caret to the character boundary nearest `x`, a distance
+    /// from the start of the text, where `advance` gives the width of
+    /// each text that starts the line. A tie goes to the earlier
+    /// boundary.
+    pub fn place(&mut self, x: f32, advance: impl Fn(&str) -> f32) {
+        let mut best = (0, x.abs());
+        for (i, c) in self.text.char_indices() {
+            let end = i + c.len_utf8();
+            let at = advance(&self.text[..end]);
+            let off = (at - x).abs();
+            if off < best.1 {
+                best = (end, off);
+            } else if at > x {
+                break;
+            }
+        }
+        self.caret = best.0;
     }
 
     /// Move the caret to `to`. Returns whether it moved.
@@ -773,6 +853,50 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    // WHY: closes "a click puts the caret on the wrong side of the
+    // character it lands on" for both entries that place the caret at a
+    // click. The caret goes to the nearest boundary measured by the
+    // text's own widths, a tie goes left, a click before or past the
+    // text lands at its start or end, and a multibyte character is never
+    // split. It does not cover where a click lands on screen; the X11
+    // tests in history.rs and settings_paste.rs do.
+    #[test]
+    fn a_click_places_the_caret_at_the_nearest_boundary() {
+        // Narrow i, wide m, and ten pixels for every other character.
+        let advance = |s: &str| {
+            s.chars()
+                .map(|c| match c {
+                    'i' => 4.0,
+                    'm' => 16.0,
+                    _ => 10.0,
+                })
+                .sum::<f32>()
+        };
+        for (start, x, end) in [
+            ("|", 30.0, "|"),
+            ("ab cd|", -5.0, "|ab cd"),
+            ("ab cd|", 4.0, "|ab cd"),
+            ("ab cd|", 5.0, "|ab cd"),
+            ("ab cd|", 6.0, "a|b cd"),
+            ("|ab cd", 26.0, "ab |cd"),
+            ("|ab cd", 46.0, "ab cd|"),
+            ("|ab cd", 400.0, "ab cd|"),
+            ("mim|", 17.0, "m|im"),
+            ("mim|", 19.0, "mi|m"),
+            ("mim|", 28.0, "mi|m"),
+            ("mim|", 29.0, "mim|"),
+            ("|mm", 20.0, "m|m"),
+            ("ii|", 5.0, "i|i"),
+            ("é✓𝄞|", 12.0, "é|✓𝄞"),
+            ("|é✓𝄞", 25.0, "é✓|𝄞"),
+            ("|é✓𝄞", 26.0, "é✓𝄞|"),
+        ] {
+            let mut placed = line(start);
+            placed.place(x, advance);
+            assert_eq!(marked(&placed), end, "{start:?} at {x}");
         }
     }
 }

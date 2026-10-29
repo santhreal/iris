@@ -433,16 +433,24 @@ impl Session {
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
 
-    /// Reopen the label at LABEL with a press inside it, the Text tool
-    /// on, and type `keysyms` after its text.
+    /// Reopen the label at LABEL with a press on its first character,
+    /// the Text tool on, and type `keysyms` after its text: the press
+    /// puts the caret before the character and End moves it after the
+    /// text.
     fn reopen(&self, keysyms: &[u32]) {
-        let inside = self.screen_at((LABEL.0 + 3.0, LABEL.1 - 5.0));
-        click(&self.conn, self.root, inside);
+        click(&self.conn, self.root, self.label_start());
         std::thread::sleep(std::time::Duration::from_millis(300));
+        tap(&self.conn, self.root, END);
         for &keysym in keysyms {
             tap(&self.conn, self.root, keysym);
         }
         std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    /// A point on the first character of a label at LABEL, nearer its
+    /// left edge than its right.
+    fn label_start(&self) -> (i16, i16) {
+        self.screen_at((LABEL.0 + 2.0, LABEL.1 - 5.0))
     }
 
     /// The rightmost canvas column the red of a label at LABEL reaches.
@@ -1097,18 +1105,21 @@ fn a_label_reopens_for_editing_as_one_undo_step() {
     let (conn, root) = (&session.conn, session.root);
     let lx = (session.screen_at(LABEL).0 - session.at.0) as usize;
     let right = || session.label_end();
-    let inside = session.screen_at((LABEL.0 + 3.0, LABEL.1 - 5.0));
+    let inside = session.label_start();
     let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
     session.label(&[A, B]);
     let ab = right();
-    // A Text tool press on the label reopens it.
+    // A Text tool press on the label reopens it, with the caret where
+    // it pressed; End moves the caret after the text.
     click(conn, root, inside);
     pause();
+    tap(conn, root, END);
     tap(conn, root, C);
     session.keys(&[RETURN]);
     let abc = right();
     click(conn, root, inside);
     pause();
+    tap(conn, root, END);
     tap(conn, root, Z);
     tap(conn, root, Z);
     session.keys(&[ESCAPE]);
@@ -1118,6 +1129,7 @@ fn a_label_reopens_for_editing_as_one_undo_step() {
     click(conn, root, inside);
     click(conn, root, inside);
     pause();
+    tap(conn, root, END);
     for _ in 0..3 {
         tap(conn, root, BACKSPACE);
     }
@@ -1246,6 +1258,59 @@ fn caret_keys_edit_a_label_where_the_caret_is() {
         edited, typed,
         "a label typed as abcd, edited at its start and end, ends where \
          bcde typed whole does"
+    );
+}
+
+// WHY: a press on a label's text puts the caret where it lands, both
+// when the press reopens the label and when the label is open. An
+// entry that reopens with the caret after the text types this case's b
+// after cd, and a press on the open label that commits and reopens it
+// makes two undo steps of one edit, so Undo leaves bcd instead of cd.
+#[test]
+fn a_press_on_a_label_puts_the_caret_where_it_lands() {
+    let Some(session) = Session::open("a_press_on_a_label_puts_the_caret_where_it_lands") else {
+        return;
+    };
+    let (conn, root) = (&session.conn, session.root);
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
+    session.label(&[A, B, C, D]);
+    let typed = session.label_end();
+    session.keys(&[CONTROL, Z]);
+    // cd, with the caret after it while it is open.
+    session.type_label(&[C, D]);
+    let at_end = session.label_reach();
+    session.keys(&[RETURN]);
+    let cd = session.label_end();
+    // A press on the c reopens cd with the caret before it.
+    click(conn, root, session.label_start());
+    pause();
+    let at_start = session.label_reach();
+    // A b typed there, then a press on the b with the label open, and
+    // an a typed before it.
+    tap(conn, root, B);
+    pause();
+    click(conn, root, session.label_start());
+    pause();
+    tap(conn, root, A);
+    pause();
+    session.keys(&[RETURN]);
+    let edited = session.label_end();
+    session.keys(&[CONTROL, Z]);
+    let undone = session.label_end();
+    assert!(
+        typed.is_some() && cd.is_some(),
+        "the labels abcd and cd were drawn"
+    );
+    assert!(
+        at_start < at_end,
+        "the open label reaches column {at_end:?} with the caret after cd \
+         and {at_start:?} after a press on its c"
+    );
+    assert_eq!(
+        (edited, undone),
+        (typed, cd),
+        "a label typed as cd, edited at two presses on its start, ends where \
+         abcd typed whole does, and one Undo returns it to cd"
     );
 }
 

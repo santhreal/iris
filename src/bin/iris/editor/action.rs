@@ -228,6 +228,19 @@ pub(crate) fn text_size(w: u32) -> f32 {
     (w as f32 * 0.016).clamp(14.0, 48.0)
 }
 
+/// The box of a line of `text` at `size` placed at `p`: from `p` right
+/// by its advance and at least 8 px, from `size` above `p` down one
+/// line box.
+pub(crate) fn text_box(p: (f32, f32), text: &str, size: f32) -> (f32, f32, f32, f32) {
+    let w = super::raster::text_advance(text, size);
+    (p.0, p.1 - size, w.max(8.0), size * super::raster::TEXT_LINE)
+}
+
+/// Whether `p` lies in the box `(x, y, w, h)`, edges included.
+pub(crate) fn in_box(p: (f32, f32), (x, y, w, h): (f32, f32, f32, f32)) -> bool {
+    p.0 >= x && p.0 <= x + w && p.1 >= y && p.1 <= y + h
+}
+
 impl Editor {
     pub(crate) fn new_action(&self, p: (f32, f32)) -> Action {
         let step = self.next_step();
@@ -257,17 +270,11 @@ impl Editor {
     /// read it instead of rescanning every point.
     pub(crate) fn compute_bbox(action: &Action) -> Option<(f32, f32, f32, f32)> {
         match action.tool {
-            Tool::Text => {
-                let p = action.points.first()?;
-                let text = action.text.as_ref()?;
-                let w = super::raster::text_advance(text, action.font_size);
-                Some((
-                    p.0,
-                    p.1 - action.font_size,
-                    w.max(8.0),
-                    action.font_size * super::raster::TEXT_LINE,
-                ))
-            }
+            Tool::Text => Some(text_box(
+                *action.points.first()?,
+                action.text.as_ref()?,
+                action.font_size,
+            )),
             Tool::Blur => Some(action.blur_rect),
             Tool::Counter => {
                 let p = action.points.first()?;
@@ -318,11 +325,8 @@ impl Editor {
 
     fn hit(&self, p: (f32, f32), take: impl Fn(&Action) -> bool) -> Option<usize> {
         let actions = self.actions.borrow();
-        actions.iter().rposition(|a| {
-            take(a)
-                && a.bbox.is_some_and(|(x, y, w, h)| {
-                    p.0 >= x && p.0 <= x + w && p.1 >= y && p.1 <= y + h
-                })
-        })
+        actions
+            .iter()
+            .rposition(|a| take(a) && a.bbox.is_some_and(|bb| in_box(p, bb)))
     }
 }

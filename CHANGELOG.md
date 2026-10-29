@@ -24,7 +24,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - A label in the editor reopens for typing on a click with the Text tool or a double-click with the Select tool.
 - `Ctrl+V` or `Cmd+V` in the editor's text entry and in a Settings text field inserts the clipboard's text at the caret as one line.
 - `Ctrl+Backspace` or `Option+Backspace` in the editor's text entry and in a Settings text field deletes the word before the caret, and `Cmd+Backspace` deletes the text before it.
-- `Left`, `Right`, `Home`, `End`, and `Delete`, alone or with `Ctrl`, `Option`, or `Cmd`, move the caret and delete at it in the editor's text entry and in a Settings text field.
+- `Left`, `Right`, `Home`, `End`, and `Delete`, alone or with `Ctrl`, `Option`, or `Cmd`, move the caret and delete at it in the editor's text entry and in a Settings text field, and a click on the text places the caret at the click.
 - `Up`, `Down`, `Return`, and `Space` move through and choose from an open menu: a Settings pop-up, the editor's Copy and More menus, and the Library's context menu.
 - `Tab` and `Shift+Tab` move a focus ring over the settings window's controls, the library's toolbar buttons, and the home window's tiles and gear, `Space` or `Return` runs the control under it, and `Ctrl+Tab` and `Ctrl+Shift+Tab` switch settings panes.
 - `Shift+F10` or the Menu key opens the library's card context menu on the selected card and the editor's More menu, where `Left` and `Right` switch to the Copy menu.

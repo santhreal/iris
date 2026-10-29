@@ -660,13 +660,24 @@ impl Settings {
             .ring()
             .or(self.keyboard_ring(Row::Text(field)))
             .or(self.keyboard_ring(Row::Folder(field)));
-        let input = widgets::text_field(field.id(), text, state)
+        // A click opens the field with the caret where it pressed. A
+        // press on the open field keeps it open: it does not reach the
+        // window, where a press ends the edit.
+        let open = matches!(state, widgets::FieldState::Editing { .. });
+        let origin = widgets::TextOrigin::default();
+        let mut input = widgets::text_field(field.id(), text, state, Some(&origin))
             .w(px(width))
             .flex_shrink_0()
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, click, window, cx| {
                 this.begin_edit(field);
+                if let Some(edit) = this.editing.as_mut().filter(|e| e.field == field) {
+                    origin.place(&mut edit.line, click, window);
+                }
                 cx.notify();
             }));
+        if open {
+            input = input.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        }
         let input = widgets::ringed(input, Some(theme::RADIUS_CONTROL), ring);
         with_note(note, input)
     }
@@ -703,7 +714,7 @@ impl Settings {
             (self.field_text(field), widgets::FieldState::Rest)
         };
         let ring = state.ring().or(self.keyboard_ring(Row::Hotkey(field)));
-        let input = widgets::text_field(field.id(), text, state)
+        let input = widgets::text_field(field.id(), text, state, None)
             .w(px(SHORTCUT_W))
             .flex_shrink_0()
             .justify_center()

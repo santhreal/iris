@@ -40,7 +40,7 @@ pub(crate) use meta_shortcut;
 pub use self::controls::{push_button, segmented, toggle, ButtonStyle, Segment, SegmentStyle};
 pub use self::field::{
     choose_folder, edit_line, folder_field, ring_step, ringed, text_field, FieldState, Line,
-    LineKey,
+    LineKey, TextOrigin,
 };
 pub use self::image::*;
 pub use self::keycaps::{chord_label, keycaps};

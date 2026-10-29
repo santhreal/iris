@@ -6,9 +6,10 @@ use gpui::*;
 use iris_lib::history::{self, Edit};
 
 use super::action::{
-    stroke_base, text_size, Action, Scene, Step, TextEntry, Tool, Transform, STROKE_MULT,
+    in_box, stroke_base, text_box, text_size, Action, Scene, Step, TextEntry, Tool, Transform,
+    STROKE_MULT,
 };
-use super::raster::{pixelate_region_bgra, png_bytes, rasterize};
+use super::raster::{pixelate_region_bgra, png_bytes, rasterize, text_advance};
 use super::Editor;
 use crate::pipeline;
 
@@ -672,9 +673,10 @@ impl Editor {
     }
 
     /// Reopen text mark `i` for typing: its text in an entry at its
-    /// point, in its color. The mark is hidden while the entry is open,
-    /// and committing the entry replaces it.
-    pub(crate) fn edit_text(&mut self, i: usize) {
+    /// point, in its color, with the caret at the character boundary
+    /// nearest `at`, the press that reopened it. The mark is hidden
+    /// while the entry is open, and committing the entry replaces it.
+    pub(crate) fn edit_text(&mut self, i: usize, at: (f32, f32)) {
         let entry = {
             let actions = self.actions.borrow();
             let Some(a) = actions.get(i).filter(|a| a.tool == Tool::Text) else {
@@ -694,7 +696,33 @@ impl Editor {
         self.selected = None;
         self.move_drag = None;
         self.text_entry = Some(entry);
+        self.place_caret(at);
+    }
+
+    /// Move the open entry's caret to the character boundary nearest
+    /// `at` and restart its blink.
+    fn place_caret(&mut self, at: (f32, f32)) {
+        let size = text_size(self.img_w());
+        if let Some(entry) = self.text_entry.as_mut() {
+            entry
+                .line
+                .place(at.0 - entry.point.0, |s| text_advance(s, size));
+        }
         self.caret_started = Instant::now();
+    }
+
+    /// A press at `p` on the open entry's text moves its caret there
+    /// and keeps the entry open. Returns whether `p` was on it. An
+    /// empty entry has no text to press on.
+    pub(crate) fn press_entry(&mut self, p: (f32, f32)) -> bool {
+        let size = text_size(self.img_w());
+        let on = self.text_entry.as_ref().is_some_and(|e| {
+            !e.line.text().is_empty() && in_box(p, text_box(e.point, e.line.text(), size))
+        });
+        if on {
+            self.place_caret(p);
+        }
+        on
     }
 
     /// Settle reopened text mark `i` with `value`: an empty value

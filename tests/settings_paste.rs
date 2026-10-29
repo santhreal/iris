@@ -1,19 +1,25 @@
-//! A paste and the caret keys in a Settings text field, read from the
-//! config it writes.
+//! A paste, the caret keys, and clicks in a Settings text field, read
+//! from the config it writes.
 //!
 //! WHY: the classes closed here are "a text entry takes keys but not
-//! the clipboard" and "a text entry edits only at its end", on the
-//! Settings side; `paste.rs` and `history.rs` read the editor's side.
-//! Both entries edit their text through one function, whose unit tests
-//! check each key exactly. A Settings field appended typed characters
-//! and dropped Ctrl+V, so a folder path or a template could only be
-//! typed, and it ignored Left, Home, End, and Delete, so a fix at the
-//! start of a value meant deleting it all. The case puts two lines on
-//! the clipboard, opens the file name field, moves the caret back a
-//! word and two characters, pastes, reads the caret bar at the field's
-//! start after Home, types at the start and the end, deletes a
-//! character, commits with Return, and reads the template from
-//! config.toml.
+//! the clipboard", "a text entry edits only at its end", and "a click
+//! does not place the caret", on the Settings side; `paste.rs` and
+//! `history.rs` read the editor's side. Both entries edit their text
+//! through one function and place the caret through another, whose unit
+//! tests check each key and position exactly. A Settings field
+//! appended typed characters and dropped Ctrl+V, so a folder path or a
+//! template could only be typed; it ignored Left, Home, End, and
+//! Delete, so a fix at the start of a value meant deleting it all; a
+//! click left the caret at the end of the text wherever it landed; and
+//! a click in the open field committed the edit and reopened it. The
+//! case puts two lines on the clipboard, opens the file name field,
+//! moves the caret back a word and two characters, pastes, reads the
+//! caret bar at the field's start after Home, types at the start and
+//! the end, deletes a character, and commits with Return. It then
+//! clicks the text's first character to open the field, types, clicks
+//! there again with the field open, types, and commits, reading the
+//! caret bar after each click and the template from config.toml after
+//! the second click and each commit.
 //!
 //! Not covered: Cmd+V and the Cmd and Alt caret keys on macOS, which
 //! reach the same key handler. The case runs only with
@@ -42,6 +48,8 @@ use x11::{chord, click, client, field_left_of, tap, windows_of};
 const SCREEN: &str = "1280x1024x24";
 const SETTINGS: &str = "Settings - iris";
 /// Keysyms.
+const A: u32 = 0x61;
+const B: u32 = 0x62;
 const V: u32 = 0x76;
 const S: u32 = 0x73;
 const X: u32 = 0x78;
@@ -68,6 +76,9 @@ const FIELD_W: f32 = 200.0;
 const CLIPBOARD: &str = "\tteam\nnotes\n";
 const BEFORE: &str = "{date}_{time}";
 const AFTER: &str = "s{date} team notes_{time}z";
+/// The template after an a typed at a click on its start, and a b at a
+/// second click there.
+const CLICKED: &str = "bas{date} team notes_{time}z";
 
 /// The file name template in `dir`'s config, or `None` while the config
 /// cannot be read whole, as mid-write.
@@ -128,6 +139,8 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
         .unwrap()
         .reply()
         .unwrap();
+    // A click past the end of the text opens the field with the caret
+    // after it.
     click(
         &conn,
         root,
@@ -152,12 +165,15 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
     // center line, at the start once Home lands.
     tap(&conn, root, HOME);
     let start = left + (12.0 * scale) as usize;
-    daemon.until("the caret to be drawn at the field's start", || {
-        let (w, _, px) = client(&conn, root, settings);
-        (left + 3..right - 2)
-            .find(|&x| accent(px[y * w + x]))
-            .filter(|&x| x < start)
-    });
+    let caret_at_start = |what: &str| {
+        daemon.until(what, || {
+            let (w, _, px) = client(&conn, root, settings);
+            (left + 3..right - 2)
+                .find(|&x| accent(px[y * w + x]))
+                .filter(|&x| x < start)
+        });
+    };
+    caret_at_start("the caret to be drawn at the field's start");
     // An s at the start, an x after it that Left and Delete remove, and
     // a z at the end.
     for keysym in [S, X, LEFT, DELETE, END, Z, RETURN] {
@@ -168,5 +184,34 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
         template(dir.path()).as_deref(),
         Some(AFTER),
         "the field committed without the edits at the caret"
+    );
+    // A click on the first character of the text opens the field with
+    // the caret before it, and a click there with the field open moves
+    // the caret back before the a typed at the start and leaves the
+    // edit open, uncommitted.
+    let first = (
+        at.dst_x + (left + (9.0 * scale) as usize) as i16,
+        at.dst_y + y as i16,
+    );
+    click(&conn, root, first);
+    caret_at_start("a click to open the field with the caret at its start");
+    tap(&conn, root, A);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    click(&conn, root, first);
+    caret_at_start("a click in the open field to move the caret to its start");
+    daemon.settle();
+    assert_eq!(
+        template(dir.path()).as_deref(),
+        Some(AFTER),
+        "a click in the open field committed it"
+    );
+    for keysym in [B, RETURN] {
+        tap(&conn, root, keysym);
+    }
+    daemon.settle();
+    assert_eq!(
+        template(dir.path()).as_deref(),
+        Some(CLICKED),
+        "the field committed without the edits at the clicked caret"
     );
 }
