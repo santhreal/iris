@@ -357,24 +357,3 @@ fn every_tool_key_selects_its_tool_and_no_key_is_shared() {
         assert_eq!(tool_for_key(key), None, "{key}");
     }
 }
-
-/// A label is one line: a paste of several lines, tabs, or control
-/// characters reaches the text entry as one line of spaces and text.
-#[test]
-fn pasted_text_becomes_one_line_of_a_label() {
-    use super::keys::one_line;
-    for (pasted, label) in [
-        ("Launch day", "Launch day"),
-        ("Launch day\n", "Launch day"),
-        ("Launch day\r\n", "Launch day"),
-        ("first\nsecond", "first second"),
-        ("first\r\nsecond\r\n", "first second"),
-        ("a\tb", "a b"),
-        ("bell\u{7}less", "bellless"),
-        ("lone\rreturn", "lone return"),
-        ("café ✓", "café ✓"),
-        ("", ""),
-    ] {
-        assert_eq!(one_line(pasted), label, "{pasted:?}");
-    }
-}

@@ -4,9 +4,10 @@
 //! clipboard". The entry appended the character of each key press and
 //! dropped Ctrl+V, so a label could only be typed. The case puts two
 //! lines on the clipboard, opens a text entry, pastes, saves, and reads
-//! one line of ink as wide as both lines' words in the file. The rules
-//! that make pasted text one line are checked exactly by the editor's
-//! unit tests.
+//! one line of ink as wide as both lines' words in the file. The editor
+//! and Settings edit their text through one function, whose unit tests
+//! check the rules that make pasted text one line; `settings_paste.rs`
+//! reads the Settings side.
 //!
 //! Not covered: Cmd+V on macOS and Ctrl+V on Windows, which reach the
 //! same key handler; a clipboard that holds no text. The case runs only

@@ -7,6 +7,7 @@ use iris_lib::history::Edit;
 
 use super::action::tool_for_key;
 use super::Editor;
+use crate::widgets;
 
 impl Editor {
     pub(super) fn handle_key_down(
@@ -24,22 +25,12 @@ impl Editor {
                 "escape" => {
                     self.commit_text(false);
                 }
-                "backspace" => {
-                    if let Some(entry) = &mut self.text_entry {
-                        entry.buffer.pop();
-                        entry.buffer_str = SharedString::from(entry.buffer.clone());
-                        self.caret_started = Instant::now();
-                    }
-                }
-                "v" if ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform => {
-                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        self.type_text(&one_line(&text));
-                    }
-                }
                 _ => {
-                    if !ev.keystroke.modifiers.control && !ev.keystroke.modifiers.platform {
-                        if let Some(ch) = &ev.keystroke.key_char {
-                            self.type_text(ch);
+                    if let Some(entry) = &mut self.text_entry {
+                        let paste = || cx.read_from_clipboard().and_then(|item| item.text());
+                        if widgets::edit_line(&mut entry.buffer, &ev.keystroke, paste) {
+                            entry.buffer_str = SharedString::from(entry.buffer.clone());
+                            self.caret_started = Instant::now();
                         }
                     }
                 }
@@ -127,35 +118,10 @@ impl Editor {
         cx.notify();
     }
 
-    /// Append `text` to the open text entry and restart the caret's blink.
-    fn type_text(&mut self, text: &str) {
-        if let Some(entry) = &mut self.text_entry {
-            entry.buffer.push_str(text);
-            entry.buffer_str = SharedString::from(entry.buffer.clone());
-            self.caret_started = Instant::now();
-        }
-    }
-
     pub(super) fn handle_key_up(&mut self, ev: &KeyUpEvent, cx: &mut Context<Self>) {
         if ev.keystroke.key == "space" {
             self.space_pan = false;
             cx.notify();
         }
     }
-}
-
-/// Pasted text as one line of a label: each line break or tab is a
-/// space, a trailing line break is dropped, and other control characters
-/// are removed.
-pub(super) fn one_line(text: &str) -> String {
-    text.lines()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .filter_map(|c| match c {
-            '\t' | '\r' => Some(' '),
-            c if c.is_control() => None,
-            c => Some(c),
-        })
-        .collect()
 }

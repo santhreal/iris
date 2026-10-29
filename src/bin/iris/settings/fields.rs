@@ -398,13 +398,9 @@ impl Settings {
                 "enter" => {
                     self.blur();
                 }
-                "backspace" => {
-                    edit.text.pop();
-                    self.rejected = None;
-                }
                 _ => {
-                    if let (false, Some(ch)) = (meta, &ks.key_char) {
-                        edit.text.push_str(ch);
+                    let paste = || cx.read_from_clipboard().and_then(|item| item.text());
+                    if widgets::edit_line(&mut edit.text, ks, paste) {
                         self.rejected = None;
                     }
                 }

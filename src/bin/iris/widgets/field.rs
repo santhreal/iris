@@ -149,3 +149,141 @@ pub fn folder_field(
             ),
         )
 }
+
+/// Apply a key press to the buffer of a one-line text entry: Backspace
+/// removes the last character, Ctrl+V or Cmd+V appends the text
+/// `clipboard` returns as one line, and a key that types a character
+/// without Ctrl or Cmd appends it. Returns whether the key edited the
+/// buffer; the caller restarts its caret or clears a rejection.
+pub fn edit_line(
+    buffer: &mut String,
+    keystroke: &Keystroke,
+    clipboard: impl FnOnce() -> Option<String>,
+) -> bool {
+    let meta = keystroke.modifiers.control || keystroke.modifiers.platform;
+    match keystroke.key.as_str() {
+        "backspace" => buffer.pop().is_some(),
+        "v" if meta => clipboard().is_some_and(|text| push_one_line(buffer, &text)),
+        _ => match (&keystroke.key_char, meta) {
+            (Some(ch), false) => {
+                buffer.push_str(ch);
+                true
+            }
+            _ => false,
+        },
+    }
+}
+
+/// Append pasted `text` to `buffer` as one line: each line break or tab
+/// is a space, a trailing line break is dropped, and other control
+/// characters are removed. Returns whether anything was appended.
+fn push_one_line(buffer: &mut String, text: &str) -> bool {
+    let before = buffer.len();
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            buffer.push(' ');
+        }
+        buffer.extend(line.chars().filter_map(|c| match c {
+            '\t' | '\r' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        }));
+    }
+    buffer.len() > before
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Keystroke, Modifiers};
+
+    use super::edit_line;
+
+    fn key(key: &str, key_char: Option<&str>, control: bool, platform: bool) -> Keystroke {
+        Keystroke {
+            modifiers: Modifiers {
+                control,
+                platform,
+                ..Modifiers::default()
+            },
+            key: key.into(),
+            key_char: key_char.map(Into::into),
+        }
+    }
+
+    /// The buffer after `start` takes `keystroke` with `clipboard` on
+    /// the clipboard, and whether the key edited it.
+    fn after(start: &str, keystroke: &Keystroke, clipboard: Option<&str>) -> (String, bool) {
+        let mut buffer = start.to_string();
+        let edited = edit_line(&mut buffer, keystroke, || clipboard.map(Into::into));
+        (buffer, edited)
+    }
+
+    /// A paste reaches a one-line entry as one line, from Ctrl+V and
+    /// Cmd+V alike, whatever line breaks, tabs, or control characters the
+    /// clipboard holds.
+    #[test]
+    fn a_paste_appends_the_clipboard_as_one_line() {
+        for (pasted, line) in [
+            ("Launch day", "Launch day"),
+            ("Launch day\n", "Launch day"),
+            ("Launch day\r\n", "Launch day"),
+            ("first\nsecond", "first second"),
+            ("first\r\nsecond\r\n", "first second"),
+            ("a\tb", "a b"),
+            ("bell\u{7}less", "bellless"),
+            ("lone\rreturn", "lone return"),
+            ("café ✓", "café ✓"),
+        ] {
+            for (control, platform) in [(true, false), (false, true)] {
+                assert_eq!(
+                    after("x ", &key("v", Some("v"), control, platform), Some(pasted)),
+                    (format!("x {line}"), true),
+                    "{pasted:?} with control {control} platform {platform}"
+                );
+            }
+        }
+    }
+
+    /// Keys other than a paste type, delete, or do nothing; a paste of
+    /// nothing edits nothing.
+    #[test]
+    fn typing_and_backspace_edit_and_chords_do_not() {
+        let cases = [
+            ("ab", key("c", Some("c"), false, false), None, "abc", true),
+            (
+                "ab",
+                key("v", Some("v"), false, false),
+                Some("zz"),
+                "abv",
+                true,
+            ),
+            ("ab", key("backspace", None, false, false), None, "a", true),
+            ("", key("backspace", None, false, false), None, "", false),
+            ("ab", key("c", Some("c"), true, false), None, "ab", false),
+            ("ab", key("a", Some("a"), false, true), None, "ab", false),
+            ("ab", key("v", Some("v"), true, false), None, "ab", false),
+            (
+                "ab",
+                key("v", Some("v"), true, false),
+                Some(""),
+                "ab",
+                false,
+            ),
+            (
+                "ab",
+                key("v", Some("v"), true, false),
+                Some("\n"),
+                "ab",
+                false,
+            ),
+            ("ab", key("left", None, false, false), None, "ab", false),
+        ];
+        for (start, keystroke, clipboard, buffer, edited) in cases {
+            assert_eq!(
+                after(start, &keystroke, clipboard),
+                (buffer.to_string(), edited),
+                "{start:?} + {keystroke:?} with {clipboard:?}"
+            );
+        }
+    }
+}
