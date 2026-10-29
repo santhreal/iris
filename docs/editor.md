@@ -55,9 +55,10 @@ Switching tools settles any active text entry, committing non-empty text to the 
 
 ## Text Tool
 
-Clicking the canvas while the Text tool is active sets an insertion point and displays a blinking caret (`▏`). The caret blinks at approximately 1 Hz via an internal timer.
+Clicking the canvas while the Text tool is active sets an insertion point and displays a blinking bar caret after the text. The caret blinks at approximately 1 Hz via an internal timer.
 
 - Type characters to append them to the text buffer.
+- `Ctrl+V` or `Cmd+V` appends the clipboard's text. A label is one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed.
 - `Backspace` deletes the preceding character.
 - `Enter` commits the text to the canvas.
 - `Escape` cancels text entry and discards uncommitted buffer text.
