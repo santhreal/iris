@@ -49,7 +49,7 @@ Dragging horizontally toward the adjacent display edge initiates a dismiss swipe
 The card remains visible for `toast_duration_ms` (default: `5000` ms):
 - Upon expiration, the card accelerates off the display edge over 300 milliseconds, fading during the final third.
 - A new toast replaces an existing one with a 180-millisecond fade.
-- Starting a region, window, or full-screen capture closes the toast first, including one pinned against auto-dismissal, so the capture does not contain it. A toast that is opening the editor stays. A [pinned window](#pinned-windows) stays.
+- Starting a capture, a region pick, or a recording closes the toast first, including one pinned against auto-dismissal, so the capture or recording does not contain it. Stopping a recording leaves the toast. A toast that is opening the editor stays. A [pinned window](#pinned-windows) stays.
 - Auto-dismiss timer behavior:
   - Hovering the pointer over the card pauses the countdown. Moving the pointer away resumes the timer.
   - Opening the context menu pauses the countdown.
@@ -153,6 +153,6 @@ Timing and placement:
 - The card slides in from beyond the screen edge and stays for `toast_duration_ms` (default: 5000 milliseconds). A failure stays for at least 8000 milliseconds. A window pick card stays until the pick ends, and a countdown card until its capture. On X11 with no compositing manager, the card has no shadow, appears at rest, and closes at once, as the toast's.
 - Hovering the pointer over the card pauses auto-dismissal. Moving the pointer off restarts the full duration.
 - A newer notice replaces the card, and so does a toast that lands on it. A delayed capture whose card is replaced still runs.
-- Starting a region, window, or full-screen capture closes the card first, so the capture does not contain it. A window pick card stays. A delayed capture whose card closes this way still runs at its deadline.
+- Starting a capture, a region pick, or a recording closes the card first, so the capture or recording does not contain it. A window pick card stays. A delayed capture whose card closes this way still runs at its deadline.
 - A notice that would cover a toast resting in the same corner stacks beyond the toast card: above it in a bottom corner, below it in a top corner.
 - The notice window never takes keyboard focus.

@@ -129,6 +129,39 @@ impl Command {
             Command::Quit => "Quit failed",
         }
     }
+
+    /// Whether this command starts reading the screen: a capture, the
+    /// region pick over the live desktop, or a recording's start. The
+    /// match is exhaustive so a new command fails to compile until it is
+    /// classified.
+    fn reads_screen(&self) -> bool {
+        match self {
+            Command::Capture
+            | Command::CaptureFullscreen
+            | Command::CaptureWindow
+            | Command::RecordRegionPick
+            | Command::RecordRegion { .. } => true,
+            // Starts a recording when none is live, else stops it.
+            Command::RecordToggle => RECORDING.lock().is_none(),
+            // Its card counts down first; the capture it sends reads.
+            Command::Delayed(_)
+            | Command::Home
+            | Command::Library
+            | Command::Settings
+            | Command::Annotate(_)
+            | Command::Toast(_)
+            | Command::RecordPause
+            | Command::RecordMic
+            | Command::RecordStop
+            | Command::RecordingEnded
+            | Command::LibraryChanged
+            | Command::HotkeysBound
+            | Command::Failed { .. }
+            | Command::UpdateOffer { .. }
+            | Command::InstallUpdate
+            | Command::Quit => false,
+        }
+    }
 }
 
 /// Send `err` from a thread with no window to the daemon's notice.
@@ -180,10 +213,34 @@ pub fn run(cx: &mut App, cmd: &Command) {
     }
 }
 
+/// Take the resting toast and the live notice off the screen before
+/// `cmd` reads it, and run `cmd` again once they are gone. Returns
+/// whether `cmd` waits on them.
+fn clear_popups_for(cx: &mut App, cmd: &Command) -> bool {
+    if !cmd.reads_screen() {
+        return false;
+    }
+    let popups: Vec<AnyWindowHandle> = [
+        stage::leave_for_capture(cx),
+        crate::notice::leave_for_capture(cx),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if popups.is_empty() {
+        return false;
+    }
+    crate::widgets::clear_then_run(cx, popups, cmd.clone());
+    true
+}
+
 /// Run one command against the live app. A caller with a surface of its
 /// own for the error (the library's status line) takes it here; every
 /// other caller goes through `run`.
 pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
+    if clear_popups_for(cx, cmd) {
+        return Ok(());
+    }
     match cmd {
         Command::Home => crate::home::open(cx),
         Command::Capture => capture::capture_region(cx),

@@ -9,8 +9,10 @@
 //! captures in a row saved the first one's toast in the second, and a
 //! region capture froze the toast into the frame it selects from. The
 //! cases rest a toast or a notice in the corner, capture, and read the
-//! desktop where the card stood. `tests/home.rs` covers Home and
-//! `tests/delay.rs` the countdown card.
+//! desktop where the card stood. A region pick and a window recording
+//! start with the toast closed the same way, and a recording's stop
+//! leaves it. `tests/home.rs` covers Home and `tests/delay.rs` the
+//! countdown card.
 //!
 //! Each case runs with no compositing manager, where a pop-up closes
 //! at once, and under picom fading windows out over two seconds, where
@@ -20,8 +22,8 @@
 //! are content a capture may hold; a window capture, which needs a
 //! window manager's active window; Wayland, whose portal captures with
 //! its own interface, Windows, and macOS. The cases run only with
-//! `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without it a case prints
-//! that it did not run.
+//! `IRIS_X11_TEST_DISPLAY` set and need Xvfb, and ffmpeg for the
+//! recording cases; without them a case prints that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -29,6 +31,10 @@
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
 mod daemon;
+// The other test files use the rest of the harness.
+#[allow(dead_code)]
+#[path = "support/recording.rs"]
+mod recording;
 // The other test files use the rest of the helpers.
 #[allow(dead_code)]
 #[path = "support/x11.rs"]
@@ -239,4 +245,94 @@ fn a_region_capture_freezes_the_screen_without_a_resting_toast() {
              stood at {centre:?}, not the dimmed desktop {beside:06x}"
         );
     }
+}
+
+/// A session for a recording case, `None`, printed, without ffmpeg.
+fn recording_session(case: &str) -> Option<Session> {
+    if !recording::on_path("ffmpeg") {
+        eprintln!("{case} did not run: no ffmpeg on PATH");
+        return None;
+    }
+    session(case, false)
+}
+
+#[test]
+fn a_region_pick_opens_without_a_resting_toast() {
+    let case = "a_region_pick_opens_without_a_resting_toast";
+    if !enabled() {
+        return;
+    }
+    let Some(s) = recording_session(case) else {
+        return;
+    };
+    let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
+    red_toast(daemon, s.dir.path());
+    let (x, y, w, h) = resting(conn, root, daemon, TOAST);
+    daemon.send(&["--record-region"]);
+    daemon.until("the pick overlay to take the focus", || {
+        windows_of(conn, root, OVERLAY)
+            .contains(&x11::focus(conn))
+            .then_some(())
+    });
+    daemon.settle();
+    assert_eq!(
+        windows_of(conn, root, TOAST),
+        Vec::<u32>::new(),
+        "the toast is still open over the region pick"
+    );
+    let beside = pixel(conn, root, (x - 40, y + h as i16 / 2));
+    let centre = (x + w as i16 / 2, y + h as i16 / 2);
+    let under = pixel(conn, root, centre);
+    assert_eq!(
+        under, beside,
+        "the pick shows {under:06x} where the toast stood at {centre:?}, not the desktop \
+         beside it {beside:06x}"
+    );
+}
+
+#[test]
+fn a_window_recording_starts_without_a_resting_toast() {
+    let case = "a_window_recording_starts_without_a_resting_toast";
+    if !enabled() {
+        return;
+    }
+    let Some(s) = recording_session(case) else {
+        return;
+    };
+    let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
+    red_toast(daemon, s.dir.path());
+    resting(conn, root, daemon, TOAST);
+    daemon.send(&["--record-window"]);
+    daemon.until("the window pick card to open", || {
+        windows_of(conn, root, NOTICE).first().copied()
+    });
+    assert_eq!(
+        windows_of(conn, root, TOAST),
+        Vec::<u32>::new(),
+        "the toast is still open as the window pick starts"
+    );
+}
+
+#[test]
+fn stopping_a_recording_leaves_the_toast() {
+    let case = "stopping_a_recording_leaves_the_toast";
+    let Some(rec) = recording::Recording::start(case) else {
+        return;
+    };
+    let (conn, root) = rec.x();
+    let images = tempfile::tempdir().unwrap();
+    red_toast(&rec.daemon, images.path());
+    resting(conn, root, &rec.daemon, TOAST);
+    rec.daemon.send(&["--record-window"]);
+    rec.daemon.until("the recording to save", || {
+        rec.daemon
+            .log()
+            .contains("iris: recording saved")
+            .then_some(())
+    });
+    assert_eq!(
+        windows_of(conn, root, TOAST).len(),
+        1,
+        "the stop closed the toast"
+    );
 }
