@@ -86,11 +86,18 @@ To start iris when the installation ends, append `/RUN`. The installer runs `iri
 iris-<ver>-windows-<arch>-setup.exe /S /RUN
 ```
 
+An unattended installation creates no desktop shortcut. To create one, append `/DESKTOP`:
+
+```cmd
+iris-<ver>-windows-<arch>-setup.exe /S /DESKTOP
+```
+
 When iris is installed and running, the installer sends it `--quit` and waits up to 30 seconds for every process that runs `iris.exe` or its bundled `ffmpeg.exe` to exit before it replaces those files. When either executable stays in use, the installer shows a message box with **Retry** and **Cancel**. **Cancel** stops the installation, and a silent installation stops without the message box and exits with status 2.
 
 The installer runs per-user without administrative privileges:
 - Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `ffmpeg.exe`, `iris.ico`, license notices, and `uninstall.exe`). FFmpeg notices are in `licenses\ffmpeg`.
 - Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe --home`.
+- Creates a desktop shortcut `iris.lnk` running `iris.exe --home` when **Create a desktop shortcut** on the last page is checked or `/DESKTOP` is given. The box is checked on a first installation and unchecked on an upgrade that finds no desktop shortcut. An upgrade rewrites a desktop shortcut that exists.
 - Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --daemon`. An upgrade rewrites the value when it exists and writes none when **Start iris at login** was turned off ([Start at Login](configuration.md#start-at-login)).
 - Registers uninstallation metadata under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris`.
 

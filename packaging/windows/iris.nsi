@@ -17,6 +17,9 @@
 ;                          has no 32-bit or emulated variant
 ;   - Registry:            HKCU in the native (64-bit) view
 ;   - Start Menu Shortcut: iris.lnk -> iris.exe --home
+;   - Desktop Shortcut:    iris.lnk -> iris.exe --home, from the Finish
+;                          page checkbox or /DESKTOP; an upgrade rewrites
+;                          one that exists
 ;   - Autostart:           HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 ;                          Value 'iris' -> "$INSTDIR\iris.exe" --daemon
 ;   - License notices: LICENSE-MIT, LICENSE-APACHE, Inter-OFL.txt
@@ -42,6 +45,7 @@
 ;   - /RUN           = Start iris when the installation ends, whether it
 ;                      succeeded or failed. `iris --update` starts the
 ;                      installer with /S /RUN.
+;   - /DESKTOP       = Create the desktop shortcut in a silent installation.
 ;   - /D=path        = Custom target directory (must be the last parameter).
 ; ==============================================================================
 
@@ -132,6 +136,10 @@ VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-${ARCH}-setup.exe"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\iris.exe"
 !define MUI_FINISHPAGE_RUN_PARAMETERS "--home"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch ${APP_NAME}"
+!define MUI_FINISHPAGE_SHOWREADME ""
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Create a desktop shortcut"
+!define MUI_FINISHPAGE_SHOWREADME_FUNCTION DesktopShortcut
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishShow
 !insertmacro MUI_PAGE_FINISH
 
 ; ------------------------------------------------------------------------------
@@ -250,6 +258,22 @@ Function .onInstFailed
     Call StartIfRequested
 FunctionEnd
 
+Function DesktopShortcut
+    SetOutPath "$INSTDIR"
+    CreateShortcut "$DESKTOP\iris.lnk" "$INSTDIR\iris.exe" "--home" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
+FunctionEnd
+
+; The Finish page offers the desktop shortcut checked on a first
+; installation and unchecked on an upgrade that found none, so an
+; upgrade does not restore a shortcut the account deleted.
+Var PriorInstall
+Function FinishShow
+    ${If} $PriorInstall != ""
+    ${AndIfNot} ${FileExists} "$DESKTOP\iris.lnk"
+        SendMessage $mui.FinishPage.ShowReadme ${BM_SETCHECK} ${BST_UNCHECKED} 0
+    ${EndIf}
+FunctionEnd
+
 ; ------------------------------------------------------------------------------
 ; Installation Section
 ; ------------------------------------------------------------------------------
@@ -279,11 +303,24 @@ Section "Install" SecInstall
     SetOutPath "$INSTDIR"
     CreateShortcut "$SMPROGRAMS\iris.lnk" "$INSTDIR\iris.exe" "--home" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
 
+    ; 4b. Desktop shortcut: /DESKTOP creates it, and an upgrade rewrites
+    ;     one that exists. The Finish page checkbox creates it after
+    ;     an interactive installation.
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "/DESKTOP" $R1
+    ${IfNot} ${Errors}
+    ${OrIf} ${FileExists} "$DESKTOP\iris.lnk"
+        DetailPrint "Creating desktop shortcut..."
+        Call DesktopShortcut
+    ${EndIf}
+
     ; 5. Register HKCU\...\Run autostart: runs the daemon at login, and
     ;    nothing when a daemon already runs. A first installation writes
     ;    it. An upgrade (InstallDir recorded) rewrites a Run value that
     ;    exists and writes none the account turned off in Settings.
     ReadRegStr $R2 HKCU "${APP_KEY}" "InstallDir"
+    StrCpy $PriorInstall $R2
     ReadRegStr $R3 HKCU "${RUN_KEY}" "iris"
     ${If} $R2 == ""
     ${OrIf} $R3 != ""
@@ -329,9 +366,10 @@ Section "Uninstall"
     DetailPrint "Removing login autostart entry..."
     DeleteRegValue HKCU "${RUN_KEY}" "iris"
 
-    ; 3. Remove Start Menu shortcut
-    DetailPrint "Removing Start Menu shortcut..."
+    ; 3. Remove Start Menu and desktop shortcuts
+    DetailPrint "Removing shortcuts..."
     Delete "$SMPROGRAMS\iris.lnk"
+    Delete "$DESKTOP\iris.lnk"
 
     ; 4. Remove installed files
     DetailPrint "Removing application files..."

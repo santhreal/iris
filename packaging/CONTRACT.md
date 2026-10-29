@@ -175,7 +175,9 @@ FFmpeg and its notices ship at:
 
 ## Install layout
 - Windows: per-user, `%LOCALAPPDATA%\Programs\iris\iris.exe` and
-  `ffmpeg.exe` beside it on x86_64 and ARM64; Start Menu shortcut; autostart via `HKCU\...\Run` value
+  `ffmpeg.exe` beside it on x86_64 and ARM64; Start Menu shortcut; a
+  desktop shortcut from the Finish page checkbox or `/DESKTOP`, rewritten
+  on an upgrade when it exists; autostart via `HKCU\...\Run` value
   `iris` = `"...\iris.exe" --daemon`, written on a first install and
   rewritten on an upgrade only when it exists. The installer writes
   HKCU in the native (64-bit) registry view. The ARM64 installer stops
