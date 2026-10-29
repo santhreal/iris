@@ -53,12 +53,10 @@ impl Library {
         let ks = &ev.keystroke;
         let key = ks.key.as_str();
         let meta = ks.modifiers.control || ks.modifiers.platform;
-        // An open menu takes the keyboard: Escape closes it, and no key
-        // acts on the grid under it.
+        // An open menu takes the keyboard: no key acts on the grid
+        // under it.
         if self.menu.is_some() {
-            if key == "escape" {
-                self.close_menu(cx);
-            }
+            self.menu_key(key, window, cx);
             return;
         }
         if meta {

@@ -63,7 +63,7 @@ A pointer on a card lifts its shadow and shows three buttons in the thumbnail's 
    - Windows: calls `SHOpenFolderAndSelectItems`. Without it, runs `explorer.exe <folder>`.
 3. **Move to Trash** (trash icon): moves the capture to the system trash ([Move to Trash](#move-to-trash)).
 
-A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Copy**, **Show in Folder**, and **Move to Trash**. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. A click outside the menu or `Escape` closes it.
+A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Copy**, **Show in Folder**, and **Move to Trash**. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. In the open menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` runs the highlighted row, and other keys do nothing. A click outside the menu or `Escape` closes it.
 
 ## Quick Look
 

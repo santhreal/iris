@@ -14,10 +14,19 @@
 //! Clear run from the More menu, placed from the menu's geometry, so a
 //! menu drawn away from its button fails the cases.
 //!
+//! The last case closes "an open toolbar menu takes no keys": with the
+//! More or Copy menu open, Return saved and closed the editor and the
+//! arrows did nothing. It runs Rotate Right from the More menu with Up
+//! and Space, passing over the disabled Clear Markup, and with Down and
+//! Return, then Copy Path from the Copy menu, and reads the image and the
+//! clipboard.
+//!
 //! Not covered: the two flips, which go through the rotation's path;
 //! redo after a rotation or Clear, which goes through the crop's swap;
-//! Windows and macOS. The cases run only with `IRIS_X11_TEST_DISPLAY` set
-//! and need Xvfb; without them they print that they did not run.
+//! the Library's context menu, whose keys `widgets::menu_key` runs as
+//! these menus'; Windows and macOS. The cases run only with
+//! `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without them they print
+//! that they did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -38,7 +47,7 @@ use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, xvfb_sized, Daemon, Server};
-use x11::{chord, click, client, drag, extent, tap, windows_of};
+use x11::{chord, click, client, clipboard_text, drag, extent, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 /// The editor's title on `plain.png`.
@@ -53,6 +62,9 @@ const Z: u32 = 0x7a;
 const RETURN: u32 = 0xff0d;
 const CONTROL: u32 = 0xffe3;
 const SHIFT: u32 = 0xffe1;
+const UP: u32 = 0xff52;
+const DOWN: u32 = 0xff54;
+const SPACE: u32 = 0x20;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -186,9 +198,9 @@ impl Session {
         client(&self.conn, self.root, self.editor)
     }
 
-    /// Open the More menu and run `item`. The More button is the first
-    /// light pixels left of Done's fill.
-    fn more(&self, item: MenuItem) {
+    /// The More button's center: the first light pixels left of Done's
+    /// fill are its rightmost dot, 5 px right of its middle.
+    fn more_button(&self) -> (i16, i16) {
         let (w, _, px) = self.canvas();
         let row = |y: usize| &px[y * w..(y + 1) * w];
         // Done is the rightmost control; the selected tool has the same
@@ -208,14 +220,17 @@ impl Session {
             .rev()
             .find(|&x| mid[x].iter().all(|&c| c > 150))
             .expect("the More button's dots are left of Done");
-        // The rightmost of the three dots: the button's middle is 5 px
-        // left of it.
-        let button = (self.at.0 + dots as i16 - 5, self.at.1 + TOOLBAR_MID as i16);
-        click(&self.conn, self.root, button);
+        (self.at.0 + dots as i16 - 5, self.at.1 + TOOLBAR_MID as i16)
+    }
+
+    /// Open the More menu and wait for it to drop under its button.
+    fn open_more(&self) {
+        click(&self.conn, self.root, self.more_button());
         self.daemon.settle();
         // The first row's label: light pixels across the panel's first
         // row, where the options bar under a misplaced menu has none.
-        let left = w as i16 - MENU_CENTER_FROM_RIGHT - MENU_W / 2;
+        let w = self.canvas().0 as i16;
+        let left = w - MENU_CENTER_FROM_RIGHT - MENU_W / 2;
         let first = MENU_TOP + MENU_PAD..MENU_TOP + MENU_PAD + MENU_ROW;
         self.daemon
             .until("the More menu to drop 4 px under its button", || {
@@ -226,14 +241,48 @@ impl Session {
                     .any(|(x, y)| px[y as usize * w + x as usize].iter().all(|&c| c > 150))
                     .then_some(())
             });
+    }
+
+    /// Open the More menu and run `item`.
+    fn more(&self, item: MenuItem) {
+        self.open_more();
+        let w = self.canvas().0 as i16;
         let y = MENU_TOP
             + MENU_PAD
             + item.rows * MENU_ROW
             + item.separators * MENU_SEPARATOR
             + MENU_ROW / 2;
-        let x = w as i16 - MENU_CENTER_FROM_RIGHT;
+        let x = w - MENU_CENTER_FROM_RIGHT;
         click(&self.conn, self.root, (self.at.0 + x, self.at.1 + y));
         self.daemon.settle();
+    }
+
+    /// Open the Copy menu: the Copy button's chevron is the first light
+    /// pixels left of the 28 px More button.
+    fn open_copy(&self) {
+        let more = self.more_button();
+        let (w, _, px) = self.canvas();
+        let mid = &px[TOOLBAR_MID * w..(TOOLBAR_MID + 1) * w];
+        let more_left = (more.0 - self.at.0 - 14) as usize;
+        let chevron = (0..more_left)
+            .rev()
+            .find(|&x| mid[x].iter().all(|&c| c > 150))
+            .expect("the Copy button is left of the More button");
+        click(
+            &self.conn,
+            self.root,
+            (
+                self.at.0 + chevron as i16 - 2,
+                self.at.1 + TOOLBAR_MID as i16,
+            ),
+        );
+        self.daemon.settle();
+    }
+
+    /// Whether the image stands on its side: taller than wide.
+    fn on_its_side(&self) -> Option<bool> {
+        let (left, top, right, bottom) = extent(&self.canvas(), IMAGE)?;
+        Some(bottom - top > right - left)
     }
 
     /// Save with Return and return the saved file.
@@ -337,8 +386,7 @@ fn undo_turns_a_rotated_image_and_its_marks_back() {
     session
         .daemon
         .until("Rotate Right to stand the image on its side", || {
-            let (left, top, right, bottom) = extent(&session.canvas(), IMAGE)?;
-            (bottom - top > right - left).then_some(())
+            session.on_its_side()?.then_some(())
         });
     session.keys(&[CONTROL, Z]);
     assert_original(&session.save(), "after undoing the rotation");
@@ -390,5 +438,70 @@ fn the_file_saved_after_clear_has_no_marks() {
         (saved.dimensions(), marks),
         (SIZE, 0),
         "the file saved after Clear Markup: its size and its marked pixels"
+    );
+}
+
+#[test]
+fn the_arrow_keys_and_return_run_a_toolbar_menu_row() {
+    let Some(session) = Session::open("the_arrow_keys_and_return_run_a_toolbar_menu_row") else {
+        return;
+    };
+    // Return with nothing lit closes the menu and leaves the editor
+    // open and the file as it was.
+    session.open_more();
+    session.keys(&[RETURN]);
+    assert!(
+        !windows_of(&session.conn, session.root, EDITOR).is_empty(),
+        "Return in the open More menu closed the editor"
+    );
+    assert_eq!(
+        std::fs::metadata(&session.file)
+            .unwrap()
+            .modified()
+            .unwrap(),
+        session.written,
+        "Return in the open More menu saved the file"
+    );
+
+    // Up from nothing lights Discard, the last row; then Keyboard
+    // Shortcuts; then, over the disabled Clear Markup of an unmarked
+    // image, Flip Vertical, Flip Horizontal, and Rotate Right.
+    session.open_more();
+    for _ in 0..5 {
+        session.keys(&[UP]);
+    }
+    session.keys(&[SPACE]);
+    session
+        .daemon
+        .until("Up and Space to run Rotate Right", || {
+            session.on_its_side()?.then_some(())
+        });
+
+    // Down from nothing lights Copy Text, then Rotate Right.
+    session.open_more();
+    session.keys(&[DOWN]);
+    session.keys(&[DOWN]);
+    session.keys(&[RETURN]);
+    session
+        .daemon
+        .until("Down and Return to run Rotate Right", || {
+            (!session.on_its_side()?).then_some(())
+        });
+
+    // Copy Path is the Copy menu's third row.
+    session.open_copy();
+    for _ in 0..3 {
+        session.keys(&[DOWN]);
+    }
+    session.keys(&[RETURN]);
+    let path = session.file.canonicalize().unwrap();
+    session
+        .daemon
+        .until("Down and Return to run Copy Path", || {
+            (clipboard_text(&session.conn, session.root)? == path.to_string_lossy()).then_some(())
+        });
+    assert!(
+        !windows_of(&session.conn, session.root, EDITOR).is_empty(),
+        "a menu row run from the keyboard closed the editor"
     );
 }

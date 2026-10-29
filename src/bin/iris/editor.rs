@@ -112,6 +112,9 @@ pub struct Editor {
     /// The toolbar's More menu: Copy Text, Rotate, Flip, Clear,
     /// shortcuts, Discard.
     pub(crate) more_menu: bool,
+    /// The open Copy or More menu's highlighted row, moved by the
+    /// pointer and the arrow keys.
+    pub(crate) menu_lit: Option<usize>,
     pub(crate) help: bool,
     pub(crate) status: Option<String>,
     pub(crate) focus: FocusHandle,
@@ -331,6 +334,7 @@ pub fn open(
                 crop_move: None,
                 copy_menu: false,
                 more_menu: false,
+                menu_lit: None,
                 help: false,
                 status: None,
                 focus,

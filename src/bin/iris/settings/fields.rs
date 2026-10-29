@@ -10,26 +10,14 @@ use iris_lib::config::Config;
 use super::panes::{Pane, Pick, Switch};
 use super::{Edit, Field, Settings};
 use crate::sys::hotkeys::{self, Binding, Chord};
-use crate::{theme, widgets};
+use crate::theme;
+use crate::widgets::{self, MenuKey};
 
 /// Field widths: a path or file name template, a number, a shortcut.
 const TEXT_W: f32 = 200.0;
 const NUMBER_W: f32 = 64.0;
 const SHORTCUT_W: f32 = 150.0;
 const PATH_W: f32 = 240.0;
-
-/// What a key does in an open pop-up menu (`Settings::menu_key`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum MenuKey {
-    /// The highlight moved.
-    Moved,
-    /// Choose this option.
-    Choose(usize),
-    /// Close the menu without a choice.
-    Close,
-    /// Not a key the menu takes.
-    Ignored,
-}
 
 /// A configured directory as its field shows it: `~` for the home
 /// directory, the form config.toml stores.
@@ -330,34 +318,6 @@ impl Settings {
         }
     }
 
-    /// Move the open menu's highlight to option `ix` when the pointer
-    /// enters it, or off `ix` when the pointer leaves it. Returns whether
-    /// the highlight changed.
-    pub(super) fn menu_hover(&mut self, ix: usize, entered: bool) -> bool {
-        let lit = match (entered, self.menu_lit) {
-            (true, _) => Some(ix),
-            (false, Some(lit)) if lit == ix => None,
-            (false, lit) => lit,
-        };
-        std::mem::replace(&mut self.menu_lit, lit) != lit
-    }
-
-    /// What `key` does in the open pop-up menu of `p`: Up and Down move
-    /// the highlight and stop at the first and last options, Return and
-    /// Space choose the highlighted option or close a menu with none,
-    /// and Escape closes the menu.
-    pub(super) fn menu_key(&mut self, p: Pick, key: &str) -> MenuKey {
-        let last = p.options().len() - 1;
-        self.menu_lit = match key {
-            "up" => Some(self.menu_lit.map_or(last, |i| i.saturating_sub(1))),
-            "down" => Some(self.menu_lit.map_or(0, |i| (i + 1).min(last))),
-            "enter" | "space" => return self.menu_lit.map_or(MenuKey::Close, MenuKey::Choose),
-            "escape" => return MenuKey::Close,
-            _ => return MenuKey::Ignored,
-        };
-        MenuKey::Moved
-    }
-
     /// Restore every config.toml setting to its default and apply it.
     /// Start at login is the login entry, not a config setting, and
     /// stays.
@@ -444,7 +404,7 @@ impl Settings {
             return;
         }
         if let Some(p) = self.open_pick {
-            let key = self.menu_key(p, &ks.key);
+            let key = widgets::menu_key(&mut self.menu_lit, p.options().len(), |_| true, &ks.key);
             match key {
                 MenuKey::Choose(ix) => self.pick(p, ix, cx),
                 MenuKey::Close => self.open_pick = None,
@@ -527,7 +487,7 @@ impl Settings {
                 move |ix, entered, _, cx| {
                     hover
                         .update(cx, |this, cx| {
-                            if this.menu_hover(ix, entered) {
+                            if widgets::hover_row(&mut this.menu_lit, ix, entered) {
                                 cx.notify();
                             }
                         })

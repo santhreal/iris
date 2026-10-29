@@ -278,3 +278,125 @@ pub fn popup_offset(selected: Option<usize>) -> f32 {
         None => theme::CONTROL_H + 4.0,
     }
 }
+
+/// What a key does in an open menu (`menu_key`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MenuKey {
+    /// The highlight moved, or stayed at the first or last row.
+    Moved,
+    /// Choose this row.
+    Choose(usize),
+    /// Close the menu without a choice.
+    Close,
+    /// Not a key the menu takes.
+    Ignored,
+}
+
+/// What `key` does in an open menu of `rows` rows whose highlighted row
+/// is `lit`: Up and Down move the highlight to the next row for which
+/// `enabled` holds and stop at the first and last such row, Return and
+/// Space choose the highlighted row or close a menu with none, and
+/// Escape closes the menu. With nothing lit, Down lights the first
+/// enabled row and Up the last.
+pub fn menu_key(
+    lit: &mut Option<usize>,
+    rows: usize,
+    enabled: impl Fn(usize) -> bool,
+    key: &str,
+) -> MenuKey {
+    let next = match key {
+        "down" => (lit.map_or(0, |i| i + 1)..rows).find(|&i| enabled(i)),
+        "up" => (0..lit.unwrap_or(rows)).rev().find(|&i| enabled(i)),
+        "enter" | "space" => return lit.map_or(MenuKey::Close, MenuKey::Choose),
+        "escape" => return MenuKey::Close,
+        _ => return MenuKey::Ignored,
+    };
+    if next.is_some() {
+        *lit = next;
+    }
+    MenuKey::Moved
+}
+
+/// Move a menu's highlight `lit` to row `ix` when the pointer enters
+/// it, or off `ix` when the pointer leaves it. Returns whether the
+/// highlight changed. A disabled row takes no hover, so the pointer on
+/// it lights nothing.
+pub fn hover_row(lit: &mut Option<usize>, ix: usize, entered: bool) -> bool {
+    let next = match (entered, *lit) {
+        (true, _) => Some(ix),
+        (false, Some(on)) if on == ix => None,
+        (false, on) => on,
+    };
+    std::mem::replace(lit, next) != next
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hover_row, menu_key, MenuKey};
+
+    // WHY: closes "an open menu takes no keys" and "the pointer and a key
+    // each light a row" for every menu: the Settings pop-ups, the
+    // editor's Copy and More menus, and the Library's context menu all
+    // move their highlight here. Arrows stop at either end and pass over
+    // disabled rows, Return and Space choose the lit row, and the
+    // pointer moves the same highlight. Not covered: each caller's
+    // choice handler, which the X11 popup and menu cases run.
+    #[test]
+    fn arrows_and_the_pointer_move_one_highlight_over_enabled_rows() {
+        let all = |_: usize| true;
+        let mut lit = Some(2);
+        assert_eq!(menu_key(&mut lit, 5, all, "down"), MenuKey::Moved);
+        assert_eq!(lit, Some(3));
+        for _ in 0..5 {
+            menu_key(&mut lit, 5, all, "down");
+        }
+        assert_eq!(lit, Some(4), "Down stops at the last row");
+        for _ in 0..5 {
+            assert_eq!(menu_key(&mut lit, 5, all, "up"), MenuKey::Moved);
+        }
+        assert_eq!(lit, Some(0), "Up stops at the first row");
+        assert_eq!(menu_key(&mut lit, 5, all, "a"), MenuKey::Ignored);
+        assert_eq!(lit, Some(0), "another key leaves the highlight");
+        assert_eq!(menu_key(&mut lit, 5, all, "enter"), MenuKey::Choose(0));
+        assert_eq!(menu_key(&mut lit, 5, all, "space"), MenuKey::Choose(0));
+        assert_eq!(menu_key(&mut lit, 5, all, "escape"), MenuKey::Close);
+
+        // With nothing lit, Return closes, Down lights the first row,
+        // and Up the last.
+        let mut lit = None;
+        assert_eq!(menu_key(&mut lit, 5, all, "enter"), MenuKey::Close);
+        menu_key(&mut lit, 5, all, "down");
+        assert_eq!(lit, Some(0));
+        let mut lit = None;
+        menu_key(&mut lit, 5, all, "up");
+        assert_eq!(lit, Some(4));
+
+        // Disabled rows: 0, 2, and 4 of five. The arrows pass over them,
+        // and stop on the last enabled row at either end.
+        let odd = |i: usize| i % 2 == 1;
+        let mut lit = None;
+        menu_key(&mut lit, 5, odd, "down");
+        assert_eq!(lit, Some(1), "Down from nothing skips a disabled first row");
+        menu_key(&mut lit, 5, odd, "down");
+        assert_eq!(lit, Some(3), "Down passes over a disabled row");
+        menu_key(&mut lit, 5, odd, "down");
+        assert_eq!(lit, Some(3), "Down stops on the last enabled row");
+        menu_key(&mut lit, 5, odd, "up");
+        menu_key(&mut lit, 5, odd, "up");
+        assert_eq!(lit, Some(1), "Up stops on the first enabled row");
+        let mut lit = None;
+        menu_key(&mut lit, 5, odd, "up");
+        assert_eq!(lit, Some(3), "Up from nothing skips a disabled last row");
+
+        // The pointer: entering a row lights it, leaving the lit row
+        // clears it, and leaving another row keeps it.
+        let mut lit = Some(0);
+        assert!(hover_row(&mut lit, 3, true));
+        assert_eq!(lit, Some(3));
+        assert!(!hover_row(&mut lit, 3, true));
+        assert!(!hover_row(&mut lit, 1, false));
+        assert_eq!(lit, Some(3));
+        assert!(hover_row(&mut lit, 3, false));
+        assert_eq!(lit, None);
+    }
+}

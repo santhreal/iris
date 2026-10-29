@@ -17,6 +17,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let key = ev.keystroke.key.as_str();
+        if self.copy_menu || self.more_menu {
+            self.toolbar_menu_key(key, window, cx);
+            cx.notify();
+            return;
+        }
         if self.text_entry.is_some() {
             match key {
                 "enter" => {
@@ -43,9 +48,6 @@ impl Editor {
             "escape" => {
                 if self.help {
                     self.help = false;
-                } else if self.copy_menu || self.more_menu {
-                    self.copy_menu = false;
-                    self.more_menu = false;
                 } else if self.crop_rect.is_some() {
                     self.crop_rect = None;
                 } else if self.selected.is_some() {

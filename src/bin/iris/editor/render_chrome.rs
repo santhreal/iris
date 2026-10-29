@@ -7,7 +7,7 @@ use super::action::{hex_rgba, Transform, COLORS, TOOLS};
 use super::Editor;
 use crate::icons::Icon;
 use crate::theme;
-use crate::widgets::{self, tip, MenuItem, Segment, SegmentStyle, Toolbar};
+use crate::widgets::{self, tip, MenuItem, MenuKey, Segment, SegmentStyle, Toolbar};
 
 /// The tool options bar's height, under the toolbar.
 pub(super) const OPTIONS_H: f32 = 40.0;
@@ -21,6 +21,13 @@ const STROKES: [(Icon, &str, &str); 3] = [
     (Icon::Stroke1, "Thin Stroke", "1"),
     (Icon::Stroke2, "Medium Stroke", "2"),
     (Icon::Stroke3, "Thick Stroke", "3"),
+];
+
+/// The toolbar's Copy menu: each row's copy variant and label.
+const COPY_ROWS: [(&str, &str); 3] = [
+    ("image", "Copy Image"),
+    ("file", "Copy File"),
+    ("path", "Copy Path"),
 ];
 
 /// A row of the toolbar's More menu.
@@ -121,6 +128,61 @@ impl Editor {
         cx.notify();
     }
 
+    /// Whether More menu row `item` runs: Clear Markup has nothing to
+    /// clear on an unmarked image.
+    fn more_enabled(&self, item: More) -> bool {
+        item != More::ClearMarkup || !self.actions.borrow().is_empty()
+    }
+
+    /// Open the Copy menu (`copy`) or the More menu with nothing lit,
+    /// closing the other; `open` false closes both.
+    fn open_toolbar_menu(&mut self, copy: bool, open: bool) {
+        self.copy_menu = open && copy;
+        self.more_menu = open && !copy;
+        self.menu_lit = None;
+    }
+
+    /// Run `key` in the open Copy or More menu. An open menu takes every
+    /// key: one it does not use does nothing, and no key reaches the
+    /// image or the toolbar under it.
+    pub(super) fn toolbar_menu_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.copy_menu {
+            match widgets::menu_key(&mut self.menu_lit, COPY_ROWS.len(), |_| true, key) {
+                MenuKey::Choose(i) => self.copy_variant(COPY_ROWS[i].0, cx),
+                MenuKey::Close => self.copy_menu = false,
+                MenuKey::Moved | MenuKey::Ignored => {}
+            }
+            return;
+        }
+        let enabled = More::ALL.map(|item| self.more_enabled(item));
+        match widgets::menu_key(&mut self.menu_lit, More::ALL.len(), |i| enabled[i], key) {
+            MenuKey::Choose(i) => self.run_more(More::ALL[i], window, cx),
+            MenuKey::Close => self.more_menu = false,
+            MenuKey::Moved | MenuKey::Ignored => {}
+        }
+    }
+
+    /// A Copy or More menu row's hover listener: the pointer entering
+    /// row `ix` lights it, and leaving it clears the highlight.
+    fn menu_row_hover(
+        this: WeakEntity<Self>,
+        ix: usize,
+    ) -> impl Fn(&bool, &mut Window, &mut App) + 'static {
+        move |entered, _, cx| {
+            this.update(cx, |this, cx| {
+                if widgets::hover_row(&mut this.menu_lit, ix, *entered) {
+                    cx.notify();
+                }
+            })
+            .ok();
+        }
+    }
+
     pub(super) fn render_backdrop(&self, chrome: f32, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .absolute()
@@ -201,8 +263,7 @@ impl Editor {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _, _, cx| {
-                        this.copy_menu = !copy_open;
-                        this.more_menu = false;
+                        this.open_toolbar_menu(true, !copy_open);
                         cx.notify();
                     }),
                 ),
@@ -214,17 +275,16 @@ impl Editor {
                     this.copy_menu = false;
                     cx.notify();
                 }));
-            for (variant, label) in [
-                ("image", "Copy Image"),
-                ("file", "Copy File"),
-                ("path", "Copy Path"),
-            ] {
-                let item = MenuItem::new(ElementId::Name(variant.into()), label);
-                panel =
-                    panel.child(item.into_row().on_click(cx.listener(move |this, _, _, cx| {
-                        this.copy_menu = false;
-                        this.copy_variant(variant, cx);
-                    })));
+            for (i, (variant, label)) in COPY_ROWS.into_iter().enumerate() {
+                let item = MenuItem::new(ElementId::Name(variant.into()), label)
+                    .lit(self.menu_lit == Some(i));
+                panel = panel.child(
+                    item.into_row()
+                        .on_hover(Self::menu_row_hover(cx.entity().downgrade(), i))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.copy_variant(variant, cx);
+                        })),
+                );
             }
             copy = copy.child(drop_menu(panel));
         }
@@ -241,8 +301,7 @@ impl Editor {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
-                    this.more_menu = !more_open;
-                    this.copy_menu = false;
+                    this.open_toolbar_menu(false, !more_open);
                     cx.notify();
                 }),
             ),
@@ -254,14 +313,14 @@ impl Editor {
                     this.more_menu = false;
                     cx.notify();
                 }));
-            for item in More::ALL {
+            for (i, item) in More::ALL.into_iter().enumerate() {
                 if item.starts_group() {
                     panel = panel.child(widgets::menu_separator());
                 }
-                // Clear Markup has nothing to clear on an unmarked image.
-                let disabled = item == More::ClearMarkup && self.actions.borrow().is_empty();
+                let enabled = self.more_enabled(item);
                 let mut row = MenuItem::new(ElementId::Name(item.label().into()), item.label())
-                    .disabled(disabled);
+                    .disabled(!enabled)
+                    .lit(self.menu_lit == Some(i));
                 if let Some(keys) = item.shortcut() {
                     row = row.shortcut(keys);
                 }
@@ -269,10 +328,12 @@ impl Editor {
                     row = row.destructive();
                 }
                 let mut row = row.into_row();
-                if !disabled {
-                    row = row.on_click(
-                        cx.listener(move |this, _, window, cx| this.run_more(item, window, cx)),
-                    );
+                if enabled {
+                    row = row
+                        .on_hover(Self::menu_row_hover(cx.entity().downgrade(), i))
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.run_more(item, window, cx)),
+                        );
                 }
                 panel = panel.child(row);
             }

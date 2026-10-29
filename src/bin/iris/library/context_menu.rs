@@ -3,21 +3,86 @@
 
 use gpui::*;
 
-use crate::widgets::{menu, menu_separator, MenuItem, MENU_PAD, MENU_ROW_H, MENU_W};
+use crate::widgets::{self, menu, menu_separator, MenuItem, MenuKey, MENU_PAD, MENU_ROW_H, MENU_W};
 
 use super::Library;
 use crate::sys::reveal::LABEL as REVEAL_LABEL;
 
-/// An open context menu: the card it opened on and the window point it
-/// opened at.
+/// An open context menu: the card it opened on, the window point it
+/// opened at, and the row the pointer or the arrow keys light.
 pub(super) struct ContextMenu {
     pub index: usize,
     pub at: Point<Pixels>,
+    pub lit: Option<usize>,
 }
 
-/// The menu's rows and separators, top to bottom.
-const ROWS: usize = 5;
-const SEPARATORS: usize = 2;
+/// A row of the context menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum MenuRow {
+    Open,
+    QuickLook,
+    Copy,
+    Reveal,
+    Trash,
+}
+
+impl MenuRow {
+    /// The rows, top to bottom.
+    pub(super) const ALL: [MenuRow; 5] = [
+        MenuRow::Open,
+        MenuRow::QuickLook,
+        MenuRow::Copy,
+        MenuRow::Reveal,
+        MenuRow::Trash,
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            MenuRow::Open => "menu-open",
+            MenuRow::QuickLook => "menu-preview",
+            MenuRow::Copy => "menu-copy",
+            MenuRow::Reveal => "menu-reveal",
+            MenuRow::Trash => "menu-trash",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            MenuRow::Open => "Open",
+            MenuRow::QuickLook => "Quick Look",
+            MenuRow::Copy => "Copy",
+            MenuRow::Reveal => REVEAL_LABEL,
+            MenuRow::Trash => "Move to Trash",
+        }
+    }
+
+    fn shortcut(self) -> Option<&'static str> {
+        match self {
+            MenuRow::Open => Some("Return"),
+            MenuRow::QuickLook => Some("Space"),
+            MenuRow::Copy => Some(crate::widgets::meta_shortcut!("C")),
+            MenuRow::Reveal => None,
+            MenuRow::Trash => Some("Delete"),
+        }
+    }
+
+    /// A separator goes above this row.
+    const fn starts_group(self) -> bool {
+        matches!(self, MenuRow::Copy | MenuRow::Trash)
+    }
+}
+
+/// The menu's separators.
+const SEPARATORS: usize = {
+    let (mut n, mut i) = (0, 0);
+    while i < MenuRow::ALL.len() {
+        if MenuRow::ALL[i].starts_group() {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+};
 /// A separator's height with its margins (`menu_separator`).
 const SEPARATOR_H: f32 = 9.0;
 /// Space kept between the menu and the window edge.
@@ -25,7 +90,7 @@ const EDGE: f32 = 4.0;
 
 /// The menu's height.
 pub(super) const MENU_H: f32 =
-    ROWS as f32 * MENU_ROW_H + SEPARATORS as f32 * SEPARATOR_H + 2.0 * MENU_PAD;
+    MenuRow::ALL.len() as f32 * MENU_ROW_H + SEPARATORS as f32 * SEPARATOR_H + 2.0 * MENU_PAD;
 
 /// Where a menu of `MENU_W` x `MENU_H` opened at `at` goes in a
 /// `win_w` x `win_h` window: at the pointer, moved left to stay inside
@@ -55,13 +120,54 @@ impl Library {
         }
         self.cursor = Some(index);
         self.anchor = Some(index);
-        self.menu = Some(ContextMenu { index, at });
+        self.menu = Some(ContextMenu {
+            index,
+            at,
+            lit: None,
+        });
         cx.notify();
     }
 
     pub(super) fn close_menu(&mut self, cx: &mut Context<Self>) {
         if self.menu.take().is_some() {
             cx.notify();
+        }
+    }
+
+    /// Run `row` on the menu's card `index` and close the menu.
+    fn run_menu_row(
+        &mut self,
+        row: MenuRow,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_menu(cx);
+        match row {
+            MenuRow::Open => self.open_entry(index, window, cx),
+            MenuRow::QuickLook => self.open_preview(index, cx),
+            MenuRow::Copy => self.copy_selection(cx),
+            MenuRow::Reveal => {
+                if let Some(e) = self.listing.entries().get(index) {
+                    crate::sys::reveal::reveal(&e.path);
+                }
+            }
+            MenuRow::Trash => self.trash_selection(cx),
+        }
+    }
+
+    /// Run `key` in the open menu. An open menu takes every key: one it
+    /// does not use does nothing, and no key acts on the grid under it.
+    pub(super) fn menu_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.menu else {
+            return;
+        };
+        let index = open.index;
+        match widgets::menu_key(&mut open.lit, MenuRow::ALL.len(), |_| true, key) {
+            MenuKey::Choose(i) => self.run_menu_row(MenuRow::ALL[i], index, window, cx),
+            MenuKey::Close => self.close_menu(cx),
+            MenuKey::Moved => cx.notify(),
+            MenuKey::Ignored => {}
         }
     }
 
@@ -82,6 +188,32 @@ impl Library {
         );
         let dismiss = cx.listener(|this, _: &MouseDownEvent, _, cx| this.close_menu(cx));
         let dismiss_right = cx.listener(|this, _: &MouseDownEvent, _, cx| this.close_menu(cx));
+        let mut panel = menu().absolute().left(px(x)).top(px(y)).occlude();
+        for (i, row) in MenuRow::ALL.into_iter().enumerate() {
+            if row.starts_group() {
+                panel = panel.child(menu_separator());
+            }
+            let mut item = MenuItem::new(row.id(), row.label()).lit(open.lit == Some(i));
+            if let Some(keys) = row.shortcut() {
+                item = item.shortcut(keys);
+            }
+            if row == MenuRow::Trash {
+                item = item.destructive();
+            }
+            panel = panel.child(
+                item.into_row()
+                    .on_hover(cx.listener(move |this, entered: &bool, _, cx| {
+                        if let Some(open) = &mut this.menu {
+                            if widgets::hover_row(&mut open.lit, i, *entered) {
+                                cx.notify();
+                            }
+                        }
+                    }))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.run_menu_row(row, index, window, cx);
+                    })),
+            );
+        }
         div()
             .absolute()
             .inset_0()
@@ -93,61 +225,6 @@ impl Library {
                     .on_mouse_down(MouseButton::Left, dismiss)
                     .on_mouse_down(MouseButton::Right, dismiss_right),
             )
-            .child(
-                menu()
-                    .absolute()
-                    .left(px(x))
-                    .top(px(y))
-                    .occlude()
-                    .child(
-                        MenuItem::new("menu-open", "Open")
-                            .shortcut("Return")
-                            .into_row()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.close_menu(cx);
-                                this.open_entry(index, window, cx);
-                            })),
-                    )
-                    .child(
-                        MenuItem::new("menu-preview", "Quick Look")
-                            .shortcut("Space")
-                            .into_row()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.close_menu(cx);
-                                this.open_preview(index, cx);
-                            })),
-                    )
-                    .child(menu_separator())
-                    .child(
-                        MenuItem::new("menu-copy", "Copy")
-                            .shortcut(crate::widgets::meta_shortcut!("C"))
-                            .into_row()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_menu(cx);
-                                this.copy_selection(cx);
-                            })),
-                    )
-                    .child(
-                        MenuItem::new("menu-reveal", REVEAL_LABEL)
-                            .into_row()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.close_menu(cx);
-                                if let Some(e) = this.listing.entries().get(index) {
-                                    crate::sys::reveal::reveal(&e.path);
-                                }
-                            })),
-                    )
-                    .child(menu_separator())
-                    .child(
-                        MenuItem::new("menu-trash", "Move to Trash")
-                            .shortcut("Delete")
-                            .destructive()
-                            .into_row()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_menu(cx);
-                                this.trash_selection(cx);
-                            })),
-                    ),
-            )
+            .child(panel)
     }
 }

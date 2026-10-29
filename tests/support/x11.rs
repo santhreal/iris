@@ -133,9 +133,15 @@ pub fn move_to(conn: &impl Connection, root: u32, at: (i16, i16)) {
 
 /// Move the pointer to `at` and click the first button, through XTest.
 pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
+    click_with(conn, root, at, 1);
+}
+
+/// Move the pointer to `at` and click `button` (3 is the secondary
+/// button), through XTest.
+pub fn click_with(conn: &impl Connection, root: u32, at: (i16, i16), button: u8) {
     move_to(conn, root, at);
     for kind in [xproto::BUTTON_PRESS_EVENT, xproto::BUTTON_RELEASE_EVENT] {
-        conn.xtest_fake_input(kind, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)
+        conn.xtest_fake_input(kind, button, x11rb::CURRENT_TIME, root, 0, 0, 0)
             .unwrap();
     }
     conn.flush().unwrap();
@@ -231,6 +237,54 @@ pub fn wm_close(conn: &impl Connection, window: u32) {
     conn.send_event(false, window, xproto::EventMask::NO_EVENT, event)
         .unwrap();
     conn.flush().unwrap();
+}
+
+/// The CLIPBOARD selection as UTF-8 text, read through a scratch window,
+/// or None when no client owns the selection, the owner offers no text,
+/// or it does not answer within 2 s.
+pub fn clipboard_text(conn: &impl Connection, root: u32) -> Option<String> {
+    let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
+    let (clipboard, utf8, slot) = (atom(b"CLIPBOARD"), atom(b"UTF8_STRING"), atom(b"IRIS_TEST"));
+    let window = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        -1,
+        -1,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_ONLY,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    conn.convert_selection(window, clipboard, utf8, slot, x11rb::CURRENT_TIME)
+        .unwrap();
+    conn.flush().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut text = None;
+    while std::time::Instant::now() < deadline {
+        match conn.poll_for_event().unwrap() {
+            Some(x11rb::protocol::Event::SelectionNotify(e)) if e.requestor == window => {
+                if e.property != x11rb::NONE {
+                    let reply = conn
+                        .get_property(true, window, slot, AtomEnum::ANY, 0, u32::MAX / 4)
+                        .unwrap()
+                        .reply()
+                        .unwrap();
+                    text = String::from_utf8(reply.value).ok();
+                }
+                break;
+            }
+            Some(_) => {}
+            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+    conn.destroy_window(window).unwrap();
+    conn.flush().unwrap();
+    text
 }
 
 /// A compositing manager: a window that owns the screen's

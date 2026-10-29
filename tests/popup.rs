@@ -17,10 +17,10 @@
 //! move of the pointer within its row takes the highlight back.
 //!
 //! Not covered: a menu that the window edge pushes off its button; a
-//! pop-up with no selected row, which opens under its button; the
-//! editor's Copy and More menus, which take no keys. The cases run only
-//! with `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without them they
-//! print that they did not run.
+//! pop-up with no selected row, which opens under its button. The
+//! editor's toolbar menus take keys in the history cases. The cases run
+//! only with `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without them
+//! they print that they did not run.
 
 #![cfg(target_os = "linux")]
 
