@@ -93,6 +93,9 @@ pub struct Settings {
     /// beside it until the field closes or takes a valid value.
     pub(super) rejected: Option<(Field, String)>,
     pub(super) open_pick: Option<panes::Pick>,
+    /// The highlighted option of the open pop-up menu: the selected one
+    /// when it opens, then the one the pointer or an arrow key moves to.
+    pub(super) menu_lit: Option<usize>,
     /// A failure to apply a setting (config.toml, the login entry, the
     /// folder picker), shown in the status pill until the next change
     /// applies.
@@ -123,6 +126,7 @@ impl Settings {
             recording: None,
             rejected: None,
             open_pick: None,
+            menu_lit: None,
             status: None,
             release,
             update_note: None,

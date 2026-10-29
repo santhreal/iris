@@ -116,8 +116,8 @@ pub fn control_left_of(row: &[[u8; 3]], ground: [u8; 3], before: usize) -> Optio
     Some((left, right))
 }
 
-/// Move the pointer to `at` and click the first button, through XTest.
-pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
+/// Move the pointer to `at`, through XTest.
+pub fn move_to(conn: &impl Connection, root: u32, at: (i16, i16)) {
     conn.xtest_fake_input(
         xproto::MOTION_NOTIFY_EVENT,
         0,
@@ -128,6 +128,12 @@ pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
         0,
     )
     .unwrap();
+    conn.flush().unwrap();
+}
+
+/// Move the pointer to `at` and click the first button, through XTest.
+pub fn click(conn: &impl Connection, root: u32, at: (i16, i16)) {
+    move_to(conn, root, at);
     for kind in [xproto::BUTTON_PRESS_EVENT, xproto::BUTTON_RELEASE_EVENT] {
         conn.xtest_fake_input(kind, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)
             .unwrap();

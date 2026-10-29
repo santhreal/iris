@@ -18,6 +18,19 @@ const NUMBER_W: f32 = 64.0;
 const SHORTCUT_W: f32 = 150.0;
 const PATH_W: f32 = 240.0;
 
+/// What a key does in an open pop-up menu (`Settings::menu_key`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum MenuKey {
+    /// The highlight moved.
+    Moved,
+    /// Choose this option.
+    Choose(usize),
+    /// Close the menu without a choice.
+    Close,
+    /// Not a key the menu takes.
+    Ignored,
+}
+
 /// A configured directory as its field shows it: `~` for the home
 /// directory, the form config.toml stores.
 fn shown_dir(dir: &Path) -> String {
@@ -303,6 +316,48 @@ impl Settings {
         true
     }
 
+    /// Open the pop-up menu of `p` with its selected option highlighted.
+    pub(super) fn open_menu(&mut self, p: Pick) {
+        self.open_pick = Some(p);
+        self.menu_lit = p.selected(&self.cfg);
+    }
+
+    /// Apply option `ix` of `p` from its menu. A changed update channel
+    /// is checked at once.
+    fn pick(&mut self, p: Pick, ix: usize, cx: &mut Context<Self>) {
+        if self.choose(p, ix) && p == Pick::UpdateChannel {
+            self.check_updates(cx);
+        }
+    }
+
+    /// Move the open menu's highlight to option `ix` when the pointer
+    /// enters it, or off `ix` when the pointer leaves it. Returns whether
+    /// the highlight changed.
+    pub(super) fn menu_hover(&mut self, ix: usize, entered: bool) -> bool {
+        let lit = match (entered, self.menu_lit) {
+            (true, _) => Some(ix),
+            (false, Some(lit)) if lit == ix => None,
+            (false, lit) => lit,
+        };
+        std::mem::replace(&mut self.menu_lit, lit) != lit
+    }
+
+    /// What `key` does in the open pop-up menu of `p`: Up and Down move
+    /// the highlight and stop at the first and last options, Return and
+    /// Space choose the highlighted option or close a menu with none,
+    /// and Escape closes the menu.
+    pub(super) fn menu_key(&mut self, p: Pick, key: &str) -> MenuKey {
+        let last = p.options().len() - 1;
+        self.menu_lit = match key {
+            "up" => Some(self.menu_lit.map_or(last, |i| i.saturating_sub(1))),
+            "down" => Some(self.menu_lit.map_or(0, |i| (i + 1).min(last))),
+            "enter" | "space" => return self.menu_lit.map_or(MenuKey::Close, MenuKey::Choose),
+            "escape" => return MenuKey::Close,
+            _ => return MenuKey::Ignored,
+        };
+        MenuKey::Moved
+    }
+
     /// Restore every config.toml setting to its default and apply it.
     /// Start at login is the login entry, not a config setting, and
     /// stays.
@@ -388,6 +443,18 @@ impl Settings {
             cx.notify();
             return;
         }
+        if let Some(p) = self.open_pick {
+            let key = self.menu_key(p, &ks.key);
+            match key {
+                MenuKey::Choose(ix) => self.pick(p, ix, cx),
+                MenuKey::Close => self.open_pick = None,
+                MenuKey::Moved | MenuKey::Ignored => {}
+            }
+            if key != MenuKey::Ignored {
+                cx.notify();
+                return;
+            }
+        }
         if let Some(edit) = &mut self.editing {
             match ks.key.as_str() {
                 "escape" => {
@@ -408,10 +475,7 @@ impl Settings {
             return;
         }
         if ks.key == "escape" {
-            if self.open_pick.take().is_none() {
-                window.remove_window();
-            }
-            cx.notify();
+            self.close(window, cx);
         }
     }
 
@@ -436,27 +500,38 @@ impl Settings {
         let button = widgets::popup_button(p.id(), p.current(&self.cfg), open).on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| {
-                this.open_pick = if open { None } else { Some(p) };
+                if open {
+                    this.open_pick = None;
+                } else {
+                    this.open_menu(p);
+                }
                 cx.notify();
             }),
         );
         let mut control = div().relative().child(button);
         if open {
             let this = cx.entity().downgrade();
-            let dismiss = this.clone();
+            let (hover, dismiss) = (this.clone(), this.clone());
             control = control.child(widgets::popup_menu(
                 p.menu_id(),
                 p.options(),
                 selected,
-                0.0,
+                self.menu_lit,
                 move |ix, _, cx| {
                     this.update(cx, |this, cx| {
-                        if this.choose(p, ix) && p == Pick::UpdateChannel {
-                            this.check_updates(cx);
-                        }
+                        this.pick(p, ix, cx);
                         cx.notify();
                     })
                     .ok();
+                },
+                move |ix, entered, _, cx| {
+                    hover
+                        .update(cx, |this, cx| {
+                            if this.menu_hover(ix, entered) {
+                                cx.notify();
+                            }
+                        })
+                        .ok();
                 },
                 move |_, cx| {
                     dismiss

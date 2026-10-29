@@ -266,6 +266,61 @@ fn restore_defaults_writes_the_defaults() {
     assert_eq!(s.open_pick, None);
 }
 
+// WHY: closes "an open pop-up menu takes no keys" and "the pointer and a
+// key each light a row". The highlight starts on the selected option,
+// arrows move it and stop at either end, Return and Space choose it,
+// and the pointer moves the same highlight. Not covered: the key
+// handler that applies a choice, which the X11 popup case runs.
+#[test]
+fn a_pop_ups_highlight_moves_with_the_arrows_and_the_pointer() {
+    use super::fields::MenuKey;
+    let mut s = settings(Release::None);
+    let p = Pick::ToastDuration;
+    let last = p.options().len() - 1;
+    s.open_menu(p);
+    assert_eq!(s.open_pick, Some(p));
+    assert_eq!(
+        s.menu_lit,
+        p.selected(&s.cfg),
+        "opens on the selected option"
+    );
+    let start = s.menu_lit.unwrap();
+    assert_eq!(s.menu_key(p, "down"), MenuKey::Moved);
+    assert_eq!(s.menu_lit, Some(start + 1));
+    for _ in 0..=last {
+        s.menu_key(p, "down");
+    }
+    assert_eq!(s.menu_lit, Some(last), "Down stops at the last option");
+    for _ in 0..=last {
+        assert_eq!(s.menu_key(p, "up"), MenuKey::Moved);
+    }
+    assert_eq!(s.menu_lit, Some(0), "Up stops at the first option");
+    assert_eq!(s.menu_key(p, "a"), MenuKey::Ignored);
+    assert_eq!(s.menu_lit, Some(0), "another key leaves the highlight");
+    assert_eq!(s.menu_key(p, "enter"), MenuKey::Choose(0));
+    assert_eq!(s.menu_key(p, "space"), MenuKey::Choose(0));
+    assert_eq!(s.menu_key(p, "escape"), MenuKey::Close);
+
+    // The pointer: entering a row lights it, leaving the lit row clears
+    // it, and leaving another row keeps it.
+    assert!(s.menu_hover(3, true));
+    assert_eq!(s.menu_lit, Some(3));
+    assert!(!s.menu_hover(3, true));
+    assert!(!s.menu_hover(1, false));
+    assert_eq!(s.menu_lit, Some(3));
+    assert!(s.menu_hover(3, false));
+    assert_eq!(s.menu_lit, None);
+
+    // With nothing lit, Return closes, Down lights the first option,
+    // and Up the last.
+    assert_eq!(s.menu_key(p, "enter"), MenuKey::Close);
+    s.menu_key(p, "down");
+    assert_eq!(s.menu_lit, Some(0));
+    s.menu_lit = None;
+    s.menu_key(p, "up");
+    assert_eq!(s.menu_lit, Some(last));
+}
+
 // WHY: closes "a setting has no row, or two rows" and "a pane does not
 // fit its window". Every switch, pop-up, and field must appear in
 // exactly one pane: a new member of any of the three enums fails here

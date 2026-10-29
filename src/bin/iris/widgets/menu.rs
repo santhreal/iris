@@ -27,8 +27,8 @@ pub fn menu() -> Div {
     menu_panel().w(px(MENU_W))
 }
 
-/// Menu surface sized by the caller (a pop-up button's menu is at least
-/// as wide as the button).
+/// Menu surface sized by the caller (a pop-up button's menu is as wide
+/// as its widest option, and at least MENU_W - 40).
 fn menu_panel() -> Div {
     div()
         .flex()
@@ -57,6 +57,9 @@ pub struct MenuItem {
     shortcut: Option<SharedString>,
     destructive: bool,
     disabled: bool,
+    /// Lit as the pointer's hover lights a row: the highlight that keys
+    /// move as well.
+    lit: bool,
 }
 
 impl MenuItem {
@@ -68,6 +71,7 @@ impl MenuItem {
             shortcut: None,
             destructive: false,
             disabled: false,
+            lit: false,
         }
     }
 
@@ -97,9 +101,20 @@ impl MenuItem {
         self
     }
 
+    /// Light the row as the pointer's hover does, for a menu whose
+    /// highlight keys move. A key press hides the hover wash until the
+    /// pointer moves, so the lit row is the one row lit.
+    pub fn lit(mut self, lit: bool) -> Self {
+        self.lit = lit;
+        self
+    }
+
     pub fn into_row(self) -> Stateful<Div> {
+        let lit = self.lit && !self.disabled;
         let color = if self.disabled {
             theme::FG_DISABLED
+        } else if lit {
+            theme::ACCENT_INK
         } else if self.destructive {
             theme::DANGER
         } else {
@@ -125,6 +140,9 @@ impl MenuItem {
             row = row
                 .cursor_pointer()
                 .hover(|s| s.bg(theme::ACCENT).text_color(theme::ACCENT_INK));
+        }
+        if lit {
+            row = row.bg(theme::ACCENT);
         }
         if let Some(on) = self.checked {
             row = row.child(
@@ -194,28 +212,36 @@ pub fn popup_button(
 /// The option menu of a pop-up button, to be added as a child of a
 /// `relative` box that holds the button at its top-left (see
 /// [`menu_at`]). The selected row opens over the button, as on macOS;
-/// the menu stays inside the window. Rows mark the selected option. A
-/// row click runs `on_select(index)`; a press outside the menu runs
-/// `on_dismiss`.
+/// the menu stays inside the window. Rows mark the selected option, and
+/// the `lit` row has the highlight, which the caller moves with the
+/// pointer and the arrow keys: the pointer entering row `i` runs
+/// `on_hover(i, true)`, and leaving it `on_hover(i, false)`. A key press
+/// counts as the pointer leaving its row, and its next move as entering
+/// it again. A row click runs `on_select(index)`; a press outside the
+/// menu runs `on_dismiss`.
 pub fn popup_menu(
     id: &'static str,
     options: &[&'static str],
     selected: Option<usize>,
-    min_width: f32,
+    lit: Option<usize>,
     on_select: impl Fn(usize, &mut Window, &mut App) + 'static,
+    on_hover: impl Fn(usize, bool, &mut Window, &mut App) + 'static,
     on_dismiss: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let on_select = Rc::new(on_select);
+    let on_hover = Rc::new(on_hover);
     let mut panel = menu_panel()
         .id(id)
-        .min_w(px(min_width.max(MENU_W - 40.)))
+        .min_w(px(MENU_W - 40.))
         .on_mouse_down_out(move |_, window, cx| on_dismiss(window, cx));
     for (i, opt) in options.iter().enumerate() {
-        let on_select = on_select.clone();
+        let (on_select, on_hover) = (on_select.clone(), on_hover.clone());
         panel = panel.child(
             MenuItem::new(ElementId::NamedInteger(id.into(), i as u64), *opt)
                 .checked(selected == Some(i))
+                .lit(lit == Some(i))
                 .into_row()
+                .on_hover(move |&entered, window, cx| on_hover(i, entered, window, cx))
                 .on_click(move |_, window, cx| on_select(i, window, cx)),
         );
     }

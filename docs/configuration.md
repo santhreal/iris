@@ -187,7 +187,7 @@ Press `Ctrl+W` (`Cmd+W` on macOS) or `Escape`, or click the close control, to cl
 
 Each change writes `config.toml` through `Config::store` at once, and the in-memory configuration cache updates with the directories expanded. The window has no Save button.
 
-- A switch or pop-up button applies on click.
+- A switch or pop-up button applies on click. In an open pop-up menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` chooses the highlighted option, and `Escape` closes the menu.
 - A text field applies on `Enter`, on a click elsewhere in the window, on a tab change, when the window loses focus, and when the window closes by `Ctrl+W`, the close control, or the window manager. `Escape` discards the typed text. A directory must be an absolute path or start with `~`, the file name template must include `{date}` or `{time}`, and frames per second must be an integer from 1 to 120. A rejected value stays in the field with the reason beside it, and the window keeps the current tab until the value is corrected or discarded. Closing the window drops a rejected value.
 - In a text field, `Backspace` deletes the last character, `Ctrl+Backspace` (`Option+Backspace` on macOS) deletes the last word and the spaces and punctuation after it, `Cmd+Backspace` on macOS deletes the whole text, and `Ctrl+V` (`Cmd+V` on macOS) appends the clipboard's text as one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed. A word is a run of letters and digits.
 - **Choose…** opens the system folder picker. When the picker cannot open, the path field opens for typing and the error shows in the window.
