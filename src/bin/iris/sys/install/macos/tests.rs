@@ -187,12 +187,12 @@ fn a_failed_install_leaves_the_installed_bundle_as_it_was() {
 fn a_busy_attach_is_tried_again_and_other_failures_are_not() {
     let busy = || {
         Err(format!(
-            "update: hdiutil exit status: 1: hdiutil: attach failed - {BUSY}"
+            "update: hdiutil failed with exit code 1: hdiutil: attach failed - {BUSY}"
         ))
     };
     let other = || {
         Err(
-            "update: hdiutil exit status: 1: hdiutil: attach failed - image not recognized"
+            "update: hdiutil failed with exit code 1: hdiutil: attach failed - image not recognized"
                 .to_string(),
         )
     };

@@ -215,9 +215,8 @@ fn run(cmd: &mut Command) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "update: {program} {}: {}",
-        out.status,
-        String::from_utf8_lossy(&out.stderr).trim()
+        "update: {}",
+        iris_lib::tools::failure(&program, out.status, &String::from_utf8_lossy(&out.stderr))
     ))
 }
 

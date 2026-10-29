@@ -243,10 +243,10 @@ fn ffmpeg<'a>(what: &str, args: impl IntoIterator<Item = &'a str>) -> Result<(),
     if out.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "ffmpeg {what} exited {}: {}",
+        Err(crate::tools::failure(
+            &format!("ffmpeg {what}"),
             out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
+            &String::from_utf8_lossy(&out.stderr),
         ))
     }
 }

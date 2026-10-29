@@ -62,10 +62,10 @@ fn recognize(source: &Path) -> Result<String, String> {
         .output()
         .map_err(|e| Tool::Tesseract.spawn_error(&e))?;
     if !out.status.success() {
-        return Err(format!(
-            "tesseract exited {}: {}",
+        return Err(crate::tools::failure(
+            "tesseract",
             out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
+            &String::from_utf8_lossy(&out.stderr),
         ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())

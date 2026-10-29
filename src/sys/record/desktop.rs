@@ -289,9 +289,10 @@ impl Desktop {
         let segment = open.segment.clone();
         self.closing
             .push(Closing::spawn(move |done| done.send(written(segment))));
-        Err(format!(
-            "ffmpeg exited {status} during capture: {}",
-            text.unwrap_or_default()
+        Err(crate::tools::failure(
+            "ffmpeg capture",
+            status,
+            &text.unwrap_or_default(),
         ))
     }
 

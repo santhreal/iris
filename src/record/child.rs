@@ -83,8 +83,9 @@ pub fn settle(
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => crate::ilog!(
-                "iris: record: ffmpeg exited {s} after writing {}: {text}",
-                path.display()
+                "iris: record: after writing {}: {}",
+                path.display(),
+                crate::tools::failure("ffmpeg", s, &text)
             ),
             Err(e) => crate::ilog!("iris: record: after writing {}: {e}", path.display()),
         }
@@ -94,7 +95,7 @@ pub fn settle(
     let text = stderr.map(Stderr::text).unwrap_or_default();
     done.send(match status {
         Err(e) => Err(e),
-        Ok(s) if !s.success() => Err(format!("ffmpeg exited {s}: {text}")),
+        Ok(s) if !s.success() => Err(crate::tools::failure("ffmpeg", s, &text)),
         Ok(_) => fed.and_then(|()| written(segment)),
     });
 }

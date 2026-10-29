@@ -105,12 +105,42 @@ fn find_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     dirs.iter().map(|d| d.join(&file)).find(|p| p.is_file())
 }
 
+/// The error for a program `what` that ended unsuccessfully with
+/// `status`: how it ended, then its trimmed `stderr` when it wrote any.
+pub fn failure(what: &str, status: std::process::ExitStatus, stderr: &str) -> String {
+    let ended = match status.code() {
+        Some(code) => format!("{what} failed with exit code {code}"),
+        None => ended_by_signal(what, status),
+    };
+    match stderr.trim() {
+        "" => ended,
+        stderr => format!("{ended}: {stderr}"),
+    }
+}
+
+#[cfg(unix)]
+fn ended_by_signal(what: &str, status: std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match status.signal() {
+        Some(sig) => format!("{what} was ended by signal {sig}"),
+        None => format!("{what} ended with {status}"),
+    }
+}
+
+#[cfg(not(unix))]
+fn ended_by_signal(what: &str, status: std::process::ExitStatus) -> String {
+    format!("{what} ended with {status}")
+}
+
 // WHY: the class closed here is "an installed tool is reported
 // missing": the macOS app's launchd PATH without Homebrew, a Windows
 // daemon PATH older than the install. Every spawn resolves through
 // `Tool::find`; these pin its search order and what counts as a hit.
-// Not covered: which extra directories a platform lists (data, checked
-// on each OS by use).
+// The second class is "a failed tool reads as a stutter": `ExitStatus`
+// printed as "exited exit status: 255: " with an empty stderr. Every
+// program failure iris reports goes through `failure`. Not covered:
+// which extra directories a platform lists (data, checked on each OS
+// by use).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +246,44 @@ mod tests {
                 .spawn_error(&denied)
                 .starts_with(&format!("{} failed to start: ", tool.name())));
         }
+    }
+
+    /// An exit status built the way this platform's wait reports it.
+    #[cfg(unix)]
+    fn exited(code: i32) -> std::process::ExitStatus {
+        std::os::unix::process::ExitStatusExt::from_raw(code << 8)
+    }
+    #[cfg(windows)]
+    fn exited(code: i32) -> std::process::ExitStatus {
+        std::os::windows::process::ExitStatusExt::from_raw(code as u32)
+    }
+
+    #[test]
+    fn a_failure_states_the_exit_code_and_stderr_once_each() {
+        for (status, stderr, want) in [
+            (exited(255), "", "ffmpeg failed with exit code 255"),
+            (exited(1), " \n\t", "ffmpeg failed with exit code 1"),
+            (
+                exited(1),
+                "\n[in#0] Error opening input\n",
+                "ffmpeg failed with exit code 1: [in#0] Error opening input",
+            ),
+        ] {
+            assert_eq!(failure("ffmpeg", status, stderr), want, "{stderr:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_signal_ending_states_the_signal() {
+        let killed = std::os::unix::process::ExitStatusExt::from_raw(15);
+        assert_eq!(
+            failure("ffmpeg join", killed, ""),
+            "ffmpeg join was ended by signal 15"
+        );
+        assert_eq!(
+            failure("ffmpeg join", killed, "Immediate exit requested"),
+            "ffmpeg join was ended by signal 15: Immediate exit requested"
+        );
     }
 }

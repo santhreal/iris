@@ -266,7 +266,7 @@ impl Encoder {
         let text = self.stderr.take().map(Stderr::text).unwrap_or_default();
         match (status, wrote) {
             (Some(s), _) if !s.success() && !text.is_empty() => {
-                format!("ffmpeg exited {s}: {text}")
+                crate::tools::failure("ffmpeg", s, &text)
             }
             (_, Some(Ok(Err(e)))) => format!("write frame to ffmpeg: {e}"),
             _ => "ffmpeg stopped reading frames".to_string(),
