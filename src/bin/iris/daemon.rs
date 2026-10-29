@@ -251,9 +251,13 @@ fn clear_popups_for(cx: &mut App, cmd: &Command) -> bool {
 /// other caller goes through `run`.
 pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
     // A second session would read the first one's overlay, and a window
-    // pick would wait on a click the overlay takes.
-    if cmd.screen() == Screen::Starts && overlay::session_live(cx) {
-        iris_lib::ilog!("iris: {cmd:?} ignored: a capture session holds the screen");
+    // pick takes the next click, which would land on a new overlay.
+    if cmd.screen() == Screen::Starts
+        && (overlay::session_live(cx) || crate::sys::record::picking())
+    {
+        iris_lib::ilog!(
+            "iris: {cmd:?} ignored: a capture overlay or a window pick holds the screen"
+        );
         return Ok(());
     }
     if clear_popups_for(cx, cmd) {

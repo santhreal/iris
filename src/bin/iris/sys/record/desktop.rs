@@ -26,6 +26,11 @@ pub(super) fn start_region(
     start(cx, p, Some(rect))
 }
 
+/// A desktop recording starts with no pick.
+pub(super) fn picking() -> bool {
+    false
+}
+
 fn start(cx: &mut App, p: Params, region: Option<WinRect>) -> Result<ActiveRecording, String> {
     let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
     chip::open(cx, p.chip_mic(), region, &monitors)?;

@@ -12,19 +12,21 @@
 //! desktop where the card stood. A region pick and a window recording
 //! start with the toast closed the same way, and a recording's stop
 //! leaves it. `tests/home.rs` covers Home and `tests/delay.rs` the
-//! countdown card. The capture overlay is such a surface too: a
-//! full-screen capture sent while it was up saved the dimmed overlay,
-//! and a window pick started under it. One case sends every command that
-//! starts reading the screen under the overlay and reads that none ran,
-//! then that a capture after the overlay closes reads the desktop; a
-//! second reads that a region pick's own commit still starts its
+//! countdown card. The capture overlay and a window pick are such
+//! surfaces too: a full-screen capture sent while the overlay was up
+//! saved the dimmed overlay, a window pick started under it, and a
+//! capture sent during a window pick opened the overlay, whose window
+//! the pick's click then recorded. Two cases send every command that
+//! starts reading the screen under the overlay and during a pick, read
+//! that none ran, then that a capture after the session ends runs; a
+//! third reads that a region pick's own commit still starts its
 //! recording.
 //!
 //! Each pop-up case runs with no compositing manager, where a pop-up
 //! closes at once, and under picom fading windows out over two seconds,
 //! where a pop-up must draw itself empty before it closes. The overlay
-//! case runs with none: it reads which commands run, not how a window
-//! leaves.
+//! and pick cases run with none: they read which commands run, not how
+//! a window leaves.
 //!
 //! Not covered: a pinned capture window and the recording chip, which
 //! are content a capture may hold; a window capture, which needs a
@@ -62,9 +64,9 @@ const DESKTOP: u32 = 0x5b7fa6;
 const TOAST: &str = "Screenshot - iris";
 const NOTICE: &str = "Notice - iris";
 const OVERLAY: &str = "Capture - iris";
-/// The log line of a command ignored while a capture session holds the
-/// screen.
-const BUSY: &str = "a capture session holds the screen";
+/// The log line of a command ignored while a capture overlay or a
+/// window pick holds the screen.
+const BUSY: &str = "holds the screen";
 /// The Escape and Return keysyms.
 const ESCAPE: u32 = 0xff1b;
 const RETURN: u32 = 0xff0d;
@@ -422,6 +424,53 @@ fn a_window_recording_starts_without_a_resting_toast() {
         windows_of(conn, root, TOAST),
         Vec::<u32>::new(),
         "the toast is still open as the window pick starts"
+    );
+}
+
+#[test]
+fn a_window_pick_ignores_a_capture_until_it_ends() {
+    let case = "a_window_pick_ignores_a_capture_until_it_ends";
+    if !enabled() {
+        return;
+    }
+    let Some(s) = recording_session(case) else {
+        return;
+    };
+    let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
+    daemon.send(&["--record-window"]);
+    daemon.until("the window pick card to open", || {
+        windows_of(conn, root, NOTICE).first().copied()
+    });
+    daemon.settle();
+    let seconds = ["--capture", "--capture-fullscreen", "--record-region"];
+    for arg in seconds {
+        daemon.send(&[arg]);
+    }
+    daemon.until("every capture to be ignored", || {
+        (daemon.log().matches(BUSY).count() == seconds.len()).then_some(())
+    });
+    daemon.settle();
+    assert_eq!(
+        captures(s.dir.path()),
+        Vec::<PathBuf>::new(),
+        "a capture saved during the pick"
+    );
+    assert_ne!(
+        windows_of(conn, root, NOTICE),
+        Vec::<u32>::new(),
+        "the pick card closed"
+    );
+
+    // The pick ends with no window picked, and the screen is free again.
+    x11::tap(conn, root, ESCAPE);
+    daemon.until("the pick card to close", || {
+        windows_of(conn, root, NOTICE).is_empty().then_some(())
+    });
+    capture_fullscreen(daemon, s.dir.path());
+    assert!(
+        !daemon.log().contains("iris: record: picked"),
+        "the pick took a window:\n{}",
+        daemon.log()
     );
 }
 

@@ -3,7 +3,7 @@
 //! it by XID.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use futures::channel::oneshot;
@@ -22,6 +22,14 @@ pub(super) fn region_available() -> Result<(), String> {
         return Err("region recording needs X11; on Wayland record a window".to_string());
     }
     Ok(())
+}
+
+/// Set while an X11 window pick waits for its click: from the start of a
+/// window recording until its pick lands or the recording ends.
+static PICKING: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn picking() -> bool {
+    PICKING.load(Ordering::Acquire)
 }
 
 /// On X11 the chip opens once the pick lands, over the picked window:
@@ -47,10 +55,12 @@ pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, S
     let chip = Arc::downgrade(&follower);
     let output = p.output.path().to_path_buf();
     let rec = p.spawn(move |spec| record::x11::record_window_follow(spec, follower))?;
+    PICKING.store(true, Ordering::Release);
     crate::notice::guide(cx, "Click a window to record it", "Press Esc to cancel.");
     // A source that ends before a pick lands drops the sender unsent.
     cx.spawn(async move |cx| {
         let landed = landed.await;
+        PICKING.store(false, Ordering::Release);
         cx.update(|cx| {
             crate::notice::end_guide(cx);
             if let (Ok(rect), Some(chip)) = (landed, chip.upgrade()) {

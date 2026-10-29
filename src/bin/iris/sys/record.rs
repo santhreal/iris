@@ -111,3 +111,10 @@ pub fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, String> 
 pub fn start_region(cx: &mut App, p: Params, rect: WinRect) -> Result<ActiveRecording, String> {
     native::start_region(cx, p, rect)
 }
+
+/// Whether a window pick waits for its click: an X11 pick holds the
+/// pointer until a click lands, and that click would pick any window
+/// opened over the screen meanwhile.
+pub fn picking() -> bool {
+    native::picking()
+}

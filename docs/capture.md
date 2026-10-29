@@ -8,7 +8,7 @@ iris provides region, fullscreen, active-window, and timed capture modes.
 
 Starting a capture closes a resting toast and notice first, so the capture does not contain them ([Auto-Dismiss Countdown](toast.md#auto-dismiss-countdown)).
 
-While the region overlay or the region-recording overlay is open, the daemon ignores a second capture, region pick, or recording start, from a shortcut, the tray, or the command line, and logs it in `iris.log`.
+While the region overlay, the region-recording overlay, or an X11 window pick is open, the daemon ignores a second capture, region pick, or recording start, from a shortcut, the tray, or the command line, and logs it in `iris.log`.
 
 ### Region Capture
 
