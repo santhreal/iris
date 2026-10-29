@@ -302,13 +302,39 @@ pub(crate) fn stroke_polyline(
     }
 }
 
+/// The arrowhead's length on a stroke of width `w`: a fixed part that
+/// keeps a thin stroke's head visible, and three widths, so the head's
+/// span stays about 2.6 widths at every stroke and image size.
+fn arrow_head_len(w: f32) -> f32 {
+    10.0 + 3.0 * w
+}
+
+/// The half-angle the arrowhead opens to each side of its stroke, rad.
+const ARROW_HALF_ANGLE: f32 = 0.45;
+
 /// The back corners of the arrowhead on a stroke of width `w` from `a` to
-/// its tip `b`, in image pixels. The head is `w` plus 14 px long and
-/// opens 0.45 rad to each side of the stroke.
+/// its tip `b`, in image pixels.
 pub(crate) fn arrow_wings(a: (f32, f32), b: (f32, f32), w: f32) -> [(f32, f32); 2] {
-    let head = 14.0 + w;
+    let head = arrow_head_len(w);
     let angle = (b.1 - a.1).atan2(b.0 - a.0);
-    [angle - 0.45, angle + 0.45].map(|t| (b.0 - head * t.cos(), b.1 - head * t.sin()))
+    [angle - ARROW_HALF_ANGLE, angle + ARROW_HALF_ANGLE]
+        .map(|t| (b.0 - head * t.cos(), b.1 - head * t.sin()))
+}
+
+/// The arrow's shaft: from `a` to the middle of the head's base, so the
+/// stroke's round cap stays inside the head and the tip is the head's
+/// point. `None` when the arrow is no longer than its head.
+pub(crate) fn arrow_shaft(
+    a: (f32, f32),
+    b: (f32, f32),
+    w: f32,
+) -> Option<((f32, f32), (f32, f32))> {
+    let back = arrow_head_len(w) * ARROW_HALF_ANGLE.cos();
+    let len = (b.0 - a.0).hypot(b.1 - a.1);
+    (len > back).then(|| {
+        let k = (len - back) / len;
+        (a, (a.0 + (b.0 - a.0) * k, a.1 + (b.1 - a.1) * k))
+    })
 }
 
 pub(crate) fn stamp_arrow_head(

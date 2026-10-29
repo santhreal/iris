@@ -155,9 +155,11 @@ pub(crate) fn rasterize(img: &mut image::RgbaImage, action: &Action, alpha_mul: 
             }
         }
         Tool::Arrow => {
-            if let (Some(a), Some(b)) = (action.points.first(), action.points.last()) {
-                stamp_segment(img, *a, *b, w, px);
-                stamp_arrow_head(img, *a, *b, w, px);
+            if let (Some(&a), Some(&b)) = (action.points.first(), action.points.last()) {
+                if let Some((a, e)) = arrow_shaft(a, b, w) {
+                    stamp_segment(img, a, e, w, px);
+                }
+                stamp_arrow_head(img, a, b, w, px);
             }
         }
         Tool::Ellipse => {

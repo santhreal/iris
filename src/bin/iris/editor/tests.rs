@@ -139,6 +139,42 @@ fn arrow_paints_head_at_tip_not_tail() {
     assert!(!painted(&img, 10, 8), "tail must not fan out");
 }
 
+/// WHY: the class closed here is "an arrowhead sized apart from its
+/// stroke". The head was 14 px plus one width long at every stroke, so a
+/// heavy stroke on a large capture got a head hardly wider than its
+/// shaft, and the shaft ran to the tip, where its round cap stood out
+/// past the head's point. Each width in the range the stroke stops reach
+/// must end at the tip and span at least 2.5 widths across the head.
+/// Not covered: the head's look on the canvas, which the geometry cases
+/// hold to the file's.
+#[test]
+fn an_arrow_ends_at_its_heads_point_and_its_head_outspans_its_stroke() {
+    let tip = 360u32;
+    for width in [1.2, 4.0, 9.7, 16.0, 27.6] {
+        let mut img = image::RgbaImage::new(420, 200);
+        let mut arrow = action(Tool::Arrow, vec![(20.0, 100.0), (tip as f32, 100.0)], false);
+        arrow.width = width;
+        rasterize(&mut img, &arrow, 1.0);
+        let ink: Vec<(u32, u32)> = img
+            .enumerate_pixels()
+            .filter(|(_, _, p)| p.0[3] > 0)
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        let right = ink.iter().map(|&(x, _)| x).max().unwrap();
+        let top = ink.iter().map(|&(_, y)| y).min().unwrap();
+        let bottom = ink.iter().map(|&(_, y)| y).max().unwrap();
+        assert!(
+            right <= tip,
+            "a {width} px arrow inks to x {right}, past its tip at {tip}"
+        );
+        let span = (bottom + 1 - top) as f32;
+        assert!(
+            span >= 2.5 * width,
+            "a {width} px arrow's head spans {span} px, under 2.5 widths"
+        );
+    }
+}
+
 #[test]
 fn filled_ellipse_paints_center_not_corners() {
     let mut img = image::RgbaImage::new(30, 30);

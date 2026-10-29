@@ -5,7 +5,7 @@ use std::rc::Rc;
 use gpui::*;
 
 use super::action::{hex_rgba, Action, Tool};
-use super::raster_shapes::arrow_wings;
+use super::raster_shapes::{arrow_shaft, arrow_wings};
 use crate::icons::{
     self, push_disc, push_ellipse_fill, push_filled_triangle, push_rect_fill, push_ring,
     push_segment, TriSink,
@@ -123,7 +123,9 @@ pub(crate) fn tessellate(action: &Action, scale: f32, path: &mut impl TriSink) {
         }
         Tool::Arrow => {
             if let (Some(&a), Some(&b)) = (action.points.first(), action.points.last()) {
-                push_segment(path, s(a), s(b), w);
+                if let Some((a, e)) = arrow_shaft(a, b, action.width) {
+                    push_segment(path, s(a), s(e), w);
+                }
                 let [p1, p2] = arrow_wings(a, b, action.width);
                 push_filled_triangle(path, s(b), s(p1), s(p2));
             }
