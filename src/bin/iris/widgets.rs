@@ -78,19 +78,15 @@ pub fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<
     .child(label)
 }
 
-/// Toolbar text button with a trailing glyph (a menu's chevron).
+/// Toolbar text button with a trailing glyph (a menu's chevron) in the
+/// label's color, hover included.
 pub fn button_with_icon(
     id: &'static str,
     label: &'static str,
     glyph: Icon,
     primary: bool,
 ) -> Stateful<Div> {
-    let color = if primary {
-        theme::ACCENT_INK
-    } else {
-        theme::FG_DIM
-    };
-    button(id, label, primary).child(icons::icon(glyph, color, 10.0))
+    button(id, label, primary).child(icons::icon_in_text_color(glyph, 10.0))
 }
 
 /// The glyph size for an icon-only control of edge `size`: 16 in a

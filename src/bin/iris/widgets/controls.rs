@@ -308,7 +308,7 @@ pub fn segmented(
             }
         };
         if let Some(icon) = seg.icon {
-            cell = cell.child(icons::icon(icon, ink, glyph));
+            cell = cell.child(icons::icon_in_text_color(icon, glyph));
         }
         if let Some(label) = seg.label {
             cell = cell.child(label);

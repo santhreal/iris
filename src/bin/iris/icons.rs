@@ -70,9 +70,25 @@ pub enum Icon {
 /// grows nor shrinks: in a row whose text overflows, a shrinkable
 /// canvas collapsed toward zero width and painted a sliver.
 pub fn icon(kind: Icon, color: Rgba, size: f32) -> Canvas<()> {
+    glyph(kind, Some(color), size)
+}
+
+/// [`icon`] in the text color in effect where it paints, so a glyph
+/// beside a label takes the label's color through hover and selection.
+/// A fixed color left a hovered tab with a lit label over a dim glyph.
+pub fn icon_in_text_color(kind: Icon, size: f32) -> Canvas<()> {
+    glyph(kind, None, size)
+}
+
+/// The one constructor every glyph goes through: `color`, or with
+/// `None` the text color at paint.
+fn glyph(kind: Icon, color: Option<Rgba>, size: f32) -> Canvas<()> {
     canvas(
         move |_, _, _| (),
-        move |bounds, (), window, cx| paint_icon(kind, bounds, color, window, cx),
+        move |bounds, (), window, cx| {
+            let color = color.unwrap_or_else(|| window.text_style().color.to_rgb());
+            paint_icon(kind, bounds, color, window, cx)
+        },
     )
     .flex_none()
     .w(px(size))
@@ -98,7 +114,7 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
 // WHY: the class closed here is "a glyph shrinks in a row with no room
 // left". A canvas in a flex row shrank like text, so a folder glyph
 // beside an overflowing path in the settings window painted a sliver.
-// `icon` is the one constructor every glyph goes through, and its box
+// `glyph` is the one constructor every glyph goes through, and its box
 // neither grows nor shrinks. Not covered: a caller that wraps the glyph
 // in a box of its own that shrinks.
 #[cfg(test)]
@@ -109,11 +125,13 @@ mod tests {
 
     #[test]
     fn an_icon_keeps_its_size_in_a_full_row() {
-        let mut glyph = icon(Icon::Folder, crate::theme::FG, 16.);
-        let style = glyph.style();
-        assert_eq!(style.flex_shrink, Some(0.));
-        assert_eq!(style.flex_grow, Some(0.));
-        assert_eq!(style.size.width, Some(px(16.).into()));
-        assert_eq!(style.size.height, Some(px(16.).into()));
+        for color in [Some(crate::theme::FG), None] {
+            let mut canvas = glyph(Icon::Folder, color, 16.);
+            let style = canvas.style();
+            assert_eq!(style.flex_shrink, Some(0.));
+            assert_eq!(style.flex_grow, Some(0.));
+            assert_eq!(style.size.width, Some(px(16.).into()));
+            assert_eq!(style.size.height, Some(px(16.).into()));
+        }
     }
 }

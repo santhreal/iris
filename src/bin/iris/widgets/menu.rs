@@ -147,7 +147,7 @@ impl MenuItem {
                     .flex_shrink_0()
                     .flex()
                     .justify_center()
-                    .children(on.then(|| icons::icon(Icon::Check, color, 12.0))),
+                    .children(on.then(|| icons::icon_in_text_color(Icon::Check, 12.0))),
             );
         }
         row = row.child(div().flex_1().child(self.label));
