@@ -61,17 +61,17 @@ enum When {
 /// The tray menu, top to bottom.
 const MENU: &[Row] = &[
     Row::Item {
-        label: "Capture",
+        label: "New Screenshot",
         command: Command::Capture,
         when: When::Always,
     },
     Row::Item {
-        label: "Record window",
+        label: "Record Window",
         command: Command::RecordToggle,
         when: When::Idle,
     },
     Row::Item {
-        label: "Stop recording",
+        label: "Stop Recording",
         command: Command::RecordStop,
         when: When::Recording,
     },
@@ -96,6 +96,17 @@ const MENU: &[Row] = &[
 
 /// The install row's label before the version it offers.
 const UPDATE_LABEL: &str = "Install iris";
+
+/// The label of the row that sends `command`, matched by its `Debug`
+/// name, for the tests that hold another surface to the same name.
+#[cfg(test)]
+pub(crate) fn label_of(command: &Command) -> Option<&'static str> {
+    let name = format!("{command:?}");
+    MENU.iter().find_map(|row| match row {
+        Row::Item { label, command, .. } if format!("{command:?}") == name => Some(*label),
+        _ => None,
+    })
+}
 
 /// The version the install row offers; `None` hides the row.
 static OFFER: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);

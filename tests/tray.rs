@@ -12,10 +12,10 @@
 //! the daemon on a private Xvfb and a private dbus-daemon and reads both
 //! answers from the item.
 //! "The tray menu does not follow the recording": the menu offered
-//! **Record window** while a recording ran, and that row stopped it.
-//! The second case starts a window recording, reads **Stop recording**
+//! **Record Window** while a recording ran, and that row stopped it.
+//! The second case starts a window recording, reads **Stop Recording**
 //! in the menu the item serves, clicks it through the menu's `Event`
-//! method, and reads the recording saved and **Record window** back.
+//! method, and reads the recording saved and **Record Window** back.
 //!
 //! Not covered: a panel itself; a recording that ends on its own, whose
 //! end takes the same path (`daemon::recording::Live`, covered by its
@@ -54,8 +54,20 @@ const PATH: &str = "/StatusNotifierItem";
 const MENU: &str = "com.canonical.dbusmenu";
 const MENU_PATH: &str = "/MenuBar";
 /// The menu's item labels with no update offered.
-const IDLE: [&str; 5] = ["Capture", "Record window", "Library", "Settings", "Quit"];
-const RECORDING: [&str; 5] = ["Capture", "Stop recording", "Library", "Settings", "Quit"];
+const IDLE: [&str; 5] = [
+    "New Screenshot",
+    "Record Window",
+    "Library",
+    "Settings",
+    "Quit",
+];
+const RECORDING: [&str; 5] = [
+    "New Screenshot",
+    "Stop Recording",
+    "Library",
+    "Settings",
+    "Quit",
+];
 
 /// A connection to the private bus at `address`.
 fn connect(address: &str) -> zbus::Connection {

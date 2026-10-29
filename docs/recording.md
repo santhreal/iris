@@ -16,12 +16,12 @@ Start window recording through any of the following triggers:
 - Keybind: `Ctrl+Shift+Print` (configured by `record_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
 - Command-line interface: `iris --record-window` (see [cli.md#command-reference](cli.md#command-reference))
 - Home window: **Record Window** tile
-- System tray menu: **Record window**
+- System tray menu: **Record Window**
 
 Stop an active recording through any of the following triggers:
 - Press `Ctrl+Shift+Print` (or the configured `record_hotkey`)
 - Run `iris --record-window`
-- Click **Stop recording** in the system tray menu, which shows it in place of **Record window** while a recording runs
+- Click **Stop Recording** in the system tray menu, which shows it in place of **Record Window** while a recording runs
 - Click **Record Window** in the Home window
 - Click the stop button on the floating indicator chip (X11, Windows, and macOS)
 - Run `iris --quit` (saves the recording before process exit)

@@ -586,4 +586,19 @@ mod tests {
         let margin = (WIN.0 - row) / 2.0;
         assert!(margin >= 32.0, "tile row leaves {margin}px side margins");
     }
+
+    // WHY: the class closed here is "one command, two names": the tray
+    // row and the home tile that run the same command read the same,
+    // for every tile. Not covered: the tooltips and help sheets, which
+    // describe a command rather than name it.
+    #[test]
+    fn every_tile_reads_as_the_tray_row_that_runs_its_command() {
+        for (_, _, _, title, tile) in TILES {
+            assert_eq!(
+                crate::sys::tray::label_of(&tile.command()),
+                Some(title),
+                "{tile:?}"
+            );
+        }
+    }
 }

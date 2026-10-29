@@ -17,7 +17,7 @@ Trigger region capture using any of the following interfaces:
 - Command-line interface: `iris --capture` (see [cli.md#command-reference](cli.md#command-reference))
 - Home window: **New Screenshot** tile
 - Library window: **New Screenshot** toolbar button
-- System tray menu: **Capture**
+- System tray menu: **New Screenshot**
 
 The region overlay applies a dimming layer at 0.32 opacity immediately and freezes the screen into an image frame across all monitors.
 

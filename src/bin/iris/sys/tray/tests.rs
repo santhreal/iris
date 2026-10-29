@@ -80,9 +80,9 @@ fn each_label_runs_its_documented_command() {
     assert_eq!(
         menu,
         [
-            "Capture: Capture (Always)",
-            "Record window: RecordToggle (Idle)",
-            "Stop recording: RecordStop (Recording)",
+            "New Screenshot: Capture (Always)",
+            "Record Window: RecordToggle (Idle)",
+            "Stop Recording: RecordStop (Recording)",
             "Library: Library (Always)",
             "Settings: Settings (Always)",
             "Install iris <version>: InstallUpdate",
@@ -121,8 +121,8 @@ fn the_drawn_rows_follow_the_offer_and_the_recording() {
             .collect()
     };
     let plain: Vec<(usize, String)> = [
-        (1, "Capture"),
-        (2, "Record window"),
+        (1, "New Screenshot"),
+        (2, "Record Window"),
         (4, "Library"),
         (5, "Settings"),
         (7, "---"),
@@ -133,7 +133,7 @@ fn the_drawn_rows_follow_the_offer_and_the_recording() {
     .collect();
     let recording = |rows: &[(usize, String)]| -> Vec<(usize, String)> {
         let mut rows = rows.to_vec();
-        rows[1] = (3, "Stop recording".to_string());
+        rows[1] = (3, "Stop Recording".to_string());
         rows
     };
 

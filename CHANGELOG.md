@@ -22,7 +22,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `Ctrl+Backspace` or `Option+Backspace` in the editor's text entry and in a Settings text field deletes the last word, and `Cmd+Backspace` deletes the whole text.
 - `Up`, `Down`, `Return`, and `Space` move through and choose from an open menu: a Settings pop-up, the editor's Copy and More menus, and the Library's context menu.
 - Window and region recording through ffmpeg writes MP4, GIF, or WebM, with pause, a microphone toggle, and an indicator chip that is excluded from the recording where the platform allows it.
-- The tray menu shows Stop recording in place of Record window while a recording runs.
+- The tray menu shows Stop Recording in place of Record Window while a recording runs.
 - A touchpad pinch zooms the editor's image about the pinch center.
 - The capture library shows every capture in a thumbnail grid with multiple selection, file drag-out, copy, and reveal in the file manager.
 - The library has keyboard navigation, a context menu on each card, and a Quick Look preview on `Space`.

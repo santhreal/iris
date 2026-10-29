@@ -12,9 +12,9 @@ The tray menu holds the same actions:
 
 | Item | Action |
 | --- | --- |
-| **Capture** | Open the region capture overlay |
-| **Record window** | Start a window recording; shown while no recording runs |
-| **Stop recording** | Stop the recording in progress; shown in place of **Record window** while a recording runs |
+| **New Screenshot** | Open the region capture overlay |
+| **Record Window** | Start a window recording; shown while no recording runs |
+| **Stop Recording** | Stop the recording in progress; shown in place of **Record Window** while a recording runs |
 | **Library** | Open the capture library |
 | **Settings** | Open the settings window |
 | **Install iris** *version* | Download, verify, and install the update the last check found; shown only while one is available ([Updates](updates.md)) |
@@ -33,7 +33,7 @@ To start the daemon at login, turn on **Start iris at login** in the settings wi
 
 ## Take a Screenshot
 
-1. Press `Ctrl+Print` (`Ctrl+F13` on macOS), click **New Screenshot**, click **Capture** in the tray menu, or run `iris --capture`. The screen freezes and dims.
+1. Press `Ctrl+Print` (`Ctrl+F13` on macOS), click **New Screenshot** in the home window or the tray menu, or run `iris --capture`. The screen freezes and dims.
 2. Click a window to capture it (X11, Windows, and macOS), or drag a rectangle and press `Enter`. `Escape` or a right click cancels.
 3. The capture is saved as a PNG in `~/Pictures/iris` and copied to the clipboard.
 
@@ -55,7 +55,7 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 
 ## Record the Screen
 
-1. Press `Ctrl+Shift+Print`, click **Record Window**, click **Record window** in the tray menu, or run `iris --record-window`.
+1. Press `Ctrl+Shift+Print`, click **Record Window** in the home window or the tray menu, or run `iris --record-window`.
 2. On X11, click the window to record. A card in the toast corner reads **Click a window to record it** until the click, and `Escape` cancels. A click on a menu, a tooltip, or the card itself picks nothing. On Wayland, pick the window in the compositor's dialog. Windows and macOS record the whole desktop.
 3. A chip with a timer and pause, stop, and microphone buttons floats beside the recorded area (X11, Windows, and macOS). A GIF recording has no microphone button.
 4. Press `Ctrl+Shift+Print` again, click the chip's stop button, or run `iris --record-window` to stop.
