@@ -244,7 +244,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -2900,7 +2900,7 @@ dependencies = [
  "ureq",
  "widestring",
  "windows 0.61.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
  "x11rb",
  "zbus",
 ]
