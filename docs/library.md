@@ -49,6 +49,7 @@ Each card is 216 pixels wide:
 - **Toggle selection**: `Ctrl`-click (Linux and Windows) or `Cmd`-click (macOS) toggles the clicked card and sets the range anchor.
 - **Range selection**: `Shift`-click selects every card from the anchor to the clicked card, inclusive.
 - **Arrow keys**: Left and Right move the selection to the previous and next capture across rows and days. Up and Down move to the card in the same column of the row above or below; a shorter row takes its last card. With no selection, an arrow key selects the first capture. `Shift` with an arrow key extends the selection from the anchor. The grid scrolls the least distance that shows the selected card, with its day title when the card is in the day's first row.
+- **Home, End, Page Up, Page Down**: `Home` and `End` move the selection to the first and last capture. `Page Up` and `Page Down` move it to the same column of the farthest row within the visible grid's height above or below, and at least one row. `Shift` with any of them extends the selection from the anchor.
 - **Select all (`Ctrl+A` or `Cmd+A`)**: Selects every capture in the library.
 - **Clear selection (`Escape`)**: Clears the selection. With no selection and the shortcut sheet closed, `Escape` closes the window.
 - **Rubber-band selection**: A press on empty grid space and a drag draws a marquee. Releasing the button selects every card the marquee touches. A drag under 4 pixels is a click on empty space and clears the selection.
@@ -79,7 +80,7 @@ A right-click on a card opens a context menu at the pointer: **Open**, **Quick L
 
 | Shortcut | Action |
 | --- | --- |
-| Arrow keys | Move the selection; `Shift` extends it |
+| Arrow keys, `Home`, `End`, `Page Up`, `Page Down` | Move the selection; `Shift` extends it |
 | `Return` | Open the selected capture in the editor |
 | `Space` | Show or close Quick Look |
 | `Ctrl+A` / `Cmd+A` | Select every capture |

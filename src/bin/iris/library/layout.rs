@@ -132,6 +132,14 @@ pub(super) enum Step {
     Right,
     Up,
     Down,
+    /// Home: the first card.
+    First,
+    /// End: the last card.
+    Last,
+    /// Page Up and Page Down: the farthest card row at most this many
+    /// pixels (the viewport height) away, and at least the next one.
+    PageUp(f32),
+    PageDown(f32),
 }
 
 /// The grid at one width: rows top to bottom, each row's top in
@@ -237,9 +245,9 @@ impl Layout {
     }
 
     /// The entry a keyboard `step` from entry `i` lands on. Left and
-    /// Right follow listing order across rows and days; Up and Down move
-    /// to the nearest column of the card row above or below. A move off
-    /// the grid's end stays on `i`.
+    /// Right follow listing order across rows and days; Up, Down, Page
+    /// Up, and Page Down move to the nearest column of a card row above
+    /// or below. A move off the grid's end stays on `i`.
     pub(super) fn step(&self, i: usize, step: Step) -> usize {
         let n = self.place.len();
         if n == 0 {
@@ -251,16 +259,28 @@ impl Layout {
             Row::Cards { start, end } => Some((start, end)),
             Row::Header(_) => None,
         };
+        // The farthest card row in `rows` within `page` of row r, and at
+        // least the first card row in them.
+        let land = |rows: &mut dyn Iterator<Item = usize>, page: f32| {
+            let mut pick = None;
+            for k in rows.filter(|&k| row(k).is_some()) {
+                if pick.is_some() && (self.tops[k] - self.tops[r]).abs() > page {
+                    break;
+                }
+                pick = Some(k);
+            }
+            pick.and_then(row)
+                .map_or(i, |(start, end)| start + c.min(end - start - 1))
+        };
         match step {
             Step::Left => i.saturating_sub(1),
             Step::Right => (i + 1).min(n - 1),
-            Step::Up => (0..r)
-                .rev()
-                .find_map(row)
-                .map_or(i, |(start, end)| start + c.min(end - start - 1)),
-            Step::Down => (r + 1..self.rows.len())
-                .find_map(row)
-                .map_or(i, |(start, end)| start + c.min(end - start - 1)),
+            Step::First => 0,
+            Step::Last => n - 1,
+            Step::Up => land(&mut (0..r).rev(), 0.0),
+            Step::Down => land(&mut (r + 1..self.rows.len()), 0.0),
+            Step::PageUp(page) => land(&mut (0..r).rev(), page),
+            Step::PageDown(page) => land(&mut (r + 1..self.rows.len()), page),
         }
     }
 

@@ -12,6 +12,9 @@
 //! menu, presses Down and Return, and reads the editor that Open
 //! starts.
 //!
+//! The third case closes "Home, End, and the page keys do nothing in
+//! the grid": End then Return opens the last capture in the editor.
+//!
 //! Not covered: a read on a timer, which `tests/idle.rs` rejects; the
 //! watches of Wayland, Windows, and macOS, which the tests of
 //! `src/bin/iris/sys/watch.rs` cover; the menu's other rows, whose keys
@@ -45,6 +48,7 @@ const CAPTURE: [u8; 4] = [40, 90, 200, 255];
 /// Keysyms.
 const DOWN: u32 = 0xff54;
 const RETURN: u32 = 0xff0d;
+const END: u32 = 0xff57;
 
 /// A capture at `path`, its folder made.
 fn png(path: &Path) -> PathBuf {
@@ -145,4 +149,53 @@ fn the_arrow_keys_and_return_run_a_context_menu_row() {
     daemon.until("Down and Return to run Open", || {
         (!windows_of(&conn, root, "one.png - iris").is_empty()).then_some(())
     });
+}
+
+#[test]
+fn end_and_return_open_the_last_capture() {
+    if !enabled() {
+        return;
+    }
+    let case = "end_and_return_open_the_last_capture";
+    let Some((_xvfb, display)) = xvfb_sized(case, "1600x1200x24") else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    let shots = dir.path().join("shots");
+    let listed: Vec<_> = ["first.png", "middle.png", "last.png"]
+        .iter()
+        .map(|name| png(&shots.join(name)))
+        .collect();
+    store(dir.path(), &listed);
+    daemon.send(&["--library"]);
+    let library = daemon.until("the library window to map", || {
+        windows_of(&conn, root, LIBRARY).first().copied()
+    });
+    let [r, g, b, _] = CAPTURE;
+    daemon.until("the cards' thumbnails to draw", || {
+        extent(&client(&conn, root, library), [r, g, b])
+    });
+    daemon.settle();
+    let at = conn
+        .translate_coordinates(library, root, 0, 0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    // With no window manager the keyboard follows the pointer.
+    move_to(&conn, root, (at.dst_x + 4, at.dst_y + 4));
+    daemon.settle();
+    tap(&conn, root, END);
+    daemon.settle();
+    tap(&conn, root, RETURN);
+    daemon.until("End and Return to open the last capture", || {
+        (!windows_of(&conn, root, "last.png - iris").is_empty()).then_some(())
+    });
+    for other in ["first.png - iris", "middle.png - iris"] {
+        assert!(windows_of(&conn, root, other).is_empty(), "{other} opened");
+    }
 }

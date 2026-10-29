@@ -24,6 +24,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The capture library shows every capture in a thumbnail grid with multiple selection, file drag-out, copy, and reveal in the file manager.
 - The library has keyboard navigation, a context menu on each card, and a Quick Look preview on `Space`.
 - The library's card context menu pins a capture to the screen.
+- `Home`, `End`, `Page Up`, and `Page Down` move the library's selection to the first or last capture or by the visible grid's height.
 - `Ctrl+C` or `Cmd+C` in a pinned window copies its image, and `Ctrl+W` or `Cmd+W` closes it.
 - The Windows installer creates a desktop shortcut from a checkbox on its last page or from `/DESKTOP` in a silent installation.
 - Moving a capture to the trash from the library or the toast moves the file to the freedesktop Trash on Linux, the Trash on macOS, or the Recycle Bin on Windows, where the file manager can restore it.

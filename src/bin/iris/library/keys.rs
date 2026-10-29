@@ -1,5 +1,5 @@
-//! The library's keyboard paths: arrow selection, open, preview,
-//! select all, trash, and the window keys.
+//! The library's keyboard paths: arrow, Home, End, and page
+//! selection, open, preview, select all, trash, and the window keys.
 
 use gpui::*;
 
@@ -8,9 +8,9 @@ use super::Library;
 
 /// The selection after an arrow key `step`: the new cursor, the new
 /// range anchor, and the inclusive index range to select. With no card
-/// under the cursor the move lands on the first card. `extend` (Shift)
-/// grows the range from the anchor; a plain move selects the one card it
-/// lands on. None for an empty grid.
+/// under the cursor the move lands on the first card, or on the last for
+/// End. `extend` (Shift) grows the range from the anchor; a plain move
+/// selects the one card it lands on. None for an empty grid.
 pub(super) fn arrow(
     layout: &Layout,
     n: usize,
@@ -23,7 +23,11 @@ pub(super) fn arrow(
         return None;
     }
     let from = cursor.filter(|c| *c < n);
-    let next = from.map_or(0, |c| layout.step(c, step));
+    let next = match from {
+        Some(c) => layout.step(c, step),
+        None if step == Step::Last => n - 1,
+        None => 0,
+    };
     let anchor = if extend {
         anchor.filter(|a| *a < n).or(from).unwrap_or(next)
     } else {
@@ -32,13 +36,18 @@ pub(super) fn arrow(
     Some((next, anchor, (anchor.min(next), anchor.max(next))))
 }
 
-/// The arrow key `key` names, if any.
-pub(super) fn arrow_step(key: &str) -> Option<Step> {
+/// The grid move for `key`, if any: an arrow, Home, End, Page Up, or
+/// Page Down, which moves by `page` pixels.
+pub(super) fn arrow_step(key: &str, page: f32) -> Option<Step> {
     match key {
         "left" => Some(Step::Left),
         "right" => Some(Step::Right),
         "up" => Some(Step::Up),
         "down" => Some(Step::Down),
+        "home" => Some(Step::First),
+        "end" => Some(Step::Last),
+        "pageup" => Some(Step::PageUp(page)),
+        "pagedown" => Some(Step::PageDown(page)),
         _ => None,
     }
 }
@@ -80,7 +89,8 @@ impl Library {
             cx.notify();
             return;
         }
-        if let Some(step) = arrow_step(key) {
+        let page = f32::from(self.scroll.bounds().size.height);
+        if let Some(step) = arrow_step(key, page) {
             self.move_cursor(step, ks.modifiers.shift, cx);
             return;
         }
@@ -147,7 +157,7 @@ impl Library {
         self.sel_dirty = true;
     }
 
-    /// An arrow key: move the cursor and the selection with it, keep the
+    /// A grid move key: move the cursor and the selection with it, keep the
     /// card in view, and follow it with the preview when one is open.
     fn move_cursor(&mut self, step: Step, extend: bool, cx: &mut Context<Self>) {
         let n = self.listing.entries().len();

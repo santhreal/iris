@@ -6,7 +6,7 @@ use iris_lib::time::days_from_civil;
 
 use super::context_menu::{place, MENU_H};
 use super::entries::trash_status;
-use super::keys::arrow;
+use super::keys::{arrow, arrow_step};
 use super::layout::{
     day_and_time, day_title, sections, Day, Layout, Row, Section, Step, BOTTOM_PAD, HEADER_H,
     PAD_X, ROW_GAP,
@@ -299,6 +299,63 @@ fn shift_arrows_grow_the_selection_from_its_anchor() {
         arrow(&l, 8, Some(1), Some(99), Step::Right, true),
         Some((2, 1, (1, 2)))
     );
+}
+
+// WHY: Home, End, Page Up, and Page Down did nothing in the library, so
+// a long history was crossed one row per key press. Closed here: Home or
+// End that misses the first or last card, with or without a cursor; a
+// page move that stops short of or passes the farthest row within the
+// viewport, loses its column, lands on a header, wraps past an end, or
+// moves less than one row for a viewport shorter than a row; and a key
+// that maps to no move. Not covered: the key event dispatch and the
+// scroll that follows.
+#[test]
+fn home_end_and_page_keys_move_through_the_grid() {
+    // 4 columns: H0 [0 1 2], H1 [3 4 5 6] ... [31 32].
+    let (_, l) = grid(&[3, 30], 960.0);
+    let n = 33;
+    let top = |i: usize| l.card_rect(i).expect("card").1;
+    for i in 0..n {
+        assert_eq!(l.step(i, Step::First), 0, "Home from {i}");
+        assert_eq!(l.step(i, Step::Last), n - 1, "End from {i}");
+        // A viewport shorter than a row pages one row, as an arrow does.
+        assert_eq!(l.step(i, Step::PageDown(0.0)), l.step(i, Step::Down));
+        assert_eq!(l.step(i, Step::PageUp(0.0)), l.step(i, Step::Up));
+    }
+    // Two rows down within the page, one row down just short of it.
+    let two = top(11) - top(3);
+    assert_eq!(l.step(3, Step::PageDown(two)), 11);
+    assert_eq!(l.step(3, Step::PageDown(two - 1.0)), 7);
+    assert_eq!(l.step(13, Step::PageUp(two)), 5);
+    assert_eq!(l.step(13, Step::PageUp(two - 1.0)), 9);
+    // Across a day header to the card row under it, in the same column.
+    assert_eq!(l.step(1, Step::PageDown(top(3) - top(1))), 4);
+    // A page past either end stops on the end row, column clamped to a
+    // short row.
+    assert_eq!(l.step(2, Step::PageDown(1e6)), 32);
+    assert_eq!(l.step(32, Step::PageUp(1e6)), 1);
+    assert_eq!(l.step(32, Step::PageDown(1e6)), 32);
+    assert_eq!(l.step(0, Step::PageUp(1e6)), 0);
+    // End with no card under the cursor lands on the last card.
+    assert_eq!(
+        arrow(&l, n, None, None, Step::Last, false),
+        Some((n - 1, n - 1, (n - 1, n - 1)))
+    );
+    assert_eq!(
+        arrow(&l, n, Some(5), Some(5), Step::First, true),
+        Some((0, 5, (0, 5)))
+    );
+    for (key, step) in [
+        ("home", Step::First),
+        ("end", Step::Last),
+        ("pageup", Step::PageUp(480.0)),
+        ("pagedown", Step::PageDown(480.0)),
+        ("left", Step::Left),
+        ("down", Step::Down),
+    ] {
+        assert_eq!(arrow_step(key, 480.0), Some(step), "{key}");
+    }
+    assert_eq!(arrow_step("a", 480.0), None);
 }
 
 #[test]
