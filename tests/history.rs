@@ -148,6 +148,8 @@ const B: u32 = 0x62;
 const BACKSPACE: u32 = 0xff08;
 const D: u32 = 0x64;
 const E: u32 = 0x65;
+const S: u32 = 0x73;
+const Y: u32 = 0x79;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -414,13 +416,32 @@ impl Session {
     /// commit it with Return. The caret blinks while the entry is open,
     /// so the keys go in on a pause rather than on an idle daemon.
     fn label(&self, keysyms: &[u32]) {
+        self.type_label(keysyms);
+        self.keys(&[RETURN]);
+    }
+
+    /// With the Text tool, type `keysyms` as a label at LABEL and leave
+    /// its entry open.
+    fn type_label(&self, keysyms: &[u32]) {
         self.keys(&[T]);
         click(&self.conn, self.root, self.screen_at(LABEL));
         std::thread::sleep(std::time::Duration::from_millis(300));
         for &keysym in keysyms {
             tap(&self.conn, self.root, keysym);
         }
-        self.keys(&[RETURN]);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    /// Reopen the label at LABEL with a press inside it, the Text tool
+    /// on, and type `keysyms` after its text.
+    fn reopen(&self, keysyms: &[u32]) {
+        let inside = self.screen_at((LABEL.0 + 3.0, LABEL.1 - 5.0));
+        click(&self.conn, self.root, inside);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        for &keysym in keysyms {
+            tap(&self.conn, self.root, keysym);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
 
     /// The rightmost canvas column the red of a label at LABEL reaches.
@@ -488,7 +509,12 @@ impl Session {
 
     /// Save with Return and return the saved file.
     fn save(self) -> image::RgbImage {
-        tap(&self.conn, self.root, RETURN);
+        self.save_with(&[RETURN])
+    }
+
+    /// Save with the chord `keysyms` and return the saved file.
+    fn save_with(self, keysyms: &[u32]) -> image::RgbImage {
+        chord(&self.conn, self.root, keysyms);
         // The save lands after the window closes, over the original file.
         self.daemon.until("the editor to save and close", || {
             if !windows_of(&self.conn, self.root, EDITOR).is_empty() {
@@ -1120,17 +1146,10 @@ fn undo_redo_and_clear_markup_commit_a_reopened_label_first() {
     };
     let (conn, root) = (&session.conn, session.root);
     let [undo, redo] = session.history_buttons();
-    let inside = session.screen_at((LABEL.0 + 3.0, LABEL.1 - 5.0));
-    let reopen = |keysym: u32| {
-        click(conn, root, inside);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        tap(conn, root, keysym);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    };
     session.label(&[A, B]);
     let ab = session.label_end();
     // The toolbar's Undo settles the reopened abc, then undoes it.
-    reopen(C);
+    session.reopen(&[C]);
     click(conn, root, undo);
     session.daemon.until("Undo to settle abc and undo it", || {
         (session.label_end() == ab).then_some(())
@@ -1139,7 +1158,7 @@ fn undo_redo_and_clear_markup_commit_a_reopened_label_first() {
     let abc = session.label_end();
     // Clear Markup settles the reopened abcd, then clears it. The
     // caret blinks under the menu, so the daemon never goes idle.
-    reopen(D);
+    session.reopen(&[D]);
     click(conn, root, session.more_button());
     std::thread::sleep(std::time::Duration::from_millis(500));
     click(conn, root, session.more_row(CLEAR));
@@ -1152,7 +1171,7 @@ fn undo_redo_and_clear_markup_commit_a_reopened_label_first() {
     let abcd = session.label_end();
     // The toolbar's Redo settles the reopened abcde: a new step, so
     // nothing is left to redo and the Clear Markup undone stays undone.
-    reopen(E);
+    session.reopen(&[E]);
     click(conn, root, redo);
     session
         .daemon
@@ -1172,6 +1191,96 @@ fn undo_redo_and_clear_markup_commit_a_reopened_label_first() {
          after the Undo of Clear Markup ({abcd:?}), and after the Undo of \
          abcde ({undone:?})"
     );
+}
+
+// WHY: Undo, Redo, and Copy Image run from their keys with a label
+// open, as from their toolbar buttons, each settling the label first.
+// An entry that takes the keys as typing leaves them dead until the
+// label is committed by hand. Ctrl+S and Ctrl+W are below.
+#[test]
+fn undo_redo_and_copy_keys_run_with_a_label_open() {
+    let Some(session) = Session::open("undo_redo_and_copy_keys_run_with_a_label_open") else {
+        return;
+    };
+    let (conn, root) = (&session.conn, session.root);
+    // Past `end` by a letter: more than the caret after it reaches.
+    let past = |x: Option<usize>, end: Option<usize>| x > end.map(|x| x + 8);
+    session.label(&[A, B]);
+    let ab = session.label_end();
+    session.reopen(&[C]);
+    chord(conn, root, &[CONTROL, Z]);
+    session
+        .daemon
+        .until("Ctrl+Z to settle abc and undo it", || {
+            (session.label_end() == ab).then_some(())
+        });
+    // Reopened with no change, the label settles as no step, and the
+    // undone abc is still there to redo.
+    session.reopen(&[]);
+    chord(conn, root, &[CONTROL, SHIFT, Z]);
+    let abc = session.daemon.until("Ctrl+Shift+Z to redo abc", || {
+        Some(session.label_end()).filter(|&end| past(end, ab))
+    });
+    session.keys(&[CONTROL, Z]);
+    session.reopen(&[]);
+    chord(conn, root, &[CONTROL, Y]);
+    session.daemon.until("Ctrl+Y to redo abc", || {
+        (session.label_end() == abc).then_some(())
+    });
+    session.reopen(&[D]);
+    chord(conn, root, &[CONTROL, C]);
+    let copied = session
+        .daemon
+        .until("Ctrl+C to put a PNG on the clipboard", || {
+            let png = clipboard(conn, root, b"image/png")?;
+            Some(image::load_from_memory(&png).ok()?.to_rgb8())
+        });
+    // The copied label's end, in canvas pixels, is abcd's on screen:
+    // the composite's text ends 4 px short of the stage's here, and a
+    // copy of abc would end about 16 px short.
+    let copied = label_columns(&copied)
+        .last()
+        .map(|&x| (session.screen_at((x as f32, LABEL.1)).0 - session.at.0) as usize);
+    session.daemon.settle();
+    let abcd = session.label_end();
+    assert!(
+        past(abcd, abc) && copied.zip(abcd).is_some_and(|(c, s)| c.abs_diff(s) <= 6),
+        "the copied label ends at {copied:?}, abcd on screen at {abcd:?}, abc at {abc:?}"
+    );
+}
+
+// WHY: Ctrl+S and Ctrl+W save and close the editor with a label open,
+// as Done does, and the saved file holds the label. An entry that
+// takes the keys as typing leaves the editor open.
+#[test]
+fn ctrl_s_saves_with_a_label_open() {
+    saves_with_a_label_open("ctrl_s_saves_with_a_label_open", S);
+}
+
+#[test]
+fn ctrl_w_saves_with_a_label_open() {
+    saves_with_a_label_open("ctrl_w_saves_with_a_label_open", W);
+}
+
+fn saves_with_a_label_open(case: &str, key: u32) {
+    let Some(session) = Session::open(case) else {
+        return;
+    };
+    session.type_label(&[A, B]);
+    let saved = session.save_with(&[CONTROL, key]);
+    let ink = label_columns(&saved).len();
+    assert!(
+        ink > 5,
+        "the saved file holds {ink} red columns of the label"
+    );
+}
+
+/// The image columns with red in the rows of a label at LABEL.
+fn label_columns(img: &image::RgbImage) -> Vec<u32> {
+    let (x, y) = (LABEL.0 as u32, LABEL.1 as u32);
+    (x.saturating_sub(2)..(x + 120).min(img.width()))
+        .filter(|&px| (y - 20..y + 6).any(|py| red(img.get_pixel(px, py).0)))
+        .collect()
 }
 
 /// Draw the rectangle and select it with the Select tool: a click on its

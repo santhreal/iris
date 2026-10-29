@@ -40,7 +40,10 @@ impl Editor {
             cx.notify();
             return;
         }
-        if self.text_entry.is_some() {
+        // Undo, Redo, Copy, Save, and Close run with a label open, as
+        // their toolbar buttons do: each settles the label first.
+        let command = meta && matches!(key, "z" | "y" | "c" | "s" | "w");
+        if self.text_entry.is_some() && !command {
             match key {
                 "enter" => {
                     self.commit_text(true);

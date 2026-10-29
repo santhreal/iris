@@ -68,9 +68,10 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 - `Escape` cancels text entry and discards uncommitted buffer text.
 - Clicking the backdrop outside the canvas commits non-empty text.
 - Clicking the canvas or switching tools commits non-empty text before beginning the new action.
+- Undo, Redo, Copy Image, Save, and Close run from their shortcuts or buttons with a label open, as does Clear Markup, and each commits the label first.
 - Empty text buffers produce no committed action.
 
-Clicking a committed label with the Text tool, or double-clicking it with the Select tool, reopens it for typing in its color with the caret after its text. `Enter` or a click elsewhere replaces the label as one undo step, an emptied label is removed, and `Escape` leaves the label as it was. Undo, Redo, and Clear Markup commit an open label first.
+Clicking a committed label with the Text tool, or double-clicking it with the Select tool, reopens it for typing in its color with the caret after its text. `Enter` or a click elsewhere replaces the label as one undo step, an emptied label is removed, and `Escape` leaves the label as it was.
 
 ## Navigation and Canvas Controls
 
