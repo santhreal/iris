@@ -54,19 +54,12 @@ pub fn play_shutter_sound() {
 }
 
 /// Reserve a frame's output under the config's screenshot template:
-/// placeholders {date} and {time}, numeric suffix on collision.
+/// placeholders {date} and {time}, `output::numbered` on collision.
 fn reserve_capture(cfg: &Config) -> Result<output::ReservedFile, String> {
     let name =
         iris_lib::config::expand_template(&cfg.screenshot_template, iris_lib::time::local_now());
-    let paths = (1..=u64::MAX).map(|n| {
-        let filename = if n == 1 {
-            format!("{name}.png")
-        } else {
-            format!("{name}-{n}.png")
-        };
-        cfg.screenshots_dir.join(filename)
-    });
-    output::reserve(paths).map_err(|e| format!("save screenshot: {e}"))
+    output::reserve(output::numbered(&cfg.screenshots_dir, &name, "png"))
+        .map_err(|e| format!("save screenshot: {e}"))
 }
 
 /// Grab the whole virtual screen once. The overlay freezes this frame and
@@ -321,13 +314,20 @@ mod tests {
     #[test]
     fn unique_path_substitutes_template_and_suffixes() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = cfg_at(dir.path());
+        // A date-only template, so the saves share a name unless they
+        // straddle midnight.
+        let cfg = Config {
+            screenshot_template: "shot {date}".to_string(),
+            ..cfg_at(dir.path())
+        };
         let first = reserve_capture(&cfg).unwrap().write_all(b"first").unwrap();
-        assert!(first.to_string_lossy().ends_with(".png"));
-        assert!(!first.to_string_lossy().contains('{'));
+        let stem = first.file_stem().unwrap().to_string_lossy().into_owned();
+        assert!(stem.starts_with("shot ") && !stem.contains('{'), "{stem}");
+        assert_eq!(first, dir.path().join(format!("{stem}.png")));
         let second = reserve_capture(&cfg).unwrap().write_all(b"second").unwrap();
-        assert_ne!(first, second);
-        assert!(second.to_string_lossy().ends_with("-2.png"));
+        let third = reserve_capture(&cfg).unwrap().write_all(b"third").unwrap();
+        assert_eq!(second, dir.path().join(format!("{stem}_2.png")));
+        assert_eq!(third, dir.path().join(format!("{stem}_3.png")));
         assert_eq!(std::fs::read(first).unwrap(), b"first");
         assert_eq!(std::fs::read(second).unwrap(), b"second");
     }

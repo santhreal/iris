@@ -21,6 +21,23 @@ pub struct ReservedFile {
     remove_on_drop: bool,
 }
 
+/// The output names for `stem` in `dir`, in the order a save tries them:
+/// `stem.ext`, then `stem_2.ext`, `stem_3.ext`, and on. Screenshots and
+/// recordings name a collision the same way.
+pub fn numbered<'a>(
+    dir: &'a Path,
+    stem: &'a str,
+    ext: &'a str,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    (1..=u64::MAX).map(move |n| {
+        dir.join(if n == 1 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}_{n}.{ext}")
+        })
+    })
+}
+
 /// Reserve the first available path in `paths`.
 ///
 /// Existing files, directories, and symlinks are left untouched. Errors other

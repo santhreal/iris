@@ -291,14 +291,7 @@ fn reserve_recording_stem(
     ext: &str,
     stem: &str,
 ) -> Result<crate::output::ReservedFile, String> {
-    let numbered = (1..1000).map(|n| {
-        let filename = if n == 1 {
-            format!("{stem}.{ext}")
-        } else {
-            format!("{stem}_{n}.{ext}")
-        };
-        dir.join(filename)
-    });
+    let numbered = crate::output::numbered(dir, stem, ext).take(999);
     let fallback =
         std::iter::once_with(|| dir.join(format!("{stem}_{}.{ext}", crate::time::now_millis())));
     crate::output::reserve(numbered.chain(fallback)).map_err(|e| format!("record: {e}"))
