@@ -135,13 +135,19 @@ jobs:
           # hdiutil fails with EAGAIN while another disk image operation
           # holds the DiskImages framework, such as a scan of the image
           # make_dmg.sh just wrote. iris --update retries its attach the
-          # same way (sys::install::macos).
+          # same way (sys::install::macos). A diskimages-helper that an
+          # earlier hdiutil of this job left hung holds it until it is
+          # stopped, so the tenth busy try stops it.
           hdiutil_busy() {
-            local out
-            for _ in $(seq 30); do
+            local out try
+            for try in $(seq 60); do
               if out=$(hdiutil "$@" 2>&1); then echo "$out"; return 0; fi
               [[ "$out" == *"Resource temporarily unavailable"* ]] || break
               echo "hdiutil $1: busy, retrying"
+              if [ "$try" -eq 10 ]; then
+                echo "hdiutil $1: stopping a hung diskimages-helper"
+                pkill -f /diskimages-helper || true
+              fi
               sleep 1
             done
             echo "$out" >&2
