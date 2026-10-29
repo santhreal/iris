@@ -129,7 +129,9 @@ iris_sha256_file() {
 # iris_fetch_sha256 URL SHA256 FILE
 # Downloads URL to FILE unless a cached FILE already has SHA256. The
 # download goes to a temporary sibling and replaces FILE only after its
-# hash matches. A rejected temporary file is deleted.
+# hash matches. A rejected temporary file is deleted. A download makes
+# seven attempts; curl retries every error, a TLS reset included, after
+# a delay that doubles from one second.
 iris_fetch_sha256() {
   local url=$1 want=$2 file=$3 actual tmp
   if [[ -f "$file" ]] && [[ "$(iris_sha256_file "$file")" == "$want" ]]; then
@@ -139,13 +141,15 @@ iris_fetch_sha256() {
   mkdir -p "$(dirname "$file")"
   tmp="$file.part.$$"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 -o "$tmp" "$url" || {
+    curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 -o "$tmp" "$url" || {
       rm -f "$tmp"
+      echo "Error: downloading $url failed; rerun the build, or save the file with SHA-256 $want as $file" >&2
       return 1
     }
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --tries=3 --timeout=20 -O "$tmp" "$url" || {
+    wget -q --tries=7 --timeout=20 -O "$tmp" "$url" || {
       rm -f "$tmp"
+      echo "Error: downloading $url failed; rerun the build, or save the file with SHA-256 $want as $file" >&2
       return 1
     }
   else

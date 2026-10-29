@@ -1015,10 +1015,12 @@ fn appimage_appdir_modes_and_ffmpeg_notices() {
 
 /// WHY: curl's `--retry` does not include TLS connect errors unless
 /// `--retry-all-errors` is present. A transient TLS EOF therefore
-/// defeated the intended three-retry source download. These cases
+/// defeated the intended source download retries, and a persistent one
+/// failed the build without the URL it could not reach. These cases
 /// emulate curl's retry loop for recovered and persistent EOF, including
-/// the four-attempt bound. They do not exercise a real TLS session or
-/// the wget fallback.
+/// the seven-attempt bound and the error that states the URL and the
+/// pinned hash. They do not exercise a real TLS session or the wget
+/// fallback.
 fn tls_download_case(succeed_at: &str) -> (Output, String, PathBuf, tempfile::TempDir) {
     require(&["bash", "sha256sum", "cut"]);
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1089,12 +1091,27 @@ fn source_download_recovers_after_tls_eof() {
 
 #[test]
 fn source_download_bounds_persistent_tls_eof() {
-    let (out, attempts, downloaded, _dir) = tls_download_case("0");
+    let (out, attempts, downloaded, dir) = tls_download_case("0");
+    let sha = lib(
+        "iris_sha256_file",
+        &[dir.path().join("expected").as_os_str()],
+    )
+    .expect("payload hash");
     assert!(
         !out.status.success(),
         "persistent TLS EOF unexpectedly succeeded"
     );
-    assert_eq!(attempts, "1\n2\n3\n4\n");
+    assert_eq!(attempts, "1\n2\n3\n4\n5\n6\n7\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Error: downloading https://example.invalid/pinned.tar failed")
+            && stderr.contains(&format!(
+                "save the file with SHA-256 {} as {}",
+                sha,
+                downloaded.display()
+            )),
+        "the failure does not state the URL, the hash, and the path:\n{stderr}"
+    );
     assert_eq!(
         std::fs::read_dir(downloaded.parent().expect("download directory"))
             .expect("read download directory")
