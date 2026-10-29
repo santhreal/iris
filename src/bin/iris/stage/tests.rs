@@ -37,7 +37,7 @@ fn card_rest_rect_anchors_all_four_corners() {
         }
         .store()
         .unwrap();
-        card_rest_rect(1920.0, 1080.0, 400, 280)
+        card_rest_rect(1920.0, 1080.0, 400, 280).0
     };
 
     let (x, y, w, h) = at(ToastPosition::BottomRight);
@@ -56,38 +56,155 @@ fn card_rest_rect_anchors_all_four_corners() {
 // WHY: the class closed here is "the toast paints pixels sized for a
 // scale other than its display's". Pixels sized in logical units are
 // upscaled on a HiDPI display, which blurs every card there. Each case
-// pins the pixel size to the card's box in device pixels (never above
-// the capture's own size) and the card to card_rest_rect's size, so
-// the flight lands on the card exactly. Not covered: the re-scale a
-// live window runs when it renders at another scale than the guess.
+// pins the pixel size to the capture's box on the card in device pixels
+// (never above the capture's own size), and the card and that box to
+// card_rest_rect's, so the flight lands on the card exactly. Not
+// covered: the re-scale a live window runs when it renders at another
+// scale than the guess.
 #[test]
 #[serial_test::serial]
 fn thumb_fills_the_cards_device_pixels() {
     let _home = isolated_home();
     let dir = tempfile::tempdir().unwrap();
-    // (capture size, display scale) -> (card size, pixel size)
+    // (capture size, display scale) -> (card size, capture's rect on
+    // the card, pixel size)
     let cases = [
-        ((1600, 900), 1.0, (200.0, 113.0), (200, 113)),
-        ((1600, 900), 1.5, (200.0, 113.0), (300, 170)),
-        ((1600, 900), 2.0, (200.0, 113.0), (400, 226)),
-        ((700, 1400), 2.0, (70.0, 140.0), (140, 280)),
-        ((300, 150), 1.0, (200.0, 100.0), (200, 100)),
-        // The card's device box exceeds the capture: its own pixels.
-        ((300, 150), 2.0, (200.0, 100.0), (300, 150)),
-        ((120, 80), 2.0, (120.0, 80.0), (120, 80)),
+        (
+            (1600, 900),
+            1.0,
+            (200.0, 113.0),
+            (0.0, 0.0, 200.0, 113.0),
+            (200, 113),
+        ),
+        (
+            (1600, 900),
+            1.5,
+            (200.0, 113.0),
+            (0.0, 0.0, 200.0, 113.0),
+            (300, 170),
+        ),
+        (
+            (1600, 900),
+            2.0,
+            (200.0, 113.0),
+            (0.0, 0.0, 200.0, 113.0),
+            (400, 226),
+        ),
+        (
+            (700, 1400),
+            2.0,
+            (185.0, 140.0),
+            (58.0, 0.0, 70.0, 140.0),
+            (140, 280),
+        ),
+        (
+            (300, 150),
+            1.0,
+            (200.0, 100.0),
+            (0.0, 0.0, 200.0, 100.0),
+            (200, 100),
+        ),
+        // The capture's device box exceeds the capture: its own pixels.
+        (
+            (300, 150),
+            2.0,
+            (200.0, 100.0),
+            (0.0, 0.0, 200.0, 100.0),
+            (300, 150),
+        ),
+        (
+            (120, 80),
+            2.0,
+            (185.0, 80.0),
+            (33.0, 0.0, 120.0, 80.0),
+            (120, 80),
+        ),
+        (
+            (40, 30),
+            1.0,
+            (185.0, 44.0),
+            (73.0, 7.0, 40.0, 30.0),
+            (40, 30),
+        ),
+        (
+            (1920, 120),
+            1.0,
+            (200.0, 44.0),
+            (0.0, 16.0, 200.0, 13.0),
+            (200, 13),
+        ),
     ];
-    for ((iw, ih), scale, dims, px) in cases {
+    for ((iw, ih), scale, card, image, px) in cases {
         let path = capture(dir.path(), iw, ih, [10, 20, 30, 255]);
         let thumb = prepare_thumb(&path, scale).unwrap();
         let case = format!("{iw}x{ih} at {scale}");
-        assert_eq!(thumb.dims, dims, "card size, {case}");
+        assert_eq!((thumb.card.w, thumb.card.h), card, "card size, {case}");
+        assert_eq!(
+            thumb.card.image, image,
+            "capture's rect on the card, {case}"
+        );
         assert_eq!(thumb.px, px, "pixel size, {case}");
         assert_eq!(thumb.scale, scale, "{case}");
         assert_eq!(thumb.rgba.len(), (px.0 * px.1 * 4) as usize, "{case}");
         let size = thumb.render.size(0);
         assert_eq!((size.width.0 as u32, size.height.0 as u32), px, "{case}");
-        let (_, _, w, h) = card_rest_rect(1920.0, 1080.0, iw, ih);
-        assert_eq!((w, h), dims, "flight landing rect, {case}");
+        let ((_, _, w, h), rest) = card_rest_rect(1920.0, 1080.0, iw, ih);
+        assert_eq!((w, h), card, "flight landing rect, {case}");
+        assert_eq!(rest, thumb.card, "flight landing card, {case}");
+    }
+}
+
+// WHY: the class closed here is "the hover actions cut off by their own
+// card". The card was the capture's aspect-true box and clips what it
+// holds, so the capsule of a square, tall, or short capture lost its
+// end buttons or its top. Every capture size the card can show must
+// give a card that holds the capsule with its inset, and the capture
+// centered on it, aspect-true, at the size it had before, in whole
+// pixels. The capsule's size comes from ToastAction::GROUPS, so a new
+// button widens the least card. Not covered: the capsule's paint, and a
+// layout that draws a button wider than ACTION_BUTTON.
+#[test]
+fn every_card_holds_the_hover_actions_and_centers_its_capture() {
+    use actions::{CAPSULE, SLOT_INSET};
+    assert_eq!(CAPSULE, (173.0, 32.0));
+    let sizes = (1..=40u32)
+        .chain((41..=4000).step_by(37))
+        .chain([7680, 20000]);
+    for iw in sizes.clone() {
+        for ih in sizes.clone() {
+            let card = Card::of(iw as f32, ih as f32);
+            let case = format!("{iw}x{ih}: {card:?}");
+            assert!(
+                card.w >= CAPSULE.0 + 2.0 * SLOT_INSET && card.h >= CAPSULE.1 + 2.0 * SLOT_INSET,
+                "the card is smaller than the capsule, {case}"
+            );
+            let (x, y, w, h) = card.image;
+            let fit = (MAX_W / iw as f32).min(MAX_H / ih as f32).min(1.0);
+            assert_eq!(
+                (w, h),
+                (
+                    (iw as f32 * fit).round().max(1.0),
+                    (ih as f32 * fit).round().max(1.0)
+                ),
+                "the capture's size, {case}"
+            );
+            assert!(
+                (x - (card.w - w) / 2.0).abs() <= 0.5 && (y - (card.h - h) / 2.0).abs() <= 0.5,
+                "the capture is off center, {case}"
+            );
+            assert_eq!((x.fract(), y.fract()), (0.0, 0.0), "{case}");
+            assert_eq!(
+                card.w,
+                w.max(CAPSULE.0 + 2.0 * SLOT_INSET),
+                "the card is wider than it needs, {case}"
+            );
+            assert_eq!(
+                card.h,
+                h.max(CAPSULE.1 + 2.0 * SLOT_INSET),
+                "the card is taller than it needs, {case}"
+            );
+            assert_eq!(card.letterboxed(), (w, h) != (card.w, card.h), "{case}");
+        }
     }
 }
 

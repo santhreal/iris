@@ -306,12 +306,13 @@ impl Overlay {
                 height: self.view.1,
             });
             let (mx, my, mw, mh) = Self::to_logical(self.origin, &host, sf, sx, sy);
-            let r = stage::card_rest_rect(mw, mh, cw, ch);
+            let (r, card) = stage::card_rest_rect(mw, mh, cw, ch);
             let rest = (mx + r.0, my + r.1, r.2, r.3);
             self.flight = Some(Flight {
                 img: flight_img,
                 from: (x, y, w, h),
                 to: rest,
+                card,
                 started: Instant::now(),
                 screen: (
                     host.x as f32 / sf,

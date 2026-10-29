@@ -16,20 +16,20 @@ pub(super) static TOAST_HANDLE: parking_lot::Mutex<Option<WindowHandle<ToastStag
     parking_lot::Mutex::new(None);
 
 /// The toast card's resting rect on a display of `disp_w`x`disp_h`
-/// logical px, for a capture of `img_w`x`img_h`. The overlay's
-/// capture flight lands exactly here, so the toast must not replay
-/// its entrance.
-pub fn card_rest_rect(disp_w: f32, disp_h: f32, img_w: u32, img_h: u32) -> (f32, f32, f32, f32) {
-    let (w, h) = card_size(img_w as f32, img_h as f32);
+/// logical px for a capture of `img_w`x`img_h`, and the card, which
+/// holds the capture's rect on it. The overlay's capture flight lands
+/// exactly here, so the toast must not replay its entrance.
+pub fn card_rest_rect(disp_w: f32, disp_h: f32, img_w: u32, img_h: u32) -> (Rect, Card) {
+    let card = Card::of(img_w as f32, img_h as f32);
+    let (w, h) = (card.w, card.h);
     let cfg = iris_lib::config::Config::load();
-    match cfg.toast_position {
-        iris_lib::config::ToastPosition::BottomRight => {
-            (disp_w - MARGIN - w, disp_h - MARGIN - h, w, h)
-        }
-        iris_lib::config::ToastPosition::BottomLeft => (MARGIN, disp_h - MARGIN - h, w, h),
-        iris_lib::config::ToastPosition::TopRight => (disp_w - MARGIN - w, MARGIN, w, h),
-        iris_lib::config::ToastPosition::TopLeft => (MARGIN, MARGIN, w, h),
-    }
+    let (x, y) = match cfg.toast_position {
+        iris_lib::config::ToastPosition::BottomRight => (disp_w - MARGIN - w, disp_h - MARGIN - h),
+        iris_lib::config::ToastPosition::BottomLeft => (MARGIN, disp_h - MARGIN - h),
+        iris_lib::config::ToastPosition::TopRight => (disp_w - MARGIN - w, MARGIN),
+        iris_lib::config::ToastPosition::TopLeft => (MARGIN, MARGIN),
+    };
+    ((x, y, w, h), card)
 }
 
 /// The toast window's size for a card of `card` (width, height): the
@@ -215,7 +215,7 @@ fn open_toast_window(
         // rest, where the flight card it replaces ended.
         stage.opened = Some(Instant::now() - motion::tempo(ENTER));
     }
-    let (w, h) = stage.thumb.dims;
+    let (w, h) = (stage.thumb.card.w, stage.thumb.card.h);
 
     let cfg = iris_lib::config::Config::load();
     let (win_w, win_h) = window_size((w, h));

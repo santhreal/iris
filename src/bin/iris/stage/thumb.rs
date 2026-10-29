@@ -1,11 +1,11 @@
-//! The toast's thumbnail: the capture box-filtered to the card's size
-//! in device pixels, so the GPU maps its texels 1:1 onto the card.
+//! The toast's thumbnail: the capture box-filtered to its rect on the
+//! card in device pixels, so the GPU maps its texels 1:1 onto the card.
 
 use std::{path::Path, sync::Arc};
 
 use gpui::{Context, RenderImage};
 
-use super::{card_size, ToastStage};
+use super::{Card, ToastStage};
 
 /// A toast thumbnail sized for one display scale.
 pub(crate) struct Thumb {
@@ -15,13 +15,13 @@ pub(crate) struct Thumb {
     pub(crate) rgba: Arc<Vec<u8>>,
     /// Pixel size of `render` and `rgba`.
     pub(crate) px: (u32, u32),
-    /// The card's size in logical pixels.
-    pub(crate) dims: (f32, f32),
+    /// The card, and the capture's rect on it, in logical pixels.
+    pub(crate) card: Card,
     /// Device pixels per logical pixel that `px` was sized for.
     pub(crate) scale: f32,
 }
 
-/// Scale the capture at `path` to the card's size in device pixels at
+/// Scale the capture at `path` to its rect on the card in device pixels at
 /// `scale` with a box filter. A capture smaller than that box keeps its
 /// own pixels: there are no sharper ones.
 pub(crate) fn prepare_thumb(path: &Path, scale: f32) -> Result<Thumb, String> {
@@ -39,13 +39,13 @@ pub(crate) fn prepare_thumb(path: &Path, scale: f32) -> Result<Thumb, String> {
         &owned
     };
     let (iw, ih) = img.dimensions();
-    let dims = card_size(iw as f32, ih as f32);
-    // The card's own box in device pixels: painting it resamples
-    // nothing. Sized off the rounded card, not the capture's aspect, so
-    // the texels land on whole device pixels.
+    let card = Card::of(iw as f32, ih as f32);
+    // The capture's own box on the card in device pixels: painting it
+    // resamples nothing. Sized off the rounded box, not the capture's
+    // aspect, so the texels land on whole device pixels.
     let (pw, ph) = (
-        (dims.0 * scale).round().max(1.0) as u32,
-        (dims.1 * scale).round().max(1.0) as u32,
+        (card.image.2 * scale).round().max(1.0) as u32,
+        (card.image.3 * scale).round().max(1.0) as u32,
     );
     let rgba = if pw <= iw && ph <= ih && (pw, ph) != (iw, ih) {
         // The banded replica of image's box-average thumbnail: a 4K
@@ -64,7 +64,7 @@ pub(crate) fn prepare_thumb(path: &Path, scale: f32) -> Result<Thumb, String> {
         render,
         rgba: Arc::new(rgba.into_raw()),
         px,
-        dims,
+        card,
         scale,
     })
 }

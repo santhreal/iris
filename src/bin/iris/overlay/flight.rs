@@ -17,7 +17,11 @@ use crate::{stage, theme};
 pub(super) struct Flight {
     pub(super) img: Arc<RenderImage>,
     pub(super) from: (f32, f32, f32, f32),
+    /// The toast card's resting rect.
     pub(super) to: (f32, f32, f32, f32),
+    /// The toast card, which holds the capture's rect on it: the
+    /// capture flies to that rect, the card's fill grows around it.
+    pub(super) card: stage::Card,
     pub(super) started: Instant,
     /// The committing window's screen rect: the toast lands on this
     /// monitor, not wherever the primary display happens to be.
@@ -67,7 +71,9 @@ impl Overlay {
         let t = (flown / crate::motion::tempo(FLIGHT).as_secs_f32()).min(1.0);
         let e = crate::motion::spring(t);
         // The clock's end bounds the flight whatever the curve does.
-        let at_rest = t >= 1.0 || flight_at_rest(f.from, f.to, e);
+        let image_to = f.card.image_at(f.to.0, f.to.1);
+        let at_rest =
+            t >= 1.0 || (flight_at_rest(f.from, f.to, e) && flight_at_rest(f.from, image_to, e));
         if at_rest {
             // Taken once: later frames of this session never reopen it.
             // Until then a slow finalize's notify re-renders this.
@@ -80,30 +86,41 @@ impl Overlay {
         }
         // The card lifts off the page: square and flat where it leaves
         // the selection, and at rest the toast's card to the pixel, its
-        // rect, corners, and shadow, so the handoff changes nothing.
-        let (e, (x, y, w, h)) = if at_rest {
-            (1.0, f.to)
+        // rect, corners, fill, and shadow, so the handoff changes
+        // nothing. The capture and the card leave from the selection
+        // together; where the card is wider or taller than the capture,
+        // its fill grows out around the capture on the way.
+        let (e, (x, y, w, h), (ix, iy, iw, ih)) = if at_rest {
+            (1.0, f.to, image_to)
         } else {
-            (e, flight_rect(f.from, f.to, e))
+            (
+                e,
+                flight_rect(f.from, f.to, e),
+                flight_rect(f.from, image_to, e),
+            )
         };
-        let radius = px(stage::RADIUS * e);
-        div().size_full().child(
-            div()
+        let mut card = div()
+            .absolute()
+            .left(px(x))
+            .top(px(y))
+            .w(px(w.max(1.0)))
+            .h(px(h.max(1.0)))
+            .rounded(px(stage::RADIUS * e))
+            .shadow(theme::card_shadow(e));
+        if f.card.letterboxed() {
+            card = card.bg(theme::alpha(theme::BG_ELEV, e.clamp(0.0, 1.0)));
+        }
+        div().size_full().child(card).child(
+            // The image rounds itself: a parent's rounded overflow clip
+            // is a rectangle.
+            img(ImageSource::Render(f.img.clone()))
                 .absolute()
-                .left(px(x))
-                .top(px(y))
-                .w(px(w.max(1.0)))
-                .h(px(h.max(1.0)))
-                .rounded(radius)
-                .shadow(theme::card_shadow(e))
-                .child(
-                    // The image rounds itself: a parent's rounded
-                    // overflow clip is a rectangle.
-                    img(ImageSource::Render(f.img.clone()))
-                        .size_full()
-                        .object_fit(ObjectFit::Fill)
-                        .rounded(radius),
-                ),
+                .left(px(ix))
+                .top(px(iy))
+                .w(px(iw.max(1.0)))
+                .h(px(ih.max(1.0)))
+                .object_fit(ObjectFit::Fill)
+                .rounded(px(f.card.image_radius() * e)),
         )
     }
 

@@ -1,7 +1,8 @@
 //! Toast stage: the floating screenshot thumbnail.
 //!
 //! Raw capture pixels, aspect-true, at most 200x140 logical px and
-//! scaled to the display's device pixels, 12px corners,
+//! scaled to the display's device pixels, on a card at least as large
+//! as its hover actions, 12px corners,
 //! one soft deep shadow. It slides in from beyond the screen edge in
 //! 280ms with a hard deceleration and stops dead, sits for the
 //! configured duration (hovering suspends the clock), then accelerates
@@ -94,17 +95,69 @@ pub(super) fn status_holds_slot(
     has_status && (!hovered || busy || status_age < STATUS_HOLD)
 }
 
-/// The card's logical size for a capture of `img_w`x`img_h` pixels:
-/// aspect-true within MAX_W x MAX_H, never enlarged, whole pixels. The
-/// flight's landing rect and the toast's card both come from here, so
+/// A rect: x, y, width, height.
+pub(super) type Rect = (f32, f32, f32, f32);
+
+/// The toast card for a capture: its logical size, and the capture's
+/// rect inside it. The capture is aspect-true within MAX_W x MAX_H,
+/// never enlarged, in whole pixels. The card is the capture, grown to
+/// hold the hover actions where the capture is narrower or shorter
+/// than they are, with the capture centered on the card's fill. The
+/// flight's landing rects and the toast's card both come from here, so
 /// the handoff between them does not move by a pixel.
-pub(super) fn card_size(img_w: f32, img_h: f32) -> (f32, f32) {
-    let fit = (MAX_W / img_w).min(MAX_H / img_h).min(1.0);
-    (
-        (img_w * fit).round().max(1.0),
-        (img_h * fit).round().max(1.0),
-    )
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Card {
+    pub(super) w: f32,
+    pub(super) h: f32,
+    /// The capture's rect relative to the card's top-left corner.
+    pub(super) image: Rect,
 }
+
+impl Card {
+    /// The card for a capture of `img_w`x`img_h` pixels.
+    pub(super) fn of(img_w: f32, img_h: f32) -> Card {
+        let fit = (MAX_W / img_w).min(MAX_H / img_h).min(1.0);
+        let (iw, ih) = (
+            (img_w * fit).round().max(1.0),
+            (img_h * fit).round().max(1.0),
+        );
+        let (w, h) = (iw.max(CARD_MIN.0), ih.max(CARD_MIN.1));
+        Card {
+            w,
+            h,
+            image: (((w - iw) / 2.0).round(), ((h - ih) / 2.0).round(), iw, ih),
+        }
+    }
+
+    /// The capture's rect for the card at (`x`, `y`).
+    pub(super) fn image_at(&self, x: f32, y: f32) -> Rect {
+        let (ix, iy, iw, ih) = self.image;
+        (x + ix, y + iy, iw, ih)
+    }
+
+    /// The capture does not cover the card: the card's fill shows
+    /// around it.
+    pub(super) fn letterboxed(&self) -> bool {
+        self.image != (0.0, 0.0, self.w, self.h)
+    }
+
+    /// The capture's corner radius: the card's where the capture is the
+    /// card, else a small one inside the card's fill.
+    pub(super) fn image_radius(&self) -> f32 {
+        if self.letterboxed() {
+            theme::RADIUS_CONTROL
+        } else {
+            RADIUS
+        }
+    }
+}
+
+/// The card's least size: the hover actions' capsule with its inset on
+/// every side.
+pub(super) const CARD_MIN: (f32, f32) = (
+    actions::CAPSULE.0 + 2.0 * actions::SLOT_INSET,
+    actions::CAPSULE.1 + 2.0 * actions::SLOT_INSET,
+);
 
 pub struct ToastStage {
     pub(super) path: PathBuf,
@@ -191,7 +244,8 @@ impl Render for ToastStage {
         if self.hidden {
             return div();
         }
-        let (w, h) = self.thumb.dims;
+        let fit = self.thumb.card;
+        let (w, h) = (fit.w, fit.h);
         // The pixels were sized for the scale the toast was expected to
         // open at; a window that renders at another one re-sizes them.
         let scale = window.scale_factor();
@@ -433,14 +487,24 @@ impl Render for ToastStage {
                 } else {
                     card = card.bottom(px(MARGIN));
                 }
+                if fit.letterboxed() {
+                    card = card.bg(theme::BG_ELEV);
+                }
 
+                let (ix, iy, iw, ih) = fit.image;
                 card = card.child(
-                    div().absolute().top_0().left_0().size_full().child(
-                        img(ImageSource::Render(thumb))
-                            .size_full()
-                            .object_fit(ObjectFit::Fill)
-                            .rounded(px(RADIUS)),
-                    ),
+                    div()
+                        .absolute()
+                        .left(px(ix))
+                        .top(px(iy))
+                        .w(px(iw))
+                        .h(px(ih))
+                        .child(
+                            img(ImageSource::Render(thumb))
+                                .size_full()
+                                .object_fit(ObjectFit::Fill)
+                                .rounded(px(fit.image_radius())),
+                        ),
                 );
 
                 let status_age = self.status_at.elapsed();

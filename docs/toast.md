@@ -11,7 +11,8 @@ The toast lands in the display corner configured by `toast_position` in [configu
 - **Fullscreen, window, and CLI invocations**: Lands on the primary monitor.
 
 Dimensions and styling:
-- The thumbnail scales aspect-true to fit within 200×140 logical pixels. Its pixels are box-filtered from the full capture to the card's size in device pixels: on a 2x display the card holds up to 400×280 pixels of the capture.
+- The thumbnail scales aspect-true to fit within 200×140 logical pixels. Its pixels are box-filtered from the full capture to the thumbnail's size in device pixels: on a 2x display the card holds up to 400×280 pixels of the capture.
+- The card is at least 185×44 logical pixels, the size of the hover action capsule and its inset. A thumbnail narrower or shorter than that is centered on the card's fill. The capture flight lands the thumbnail on its place on the card while the fill grows around it.
 - Corner radius is 12.0 logical pixels.
 - Edge margin is 12.0 logical pixels from display boundaries.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.

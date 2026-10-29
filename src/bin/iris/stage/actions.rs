@@ -114,11 +114,13 @@ impl ToastStage {
 
     /// Open the markup editor over this toast and wait for its first
     /// frame before leaving: the editor paints the same image over the
-    /// exact same screen pixels, so the morph has no blank blink.
+    /// exact same screen pixels, the capture's rect on the card, so the
+    /// morph has no blank blink.
     pub(super) fn hand_off_to_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ready = Arc::new(AtomicBool::new(false));
-        let result =
-            crate::editor::open(cx, &self.path, Some(self.card_screen), Some(ready.clone()));
+        let (x, y, _, _) = self.card_screen;
+        let from = self.thumb.card.image_at(x, y);
+        let result = crate::editor::open(cx, &self.path, Some(from), Some(ready.clone()));
         match result {
             Ok(()) => {
                 self.pending_morph = Some((ready, Instant::now()));
@@ -322,89 +324,44 @@ impl ToastStage {
     }
 
     /// The hover actions: one frosted capsule centered over the card's
-    /// lower edge, in groups split by hairlines: keep open (when
-    /// `toast_pin_enabled`), the two copies, reveal and markup, then
-    /// Move to Trash. Every button carries a tooltip.
+    /// lower edge, in ToastAction::GROUPS split by hairlines. Keep Open
+    /// shows when `toast_pin_enabled`. Every button carries a tooltip.
     pub(super) fn render_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.cfg.toast_show_actions {
             return None;
         }
-        let button = |id: &'static str, glyph: Icon, active: bool, label: &'static str| {
-            crate::widgets::icon_button(id, glyph, active, ACTION_BUTTON).tooltip(tip(label, None))
-        };
         let mut capsule = div()
             .flex()
             .items_center()
-            .p(px(3.))
-            .rounded(px(ACTION_BUTTON / 2.0 + 3.0))
+            .p(px(CAPSULE_PAD))
+            .rounded(px(ACTION_BUTTON / 2.0 + CAPSULE_PAD))
             .bg(theme::alpha(theme::BG_ELEV, 0.96))
             .border_1()
             .border_color(theme::HAIRLINE)
             .shadow(theme::shadow_float());
-        if self.cfg.toast_pin_enabled {
-            let label = if self.pinned {
-                "Allow to Close"
-            } else {
-                "Keep Open"
-            };
-            capsule = capsule
-                .child(
-                    button("toast-action-pin", Icon::Pin, self.pinned, label).on_click(
-                        cx.listener(|stage, _, _, cx| {
+        let shown =
+            |action: &&ToastAction| **action != ToastAction::KeepOpen || self.cfg.toast_pin_enabled;
+        let mut groups = ToastAction::GROUPS
+            .iter()
+            .filter(|group| group.iter().any(|a| shown(&a)))
+            .peekable();
+        while let Some(group) = groups.next() {
+            for &action in group.iter().filter(shown) {
+                let (glyph, label) = action.face(self.pinned);
+                let active = action == ToastAction::KeepOpen && self.pinned;
+                capsule = capsule.child(
+                    crate::widgets::icon_button(action.id(), glyph, active, ACTION_BUTTON)
+                        .tooltip(tip(label, None))
+                        .on_click(cx.listener(move |stage, _, window, cx| {
                             cx.stop_propagation();
-                            stage.toggle_pin(cx);
-                        }),
-                    ),
-                )
-                .child(group_rule());
+                            stage.run_action(action, window, cx);
+                        })),
+                );
+            }
+            if groups.peek().is_some() {
+                capsule = capsule.child(group_rule());
+            }
         }
-        capsule = capsule
-            .child(
-                button("toast-action-copy-img", Icon::Copy, false, "Copy Image").on_click(
-                    cx.listener(|stage, _, _, cx| {
-                        cx.stop_propagation();
-                        stage.copy_image(cx);
-                    }),
-                ),
-            )
-            .child(
-                button("toast-action-copy-file", Icon::File, false, "Copy File").on_click(
-                    cx.listener(|stage, _, _, cx| {
-                        cx.stop_propagation();
-                        stage.copy_file(cx);
-                    }),
-                ),
-            )
-            .child(group_rule())
-            .child(
-                button(
-                    "toast-action-open-folder",
-                    Icon::Folder,
-                    false,
-                    crate::sys::reveal::LABEL,
-                )
-                .on_click(cx.listener(|stage, _, _, cx| {
-                    cx.stop_propagation();
-                    stage.open_folder();
-                })),
-            )
-            .child(
-                button("toast-action-markup", Icon::Pen, false, "Markup").on_click(cx.listener(
-                    |stage, _, window, cx| {
-                        cx.stop_propagation();
-                        stage.hand_off_to_editor(window, cx);
-                    },
-                )),
-            )
-            .child(group_rule())
-            .child(
-                button("toast-action-delete", Icon::Trash, false, "Move to Trash").on_click(
-                    cx.listener(|stage, _, _, cx| {
-                        cx.stop_propagation();
-                        stage.delete_capture(cx);
-                    }),
-                ),
-            );
         Some(
             div()
                 .absolute()
@@ -416,7 +373,80 @@ impl ToastStage {
                 .child(capsule),
         )
     }
+
+    fn run_action(&mut self, action: ToastAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            ToastAction::KeepOpen => self.toggle_pin(cx),
+            ToastAction::CopyImage => self.copy_image(cx),
+            ToastAction::CopyFile => self.copy_file(cx),
+            ToastAction::Reveal => self.open_folder(),
+            ToastAction::Markup => self.hand_off_to_editor(window, cx),
+            ToastAction::Trash => self.delete_capture(cx),
+        }
+    }
 }
+
+/// A button of the toast's hover capsule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum ToastAction {
+    KeepOpen,
+    CopyImage,
+    CopyFile,
+    Reveal,
+    Markup,
+    Trash,
+}
+
+impl ToastAction {
+    /// The capsule's buttons left to right, in groups split by a rule.
+    pub(super) const GROUPS: [&'static [ToastAction]; 4] = [
+        &[ToastAction::KeepOpen],
+        &[ToastAction::CopyImage, ToastAction::CopyFile],
+        &[ToastAction::Reveal, ToastAction::Markup],
+        &[ToastAction::Trash],
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            ToastAction::KeepOpen => "toast-action-pin",
+            ToastAction::CopyImage => "toast-action-copy-img",
+            ToastAction::CopyFile => "toast-action-copy-file",
+            ToastAction::Reveal => "toast-action-open-folder",
+            ToastAction::Markup => "toast-action-markup",
+            ToastAction::Trash => "toast-action-delete",
+        }
+    }
+
+    /// The glyph and the tooltip, for a toast `pinned` or not.
+    fn face(self, pinned: bool) -> (Icon, &'static str) {
+        match self {
+            ToastAction::KeepOpen if pinned => (Icon::Pin, "Allow to Close"),
+            ToastAction::KeepOpen => (Icon::Pin, "Keep Open"),
+            ToastAction::CopyImage => (Icon::Copy, "Copy Image"),
+            ToastAction::CopyFile => (Icon::File, "Copy File"),
+            ToastAction::Reveal => (Icon::Folder, crate::sys::reveal::LABEL),
+            ToastAction::Markup => (Icon::Pen, "Markup"),
+            ToastAction::Trash => (Icon::Trash, "Move to Trash"),
+        }
+    }
+}
+
+/// The hover capsule's size with every button shown: the buttons, a
+/// rule between groups, the padding, and the 1px border.
+pub(super) const CAPSULE: (f32, f32) = {
+    let mut buttons = 0;
+    let mut g = 0;
+    while g < ToastAction::GROUPS.len() {
+        buttons += ToastAction::GROUPS[g].len();
+        g += 1;
+    }
+    let rules = ToastAction::GROUPS.len() - 1;
+    let rim = 2.0 * (CAPSULE_PAD + 1.0);
+    (
+        buttons as f32 * ACTION_BUTTON + rules as f32 * (RULE_W + 2.0 * RULE_MARGIN) + rim,
+        ACTION_BUTTON + rim,
+    )
+};
 
 /// A row of the toast's context menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -481,12 +511,22 @@ pub(super) fn menu_place(at: (f32, f32), win: (f32, f32)) -> (f32, f32) {
 /// Edge of one capsule button: 24, a form control's height; the glyph
 /// is 14.
 const ACTION_BUTTON: f32 = 24.0;
+/// The capsule's padding around its buttons.
+const CAPSULE_PAD: f32 = 3.0;
+/// The rule between two groups of capsule buttons, and its margin on
+/// either side.
+const RULE_W: f32 = 1.0;
+const RULE_MARGIN: f32 = 3.0;
 /// The action slot's inset from the card's lower and side edges.
-const SLOT_INSET: f32 = 6.0;
+pub(super) const SLOT_INSET: f32 = 6.0;
 
 /// The hairline between two groups of capsule buttons.
 fn group_rule() -> Div {
-    div().w(px(1.)).h(px(14.)).mx(px(3.)).bg(theme::HAIRLINE)
+    div()
+        .w(px(RULE_W))
+        .h(px(14.))
+        .mx(px(RULE_MARGIN))
+        .bg(theme::HAIRLINE)
 }
 
 /// The pinned toast's mark at rest: an accent disc with the pin glyph in
