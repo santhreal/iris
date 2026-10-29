@@ -110,14 +110,14 @@ impl Overlay {
         self.hint = super::hint(&self.cfg, mode);
     }
 
-    /// Frame-pixel hit test for hover-snap. The window list is in frame
-    /// (physical) pixels; the cursor arrives logical.
+    /// Root-pixel hit test for hover-snap. The window list is in root
+    /// (physical) pixels, bottom to top; the cursor arrives logical.
     pub(super) fn window_at(&self, cx: f32, cy: f32, sf: f32, sx: f32, sy: f32) -> Option<WinRect> {
         let (fx, fy) = (
             self.origin.0 as f32 + cx * sf * sx,
             self.origin.1 as f32 + cy * sf * sy,
         );
-        // Topmost first: the list is bottom-to-top.
+        // Topmost first.
         self.windows
             .iter()
             .rev()

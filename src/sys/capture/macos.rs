@@ -256,7 +256,9 @@ fn windows(scale: f64) -> Result<Vec<WinRect>, String> {
     Ok(out)
 }
 
-/// Monitors plus on-screen windows for the overlay's hover-snap.
+/// Monitors plus on-screen windows for the overlay's hover-snap, bottom
+/// to top: the window server lists front to back, so the list is
+/// reversed.
 pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
     let ids = displays()?;
     let scale = root_scale_of(&ids);
@@ -264,7 +266,9 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
         .iter()
         .map(|&d| to_root(unsafe { CGDisplayBounds(d) }, scale))
         .collect();
-    Ok((mons, windows(scale)?))
+    let mut wins = windows(scale)?;
+    wins.reverse();
+    Ok((mons, wins))
 }
 
 /// The pointer in root pixels: its global location in points, top-left

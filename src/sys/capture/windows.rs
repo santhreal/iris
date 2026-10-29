@@ -10,7 +10,8 @@ use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetCursorPos, GetForegroundWindow, GetWindowRect, IsWindowVisible,
+    EnumWindows, GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId,
+    IsIconic, IsWindowVisible,
 };
 
 /// Root pixels per GPUI logical pixel: the system DPI over 96. GPUI
@@ -110,16 +111,56 @@ pub fn monitors() -> Result<Vec<WinRect>, String> {
     Ok(found.into_iter().map(|(r, _)| r).collect())
 }
 
-/// Monitors plus the visible top-level windows for hover-snap.
+/// The rect a window draws on screen, or None for a window that shows
+/// nothing: one cloaked by DWM (on another virtual desktop, or a
+/// suspended store app) or one with an empty frame. DWM's extended
+/// frame bounds leave out the invisible resize borders GetWindowRect
+/// includes, 7 px on each side of a Windows 10 or 11 window.
+unsafe fn shown_rect(hwnd: HWND) -> Option<WinRect> {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+    };
+    let mut cloaked: u32 = 0;
+    let read = DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_CLOAKED as u32,
+        &mut cloaked as *mut u32 as *mut core::ffi::c_void,
+        std::mem::size_of::<u32>() as u32,
+    );
+    if read == 0 && cloaked != 0 {
+        return None;
+    }
+    let mut r: RECT = std::mem::zeroed();
+    let framed = DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+        &mut r as *mut RECT as *mut core::ffi::c_void,
+        std::mem::size_of::<RECT>() as u32,
+    ) == 0;
+    if !framed && GetWindowRect(hwnd, &mut r) != TRUE {
+        return None;
+    }
+    let rect = rect_to_winrect(r);
+    (rect.width > 0 && rect.height > 0).then_some(rect)
+}
+
+/// Monitors plus the shown top-level windows of other processes for
+/// hover-snap, bottom to top. EnumWindows visits the top of the Z order
+/// first, so the list is reversed. Minimized and cloaked windows show
+/// nothing and are left out.
 pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
     let monitors = monitors()?;
     unsafe extern "system" fn cb(hwnd: HWND, data: LPARAM) -> BOOL {
-        if IsWindowVisible(hwnd) == TRUE {
-            let mut r: RECT = std::mem::zeroed();
-            if GetWindowRect(hwnd, &mut r) == TRUE {
-                let out = &mut *(data as *mut Vec<WinRect>);
-                out.push(rect_to_winrect(r));
-            }
+        if IsWindowVisible(hwnd) != TRUE || IsIconic(hwnd) == TRUE {
+            return TRUE;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == windows_sys::Win32::System::Threading::GetCurrentProcessId() {
+            return TRUE;
+        }
+        if let Some(rect) = shown_rect(hwnd) {
+            (*(data as *mut Vec<WinRect>)).push(rect);
         }
         TRUE
     }
@@ -127,21 +168,18 @@ pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
     unsafe {
         EnumWindows(Some(cb), &mut windows as *mut _ as LPARAM);
     }
+    windows.reverse();
     Ok((monitors, windows))
 }
 
-/// The foreground window's rect, decorations included.
+/// The rect the foreground window draws, decorations included.
 pub fn active_window_rect() -> Result<WinRect, String> {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.is_null() {
             return Err("no foreground window".to_string());
         }
-        let mut r: RECT = std::mem::zeroed();
-        if GetWindowRect(hwnd, &mut r) != TRUE {
-            return Err("GetWindowRect failed".to_string());
-        }
-        Ok(rect_to_winrect(r))
+        shown_rect(hwnd).ok_or_else(|| "the foreground window shows nothing".to_string())
     }
 }
 

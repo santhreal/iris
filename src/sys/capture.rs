@@ -71,7 +71,9 @@ pub fn monitors() -> Result<Vec<WinRect>, String> {
     native::monitors()
 }
 
-/// Monitors plus top-level windows for the overlay's hover-snap.
+/// Monitors plus top-level windows for the overlay's hover-snap. The
+/// windows are listed bottom to top on every platform, so the last
+/// window holding a point is the one drawn there.
 pub fn layout() -> Result<(Vec<WinRect>, Vec<WinRect>), String> {
     #[cfg(target_os = "linux")]
     return x11_only("the window layout", x11::layout);
