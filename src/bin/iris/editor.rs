@@ -22,7 +22,6 @@ use std::{
 use gpui::*;
 
 use crate::{motion, theme};
-use iris_lib::history::Edit;
 
 mod action;
 #[cfg(test)]
@@ -80,10 +79,11 @@ pub struct Editor {
     /// A plain Rc forced Rc::make_mut to deep-copy every stroke's points
     /// on each edit while the canvas held a ref.
     pub(crate) actions: Rc<std::cell::RefCell<Vec<Action>>>,
-    /// Operation-level history: commits, deletes and moves are all
-    /// undoable, like Markup. Two stacks; a fresh edit clears redo.
-    pub(crate) undos: Vec<Edit<Action>>,
-    pub(crate) redos: Vec<Edit<Action>>,
+    /// Operation-level history: commits, deletes, moves, crops,
+    /// transforms, and clears are all undoable. Two stacks; a fresh step
+    /// clears redo.
+    pub(crate) undos: Vec<Step>,
+    pub(crate) redos: Vec<Step>,
     /// In-progress action behind an Rc<RefCell>: the canvas prep
     /// closure clones a refcount per render, and the mousemove handler
     /// borrows it mutably in place. A plain Rc forced Rc::make_mut to

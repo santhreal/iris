@@ -176,11 +176,11 @@ impl Editor {
                        glyph: Icon,
                        label: &'static str,
                        keys: &'static str,
-                       run: fn(&mut Self)| {
+                       run: fn(&mut Self, &mut Context<Self>)| {
             widgets::icon_button(id, glyph, false, theme::TOOLBAR_CONTROL_H)
                 .tooltip(tip(label, Some(keys.into())))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    run(this);
+                    run(this, cx);
                     cx.notify();
                 }))
         };

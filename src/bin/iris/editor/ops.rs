@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use gpui::*;
 use iris_lib::history::{self, Edit};
 
-use super::action::{stroke_base, text_size, Action, Tool, Transform};
+use super::action::{stroke_base, text_size, Action, Scene, Step, Tool, Transform};
 use super::raster::{pixelate_region_bgra, png_bytes, rasterize};
 use super::Editor;
 use crate::pipeline;
@@ -80,7 +80,11 @@ impl Editor {
     }
 
     pub(crate) fn push_edit(&mut self, edit: Edit<Action>) {
-        self.undos.push(edit);
+        self.push_step(Step::Edit(Box::new(edit)));
+    }
+
+    fn push_step(&mut self, step: Step) {
+        self.undos.push(step);
         self.redos.clear();
     }
 
@@ -92,30 +96,108 @@ impl Editor {
         history::apply_inverse(&mut self.actions.borrow_mut(), edit);
     }
 
-    pub(crate) fn undo(&mut self) {
-        if let Some(edit) = self.undos.pop() {
-            self.apply_inverse(&edit);
-            self.selected = None;
-            self.rebuild_for_edit(&edit);
-            self.redos.push(edit);
-        }
-    }
-
-    pub(crate) fn redo(&mut self) {
-        if let Some(edit) = self.redos.pop() {
-            self.apply_forward(&edit);
-            self.selected = None;
-            self.rebuild_for_edit(&edit);
-            self.undos.push(edit);
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.actions.borrow_mut().clear();
-        self.undos.clear();
-        self.redos.clear();
+    pub(crate) fn undo(&mut self, cx: &mut Context<Self>) {
+        let Some(step) = self.undos.pop() else {
+            return;
+        };
+        let step = match step {
+            Step::Edit(edit) => {
+                self.apply_inverse(&edit);
+                self.rebuild_for_edit(&edit);
+                Step::Edit(edit)
+            }
+            Step::Swap(mut scene) => {
+                self.swap_scene(&mut scene, cx);
+                Step::Swap(scene)
+            }
+        };
         self.selected = None;
-        self.rebuild_all();
+        self.redos.push(step);
+    }
+
+    pub(crate) fn redo(&mut self, cx: &mut Context<Self>) {
+        let Some(step) = self.redos.pop() else {
+            return;
+        };
+        let step = match step {
+            Step::Edit(edit) => {
+                self.apply_forward(&edit);
+                self.rebuild_for_edit(&edit);
+                Step::Edit(edit)
+            }
+            Step::Swap(mut scene) => {
+                self.swap_scene(&mut scene, cx);
+                Step::Swap(scene)
+            }
+        };
+        self.selected = None;
+        self.undos.push(step);
+    }
+
+    /// Exchange the editor's image and actions with `scene`'s, and redraw
+    /// the composite from them.
+    fn swap_scene(&mut self, scene: &mut Scene, cx: &mut Context<Self>) {
+        let same_image = Arc::ptr_eq(&self.base, &scene.base);
+        std::mem::swap(&mut self.base, &mut scene.base);
+        std::mem::swap(&mut *self.actions.borrow_mut(), &mut scene.actions);
+        self.crop_rect = None;
+        if !same_image {
+            self.show_base(cx);
+        }
+        // With no actions the composite is the base. A new image also
+        // has a new size, which a replay into the old buffer cannot fit.
+        if !same_image || self.actions.borrow().is_empty() {
+            self.composite = Arc::clone(&self.base);
+        }
+        if !self.actions.borrow().is_empty() {
+            self.rebuild_all();
+        }
+    }
+
+    /// Point the canvas and the size caption at `base` after it changed
+    /// size or content. The composite is the caller's.
+    fn show_base(&mut self, cx: &mut Context<Self>) {
+        let (w, h) = self.base.dimensions();
+        let old = std::mem::replace(
+            &mut self.base_img,
+            crate::widgets::render_image_from_rgba(w, h, self.base.as_raw()),
+        );
+        crate::widgets::release_render(&old, cx);
+        self.base_dims = (w, h);
+        self.dims = SharedString::from(format!("{} × {}", w, h));
+    }
+
+    /// Make `image`, with every committed action already in it, the new
+    /// base with no actions, as one undoable step: a crop or transform
+    /// re-keys every coordinate system, so actions do not carry across.
+    fn rebase(&mut self, image: image::RgbaImage, cx: &mut Context<Self>) {
+        // Base and composite share the new buffer: the first edit after
+        // the step splits it through make_mut, or never on a save.
+        self.composite = Arc::new(image);
+        let old = Scene {
+            base: std::mem::replace(&mut self.base, Arc::clone(&self.composite)),
+            actions: std::mem::take(&mut *self.actions.borrow_mut()),
+        };
+        self.show_base(cx);
+        self.push_step(Step::Swap(old));
+        self.selected = None;
+        self.crop_rect = None;
+    }
+
+    /// Remove every committed action, as one undoable step.
+    pub(crate) fn clear(&mut self) {
+        if self.actions.borrow().is_empty() {
+            return;
+        }
+        let old = Scene {
+            base: Arc::clone(&self.base),
+            actions: std::mem::take(&mut *self.actions.borrow_mut()),
+        };
+        self.push_step(Step::Swap(old));
+        self.selected = None;
+        // With no actions the composite is the base: share it rather
+        // than copy the base's pixels back over the composite.
+        self.composite = Arc::clone(&self.base);
     }
 
     /// Translate one action, clamped so its bbox stays on the image.
@@ -170,9 +252,8 @@ impl Editor {
     }
 
     /// Apply the pending crop: everything committed flattens into the
-    /// base (a crop re-keys every coordinate system; keeping actions
-    /// editable across it is not worth the transform bugs), then the
-    /// image is cut to the rect.
+    /// new base, then the image is cut to the rect. Undo restores the
+    /// uncut image and its actions.
     pub(crate) fn apply_crop(&mut self, cx: &mut Context<Self>) {
         if !self.base_ready {
             self.crop_rect = None;
@@ -197,27 +278,12 @@ impl Editor {
             return;
         }
         let cropped = image::imageops::crop_imm(&*self.composite, x, y, w, h).to_image();
-        let old = std::mem::replace(
-            &mut self.base_img,
-            crate::widgets::render_image_from_rgba(w, h, cropped.as_raw()),
-        );
-        crate::widgets::release_render(&old, cx);
-        // base and composite share the cropped buffer: the clone this
-        // replaces was a full-size copy on the UI thread, and the
-        // first post-crop edit pays it through make_mut instead.
-        self.composite = Arc::new(cropped);
-        self.base = Arc::clone(&self.composite);
-        self.base_dims = (w, h);
-        self.dims = SharedString::from(format!("{} × {}", self.base_dims.0, self.base_dims.1));
-        self.actions.borrow_mut().clear();
-        self.undos.clear();
-        self.redos.clear();
-        self.selected = None;
+        self.rebase(cropped, cx);
     }
 
-    /// Rotate the whole image 90° CW, or mirror it horizontally.
-    /// Like a crop, this re-keys every coordinate system, so committed
-    /// actions flatten into the base first.
+    /// Rotate the whole image 90° CW, or mirror it horizontally. Like a
+    /// crop, committed actions flatten into the new base, and undo
+    /// restores them.
     pub(crate) fn transform(&mut self, op: Transform, cx: &mut Context<Self>) {
         if !self.base_ready {
             self.status = Some("still decoding".into());
@@ -230,22 +296,7 @@ impl Editor {
             Transform::FlipH => image::imageops::flip_horizontal(&*self.composite),
             Transform::FlipV => image::imageops::flip_vertical(&*self.composite),
         };
-        let (w, h) = (out.width(), out.height());
-        let old = std::mem::replace(
-            &mut self.base_img,
-            crate::widgets::render_image_from_rgba(w, h, out.as_raw()),
-        );
-        crate::widgets::release_render(&old, cx);
-        // Same sharing as apply_crop: the clone this replaces was a
-        // full-size copy on the UI thread per transform.
-        self.composite = Arc::new(out);
-        self.base = Arc::clone(&self.composite);
-        self.base_dims = (w, h);
-        self.dims = SharedString::from(format!("{} × {}", self.base_dims.0, self.base_dims.1));
-        self.actions.borrow_mut().clear();
-        self.undos.clear();
-        self.redos.clear();
-        self.selected = None;
+        self.rebase(out, cx);
         cx.notify();
     }
 

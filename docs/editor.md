@@ -75,14 +75,14 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 
 ## Edit Operations
 
-- **Undo (`Ctrl+Z` or `Cmd+Z`)**: Reverts the most recent markup action, deletion, or move. **Undo** in the toolbar does the same.
-- **Redo (`Ctrl+Shift+Z`, `Cmd+Shift+Z`, `Ctrl+Y`, or `Cmd+Y`)**: Re-applies the most recently undone action. **Redo** in the toolbar does the same.
+- **Undo (`Ctrl+Z` or `Cmd+Z`)**: Reverts the most recent markup action, deletion, move, crop, transformation, or Clear Markup. Undoing a crop or transformation restores the previous image with its annotations editable. **Undo** in the toolbar does the same.
+- **Redo (`Ctrl+Shift+Z`, `Cmd+Shift+Z`, `Ctrl+Y`, or `Cmd+Y`)**: Re-applies the most recently undone step. **Redo** in the toolbar does the same.
 - **Delete selected action (`Delete` or `Backspace`)**: Removes the currently selected annotation item when Select mode is active.
-- **Clear Markup** (More menu): Clears all committed actions and empties the undo and redo stacks. The row is dimmed and inert while the image has no markup.
-- **Commit crop (`Enter`)**: Flattens committed annotations into the base image, crops the composite image to the selection box (minimum 8x8 pixels), clears actions and undo stacks, updates dimensions, and recalculates fit scale.
+- **Clear Markup** (More menu): Removes all committed actions as one undoable step. The row is dimmed and inert while the image has no markup.
+- **Commit crop (`Enter`)**: Flattens committed annotations into the base image, crops the composite image to the selection box (minimum 8x8 pixels), updates dimensions, and recalculates fit scale. The crop is one undoable step.
 - **Discard crop (`Escape`)**: Clears the active crop rectangle without modifying the image.
 - **Shortcut sheet (`?` or `/`, or Keyboard Shortcuts in the More menu)**: Toggles the keyboard shortcut reference sheet.
-- **Image transformations** (More menu): Whole-image operations that flatten committed annotations into the base:
+- **Image transformations** (More menu): Whole-image operations that flatten committed annotations into the base. Each is one undoable step:
   - **Rotate Right**: Rotates the image 90 degrees clockwise.
   - **Flip Horizontal**: Mirrors the image horizontally.
   - **Flip Vertical**: Mirrors the image vertically.

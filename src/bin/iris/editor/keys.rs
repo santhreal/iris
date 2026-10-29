@@ -79,13 +79,13 @@ impl Editor {
                 }
             }
             "z" if meta && ev.keystroke.modifiers.shift => {
-                self.redo();
+                self.redo(cx);
             }
             "y" if meta => {
-                self.redo();
+                self.redo(cx);
             }
             "z" if meta => {
-                self.undo();
+                self.undo(cx);
             }
             "s" if meta => {
                 self.finish(window, cx);

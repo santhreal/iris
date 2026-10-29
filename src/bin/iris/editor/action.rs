@@ -126,6 +126,22 @@ pub(crate) struct TextEntry {
     pub(crate) buffer_str: SharedString,
 }
 
+/// One step of the editor's history.
+pub(crate) enum Step {
+    /// An edit to the committed actions.
+    Edit(Box<iris_lib::history::Edit<Action>>),
+    /// A crop, rotation, flip, or clear: the image and the actions on the
+    /// other side of it. Undo and redo both swap it with the editor's
+    /// own, so the step then holds the side it left.
+    Swap(Scene),
+}
+
+/// An image and the actions drawn over it.
+pub(crate) struct Scene {
+    pub(crate) base: Arc<image::RgbaImage>,
+    pub(crate) actions: Vec<Action>,
+}
+
 /// Stroke, highlight and text scale with the capture's pixel size, so a
 /// stroke reads the same on a 400px region grab and a 5K full-screen shot.
 /// Stroke width stops: multipliers over the image-relative base.
