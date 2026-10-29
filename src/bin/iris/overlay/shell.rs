@@ -145,6 +145,8 @@ fn open_shell_opts(
                     focus,
                     dragging: false,
                     anchor: (0.0, 0.0),
+                    space: false,
+                    slide: (0.0, 0.0),
                     resize: None,
                     moving: None,
                     current: None,

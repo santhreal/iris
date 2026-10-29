@@ -3,7 +3,7 @@ use super::{
     flight::{flight_at_rest, flight_rect},
     hint,
     input::frame_rect,
-    Overlay, OverlayMode,
+    slide_rect, Overlay, OverlayMode,
 };
 use crate::pipeline::Region;
 use iris_lib::capture::WinRect;
@@ -25,6 +25,33 @@ fn handles_are_corners_then_edges() {
     assert_eq!(h[5], (60.0, 70.0));
     assert_eq!(h[6], (10.0, 45.0));
     assert_eq!(h[7], (110.0, 45.0));
+}
+
+// WHY: Space during a drag and the arrow keys move a selection at its
+// size and stop it at the window's edges, and the drag's anchor moves
+// by the move made, not the move asked for: an unclamped move would
+// commit a rect past the screen, and an anchor moved by the asked
+// delta would reshape the selection on the next pointer motion. Not
+// covered: the key and pointer events, which `tests/loupe.rs` drives.
+#[test]
+fn slide_rect_moves_at_size_and_stops_at_the_edges() {
+    let size = (1280.0, 1024.0);
+    let rect = (200.0, 200.0, 200.0, 100.0);
+    let cases = [
+        ((100.0, 50.0), (300.0, 250.0), (100.0, 50.0)),
+        ((1000.0, 700.0), (1080.0, 900.0), (880.0, 700.0)),
+        ((-500.0, -10.0), (0.0, 190.0), (-200.0, -10.0)),
+        ((0.0, -900.0), (200.0, 0.0), (0.0, -200.0)),
+        ((0.0, 0.0), (200.0, 200.0), (0.0, 0.0)),
+    ];
+    for (delta, at, made) in cases {
+        let (moved, d) = slide_rect(rect, delta, size);
+        assert_eq!(moved, (at.0, at.1, 200.0, 100.0), "moved by {delta:?}");
+        assert_eq!(d, made, "the move made for {delta:?}");
+    }
+    // A rect that fills the window cannot move.
+    let full = (0.0, 0.0, 1280.0, 1024.0);
+    assert_eq!(slide_rect(full, (5.0, 5.0), size), (full, (0.0, 0.0)));
 }
 
 // WHY: the capture flight hands the card to the toast once the card is

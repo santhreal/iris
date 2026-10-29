@@ -225,21 +225,8 @@ pub fn press_and_move(
     to: (i16, i16),
     step: i16,
 ) {
-    let motion = |at: (i16, i16)| {
-        conn.xtest_fake_input(
-            xproto::MOTION_NOTIFY_EVENT,
-            0,
-            x11rb::CURRENT_TIME,
-            root,
-            at.0,
-            at.1,
-            0,
-        )
-        .unwrap();
-        conn.flush().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(8));
-    };
-    motion(from);
+    move_to(conn, root, from);
+    std::thread::sleep(std::time::Duration::from_millis(8));
     conn.xtest_fake_input(
         xproto::BUTTON_PRESS_EVENT,
         1,
@@ -250,13 +237,24 @@ pub fn press_and_move(
         0,
     )
     .unwrap();
+    glide(conn, root, from, to, step);
+}
+
+/// Move the pointer from `from` to `to` in steps of `step` pixels with
+/// a pause after each, through XTest, buttons as they are.
+pub fn glide(conn: &impl Connection, root: u32, from: (i16, i16), to: (i16, i16), step: i16) {
     let (dx, dy) = (i32::from(to.0 - from.0), i32::from(to.1 - from.1));
     let steps = (dx.abs().max(dy.abs()) / i32::from(step.max(1))).max(1);
     for i in 1..=steps {
-        motion((
-            from.0 + (dx * i / steps) as i16,
-            from.1 + (dy * i / steps) as i16,
-        ));
+        move_to(
+            conn,
+            root,
+            (
+                from.0 + (dx * i / steps) as i16,
+                from.1 + (dy * i / steps) as i16,
+            ),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(8));
     }
 }
 
@@ -285,34 +283,49 @@ pub fn tap(conn: &impl Connection, root: u32, keysym: u32) {
 /// release them in reverse order, through XTest: `[CONTROL_L, PRINT]`
 /// is Ctrl+Print.
 pub fn chord(conn: &impl Connection, root: u32, keysyms: &[u32]) {
+    let keycodes: Vec<u8> = keysyms.iter().map(|&k| keycode(conn, k)).collect();
+    for &keycode in &keycodes {
+        key(conn, root, keycode, xproto::KEY_PRESS_EVENT);
+    }
+    for &keycode in keycodes.iter().rev() {
+        key(conn, root, keycode, xproto::KEY_RELEASE_EVENT);
+    }
+    conn.flush().unwrap();
+}
+
+/// Press the first key that produces `keysym` and leave it held,
+/// through XTest. `let_go` releases it.
+pub fn hold(conn: &impl Connection, root: u32, keysym: u32) {
+    key(conn, root, keycode(conn, keysym), xproto::KEY_PRESS_EVENT);
+    conn.flush().unwrap();
+}
+
+/// Release the first key that produces `keysym`, through XTest.
+pub fn let_go(conn: &impl Connection, root: u32, keysym: u32) {
+    key(conn, root, keycode(conn, keysym), xproto::KEY_RELEASE_EVENT);
+    conn.flush().unwrap();
+}
+
+/// The first keycode that produces `keysym`.
+fn keycode(conn: &impl Connection, keysym: u32) -> u8 {
     let (low, high) = (conn.setup().min_keycode, conn.setup().max_keycode);
     let map = conn
         .get_keyboard_mapping(low, high - low + 1)
         .unwrap()
         .reply()
         .unwrap();
-    let keycodes: Vec<u8> = keysyms
+    let at = map
+        .keysyms
         .iter()
-        .map(|&keysym| {
-            let at = map
-                .keysyms
-                .iter()
-                .position(|&k| k == keysym)
-                .unwrap_or_else(|| panic!("no key produces keysym {keysym:#x}"));
-            low + (at / usize::from(map.keysyms_per_keycode)) as u8
-        })
-        .collect();
-    let fake = |kind, keycode| {
-        conn.xtest_fake_input(kind, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)
-            .unwrap();
-    };
-    for &keycode in &keycodes {
-        fake(xproto::KEY_PRESS_EVENT, keycode);
-    }
-    for &keycode in keycodes.iter().rev() {
-        fake(xproto::KEY_RELEASE_EVENT, keycode);
-    }
-    conn.flush().unwrap();
+        .position(|&k| k == keysym)
+        .unwrap_or_else(|| panic!("no key produces keysym {keysym:#x}"));
+    low + (at / usize::from(map.keysyms_per_keycode)) as u8
+}
+
+/// One XTest key event of `kind` for `keycode`.
+fn key(conn: &impl Connection, root: u32, keycode: u8, kind: u8) {
+    conn.xtest_fake_input(kind, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)
+        .unwrap();
 }
 
 /// Ask `window` to close as a window manager does when its close button

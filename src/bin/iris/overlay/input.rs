@@ -6,7 +6,7 @@ use iris_lib::capture::WinRect;
 use super::{
     drag_region,
     shell::{close_other_overlays, poolable, ShellLayout},
-    Flight, Overlay, OverlayMode, MIN_SIZE,
+    slide_rect, Flight, Overlay, OverlayMode, MIN_SIZE,
 };
 use crate::{pipeline, pipeline::Region, stage};
 
@@ -63,6 +63,8 @@ impl Overlay {
         self.monitors = layout.monitors.clone();
         self.windows = layout.windows.clone();
         self.dragging = false;
+        self.space = false;
+        self.slide = (0.0, 0.0);
         self.current = None;
         self.landed = None;
         self.finalize_failed = false;
@@ -175,6 +177,12 @@ impl Overlay {
     /// Frame-pixel coordinates of a logical cursor position.
     pub(super) fn frame_pos(sf: f32, sx: f32, sy: f32, lx: f32, ly: f32) -> (i64, i64) {
         ((lx * sf * sx) as i64, (ly * sf * sy) as i64)
+    }
+
+    /// The fixed corner of a drag: the press point, moved by Space and
+    /// the arrow keys during the drag.
+    pub(super) fn drag_anchor(&self) -> (f32, f32) {
+        (self.anchor.0 + self.slide.0, self.anchor.1 + self.slide.1)
     }
 
     pub(super) fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -372,6 +380,11 @@ impl Overlay {
     ) {
         let key = ev.keystroke.key.as_str();
         let shift = ev.keystroke.modifiers.shift;
+        // Space during a drag moves the selection until it is released.
+        if key == "space" && self.dragging {
+            self.space = true;
+            return;
+        }
         let dir = match key {
             "left" => Some((-1.0, 0.0)),
             "right" => Some((1.0, 0.0)),
@@ -379,12 +392,17 @@ impl Overlay {
             "down" => Some((0.0, 1.0)),
             _ => None,
         };
-        if let (Some((dx, dy)), Some((x, y, w, h))) = (dir, self.current) {
+        if let (Some((dx, dy)), Some(rect)) = (dir, self.current) {
             let step = if shift { 10.0 } else { 1.0 };
             let size = window.bounds().size;
-            let nx = (x + dx * step).clamp(0.0, f32::from(size.width) - w);
-            let ny = (y + dy * step).clamp(0.0, f32::from(size.height) - h);
-            self.current = Some((nx, ny, w, h));
+            let size = (f32::from(size.width), f32::from(size.height));
+            let (moved, d) = slide_rect(rect, (dx * step, dy * step), size);
+            self.current = Some(moved);
+            // During a drag the anchor moves too, so the next pointer
+            // motion keeps the move.
+            if self.dragging {
+                self.slide = (self.slide.0 + d.0, self.slide.1 + d.1);
+            }
             cx.notify();
             return;
         }
@@ -444,6 +462,13 @@ impl Overlay {
         }
     }
 
+    pub(super) fn handle_key_up(&mut self, ev: &KeyUpEvent, cx: &mut Context<Self>) {
+        if ev.keystroke.key == "space" && self.space {
+            self.space = false;
+            cx.notify();
+        }
+    }
+
     pub(super) fn handle_mouse_up(
         &mut self,
         ev: &MouseUpEvent,
@@ -484,23 +509,26 @@ impl Overlay {
             cx.notify();
             return;
         }
-        let size = window.bounds().size;
-        let region = drag_region(
-            self.anchor,
-            (mx, my),
-            (f32::from(size.width), f32::from(size.height)),
-            ev.modifiers.shift,
-        );
-        if (region.width as f32) < MIN_SIZE || (region.height as f32) < MIN_SIZE {
-            self.current = None;
+        // With Space held the selection is the one shown; otherwise the
+        // release point is its far corner.
+        let rect = if self.space {
+            self.current
         } else {
-            self.current = Some((
+            let size = window.bounds().size;
+            let region = drag_region(
+                self.drag_anchor(),
+                (mx, my),
+                (f32::from(size.width), f32::from(size.height)),
+                ev.modifiers.shift,
+            );
+            Some((
                 region.x as f32,
                 region.y as f32,
                 region.width as f32,
                 region.height as f32,
-            ));
-        }
+            ))
+        };
+        self.current = rect.filter(|r| r.2 >= MIN_SIZE && r.3 >= MIN_SIZE);
         cx.notify();
     }
 }

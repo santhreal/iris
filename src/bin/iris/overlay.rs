@@ -91,6 +91,11 @@ pub struct Overlay {
     focus: FocusHandle,
     dragging: bool,
     anchor: (f32, f32),
+    /// Space is held during a drag: pointer motion moves the selection
+    /// instead of resizing it.
+    space: bool,
+    /// How far Space moved the drag's anchor since the press.
+    slide: (f32, f32),
     /// A committed selection being reshaped by a handle: the handle
     /// index (0-7, corners then edges) and the rect at drag start.
     resize: Option<(usize, (f32, f32, f32, f32))>,
@@ -170,7 +175,8 @@ pub fn session_live(cx: &App) -> bool {
 /// window of `size`. `square` (Shift held) locks it to a square that
 /// grows away from the anchor in the drag's direction.
 /// Mouse move and mouse up share it, so the committed rect is the one
-/// the drag showed.
+/// the drag showed. The drag's anchor is the press point plus the
+/// overlay's `slide`.
 fn drag_region(anchor: (f32, f32), cursor: (f32, f32), size: (f32, f32), square: bool) -> Region {
     let region = Region::from_corners(anchor, cursor, size.0 as u32, size.1 as u32);
     if !square {
@@ -187,6 +193,20 @@ fn drag_region(anchor: (f32, f32), cursor: (f32, f32), size: (f32, f32), square:
         width: side as u32,
         height: side as u32,
     }
+}
+
+/// `rect` moved by `delta` and clamped inside a window of `size`, and
+/// the move it made. Space during a drag and the arrow keys move a
+/// selection through it, so both stop at the same edges.
+fn slide_rect(
+    rect: (f32, f32, f32, f32),
+    delta: (f32, f32),
+    size: (f32, f32),
+) -> ((f32, f32, f32, f32), (f32, f32)) {
+    let (x, y, w, h) = rect;
+    let nx = (x + delta.0).clamp(0.0, (size.0 - w).max(0.0));
+    let ny = (y + delta.1).clamp(0.0, (size.1 - h).max(0.0));
+    ((nx, ny, w, h), (nx - x, ny - y))
 }
 
 impl Render for Overlay {
@@ -217,6 +237,9 @@ impl Render for Overlay {
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 this.handle_key_down(ev, window, cx);
             }))
+            .on_key_up(cx.listener(|this, ev: &KeyUpEvent, _window, cx| {
+                this.handle_key_up(ev, cx);
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
@@ -243,6 +266,8 @@ impl Render for Overlay {
                     }
                     this.dragging = true;
                     this.anchor = p;
+                    this.slide = (0.0, 0.0);
+                    this.cursor = p;
                     this.current = None;
                     cx.notify();
                 }),
@@ -255,6 +280,7 @@ impl Render for Overlay {
             )
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
+                let prev = this.cursor;
                 this.cursor = (mx, my);
                 this.cursor_known = true;
                 this.seed = None;
@@ -333,18 +359,30 @@ impl Render for Overlay {
                     }
                     this.hover_in = None;
                     let size = window.bounds().size;
-                    let region = drag_region(
-                        this.anchor,
-                        (mx, my),
-                        (f32::from(size.width), f32::from(size.height)),
-                        ev.modifiers.shift,
-                    );
-                    this.current = Some((
-                        region.x as f32,
-                        region.y as f32,
-                        region.width as f32,
-                        region.height as f32,
-                    ));
+                    let size = (f32::from(size.width), f32::from(size.height));
+                    if this.space {
+                        // Space held: the selection follows the pointer
+                        // at its size, and the anchor moves with it.
+                        let delta = (mx - prev.0, my - prev.1);
+                        let d = match this.current {
+                            Some(rect) => {
+                                let (moved, d) = slide_rect(rect, delta, size);
+                                this.current = Some(moved);
+                                d
+                            }
+                            None => delta,
+                        };
+                        this.slide = (this.slide.0 + d.0, this.slide.1 + d.1);
+                    } else {
+                        let region =
+                            drag_region(this.drag_anchor(), (mx, my), size, ev.modifiers.shift);
+                        this.current = Some((
+                            region.x as f32,
+                            region.y as f32,
+                            region.width as f32,
+                            region.height as f32,
+                        ));
+                    }
                     let (fx, fy) = Overlay::frame_pos(sf, sx, sy, mx, my);
                     this.update_loupe(fx, fy, cx);
                 } else {
