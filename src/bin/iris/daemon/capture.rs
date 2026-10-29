@@ -5,7 +5,24 @@ use std::time::Instant;
 use gpui::*;
 use iris_lib::config::Config;
 
+use super::Command;
 use crate::{flash, notice, overlay, pipeline, stage};
+
+/// Take a resting toast and the live notice off the screen before a
+/// capture reads it: once they are gone, `cmd` runs again and finds
+/// none. Returns whether `cmd` waits on them.
+fn after_popups(cx: &mut App, cmd: Command) -> bool {
+    let popups: Vec<AnyWindowHandle> =
+        [stage::leave_for_capture(cx), notice::leave_for_capture(cx)]
+            .into_iter()
+            .flatten()
+            .collect();
+    if popups.is_empty() {
+        return false;
+    }
+    crate::widgets::clear_then_run(cx, popups, cmd);
+    true
+}
 
 /// Region capture: the overlay shells map at once, transparent over
 /// the live desktop with crosshair and window-snap already live. The
@@ -13,6 +30,17 @@ use crate::{flash, notice, overlay, pipeline, stage};
 /// frame appears as it lands, so the keypress reads as instant even
 /// on a multi-4K setup where the grab takes half a second.
 pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
+    // A live session swallows the press before it can close the toast
+    // the session is about to capture.
+    let pooled = *overlay::POOL.lock();
+    if let Some(h) = pooled {
+        if h.read_with(cx, |o, _| !o.hidden).unwrap_or(false) {
+            return Ok(());
+        }
+    }
+    if after_popups(cx, Command::Capture) {
+        return Ok(());
+    }
     let t0 = Instant::now();
     // The grab goes out FIRST: the X server reads the framebuffer
     // when it processes the request, before any overlay pixel can
@@ -25,8 +53,7 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
     let layout = overlay::layout();
     // Reuse the pooled window when there is one: GPUI window init is
     // ~65% of keypress-to-overlay latency, and a parked window skips
-    // all of it. A live session (visible overlay) swallows the press.
-    let pooled = *overlay::POOL.lock();
+    // all of it.
     let handle = if let Some(h) = pooled {
         let session = h.update(cx, |o, _, cx| {
             if o.hidden {
@@ -109,6 +136,9 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
 /// off the main thread: a 4K frame would otherwise freeze the app for
 /// seconds.
 pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
+    if after_popups(cx, Command::CaptureFullscreen) {
+        return Ok(());
+    }
     let grab = cx.background_executor().spawn(async move {
         let frame = pipeline::grab_frame()?;
         pipeline::play_shutter_sound();
@@ -146,6 +176,9 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
 /// screen, decorations included, on X11, Windows, and macOS. The
 /// Wayland portal cannot name a window, so there this returns an error.
 pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
+    if after_popups(cx, Command::CaptureWindow) {
+        return Ok(());
+    }
     fn grab_and_finish() -> Result<(PathBuf, iris_lib::library::CaptureEntry), String> {
         let rect = iris_lib::sys::capture::active_window_rect()?;
         // Grab only the window's rect off the root: the whole-screen

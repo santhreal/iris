@@ -58,6 +58,34 @@ pub fn live_card_rect(cx: &App) -> Option<(f32, f32, f32, f32)> {
     cx.windows().contains(&toast).then_some(card)
 }
 
+/// Take the live toast off the screen for a capture: it draws nothing
+/// from its next frame and is no longer the live toast. Returns its
+/// window for the caller to close (`widgets::clear_then_run`). A toast
+/// handing its card to the editor stays: the editor takes its place.
+pub fn leave_for_capture(cx: &mut App) -> Option<AnyWindowHandle> {
+    let live = (*TOAST_HANDLE.lock())?;
+    let left = live
+        .update(cx, |stage, window, cx| {
+            if stage.pending_morph.is_some() {
+                return false;
+            }
+            stage.hidden = true;
+            crate::widgets::release_render(&stage.thumb.render, cx);
+            publish_rest(window.window_handle(), None);
+            cx.notify();
+            true
+        })
+        .unwrap_or(false);
+    if !left {
+        return None;
+    }
+    let mut slot = TOAST_HANDLE.lock();
+    if *slot == Some(live) {
+        *slot = None;
+    }
+    Some(live.into())
+}
+
 /// Open the toast stage window in the bottom-right corner of the primary
 /// display for the capture at `path`. A toast that cannot open reports
 /// why in a notice.

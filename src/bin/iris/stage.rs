@@ -11,7 +11,8 @@
 //! Markup, morphs the card into the editor. Hovering the card fades in
 //! a capsule of grouped actions with tooltips, and the right-click menu
 //! acts on the capture too; an action's result takes the capsule's slot
-//! as a status line. A new capture replaces the toast.
+//! as a status line. A new capture replaces the toast, and the toast
+//! leaves the screen before that capture reads it.
 
 use std::{
     path::PathBuf,
@@ -36,7 +37,9 @@ mod tests;
 use theme::card_shadow;
 pub(super) use thumb::{prepare_thumb, Thumb};
 use window::publish_rest;
-pub use window::{card_rest_rect, live_card_rect, show_toast, show_toast_landed};
+pub use window::{
+    card_rest_rect, leave_for_capture, live_card_rect, show_toast, show_toast_landed,
+};
 
 pub(super) const MAX_W: f32 = 200.0;
 pub(super) const MAX_H: f32 = 140.0;
@@ -160,6 +163,8 @@ pub struct ToastStage {
     /// The card and its menu, where a screen that does not blend the
     /// window shows it.
     pub(super) cutout: crate::sys::window::Cutout,
+    /// Draw nothing: the toast left the screen for a capture.
+    pub(super) hidden: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -180,6 +185,9 @@ pub(super) struct Swipe {
 
 impl Render for ToastStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.hidden {
+            return div();
+        }
         let (w, h) = self.thumb.dims;
         // The pixels were sized for the scale the toast was expected to
         // open at; a window that renders at another one re-sizes them.

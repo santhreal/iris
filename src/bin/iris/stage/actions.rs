@@ -40,6 +40,7 @@ impl ToastStage {
             busy: false,
             hover_turn: (Instant::now(), 0.0),
             cutout: Default::default(),
+            hidden: false,
         }
     }
 

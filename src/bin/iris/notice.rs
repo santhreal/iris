@@ -179,19 +179,40 @@ fn on_countdown(
 /// on a screen without it.
 fn capture_now(cx: &mut App) {
     let closed = on_countdown(cx, |n, window, cx| {
-        if crate::sys::window::blended(window) {
-            n.hidden = true;
-            cx.notify();
-            widgets::close_then_run(window, cx, daemon::Command::CaptureFullscreen);
-        } else {
-            // A card cut to its shape leaves the screen as it closes.
-            window.remove_window();
-            widgets::run_after_vanish(cx, daemon::Command::CaptureFullscreen);
-        }
+        n.hidden = true;
+        cx.notify();
+        widgets::close_then_run(window, cx, daemon::Command::CaptureFullscreen);
     });
     if !closed {
         daemon::run(cx, &daemon::Command::CaptureFullscreen);
     }
+}
+
+/// Take the live notice off the screen for a capture: it draws nothing
+/// from its next frame and is no longer the live notice. Returns its
+/// window for the caller to close (`widgets::clear_then_run`). A guide
+/// stays: the interaction it states waits on input. A countdown whose
+/// card leaves still captures at its deadline.
+pub fn leave_for_capture(cx: &mut App) -> Option<AnyWindowHandle> {
+    let live = (*NOTICE.lock())?;
+    let left = live
+        .update(cx, |n, _, cx| {
+            if n.kind == Kind::Guide {
+                return false;
+            }
+            n.hidden = true;
+            cx.notify();
+            true
+        })
+        .unwrap_or(false);
+    if !left {
+        return None;
+    }
+    let mut slot = NOTICE.lock();
+    if *slot == Some(live) {
+        *slot = None;
+    }
+    Some(live.into())
 }
 
 /// The title of a countdown with `left` to go: the whole seconds,
