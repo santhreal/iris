@@ -343,26 +343,58 @@ pub struct Rounded {
     pub r: f32,
 }
 
-/// The areas a transparent pop-up window paints, for a screen that does
-/// not blend it (`blended`). There the window is cut to those areas, so
-/// the screen beneath shows through the rest of it in place of black:
-/// a card keeps its corners, stepped to whole pixels, and loses its
-/// shadow. A screen that blends leaves the window whole. Hold one per
-/// window; a frame that paints the areas of the last one sends nothing.
+/// The areas a transparent pop-up window paints. On a screen that does
+/// not blend the window (`blended`), the window is cut to those areas,
+/// so the screen beneath shows through the rest of it in place of
+/// black: a card keeps its corners, stepped to whole pixels, and loses
+/// its shadow. On an X11 or Wayland screen that blends, the window
+/// shows whole and takes pointer input only in the areas, so a click
+/// on its shadow or the transparent room around the card reaches the
+/// window beneath. macOS and Windows leave the window whole. Hold one
+/// per window; a frame that paints the areas of the last one sends
+/// nothing.
 #[derive(Default)]
 pub struct Cutout(CutoutImpl);
 
 #[cfg(target_os = "linux")]
-type CutoutImpl = x11::Cutout;
+#[derive(Default)]
+struct CutoutImpl {
+    x11: x11::Cutout,
+    /// The Wayland input region last set, and the next one.
+    region: Option<Vec<gpui::Bounds<gpui::Pixels>>>,
+    next: Vec<gpui::Bounds<gpui::Pixels>>,
+}
 #[cfg(not(target_os = "linux"))]
 type CutoutImpl = ();
 
 impl Cutout {
-    /// Show `window` only in `areas`, when its screen does not blend it.
+    /// Show `window` only in `areas` where its screen does not blend it,
+    /// and take its pointer input only in `areas` where it does.
     pub fn set(&mut self, window: &gpui::Window, areas: &[Rounded]) {
         #[cfg(target_os = "linux")]
-        if let (false, Some(xid)) = (blended(window), x11::xid(window)) {
-            self.0.set(xid, window.scale_factor(), areas);
+        match x11::xid(window) {
+            Some(xid) => {
+                let cut = if blended(window) {
+                    x11::Cut::Input
+                } else {
+                    x11::Cut::Bounding
+                };
+                self.0.x11.set(xid, window.scale_factor(), areas, cut);
+            }
+            None => {
+                let c = &mut self.0;
+                c.next.clear();
+                c.next.extend(areas.iter().map(|a| {
+                    gpui::Bounds::new(
+                        gpui::point(gpui::px(a.x), gpui::px(a.y)),
+                        gpui::size(gpui::px(a.w), gpui::px(a.h)),
+                    )
+                }));
+                if c.region.as_ref() != Some(&c.next) {
+                    window.set_input_region(Some(&c.next));
+                    std::mem::swap(c.region.get_or_insert_with(Vec::new), &mut c.next);
+                }
+            }
         }
         #[cfg(not(target_os = "linux"))]
         let _ = (&self.0, window, areas);

@@ -19,6 +19,8 @@
 //!   or out of it, or never reaches it, or whose window does not close
 //!   as the card leaves;
 //! - a pop-up under a compositing manager cut to a shape;
+//! - a pop-up whose shadow and the room around its card take a click
+//!   meant for the window beneath, or whose card does not take one;
 //! - a flash that darkens every monitor with no compositing manager, or
 //!   one that no longer opens under one.
 //!
@@ -51,7 +53,7 @@ use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{windows_of, Compositor};
+use x11::{move_to, windows_of, Compositor};
 
 /// The screen, and its width and height in pixels.
 const SCREEN: &str = "1280x1024x24";
@@ -112,12 +114,14 @@ fn a_popup_shows_only_its_card_where_no_compositor_blends_it() {
         std::fs::write(&broken, "not an image").unwrap();
         daemon.send(&[std::ffi::OsStr::new("--toast"), broken.as_os_str()]);
         let (window, rest) = card(&conn, root, &daemon, NOTICE, compositor, &mut wrong);
+        input(&conn, root, window, NOTICE, compositor, false, &mut wrong);
         leaves(&conn, root, &daemon, NOTICE, window, rest, &mut wrong);
 
         // A capture flashes, then its toast lands, and leaves after its
         // default five seconds.
         daemon.send(&["--capture-fullscreen"]);
         let (window, rest) = card(&conn, root, &daemon, TOAST, compositor, &mut wrong);
+        input(&conn, root, window, TOAST, compositor, true, &mut wrong);
         let mut flashes = 0;
         while let Some(event) = conn.poll_for_event().unwrap() {
             if let Event::CreateNotify(created) = event {
@@ -134,6 +138,47 @@ fn a_popup_shows_only_its_card_where_no_compositor_blends_it() {
         leaves(&conn, root, &daemon, TOAST, window, rest, &mut wrong);
     }
     assert!(wrong.is_empty(), "pop-ups:\n{}", wrong.join("\n"));
+}
+
+/// Check that a click on the room around the resting card of the pop-up
+/// `window` reaches the window beneath, the root here, and, with `card`,
+/// that a click on the card reaches `window`. Leaves the pointer in the
+/// screen's top-left corner, off the pop-up. Pushes to `wrong` what is
+/// wrong.
+fn input(
+    conn: &RustConnection,
+    root: u32,
+    window: u32,
+    title: &str,
+    compositor: bool,
+    card: bool,
+    wrong: &mut Vec<String>,
+) {
+    let at = conn
+        .translate_coordinates(window, root, 0, 0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let size = conn.get_geometry(window).unwrap().reply().unwrap();
+    let mut spots = vec![("the room around the card", (BLEED / 2, BLEED / 2), false)];
+    if card {
+        let centre = (
+            BLEED + (size.width as i16 - BLEED - MARGIN) / 2,
+            BLEED + (size.height as i16 - BLEED - MARGIN) / 4,
+        );
+        spots.push(("the card", centre, true));
+    }
+    for (what, (x, y), takes) in spots {
+        move_to(conn, root, (at.dst_x + x, at.dst_y + y));
+        let under = conn.query_pointer(root).unwrap().reply().unwrap().child;
+        if (under == window) != takes {
+            wrong.push(format!(
+                "{title:?}, compositor {compositor}: a click on {what} at ({x}, {y}) \
+                 reaches window {under:#x}, the pop-up is {window:#x}"
+            ));
+        }
+    }
+    move_to(conn, root, (0, 0));
 }
 
 /// A window's bounding shape when it has one: the extents x, y, width,

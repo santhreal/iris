@@ -1,15 +1,15 @@
 //! X11 window operations for `sys::window`, keyed by the window's XID:
 //! window manager state for managed windows, moves and resizes that
 //! follow the pointer where the window manager does not handle
-//! _NET_WM_MOVERESIZE, window shapes where no compositing manager
-//! blends transparent pixels, and the present report.
+//! _NET_WM_MOVERESIZE, window shapes for pop-up windows, and the
+//! present report.
 
 mod cutout;
 mod fixup;
 mod present;
 mod wm_drag;
 
-pub use cutout::{compositor, pass_input, Cutout};
+pub use cutout::{compositor, pass_input, Cut, Cutout};
 pub use fixup::{always_on_top_after_map, park_unmanaged, span_after_map, unpark_span};
 pub use present::PresentWatch;
 pub use wm_drag::{begin_wm_move, begin_wm_resize};

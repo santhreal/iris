@@ -1,7 +1,9 @@
-//! Window shapes for an X11 screen with no compositing manager, where a
-//! transparent pixel shows black: the X Shape extension cuts a pop-up
-//! window's bounding region to the areas it paints, so the screen
-//! beneath shows through everywhere else.
+//! Window shapes for a pop-up window, cut with the X Shape extension to
+//! the areas the window paints. With no compositing manager a
+//! transparent pixel shows black: the bounding shape is cut, so the
+//! screen beneath shows through everywhere else. Under one the window
+//! stays whole and only its input shape is cut, so a click past the
+//! areas reaches the window beneath.
 
 use std::sync::LazyLock;
 
@@ -52,38 +54,51 @@ pub fn compositor() -> bool {
             .is_some_and(|reply| reply.value_len > 0)
 }
 
-/// The bounding shape last set on one window, so a frame that paints
-/// the same areas sends no request.
+/// The shape `Cutout::set` cuts to the areas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cut {
+    /// The bounding shape: the window shows, and takes input, only in
+    /// the areas.
+    Bounding,
+    /// The input shape: the window shows whole, and takes input only in
+    /// the areas.
+    Input,
+}
+
+/// The shape last set on one window, so a frame that paints the same
+/// areas sends no request.
 #[derive(Default)]
 pub struct Cutout {
-    sent: Option<Vec<Span>>,
+    sent: Option<(Cut, Vec<Span>)>,
     next: Vec<Span>,
 }
 
 impl Cutout {
-    /// Cut window `xid` to `areas`, window-local logical pixels at
-    /// `scale` device pixels each.
-    pub fn set(&mut self, xid: u32, scale: f32, areas: &[Rounded]) {
+    /// Cut window `xid`'s `cut` shape to `areas`, window-local logical
+    /// pixels at `scale` device pixels each.
+    pub fn set(&mut self, xid: u32, scale: f32, areas: &[Rounded], cut: Cut) {
         self.next.clear();
         spans(&mut self.next, scale, areas);
-        if self.sent.as_ref() == Some(&self.next) {
+        if self
+            .sent
+            .as_ref()
+            .is_some_and(|(c, s)| *c == cut && *s == self.next)
+        {
             return;
         }
         let Ok((conn, _)) = iris_lib::sys::capture::x11::shared_conn() else {
             return;
         };
+        let kind = match cut {
+            Cut::Bounding => SK::BOUNDING,
+            Cut::Input => SK::INPUT,
+        };
         let rects: Vec<Rectangle> = self.next.iter().map(|&s| rectangle(s)).collect();
-        let sent = conn.shape_rectangles(
-            SO::SET,
-            SK::BOUNDING,
-            ClipOrdering::UNSORTED,
-            xid,
-            0,
-            0,
-            &rects,
-        );
+        let sent = conn.shape_rectangles(SO::SET, kind, ClipOrdering::UNSORTED, xid, 0, 0, &rects);
         if sent.is_ok() && conn.flush().is_ok() {
-            std::mem::swap(self.sent.get_or_insert_with(Vec::new), &mut self.next);
+            let (c, s) = self.sent.get_or_insert_with(|| (cut, Vec::new()));
+            *c = cut;
+            std::mem::swap(s, &mut self.next);
         }
     }
 }
