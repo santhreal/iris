@@ -161,7 +161,9 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             tabbing_identifier: None,
             ..Default::default()
         },
-        |_, cx| {
+        |window, cx| {
+            // The keys work from the first frame, before any click.
+            focus.focus(window, cx);
             cx.new(|cx| {
                 // Listing the shots dir here would stall the open on a
                 // slow or network dir: open empty and populate from the
