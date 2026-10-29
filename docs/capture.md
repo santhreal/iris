@@ -6,6 +6,8 @@ iris provides region, fullscreen, active-window, and timed capture modes.
 
 ## Capture Modes
 
+Starting a capture closes a resting toast and notice first, so the capture does not contain them ([Auto-Dismiss Countdown](toast.md#auto-dismiss-countdown)).
+
 ### Region Capture
 
 Trigger region capture using any of the following interfaces:

@@ -6,6 +6,8 @@ iris records selected windows, screen regions, or displays using platform captur
 
 ## Recording Modes
 
+Starting a recording or a region pick closes a resting toast and notice first, so the recording does not contain them ([Auto-Dismiss Countdown](toast.md#auto-dismiss-countdown)).
+
 ### Window Recording
 
 Start window recording through any of the following triggers:
