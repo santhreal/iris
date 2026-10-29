@@ -66,6 +66,54 @@ pub(crate) enum Tool {
     Counter,
 }
 
+/// Which options bar settings a mark of each tool takes. The matches
+/// list every tool, so a new one cannot compile without a decision.
+impl Tool {
+    /// The markup color.
+    pub(crate) fn colored(self) -> bool {
+        match self {
+            Tool::Pen
+            | Tool::Line
+            | Tool::Arrow
+            | Tool::Ellipse
+            | Tool::Rect
+            | Tool::Text
+            | Tool::Highlight
+            | Tool::Counter => true,
+            Tool::Select | Tool::Blur | Tool::Crop => false,
+        }
+    }
+
+    /// The stroke width stop. A highlight has its own width.
+    pub(crate) fn stroked(self) -> bool {
+        match self {
+            Tool::Pen | Tool::Line | Tool::Arrow | Tool::Ellipse | Tool::Rect => true,
+            Tool::Select
+            | Tool::Text
+            | Tool::Highlight
+            | Tool::Blur
+            | Tool::Crop
+            | Tool::Counter => false,
+        }
+    }
+
+    /// The fill toggle.
+    pub(crate) fn fillable(self) -> bool {
+        match self {
+            Tool::Ellipse | Tool::Rect => true,
+            Tool::Select
+            | Tool::Pen
+            | Tool::Line
+            | Tool::Arrow
+            | Tool::Text
+            | Tool::Highlight
+            | Tool::Blur
+            | Tool::Crop
+            | Tool::Counter => false,
+        }
+    }
+}
+
 /// Each tool: its value, toolbar glyph, name, and the single key that
 /// selects it. The toolbar tooltips and the key handler both read this
 /// table, so a tool's shown shortcut is the key that selects it.

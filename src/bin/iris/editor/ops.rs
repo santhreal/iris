@@ -336,11 +336,11 @@ impl Editor {
     }
 
     /// Select markup color `color` for the next mark, and give it to
-    /// the selected mark. A blur has no color.
+    /// the selected mark if that takes a color.
     pub(crate) fn set_color(&mut self, color: &'static str) {
         self.color = color;
         self.restyle_selected(|a| {
-            if a.tool != Tool::Blur {
+            if a.tool.colored() {
                 a.color = color;
             }
         });
@@ -352,10 +352,7 @@ impl Editor {
         self.stroke = stop;
         let width = stroke_base(self.img_w()) * STROKE_MULT[stop as usize];
         self.restyle_selected(|a| {
-            if matches!(
-                a.tool,
-                Tool::Pen | Tool::Line | Tool::Arrow | Tool::Rect | Tool::Ellipse
-            ) {
+            if a.tool.stroked() {
                 a.width = width;
             }
         });
@@ -367,10 +364,36 @@ impl Editor {
         self.fill = !self.fill;
         let fill = self.fill;
         self.restyle_selected(|a| {
-            if matches!(a.tool, Tool::Rect | Tool::Ellipse) {
+            if a.tool.fillable() {
                 a.filled = fill;
             }
         });
+    }
+
+    /// Select mark `hit`, or none, and show the selected mark's color,
+    /// stroke width, and fill in the options bar, where it has them: a
+    /// change in the bar then steps from the mark's own setting.
+    pub(crate) fn select(&mut self, hit: Option<usize>) {
+        self.selected = hit;
+        let actions = self.actions.borrow();
+        let Some(a) = hit.and_then(|i| actions.get(i)) else {
+            return;
+        };
+        if a.tool.colored() {
+            self.color = a.color;
+        }
+        if a.tool.stroked() {
+            let base = stroke_base(self.base_dims.0);
+            if let Some(stop) = STROKE_MULT
+                .iter()
+                .position(|m| (base * m - a.width).abs() < 1e-3)
+            {
+                self.stroke = stop as u8;
+            }
+        }
+        if a.tool.fillable() {
+            self.fill = a.filled;
+        }
     }
 
     /// Apply `style` to a copy of the selected mark and, when that

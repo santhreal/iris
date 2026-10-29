@@ -151,6 +151,8 @@ const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
 const LABEL: (f32, f32) = (380.0, 280.0);
 /// A second rectangle's corners, in image pixels.
 const SECOND: [(f32, f32); 2] = [(300.0, 220.0), (400.0, 300.0)];
+/// A third rectangle's corners, in image pixels.
+const THIRD: [(f32, f32); 2] = [(420.0, 60.0), (520.0, 140.0)];
 /// Where the status line shows, from `widgets::status_pill`: from the
 /// stage margin, 10 px over the window's bottom edge; the span covers
 /// the start of its text.
@@ -1115,6 +1117,60 @@ fn the_options_bar_restyles_the_selected_mark_one_undo_step_each() {
         "the restyled rectangle: orange at its left and right sides, red \
          anywhere, its center, and its stroke {rect} px wide as the fresh \
          rectangle's {second} px"
+    );
+}
+
+// WHY: selecting a mark shows its color, stroke width, and fill in the
+// options bar, so a change steps from the mark's own setting and the
+// next mark is drawn as the selected one was. A selection that leaves
+// the bar as it was steps the mark from the last-used color here (to
+// green, not orange) and draws the third rectangle thick, filled, or
+// green.
+#[test]
+fn selecting_a_mark_shows_its_style_in_the_options_bar() {
+    let Some(session) = Session::open("selecting_a_mark_shows_its_style_in_the_options_bar") else {
+        return;
+    };
+    // Red, the middle stroke, no fill.
+    session.draw(R, RECT);
+    // Yellow, the widest stroke, fill.
+    session.keys(&[BRACKET_RIGHT]);
+    session.keys(&[BRACKET_RIGHT]);
+    session.keys(&[THREE]);
+    session.keys(&[F]);
+    session.draw(R, SECOND);
+    // Select the red rectangle, step its color, and deselect it.
+    tap(&session.conn, session.root, V);
+    session.daemon.settle();
+    let side = (RECT[0].0, (RECT[0].1 + RECT[1].1) / 2.0);
+    click(&session.conn, session.root, session.screen_at(side));
+    session.daemon.settle();
+    session.keys(&[BRACKET_RIGHT]);
+    session.keys(&[ESCAPE]);
+    session.draw(R, THIRD);
+    let saved = session.save();
+    let orange = |[r, g, b]: [u8; 3]| r > 230 && (140..180).contains(&g) && b < 40;
+    let at = |x: f32, y: f32| saved.get_pixel(x as u32, y as u32).0;
+    let side_of = |c: [(f32, f32); 2]| {
+        let y = (c[0].1 + c[1].1) / 2.0;
+        (c[0].0 as u32 - 3..c[0].0 as u32 + 4).any(|x| orange(saved.get_pixel(x, y as u32).0))
+    };
+    let center = |c: [(f32, f32); 2]| at((c[0].0 + c[1].0) / 2.0, (c[0].1 + c[1].1) / 2.0);
+    let [r, g, b] = center(SECOND);
+    let rect = edge_ink(&saved, RECT[0].0 as u32, 110..170);
+    let third = edge_ink(&saved, THIRD[0].0 as u32, 70..130);
+    assert_eq!(
+        (
+            side_of(RECT),
+            r > 230 && g > 200 && b < 40,
+            side_of(THIRD),
+            center(THIRD),
+            (rect - third).abs() < 0.5,
+        ),
+        (true, true, true, IMAGE, true),
+        "the first rectangle's side orange, the second's center yellow, the \
+         third's side orange, the third's center, and the third's stroke \
+         {third} px wide as the first's {rect} px"
     );
 }
 

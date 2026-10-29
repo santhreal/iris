@@ -296,7 +296,7 @@ impl Editor {
                     let p = this.to_image(ev.position, window);
                     if this.tool == Tool::Select {
                         this.commit_text(true);
-                        this.selected = this.hit_action(p);
+                        this.select(this.hit_action(p));
                         if let Some(i) = this.selected {
                             if let Some(a) = this.actions.borrow().get(i) {
                                 if let Some(bb) = a.bbox {
