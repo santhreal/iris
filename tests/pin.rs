@@ -282,6 +282,60 @@ fn ctrl_c_copies_a_pin_and_ctrl_w_closes_it() {
     });
 }
 
+/// WHY: a pin showed the pointing hand of a link over its whole surface,
+/// where a press moves the window as a title bar does, so the surface
+/// and its close control looked alike. The case hovers the pin's
+/// surface, then its close control, and waits for the cursor that X
+/// shows to change. Not covered: which cursor the surface shows, past
+/// differing from the close control's; Wayland, where the compositor
+/// draws the cursor.
+#[test]
+fn a_pins_surface_shows_another_cursor_than_its_close_control() {
+    let case = "a_pins_surface_shows_another_cursor_than_its_close_control";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    paint_root(&conn, root, DESKTOP);
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    capture(&conn, root, &daemon, dir.path(), 1);
+    pin_from_toast(&conn, root, &daemon);
+    let pin = daemon.until("the pin to open", || {
+        windows_of(&conn, root, PIN).first().copied()
+    });
+    daemon.settle();
+    let (x, y, w, h) = rect(&conn, root, pin);
+    move_to(&conn, root, (x + w as i16 / 2, y + h as i16 / 2));
+    daemon.settle();
+    let surface = cursor(&conn);
+    // The close control: 22 px, 8 px in from the top-left corner.
+    move_to(&conn, root, (x + 8 + 11, y + 8 + 11));
+    daemon.until("the close control to show another cursor", || {
+        (cursor(&conn) != surface).then_some(())
+    });
+}
+
+/// The cursor X shows: its size, hotspot, and ARGB pixels.
+fn cursor(conn: &RustConnection) -> (u16, u16, u16, u16, Vec<u32>) {
+    use x11rb::protocol::xfixes::ConnectionExt as _;
+    conn.xfixes_query_version(5, 0).unwrap().reply().unwrap();
+    let image = conn.xfixes_get_cursor_image().unwrap().reply().unwrap();
+    (
+        image.width,
+        image.height,
+        image.xhot,
+        image.yhot,
+        image.cursor_image,
+    )
+}
+
 /// The pixels of a pin's bottom-left corner, where its status pill
 /// shows: 100 px across and 40 px up from the bottom edge.
 fn pill_corner((w, h, px): &(usize, usize, Vec<[u8; 3]>)) -> Vec<[u8; 3]> {

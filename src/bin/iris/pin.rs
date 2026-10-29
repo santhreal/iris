@@ -229,7 +229,6 @@ impl Render for PinStage {
             .rounded(crate::widgets::window_corner(window, 8.))
             .overflow_hidden()
             .bg(theme::BG_ELEV)
-            .cursor_pointer()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let ks = &ev.keystroke;
