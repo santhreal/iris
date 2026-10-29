@@ -130,13 +130,17 @@ impl Tile {
 
 pub struct Home {
     focus: FocusHandle,
-    /// The tile Tab and the arrow keys selected; Return or Space runs
-    /// it. None until a key moves it, so pointer use draws no ring.
+    /// The stop Tab and the arrow keys selected: a tile index, or
+    /// [`GEAR`]. Return or Space runs it. None until a key moves it, so
+    /// pointer use draws no ring.
     selected: Option<usize>,
     /// A tile that reads the screen ran: home draws nothing until it
     /// closes, so the capture never contains it.
     leaving: bool,
 }
+
+/// The Settings gear's keyboard stop, after the tiles.
+const GEAR: usize = TILES.len();
 
 /// Open the home window, or raise the one already open.
 pub fn open(cx: &mut App) -> Result<(), String> {
@@ -213,18 +217,21 @@ impl Home {
             "," if meta => daemon::run(cx, &daemon::Command::Settings),
             k if meta && k == LIBRARY_KEY => self.activate(Tile::Library, window, cx),
             "tab" => {
-                self.selected = widgets::ring_step(self.selected, TILES.len(), !ks.modifiers.shift);
+                self.selected = widgets::ring_step(self.selected, GEAR + 1, !ks.modifiers.shift);
                 cx.notify();
             }
+            // The arrows move along the tile row; from the gear they
+            // enter it at either end.
             "right" | "left" => {
-                self.selected = widgets::ring_step(self.selected, TILES.len(), ks.key == "right");
+                let tile = self.selected.filter(|&ix| ix < GEAR);
+                self.selected = widgets::ring_step(tile, TILES.len(), ks.key == "right");
                 cx.notify();
             }
-            "enter" | "space" => {
-                if let Some(ix) = self.selected {
-                    self.activate(TILES[ix].4, window, cx);
-                }
-            }
+            "enter" | "space" => match self.selected {
+                Some(GEAR) => daemon::run(cx, &daemon::Command::Settings),
+                Some(ix) => self.activate(TILES[ix].4, window, cx),
+                None => {}
+            },
             _ => {}
         }
     }
@@ -464,6 +471,11 @@ impl Render for Home {
         )
         .tooltip(widgets::tip("Settings", Some(SETTINGS_SHORTCUT.into())))
         .on_click(cx.listener(|_, _, _, cx| daemon::run(cx, &daemon::Command::Settings)));
+        let gear = widgets::ringed(
+            gear,
+            Some(theme::RADIUS_CONTROL),
+            (self.selected == Some(GEAR)).then_some(theme::FOCUS_RING),
+        );
         widgets::toolbar_frame(
             window,
             widgets::Toolbar::default().trailing(gear),
@@ -476,17 +488,16 @@ impl Render for Home {
     }
 }
 
-// WHY: the classes closed here are "a tile shows a shortcut other than
-// the one that runs it, or one that does nothing" and "keyboard
-// selection escapes the tiles". A hardcoded caption once read a default
-// hotkey after the config changed it, and a chord another app held was
-// captioned as if it worked; every tile's caption is derived from the
-// config it runs under and the chord's registration state, and an
-// emptied hotkey reads as no shortcut instead of a blank line. The
-// selection steps through every tile in both directions and always
-// lands on a tile Return can run. Only the tiles that read the screen
-// hide home before they run. Not covered: the rendered layout and the
-// frame timing of the hide, checked on docshots and the surfaces suite.
+// WHY: the class closed here is "a tile shows a shortcut other than the
+// one that runs it, or one that does nothing". A hardcoded caption once
+// read a default hotkey after the config changed it, and a chord another
+// app held was captioned as if it worked; every tile's caption is
+// derived from the config it runs under and the chord's registration
+// state, and an emptied hotkey reads as no shortcut instead of a blank
+// line. Only the tiles that read the screen hide home before they run.
+// Not covered: the rendered layout and the frame timing of the hide,
+// checked on docshots and the surfaces suite; the keyboard ring, which
+// `tests/home.rs` drives.
 #[cfg(test)]
 mod tests {
     use std::prelude::v1::test;

@@ -1,8 +1,8 @@
-//! The home window's capture tile, the library's New Screenshot button,
-//! and the overlay's opening hover-snap, driven on a private Xvfb and
-//! read back from the screen.
+//! The home window's capture tile and keyboard ring, the library's New
+//! Screenshot button, and the overlay's opening hover-snap, driven on a
+//! private Xvfb and read back from the screen.
 //!
-//! WHY: two classes close here. "A surface iris opens is part of the
+//! WHY: three classes close here. "A surface iris opens is part of the
 //! picture it takes": the New Screenshot tile ran the capture with Home
 //! still on screen, so the frozen frame held Home under the overlay, and
 //! the library's New Screenshot button did the same with the library. A
@@ -16,6 +16,10 @@
 //! a capture from a hotkey with the pointer resting on a window showed
 //! that window dimmed. The second case rests the pointer on a window,
 //! opens the overlay, and reads the window revealed at full colour.
+//! "The gear has no keyboard path": Tab cycled the three tiles and never
+//! reached Settings. The fourth case tabs past the tiles and runs the
+//! gear with Return; a ring that wraps at the last tile starts a capture
+//! instead.
 //!
 //! Not covered: Wayland, where the pointer is unknown until it moves;
 //! a window manager's frame or close animation; Windows and macOS. The
@@ -40,7 +44,7 @@ use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, fading_compositor, xvfb_sized, Daemon};
-use x11::{click, paint_root, pixel, rect, windows_of};
+use x11::{click, move_to, paint_root, pixel, rect, tap, windows_of};
 
 const HOME: &str = "iris";
 const OVERLAY: &str = "Capture - iris";
@@ -61,6 +65,11 @@ const HEADER: (i16, i16) = (48, 60);
 /// The pointer's window: x, y, width, height, and its colour.
 const TARGET: (i16, i16, u16, u16) = (200, 200, 320, 240);
 const TARGET_RGB: u32 = 0x0033_66cc;
+/// The settings window's title.
+const SETTINGS: &str = "Settings - iris";
+/// Keysyms.
+const TAB: u32 = 0xff09;
+const RETURN: u32 = 0xff0d;
 
 /// Wait until the overlay holds the focus and its frozen frame landed.
 fn overlay_up(conn: &RustConnection, root: u32, daemon: &Daemon) {
@@ -242,4 +251,47 @@ fn the_overlay_opens_snapped_to_the_window_under_a_resting_pointer() {
         let (i, o) = (pixel(&conn, root, inside), pixel(&conn, root, outside));
         (i == TARGET_RGB && o != WHITE).then_some(())
     });
+}
+
+#[test]
+fn tab_reaches_the_settings_gear_after_the_tiles() {
+    let case = "tab_reaches_the_settings_gear_after_the_tiles";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&["--home"]);
+    let home = daemon.until("home to open", || {
+        windows_of(&conn, root, HOME).first().copied()
+    });
+    daemon.settle();
+    let (x, y, _, _) = rect(&conn, root, home);
+    // With no window manager the keyboard follows the pointer.
+    move_to(&conn, root, (x + HEADER.0, y + HEADER.1));
+    daemon.settle();
+    // Three Tabs select the tiles in turn and run none of them; the
+    // fourth reaches the gear.
+    for _ in 0..4 {
+        tap(&conn, root, TAB);
+        daemon.settle();
+    }
+    tap(&conn, root, RETURN);
+    daemon.until("Tab past the tiles and Return to open Settings", || {
+        (!windows_of(&conn, root, SETTINGS).is_empty()).then_some(())
+    });
+    for other in [OVERLAY, LIBRARY] {
+        assert!(windows_of(&conn, root, other).is_empty(), "{other} opened");
+    }
+    assert!(
+        !windows_of(&conn, root, HOME).is_empty(),
+        "Settings closed home"
+    );
 }

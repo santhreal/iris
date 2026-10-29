@@ -21,7 +21,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `Ctrl+V` or `Cmd+V` in the editor's text entry and in a Settings text field appends the clipboard's text as one line.
 - `Ctrl+Backspace` or `Option+Backspace` in the editor's text entry and in a Settings text field deletes the last word, and `Cmd+Backspace` deletes the whole text.
 - `Up`, `Down`, `Return`, and `Space` move through and choose from an open menu: a Settings pop-up, the editor's Copy and More menus, and the Library's context menu.
-- `Tab` and `Shift+Tab` move a focus ring over the settings window's controls and the library's toolbar buttons, `Space` or `Return` runs the control under it, and `Ctrl+Tab` and `Ctrl+Shift+Tab` switch settings panes.
+- `Tab` and `Shift+Tab` move a focus ring over the settings window's controls, the library's toolbar buttons, and the home window's tiles and gear, `Space` or `Return` runs the control under it, and `Ctrl+Tab` and `Ctrl+Shift+Tab` switch settings panes.
 - `Shift+F10` or the Menu key opens the library's card context menu on the selected card and the editor's More menu, where `Left` and `Right` switch to the Copy menu.
 - Window and region recording through ffmpeg writes MP4, GIF, or WebM, with pause, a microphone toggle, and an indicator chip that is excluded from the recording where the platform allows it.
 - The tray menu shows Stop Recording in place of Record Window, or Record Screen on Windows and macOS, while a recording runs.
