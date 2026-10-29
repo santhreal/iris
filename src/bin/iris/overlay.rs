@@ -157,6 +157,15 @@ pub struct Overlay {
 /// parked window skips all of it.
 pub static POOL: parking_lot::Mutex<Option<WindowHandle<Overlay>>> = parking_lot::Mutex::new(None);
 
+/// Whether a capture or region-pick session holds the screen: an overlay
+/// window that is not parked. Call it outside every overlay's update.
+pub fn session_live(cx: &App) -> bool {
+    cx.windows()
+        .into_iter()
+        .filter_map(|h| h.downcast::<Overlay>())
+        .any(|h| h.read_with(cx, |o, _| !o.hidden).unwrap_or(false))
+}
+
 /// The rect a drag from `anchor` to `cursor` selects, clamped to a
 /// window of `size`. `square` (Shift held) locks it to a square that
 /// grows away from the anchor in the drag's direction.

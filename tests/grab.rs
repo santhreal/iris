@@ -12,11 +12,19 @@
 //! desktop where the card stood. A region pick and a window recording
 //! start with the toast closed the same way, and a recording's stop
 //! leaves it. `tests/home.rs` covers Home and `tests/delay.rs` the
-//! countdown card.
+//! countdown card. The capture overlay is such a surface too: a
+//! full-screen capture sent while it was up saved the dimmed overlay,
+//! and a window pick started under it. One case sends every command that
+//! starts reading the screen under the overlay and reads that none ran,
+//! then that a capture after the overlay closes reads the desktop; a
+//! second reads that a region pick's own commit still starts its
+//! recording.
 //!
-//! Each case runs with no compositing manager, where a pop-up closes
-//! at once, and under picom fading windows out over two seconds, where
-//! a pop-up must draw itself empty before it closes.
+//! Each pop-up case runs with no compositing manager, where a pop-up
+//! closes at once, and under picom fading windows out over two seconds,
+//! where a pop-up must draw itself empty before it closes. The overlay
+//! case runs with none: it reads which commands run, not how a window
+//! leaves.
 //!
 //! Not covered: a pinned capture window and the recording chip, which
 //! are content a capture may hold; a window capture, which needs a
@@ -54,6 +62,12 @@ const DESKTOP: u32 = 0x5b7fa6;
 const TOAST: &str = "Screenshot - iris";
 const NOTICE: &str = "Notice - iris";
 const OVERLAY: &str = "Capture - iris";
+/// The log line of a command ignored while a capture session holds the
+/// screen.
+const BUSY: &str = "a capture session holds the screen";
+/// The Escape and Return keysyms.
+const ESCAPE: u32 = 0xff1b;
+const RETURN: u32 = 0xff0d;
 
 /// A private Xvfb with the root painted DESKTOP, picom on it when
 /// `compositor`, and a daemon. Fields drop in order: the daemon first.
@@ -181,6 +195,67 @@ fn a_full_screen_capture_leaves_out_a_resting_toast() {
 }
 
 #[test]
+fn a_capture_session_ignores_a_second_command_that_reads_the_screen() {
+    let case = "a_capture_session_ignores_a_second_command_that_reads_the_screen";
+    if !enabled() {
+        return;
+    }
+    let Some(s) = session(case, false) else {
+        return;
+    };
+    let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
+    daemon.send(&["--capture"]);
+    let overlay = daemon.until("the overlay to take the focus", || {
+        windows_of(conn, root, OVERLAY)
+            .into_iter()
+            .find(|&w| w == x11::focus(conn))
+    });
+    daemon.until("the frozen frame to land", || {
+        daemon.log().contains("frame landed").then_some(())
+    });
+    daemon.settle();
+    let seconds = [
+        "--capture-fullscreen",
+        "--record-window",
+        "--record-region",
+        "--capture",
+    ];
+    for arg in seconds {
+        daemon.send(&[arg]);
+    }
+    daemon.until("every second command to be ignored", || {
+        (daemon.log().matches(BUSY).count() == seconds.len()).then_some(())
+    });
+    daemon.settle();
+    assert_eq!(
+        captures(s.dir.path()),
+        Vec::<PathBuf>::new(),
+        "a capture saved under the overlay"
+    );
+    assert_eq!(x11::focus(conn), overlay, "the overlay lost the focus");
+    assert!(
+        !daemon.log().contains("iris: record"),
+        "a recording or a pick started under the overlay:\n{}",
+        daemon.log()
+    );
+
+    // The session ends, and the screen is free again.
+    x11::tap(conn, root, ESCAPE);
+    daemon.until("the overlay to park", || {
+        (x11::focus(conn) != overlay).then_some(())
+    });
+    daemon.settle();
+    let shot = capture_fullscreen(daemon, s.dir.path());
+    let image = image::open(&shot).unwrap().to_rgb8();
+    let [r, g, b] = image.get_pixel(5, 5).0;
+    assert_eq!(
+        u32::from_be_bytes([0, r, g, b]),
+        DESKTOP,
+        "the capture after the session is not the desktop"
+    );
+}
+
+#[test]
 fn a_full_screen_capture_leaves_out_a_resting_notice() {
     let case = "a_full_screen_capture_leaves_out_a_resting_notice";
     if !enabled() {
@@ -287,6 +362,43 @@ fn a_region_pick_opens_without_a_resting_toast() {
         under, beside,
         "the pick shows {under:06x} where the toast stood at {centre:?}, not the desktop \
          beside it {beside:06x}"
+    );
+}
+
+/// The pick overlay hands its region over while it is still up: the
+/// recording it starts is not a second session the overlay holds off.
+#[test]
+fn a_region_pick_starts_the_recording_it_selects() {
+    let case = "a_region_pick_starts_the_recording_it_selects";
+    if !enabled() {
+        return;
+    }
+    let Some(s) = recording_session(case) else {
+        return;
+    };
+    let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
+    daemon.send(&["--record-region"]);
+    daemon.until("the pick overlay to take the focus", || {
+        windows_of(conn, root, OVERLAY)
+            .contains(&x11::focus(conn))
+            .then_some(())
+    });
+    daemon.settle();
+    x11::drag(conn, root, (200, 200), (520, 440), 40);
+    x11::tap(conn, root, RETURN);
+    daemon.until("the region recording to start", || {
+        daemon.log().contains("iris: record: segment").then_some(())
+    });
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // A live recording: the toggle stops it.
+    daemon.send(&["--record-window"]);
+    daemon.until("the recording to be saved", || {
+        daemon.log().contains("iris: recording saved").then_some(())
+    });
+    assert!(
+        !daemon.log().contains(BUSY),
+        "a command was ignored:\n{}",
+        daemon.log()
     );
 }
 

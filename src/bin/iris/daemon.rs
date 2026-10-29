@@ -130,21 +130,21 @@ impl Command {
         }
     }
 
-    /// Whether this command starts reading the screen: a capture, the
-    /// region pick over the live desktop, or a recording's start. The
-    /// match is exhaustive so a new command fails to compile until it is
-    /// classified.
-    fn reads_screen(&self) -> bool {
+    /// How this command uses the screen. The match is exhaustive so a
+    /// new command fails to compile until it is classified.
+    fn screen(&self) -> Screen {
         match self {
             Command::Capture
             | Command::CaptureFullscreen
             | Command::CaptureWindow
-            | Command::RecordRegionPick
-            | Command::RecordRegion { .. } => true,
+            | Command::RecordRegionPick => Screen::Starts,
             // Starts a recording when none is live, else stops it.
-            Command::RecordToggle => !RECORDING.active(),
+            Command::RecordToggle if !RECORDING.active() => Screen::Starts,
+            Command::RecordRegion { .. } => Screen::Commits,
             // Its card counts down first; the capture it sends reads.
             Command::Delayed(_)
+            // Stops the live recording.
+            | Command::RecordToggle
             | Command::Home
             | Command::Library
             | Command::Settings
@@ -159,9 +159,21 @@ impl Command {
             | Command::Failed { .. }
             | Command::UpdateOffer { .. }
             | Command::InstallUpdate
-            | Command::Quit => false,
+            | Command::Quit => Screen::Untouched,
         }
     }
+}
+
+/// How a command uses the screen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Untouched,
+    /// It starts reading the screen: a capture, the region pick over the
+    /// live desktop, or a recording's start.
+    Starts,
+    /// The overlay hands over the region it picked, and the recording
+    /// starts reading it while that overlay is still up.
+    Commits,
 }
 
 /// Send `err` from a thread with no window to the daemon's notice.
@@ -217,7 +229,7 @@ pub fn run(cx: &mut App, cmd: &Command) {
 /// `cmd` reads it, and run `cmd` again once they are gone. Returns
 /// whether `cmd` waits on them.
 fn clear_popups_for(cx: &mut App, cmd: &Command) -> bool {
-    if !cmd.reads_screen() {
+    if cmd.screen() == Screen::Untouched {
         return false;
     }
     let popups: Vec<AnyWindowHandle> = [
@@ -238,6 +250,12 @@ fn clear_popups_for(cx: &mut App, cmd: &Command) -> bool {
 /// own for the error (the library's status line) takes it here; every
 /// other caller goes through `run`.
 pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
+    // A second session would read the first one's overlay, and a window
+    // pick would wait on a click the overlay takes.
+    if cmd.screen() == Screen::Starts && overlay::session_live(cx) {
+        iris_lib::ilog!("iris: {cmd:?} ignored: a capture session holds the screen");
+        return Ok(());
+    }
     if clear_popups_for(cx, cmd) {
         return Ok(());
     }
