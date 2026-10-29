@@ -1,4 +1,4 @@
-//! How far one scroll or pinch event zooms the editor's image.
+//! How far one scroll or pinch event zooms an image.
 //!
 //! WHY: the class closed here is "a zoom step counted per event, not
 //! per distance". Every scroll event zoomed one fixed step, so a
@@ -15,7 +15,7 @@
 
 use gpui::{point, px, ScrollDelta};
 
-use super::ops::{pinch_zoom, wheel_zoom, MAX_NOTCHES, NOTCH_LINES, NOTCH_PX, WHEEL_STEP};
+use super::{pinch_zoom, wheel_zoom, MAX_NOTCHES, NOTCH_LINES, NOTCH_PX, WHEEL_STEP};
 
 /// How far two factors may differ: f32 rounding over 64 products.
 const EPS: f32 = 1e-3;

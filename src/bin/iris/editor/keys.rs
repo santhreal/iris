@@ -8,9 +8,8 @@ use iris_lib::history::Edit;
 use super::action::{step_color, tool_for_key};
 use super::Editor;
 use crate::widgets;
+use crate::zoom::KEY_STEP;
 
-/// The zoom factor of one `+` or `-` press.
-const KEY_STEP: f32 = 1.25;
 /// Image pixels an arrow key moves the selection with `Shift`; one
 /// without.
 const NUDGE_SHIFT: f32 = 10.0;

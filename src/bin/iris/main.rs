@@ -34,6 +34,7 @@ mod sys;
 mod theme;
 mod update;
 mod widgets;
+mod zoom;
 
 use gpui::*;
 

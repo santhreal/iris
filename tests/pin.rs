@@ -40,10 +40,16 @@ const PIN: &str = "Pin - iris";
 const LIBRARY: &str = "Library - iris";
 const RETURN: u32 = 0xff0d;
 const DOWN: u32 = 0xff54;
-/// XK_Control_L, XK_c, and XK_w.
+/// XK_Control_L, XK_c, XK_w, XK_0, XK_minus, and XK_equal.
 const CONTROL: u32 = 0xffe3;
 const C: u32 = 0x63;
 const W: u32 = 0x77;
+const ZERO: u32 = 0x30;
+const MINUS: u32 = 0x2d;
+const EQUAL: u32 = 0x3d;
+/// The wheel's up and down buttons.
+const WHEEL_UP: u8 = 4;
+const WHEEL_DOWN: u8 = 5;
 
 /// The selection both captures drag, corner to corner.
 const FROM: (i16, i16) = (200, 200);
@@ -320,6 +326,88 @@ fn a_pins_surface_shows_another_cursor_than_its_close_control() {
     daemon.until("the close control to show another cursor", || {
         (cursor(&conn) != surface).then_some(())
     });
+}
+
+/// WHY: a pin kept the size it opened at, so a capture scaled down to
+/// the 720x540 cap could not be read at native scale, and a pin could
+/// not be made smaller to sit beside the work it is a reference for.
+/// The case pins a 320x240 capture, wheels it larger, presses `0`, `-`,
+/// and `=`, then wheels it down to its floor and once past it, reading
+/// the window's rect after each: the top-left corner stays put and the
+/// image's shape holds. Not covered: a pinch; the ceiling, which
+/// `src/bin/iris/pin/tests.rs` sets; the percent the pill states.
+#[test]
+fn the_wheel_and_keys_zoom_a_pin_from_its_corner() {
+    let case = "the_wheel_and_keys_zoom_a_pin_from_its_corner";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    paint_root(&conn, root, DESKTOP);
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    let size = capture(&conn, root, &daemon, dir.path(), 1);
+    assert_eq!(size, (320, 240), "the capture's size");
+    pin_from_toast(&conn, root, &daemon);
+    let pin = daemon.until("the pin to open", || {
+        windows_of(&conn, root, PIN).first().copied()
+    });
+    daemon.settle();
+    let (x, y, _, _) = rect(&conn, root, pin);
+    // With no window manager the keyboard follows the pointer: the
+    // pointer stays over the pin while it is at least 256x192.
+    move_to(&conn, root, (x + 120, y + 90));
+    daemon.settle();
+    let sized = |what: &str, want: (u16, u16)| {
+        daemon.until(what, || {
+            let (px, py, w, h) = rect(&conn, root, pin);
+            ((w, h) == want).then_some((px, py))
+        })
+    };
+    click_with(&conn, root, (x + 120, y + 90), WHEEL_UP);
+    let (gx, gy, gw, gh) = daemon.until("the wheel to zoom the pin in", || {
+        let grown = rect(&conn, root, pin);
+        (grown.2 > 320).then_some(grown)
+    });
+    tap(&conn, root, ZERO);
+    let native = sized("0 to return the pin to native scale", (320, 240));
+    tap(&conn, root, MINUS);
+    let smaller = sized("- to zoom the pin out a step", (256, 192));
+    tap(&conn, root, EQUAL);
+    let larger = sized("= to zoom the pin in a step", (320, 240));
+    // The floor: a shorter edge of 48 px. The wheel turns over the
+    // bottom-right corner, clear of the close control.
+    let corner = |(px, py, w, h): (i16, i16, u16, u16)| (px + w as i16 - 12, py + h as i16 - 12);
+    let floor = daemon.until("the wheel to zoom the pin down to 64x48", || {
+        let now = rect(&conn, root, pin);
+        if (now.2, now.3) == (64, 48) {
+            return Some((now.0, now.1));
+        }
+        click_with(&conn, root, corner(now), WHEEL_DOWN);
+        None
+    });
+    click_with(&conn, root, corner(rect(&conn, root, pin)), WHEEL_DOWN);
+    daemon.settle();
+    let past = rect(&conn, root, pin);
+    assert_eq!(
+        (
+            (gx, gy),
+            (f32::from(gw) * 0.75 - f32::from(gh)).abs() <= 1.0,
+            native,
+            smaller,
+            larger,
+            floor,
+            past,
+        ),
+        ((x, y), true, (x, y), (x, y), (x, y), (x, y), (x, y, 64, 48)),
+        "the pin wheeled in to {gw}x{gh} at ({gx}, {gy}) from 320x240 at ({x}, {y})"
+    );
 }
 
 /// The cursor X shows: its size, hotspot, and ARGB pixels.

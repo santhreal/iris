@@ -119,7 +119,7 @@ Platform implementations for folder reveal:
 
 Triggered via the toast context menu (**Pin to Screen**) or the library's card context menu (**Pin to Screen**):
 - Displays the capture in a borderless window with 8.0 logical pixel rounded corners and no shadow. On X11 with no compositing manager, the window manager frames the window and its corners are square.
-- Scales the image aspect-true to fit within 720×540 logical pixels.
+- Opens at native scale, one image pixel per device pixel, or scaled aspect-true to fit within 720×540 logical pixels.
 - Opens centered on the screen rect the capture came from: the selection of a region capture, or the window of a window capture. A pin at native scale covers those pixels. A full-screen capture, or a toast opened with `--toast`, pins at the center of the toast's monitor, and a library capture at the center of the library window. A pin that would open at another pin's origin opens 24 logical pixels down and right of it.
 - Always-on-top status: On X11, assigns `_NET_WM_STATE_ABOVE` via a client message.
 - Window movement: Click and drag anywhere on the image delegates movement to the window manager:
@@ -127,6 +127,7 @@ Triggered via the toast context menu (**Pin to Screen**) or the library's card c
   - **Linux X11**: Tracks pointer coordinates and moves the window.
   - **Windows and macOS**: Invokes platform window drag routines.
 - Copy: `Ctrl+C` (`Cmd+C` on macOS) copies the image to the clipboard. A status pill in the bottom-left corner reads **Copied**, or the error, for 4 seconds.
+- Zoom: the scroll wheel, a touchpad pinch, `+`, and `-` resize the window and its image from the top-left corner, and `0` returns it to native scale. The zoom ranges from a shorter edge of 48 logical pixels, or native scale for a smaller image, up to 4 times native scale or the size of the monitor, whichever is smaller. The status pill states the zoom in percent of native scale for 4 seconds.
 - Closing gestures:
   - Double-click anywhere on the image.
   - Press `Escape`, or `Ctrl+W` (`Cmd+W` on macOS).

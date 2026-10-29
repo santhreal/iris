@@ -6,7 +6,9 @@
 //! covers them exactly. Drag anywhere to move it; double-click, Escape,
 //! Ctrl+W, or the close button that shows in the top-left corner while
 //! the pointer is over the window closes it. Ctrl+C copies the image.
-//! The image is the frozen capture's own pixels, not a live feed.
+//! The wheel, a pinch, `+`, and `-` zoom it from its top-left corner,
+//! and `0` returns it to native scale; the pill states the zoom. The
+//! image is the frozen capture's own pixels, not a live feed.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -22,12 +24,23 @@ pub struct PinStage {
     /// The window's focus: without it no key event reaches this window,
     /// so Escape would be dead code on a plain div.
     focus: FocusHandle,
-    /// The result of the last copy, shown for `widgets::STATUS_FOR`.
+    /// The image's size at native scale, one image pixel per device
+    /// pixel, in logical pixels.
+    native: (f32, f32),
+    /// The window's size as a multiple of `native`.
+    zoom: f32,
+    /// The last copy's result or zoom, shown for `widgets::STATUS_FOR`.
     status: Option<SharedString>,
-    /// Copies run so far: a copy clears the pill only when no later
-    /// copy has run.
-    copies: u64,
+    /// Statuses shown so far: one clears the pill only when no later
+    /// one has replaced it.
+    statuses: u64,
 }
+
+/// The shorter edge a pin zooms down to, unless its image is smaller.
+const MIN_EDGE: f32 = 48.0;
+
+/// The largest zoom, as a multiple of native scale.
+const ZOOM_MAX: f32 = 4.0;
 
 /// A rect in screen coordinates, logical pixels: x, y, width, height.
 pub type Over = (f32, f32, f32, f32);
@@ -174,8 +187,10 @@ fn open_with_image(
                     img,
                     path,
                     focus,
+                    native: (w, h),
+                    zoom: scale,
                     status: None,
-                    copies: 0,
+                    statuses: 0,
                 }
             })
         },
@@ -189,8 +204,6 @@ impl PinStage {
     /// state the result in the status pill.
     fn copy(&mut self, cx: &mut Context<Self>) {
         let path = self.path.clone();
-        self.copies += 1;
-        let copy = self.copies;
         let task = cx
             .background_executor()
             .spawn(async move { crate::pipeline::copy_image_file(&path) });
@@ -199,15 +212,23 @@ impl PinStage {
                 Ok(()) => "Copied".to_owned(),
                 Err(e) => e,
             });
-            let _ = this.update(cx, |this, cx| {
-                this.status = Some(text);
-                cx.notify();
-            });
+            let _ = this.update(cx, |this, cx| this.show_status(text, cx));
+        })
+        .detach();
+    }
+
+    /// Show `text` in the status pill for `widgets::STATUS_FOR`.
+    fn show_status(&mut self, text: SharedString, cx: &mut Context<Self>) {
+        self.status = Some(text);
+        self.statuses += 1;
+        let shown = self.statuses;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(crate::widgets::STATUS_FOR)
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if this.copies == copy {
+                if this.statuses == shown {
                     this.status = None;
                     cx.notify();
                 }
@@ -215,6 +236,36 @@ impl PinStage {
         })
         .detach();
     }
+
+    /// Zoom to `zoom` times native scale, clamped to `zoom_range`: the
+    /// window resizes from its top-left corner, on whole pixels, and
+    /// the pill states the percent.
+    fn zoom_to(&mut self, zoom: f32, window: &mut Window, cx: &mut Context<Self>) {
+        let screen = window.display(cx).map(|display| {
+            let size = display.bounds().size;
+            (f32::from(size.width), f32::from(size.height))
+        });
+        let (lo, hi) = zoom_range(self.native, screen);
+        let zoom = zoom.clamp(lo, hi);
+        if (zoom - self.zoom).abs() < 1e-4 {
+            return;
+        }
+        self.zoom = zoom;
+        let (w, h) = self.native;
+        window.resize(size(px((w * zoom).round()), px((h * zoom).round())));
+        self.show_status(format!("{}%", (zoom * 100.0).round()).into(), cx);
+    }
+}
+
+/// The zoom range of a pin whose image is `native` at native scale, on
+/// a `screen`-sized display: down to a shorter edge of MIN_EDGE, or
+/// native scale for a smaller image, and up to ZOOM_MAX or the
+/// screen's size, whichever is smaller, and never under the floor.
+fn zoom_range(native: (f32, f32), screen: Option<(f32, f32)>) -> (f32, f32) {
+    let (w, h) = native;
+    let lo = (MIN_EDGE / w.min(h)).min(1.0);
+    let hi = screen.map_or(ZOOM_MAX, |(sw, sh)| (sw / w).min(sh / h));
+    (lo, hi.min(ZOOM_MAX).max(lo))
 }
 
 impl Render for PinStage {
@@ -237,8 +288,19 @@ impl Render for PinStage {
                     "escape" => window.remove_window(),
                     "w" if meta => window.remove_window(),
                     "c" if meta => this.copy(cx),
+                    "=" | "+" => this.zoom_to(this.zoom * crate::zoom::KEY_STEP, window, cx),
+                    "-" => this.zoom_to(this.zoom / crate::zoom::KEY_STEP, window, cx),
+                    "0" => this.zoom_to(1.0, window, cx),
                     _ => {}
                 }
+            }))
+            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
+                let factor = crate::zoom::wheel_zoom(ev.delta);
+                this.zoom_to(this.zoom * factor, window, cx);
+            }))
+            .on_pinch(cx.listener(|this, ev: &PinchEvent, window, cx| {
+                let factor = crate::zoom::pinch_zoom(ev.delta);
+                this.zoom_to(this.zoom * factor, window, cx);
             }))
             .child(crate::widgets::move_handle(crate::widgets::Double::Close))
             .child(
