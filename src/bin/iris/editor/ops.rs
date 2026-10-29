@@ -475,10 +475,15 @@ impl Editor {
     }
 
     /// Switch tools from a hotkey or the sidebar: settle any open text
-    /// entry first so a typed label is never dropped by the switch.
+    /// entry first so a typed label is never dropped by the switch. A
+    /// selection is the Select tool's: another tool clears it, so the
+    /// keys and the options bar act on the next mark.
     pub(crate) fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
         self.commit_text(true);
         self.tool = tool;
+        if tool != Tool::Select {
+            self.selected = None;
+        }
         cx.notify();
     }
 

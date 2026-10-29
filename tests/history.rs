@@ -1021,6 +1021,40 @@ fn the_arrow_keys_nudge_the_selected_mark_one_undo_step_each() {
     );
 }
 
+// WHY: a selection is the Select tool's. Another tool clears it, so the
+// keys that act on a selected mark (Delete, the arrows, the options
+// bar's) act on the next mark once a drawing tool is picked. A
+// selection that survives the switch deletes, moves, or restyles the
+// first rectangle here.
+#[test]
+fn picking_a_drawing_tool_clears_the_selection() {
+    let Some(session) = selected("picking_a_drawing_tool_clears_the_selection") else {
+        return;
+    };
+    session.keys(&[R]);
+    session.keys(&[DELETE]);
+    session.keys(&[SHIFT, RIGHT]);
+    session.keys(&[BRACKET_RIGHT]);
+    session.draw(R, SECOND);
+    let saved = session.save();
+    assert_rect(
+        &saved,
+        (RECT[0].0 as u32, RECT[1].0 as u32),
+        (RECT[0].1 as u32, RECT[1].1 as u32),
+        "the first rectangle after R, Delete, Shift+Right, and ]",
+    );
+    let y = ((SECOND[0].1 + SECOND[1].1) / 2.0) as u32;
+    let x = SECOND[0].0 as u32;
+    let [r, g, b] = (x - 3..x + 4)
+        .map(|x| saved.get_pixel(x, y).0)
+        .max_by_key(|p| p[0])
+        .unwrap();
+    assert!(
+        r > 230 && (140..180).contains(&g) && b < 40,
+        "the second rectangle's left side is [{r}, {g}, {b}], not orange"
+    );
+}
+
 /// The ink across the image's vertical edge at `x` on `rows`: the mean
 /// over the rows of each pixel's red channel above the image's, as a
 /// share of the most it can be, summed within 8 px of `x`. A stroke's
