@@ -98,13 +98,13 @@ blocking = "~1.6"
 [target.'cfg(windows)'.dependencies]
 # Win32 for monitor enumeration, the foreground-window rect, the
 # DWM frame bounds and cloaking of a window, region grabs, CF_HDROP
-# file copy, the shutter sound, the registry PATH searched for ffmpeg
-# and tesseract, the parent console a command line prints to, the
+# file copy, the shutter sound, the registry PATH searched for ffmpeg,
+# the parent console a command line prints to, the
 # process starts that pass the child no handle, the account SID that
 # names and secures the daemon's pipe, and the folder change
 # notifications the library watches its captures with. windows-sys is
 # already in the tree through gpui.
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",

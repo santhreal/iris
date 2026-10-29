@@ -4,8 +4,9 @@
 #![cfg(windows)]
 
 use crate::capture::{Frame, WinRect};
+use windows_sys::core::BOOL;
 use windows_sys::Win32::Foundation::POINT;
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT, TRUE};
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
 };
