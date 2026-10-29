@@ -287,6 +287,21 @@ pub fn clipboard_text(conn: &impl Connection, root: u32) -> Option<String> {
     text
 }
 
+/// The window that owns the CLIPBOARD selection, or `x11rb::NONE`.
+pub fn clipboard_owner(conn: &impl Connection) -> u32 {
+    let clipboard = conn
+        .intern_atom(false, b"CLIPBOARD")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    conn.get_selection_owner(clipboard)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .owner
+}
+
 /// A compositing manager: a window that owns the screen's
 /// `_NET_WM_CM_S<n>` selection, and that selection.
 pub struct Compositor {

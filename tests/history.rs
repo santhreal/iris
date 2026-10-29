@@ -21,6 +21,14 @@
 //! Return, then Copy Path from the Copy menu, and reads the image and the
 //! clipboard.
 //!
+//! Two cases close "looking at a capture rewrites it": the editor's save
+//! ran with nothing changed, so closing an image only viewed re-encoded
+//! the file, moved its library entry to the top, and took the clipboard.
+//! One closes with Return before any edit; the other draws, undoes the
+//! mark, and closes from the window manager. Both read the file's bytes,
+//! the library store, and the clipboard's owner after the daemon goes
+//! idle.
+//!
 //! Not covered: the two flips, which go through the rotation's path;
 //! redo after a rotation or Clear, which goes through the crop's swap;
 //! the Library's context menu, whose keys `widgets::menu_key` runs as
@@ -46,8 +54,10 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
-use daemon::{enabled, xvfb_sized, Daemon, Server};
-use x11::{chord, click, client, clipboard_text, drag, extent, tap, windows_of};
+use daemon::{enabled, stored, xvfb_sized, Daemon, Server};
+use x11::{
+    chord, click, client, clipboard_owner, clipboard_text, drag, extent, tap, windows_of, wm_close,
+};
 
 const SCREEN: &str = "1280x1024x24";
 /// The editor's title on `plain.png`.
@@ -503,5 +513,58 @@ fn the_arrow_keys_and_return_run_a_toolbar_menu_row() {
     assert!(
         !windows_of(&session.conn, session.root, EDITOR).is_empty(),
         "a menu row run from the keyboard closed the editor"
+    );
+}
+
+/// Wait for the editor to close and the daemon to finish what the close
+/// started, then assert that the file, the library store, and the
+/// clipboard are as before.
+fn assert_untouched(session: Session, before: &[u8], how: &str) {
+    session.daemon.until("the editor to close", || {
+        windows_of(&session.conn, session.root, EDITOR)
+            .is_empty()
+            .then_some(())
+    });
+    session.daemon.settle();
+    assert!(
+        std::fs::read(&session.file).unwrap() == before,
+        "{how} rewrote the unchanged file"
+    );
+    assert_eq!(
+        stored(session._dir.path()).unwrap_or_default(),
+        Vec::<PathBuf>::new(),
+        "{how} added the unchanged file to the library"
+    );
+    assert_eq!(
+        clipboard_owner(&session.conn),
+        x11rb::NONE,
+        "{how} took the clipboard"
+    );
+}
+
+#[test]
+fn closing_before_any_edit_leaves_the_file_alone() {
+    let Some(session) = Session::open("closing_before_any_edit_leaves_the_file_alone") else {
+        return;
+    };
+    let before = std::fs::read(&session.file).unwrap();
+    tap(&session.conn, session.root, RETURN);
+    assert_untouched(session, &before, "Return before any edit");
+}
+
+#[test]
+fn closing_with_every_edit_undone_leaves_the_file_alone() {
+    let Some(session) = Session::open("closing_with_every_edit_undone_leaves_the_file_alone")
+    else {
+        return;
+    };
+    let before = std::fs::read(&session.file).unwrap();
+    session.draw(R, RECT);
+    session.keys(&[CONTROL, Z]);
+    wm_close(&session.conn, session.editor);
+    assert_untouched(
+        session,
+        &before,
+        "the window manager's close after undoing the mark",
     );
 }

@@ -324,6 +324,14 @@ impl Editor {
         // the UI thread would freeze the outro for hundreds of ms.
         self.commit_text(true);
         self.commit_current();
+        // Every change is a history step, so with none left to undo the
+        // image is the file's. Rewriting it re-encodes the file, moves
+        // its library entry to the top, and takes the clipboard, all for
+        // a capture that was only looked at.
+        if self.undos.is_empty() {
+            self.begin_close(window, cx);
+            return;
+        }
         // Move the pixels out rather than cloning: after a crop or
         // transform, base shares composite's buffer, so resetting base
         // first leaves composite unique and try_unwrap hands the image
