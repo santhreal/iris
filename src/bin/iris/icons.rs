@@ -58,7 +58,7 @@ pub enum Icon {
     Rotate,
     FlipH,
     FlipV,
-    Share,
+    File,
     Fill,
     Keyboard,
     Download,

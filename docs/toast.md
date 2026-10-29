@@ -63,7 +63,7 @@ When `toast_show_actions` is true in [configuration.md#toast](configuration.md#t
 The capsule holds 24×24 logical pixel icon buttons with 14 pixel glyphs, in groups separated by hairlines. Resting the pointer on a button for 500 milliseconds shows its name in a tooltip:
 1. **Keep Open** (pin icon): Toggles the pinned state of the toast notification card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). The button fills with the accent color while pinned, and its tooltip reads **Allow to Close**.
 2. **Copy Image** (copy icon): Encodes and copies image pixels to the system clipboard on a background thread.
-3. **Copy File** (share icon): Copies the file path in platform file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
+3. **Copy File** (document icon): Copies the file path in platform file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
 4. **Show in Folder** (folder icon; **Show in Finder** on macOS, **Show in File Explorer** on Windows): Reveals the file in the desktop file manager.
 5. **Markup** (pen icon): Opens the image in the annotation editor.
 6. **Move to Trash** (trash icon): Moves the PNG file to the system trash, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast ([library.md#move-to-trash](library.md#move-to-trash)).

@@ -73,7 +73,7 @@ documents! {
     Rotate => r##"<path d="M4.3 12.22A5.2 5.2 0 1 1 14.11 9.05"/><path d="M14.37 10.43L10.94 6.18L16.05 5.24Z" fill="#fff" stroke="none"/>"##,
     FlipH => r##"<path d="M9 3L9 15" stroke-width="1.28"/><path d="M7.4 5L7.4 13L2.6 13Z" fill="#fff" stroke="none"/><path d="M10.6 5L10.6 13L15.4 13Z"/>"##,
     FlipV => r##"<path d="M3 9L15 9" stroke-width="1.28"/><path d="M5 7.4L13 7.4L13 2.6Z" fill="#fff" stroke="none"/><path d="M5 10.6L13 10.6L13 15.4Z"/>"##,
-    Share => r##"<path d="M6.4 7.6L4.4 7.6L4.4 15.2L13.6 15.2L13.6 7.6L11.6 7.6"/><path d="M9 11.4L9 3"/><path d="M6.4 5.4L9 2.8L11.6 5.4"/>"##,
+    File => r##"<path d="M5 2.8L10.4 2.8L13.4 5.8L13.4 15.2L5 15.2Z"/><path d="M10.4 2.8L10.4 5.8L13.4 5.8"/>"##,
     Fill => r##"<rect x="4.2" y="5.4" width="9.6" height="7.2" fill="#fff" stroke="none"/>"##,
     Keyboard => r##"<path d="M2.4 4.8L15.6 4.8L15.6 13.2L2.4 13.2Z"/><circle cx="5.4" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="8" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="10.6" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="13.2" cy="7.6" r="0.85" fill="#fff" stroke="none"/><path d="M6.2 10.6L11.8 10.6"/>"##,
     Download => r##"<circle cx="9" cy="9" r="6.6"/><path d="M9 5L9 12.4"/><path d="M6.2 9.8L9 12.6L11.8 9.8"/>"##,

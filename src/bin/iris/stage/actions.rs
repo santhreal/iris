@@ -389,7 +389,7 @@ impl ToastStage {
                 ),
             )
             .child(
-                button("toast-action-copy-file", Icon::Share, false, "Copy File").on_click(
+                button("toast-action-copy-file", Icon::File, false, "Copy File").on_click(
                     cx.listener(|stage, _, _, cx| {
                         cx.stop_propagation();
                         stage.copy_file(cx);
