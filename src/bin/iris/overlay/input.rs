@@ -399,12 +399,16 @@ impl Overlay {
                 return;
             }
         }
-        // 'c' copies the loupe's center hex while dragging. The set waits
-        // on the display server, so it runs off the UI thread.
+        // 'c' copies the loupe's center hex while dragging, and the
+        // loupe's banner states the copy until the pointer leaves that
+        // pixel. The set waits on the display server, so it runs off
+        // the UI thread.
         if key == "c" {
-            if let Some((_, info)) = &self.loupe {
+            if let Some((img, info)) = &self.loupe {
                 if let Some(hex) = info.split('#').nth(1) {
                     let text = format!("#{hex}");
+                    let label = SharedString::from(format!("Copied {text}"));
+                    self.loupe = Some((img.clone(), label));
                     cx.background_executor()
                         .spawn(async move {
                             if let Err(e) = iris_lib::clipboard::set_text(&text) {

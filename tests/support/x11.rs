@@ -213,6 +213,18 @@ pub fn click_with(conn: &impl Connection, root: u32, at: (i16, i16), button: u8)
 /// of `step` pixels with a pause after each, and release, through
 /// XTest. The pause lets the client read each motion on its own.
 pub fn drag(conn: &impl Connection, root: u32, from: (i16, i16), to: (i16, i16), step: i16) {
+    press_and_move(conn, root, from, to, step);
+    release(conn, root);
+}
+
+/// `drag` with the first button still held at `to`.
+pub fn press_and_move(
+    conn: &impl Connection,
+    root: u32,
+    from: (i16, i16),
+    to: (i16, i16),
+    step: i16,
+) {
     let motion = |at: (i16, i16)| {
         conn.xtest_fake_input(
             xproto::MOTION_NOTIFY_EVENT,
@@ -227,12 +239,17 @@ pub fn drag(conn: &impl Connection, root: u32, from: (i16, i16), to: (i16, i16),
         conn.flush().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(8));
     };
-    let button = |kind| {
-        conn.xtest_fake_input(kind, 1, x11rb::CURRENT_TIME, root, 0, 0, 0)
-            .unwrap();
-    };
     motion(from);
-    button(xproto::BUTTON_PRESS_EVENT);
+    conn.xtest_fake_input(
+        xproto::BUTTON_PRESS_EVENT,
+        1,
+        x11rb::CURRENT_TIME,
+        root,
+        0,
+        0,
+        0,
+    )
+    .unwrap();
     let (dx, dy) = (i32::from(to.0 - from.0), i32::from(to.1 - from.1));
     let steps = (dx.abs().max(dy.abs()) / i32::from(step.max(1))).max(1);
     for i in 1..=steps {
@@ -241,7 +258,20 @@ pub fn drag(conn: &impl Connection, root: u32, from: (i16, i16), to: (i16, i16),
             from.1 + (dy * i / steps) as i16,
         ));
     }
-    button(xproto::BUTTON_RELEASE_EVENT);
+}
+
+/// Release the first button, through XTest.
+pub fn release(conn: &impl Connection, root: u32) {
+    conn.xtest_fake_input(
+        xproto::BUTTON_RELEASE_EVENT,
+        1,
+        x11rb::CURRENT_TIME,
+        root,
+        0,
+        0,
+        0,
+    )
+    .unwrap();
     conn.flush().unwrap();
 }
 
