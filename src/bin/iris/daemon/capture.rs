@@ -136,7 +136,7 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
             }
             Err(e) => Err(e),
         };
-        cx.update(|cx| landed(cx, done));
+        cx.update(|cx| landed(cx, done, None));
     })
     .detach();
     Ok(())
@@ -146,7 +146,8 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
 /// screen, decorations included, on X11, Windows, and macOS. The
 /// Wayland portal cannot name a window, so there this returns an error.
 pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
-    fn grab_and_finish() -> Result<(PathBuf, iris_lib::library::CaptureEntry), String> {
+    type Shot = (PathBuf, iris_lib::library::CaptureEntry);
+    fn grab_and_finish() -> Result<(Shot, iris_lib::capture::WinRect), String> {
         let rect = iris_lib::sys::capture::active_window_rect()?;
         // Grab only the window's rect off the root: the whole-screen
         // grab + crop this replaced moved up to 200MB for a window
@@ -155,25 +156,42 @@ pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
         pipeline::play_shutter_sound();
         let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
             .ok_or("frame buffer size mismatch")?;
-        pipeline::finalize(img)
+        Ok((pipeline::finalize(img)?, rect))
     }
     cx.spawn(async move |cx| {
         let done = cx
             .background_executor()
             .spawn(async move { grab_and_finish() })
             .await;
-        cx.update(|cx| landed(cx, done));
+        cx.update(|cx| match done {
+            Ok((shot, rect)) => {
+                let s = crate::sys::window::root_scale(cx);
+                let source = (
+                    rect.x as f32 / s,
+                    rect.y as f32 / s,
+                    rect.width as f32 / s,
+                    rect.height as f32 / s,
+                );
+                landed(cx, Ok(shot), Some(source))
+            }
+            Err(e) => landed(cx, Err(e), None),
+        });
     })
     .detach();
     Ok(())
 }
 
 /// A capture with no overlay finished: its toast, or why it failed.
-fn landed(cx: &mut App, done: Result<(PathBuf, iris_lib::library::CaptureEntry), String>) {
+/// `source` is the capture's screen rect where the capture has one.
+fn landed(
+    cx: &mut App,
+    done: Result<(PathBuf, iris_lib::library::CaptureEntry), String>,
+    source: Option<crate::pin::Over>,
+) {
     match done {
         Ok((path, _)) => {
             if Config::load().show_toast_after_capture {
-                stage::show_toast(cx, &path);
+                stage::show_toast(cx, &path, source);
             }
         }
         Err(e) => {

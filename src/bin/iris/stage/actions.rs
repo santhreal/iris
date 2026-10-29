@@ -18,6 +18,7 @@ impl ToastStage {
             thumb,
             rescaling: false,
             card_screen: (0.0, 0.0, 0.0, 0.0),
+            pin_over: None,
             opened: None,
             hover_paused: false,
             pinned: false,
@@ -316,7 +317,7 @@ impl ToastStage {
                 |stage, _, _window, cx| {
                     cx.stop_propagation();
                     stage.menu_at = None;
-                    crate::pin::open(cx, &stage.path);
+                    crate::pin::open(cx, &stage.path, stage.pin_over);
                     stage.begin_close(cx);
                 },
             )),

@@ -87,9 +87,10 @@ pub fn leave_for_capture(cx: &mut App) -> Option<AnyWindowHandle> {
 }
 
 /// Open the toast stage window in the bottom-right corner of the primary
-/// display for the capture at `path`. A toast that cannot open reports
-/// why in a notice.
-pub fn show_toast(cx: &mut App, path: &Path) {
+/// display for the capture at `path`, whose screen rect is `source`
+/// where the caller has it. A toast that cannot open reports why in a
+/// notice.
+pub fn show_toast(cx: &mut App, path: &Path, source: Option<crate::pin::Over>) {
     let path = path.to_path_buf();
     // Sized for the primary display, where the card opens; a window
     // that renders at another scale re-sizes the pixels itself.
@@ -103,7 +104,8 @@ pub fn show_toast(cx: &mut App, path: &Path) {
     cx.spawn(async move |cx| {
         let thumb = scaled.await;
         cx.update(|cx| {
-            if let Err(e) = thumb.and_then(|t| open_toast_window(cx, &path, t, false, None)) {
+            let opened = thumb.and_then(|t| open_toast_window(cx, &path, t, false, None, source));
+            if let Err(e) = opened {
                 iris_lib::ilog!("toast: {e}");
                 crate::notice::failed(cx, "Toast did not open", &e);
             }
@@ -118,17 +120,18 @@ pub type Handoff = Box<dyn FnOnce(&mut App)>;
 /// The capture-flight landing: the card appears at rest, no entrance,
 /// with the pixels the flight scaled while it was in the air. `anchor`
 /// is the committing monitor's rect in screen coordinates, so the card
-/// lands where the flight ended, not on another display. `handoff` runs
-/// exactly once: after the toast's first frame is on screen, or at once
-/// if the toast cannot open.
+/// lands where the flight ended, not on another display, and `source`
+/// the selection's. `handoff` runs exactly once: after the toast's
+/// first frame is on screen, or at once if the toast cannot open.
 pub fn show_toast_landed(
     cx: &mut App,
     path: &Path,
     thumb: Result<Thumb, String>,
     anchor: Option<(f32, f32, f32, f32)>,
+    source: Option<crate::pin::Over>,
     handoff: Handoff,
 ) {
-    match thumb.and_then(|t| open_toast_window(cx, path, t, true, anchor)) {
+    match thumb.and_then(|t| open_toast_window(cx, path, t, true, anchor, source)) {
         Ok(toast) => hand_off_after_present(toast, cx, handoff),
         Err(e) => {
             iris_lib::ilog!("toast: {e}");
@@ -192,6 +195,7 @@ fn open_toast_window(
     thumb: Thumb,
     landed: bool,
     anchor: Option<(f32, f32, f32, f32)>,
+    source: Option<crate::pin::Over>,
 ) -> Result<WindowHandle<ToastStage>, String> {
     let mut stage = ToastStage::from_parts(path, thumb);
     if landed {
@@ -204,6 +208,7 @@ fn open_toast_window(
     let cfg = iris_lib::config::Config::load();
     let win_size = size(px(w + BLEED + MARGIN), px(h + BLEED + MARGIN));
     let screen = anchor.or_else(|| crate::sys::window::primary_monitor_rect(cx));
+    stage.pin_over = source.or(screen);
     let origin = match screen {
         Some((sx, sy, sw, sh)) => match cfg.toast_position {
             iris_lib::config::ToastPosition::BottomRight => point(

@@ -336,6 +336,12 @@ impl Overlay {
                     host.width as f32 / sf,
                     host.height as f32 / sf,
                 ),
+                source: (
+                    region.x as f32 / sf,
+                    region.y as f32 / sf,
+                    region.width as f32 / sf,
+                    region.height as f32 / sf,
+                ),
             });
             self.current = None;
             self.hovered = None;

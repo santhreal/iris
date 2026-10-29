@@ -112,6 +112,9 @@ pub struct ToastStage {
     /// A re-scale of `thumb` is in flight: render does not queue another.
     pub(super) rescaling: bool,
     pub(super) card_screen: (f32, f32, f32, f32),
+    /// The screen rect a pin of this capture opens over: the capture's
+    /// own rect where the toast has it, else the toast's monitor.
+    pub(super) pin_over: Option<crate::pin::Over>,
     pub(super) opened: Option<Instant>,
     pub(super) hover_paused: bool,
     pub(super) pinned: bool,

@@ -276,7 +276,7 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::Settings => settings::open(cx),
         Command::Annotate(path) => crate::editor::open(cx, path, None, None),
         Command::Toast(path) => {
-            stage::show_toast(cx, path);
+            stage::show_toast(cx, path, None);
             Ok(())
         }
         Command::RecordToggle => recording::toggle_recording(cx),

@@ -1,10 +1,12 @@
 //! Pin to screen: a Snipaste-style always-on-top reference image.
 //!
 //! A borderless window holding the capture at native scale, pinned
-//! above every other window via _NET_WM_STATE_ABOVE. Drag anywhere to
-//! move it; double-click, Escape, or the close button that shows in the
-//! top-left corner while the pointer is over the window closes it. The
-//! image is the frozen capture's own pixels, not a live feed.
+//! above every other window via _NET_WM_STATE_ABOVE. It opens centered
+//! on the screen rect its pixels came from, so a pin at native scale
+//! covers them exactly. Drag anywhere to move it; double-click, Escape,
+//! or the close button that shows in the top-left corner while the
+//! pointer is over the window closes it. The image is the frozen
+//! capture's own pixels, not a live feed.
 
 use std::sync::Arc;
 
@@ -20,11 +22,21 @@ pub struct PinStage {
     focus: FocusHandle,
 }
 
-/// Open a pinned window showing `path`'s image at native scale. The
-/// PNG read + decode run on the background executor: a 4K decode on
-/// the UI thread stalls every other surface for ~100ms. A pin that
-/// cannot open reports why in a notice.
-pub fn open(cx: &mut App, path: &std::path::Path) {
+/// A rect in screen coordinates, logical pixels: x, y, width, height.
+pub type Over = (f32, f32, f32, f32);
+
+/// The origin of a pin with no rect to open over.
+const UNPLACED: (f32, f32) = (80.0, 80.0);
+
+/// How far a pin that would open on another pin's origin steps down
+/// and right.
+const CASCADE: f32 = 24.0;
+
+/// Open a pinned window showing `path`'s image at native scale,
+/// centered on `over`. The PNG read + decode run on the background
+/// executor: a 4K decode on the UI thread stalls every other surface
+/// for ~100ms. A pin that cannot open reports why in a notice.
+pub fn open(cx: &mut App, path: &std::path::Path, over: Option<Over>) {
     let path = path.to_path_buf();
     cx.spawn(async move |cx| {
         let decoded = cx
@@ -48,7 +60,7 @@ pub fn open(cx: &mut App, path: &std::path::Path) {
             })
             .await;
         cx.update(|cx| {
-            if let Err(e) = decoded.and_then(|img| open_with_image(cx, img)) {
+            if let Err(e) = decoded.and_then(|img| open_with_image(cx, img, over)) {
                 iris_lib::ilog!("pin: {e}");
                 crate::notice::failed(cx, "Pin failed", &e);
             }
@@ -57,7 +69,50 @@ pub fn open(cx: &mut App, path: &std::path::Path) {
     .detach();
 }
 
-fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
+/// The origin of a `size` pin: centered on `over` and on a whole pixel,
+/// or at UNPLACED with no rect. A pin whose origin another pin's
+/// origin in `taken` already has steps CASCADE down and right until no
+/// other pin is there. A pin no larger than an on-screen `over` stays
+/// inside it, so it stays on that screen.
+pub(crate) fn place(size: (f32, f32), over: Option<Over>, taken: &[(f32, f32)]) -> (f32, f32) {
+    let (mut x, mut y) = match over {
+        Some((ox, oy, ow, oh)) => (
+            (ox + (ow - size.0) / 2.0).round(),
+            (oy + (oh - size.1) / 2.0).round(),
+        ),
+        None => UNPLACED,
+    };
+    // Each step leaves the one pin it met: `taken.len()` steps reach a
+    // free origin.
+    for _ in 0..taken.len() {
+        let met = taken
+            .iter()
+            .any(|&(tx, ty)| (tx - x).abs() < 1.0 && (ty - y).abs() < 1.0);
+        if !met {
+            break;
+        }
+        x += CASCADE;
+        y += CASCADE;
+    }
+    (x, y)
+}
+
+/// The origins of the open pins.
+fn pin_origins(cx: &mut App) -> Vec<(f32, f32)> {
+    cx.windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<PinStage>())
+        .filter_map(|pin| {
+            pin.update(cx, |_, window, _| {
+                let origin = window.bounds().origin;
+                (f32::from(origin.x), f32::from(origin.y))
+            })
+            .ok()
+        })
+        .collect()
+}
+
+fn open_with_image(cx: &mut App, img: Arc<RenderImage>, over: Option<Over>) -> Result<(), String> {
     // One image pixel per device pixel: a pinned capture shows at the
     // size it had on screen.
     let root = crate::sys::window::root_scale(cx);
@@ -69,13 +124,13 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>) -> Result<(), String> {
     let (max_w, max_h) = (720.0f32, 540.0f32);
     let scale = (max_w / w).min(max_h / h).min(1.0);
     let (vw, vh) = (w * scale, h * scale);
-
+    let (x, y) = place((vw, vh), over, &pin_origins(cx));
     crate::widgets::open_window(
         cx,
         "Pin - iris",
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: point(px(80.), px(80.)),
+                origin: point(px(x), px(y)),
                 size: size(px(vw), px(vh)),
             })),
             titlebar: None,
@@ -166,3 +221,6 @@ impl Render for PinStage {
             )
     }
 }
+
+#[cfg(test)]
+mod tests;

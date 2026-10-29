@@ -22,6 +22,9 @@ pub(super) struct Flight {
     /// The committing window's screen rect: the toast lands on this
     /// monitor, not wherever the primary display happens to be.
     pub(super) screen: (f32, f32, f32, f32),
+    /// The selection's screen rect, which a pin of the capture opens
+    /// over.
+    pub(super) source: (f32, f32, f32, f32),
 }
 
 /// The flight card's rect at spring progress `e`.
@@ -118,7 +121,7 @@ impl Overlay {
             self.park(window, cx);
             return;
         };
-        let (started, screen) = (f.started, f.screen);
+        let (started, screen, source) = (f.started, f.screen, f.source);
         let park = Box::new(move |cx: &mut App| {
             let _ = overlay.update(cx, |this, window, cx| {
                 if this.flight.as_ref().is_some_and(|f| f.started == started) {
@@ -128,6 +131,8 @@ impl Overlay {
         });
         // Window ops from inside a render are dropped by GPUI's effect
         // queue; open the toast after this frame.
-        cx.defer(move |cx| stage::show_toast_landed(cx, &path, thumb, Some(screen), park));
+        cx.defer(move |cx| {
+            stage::show_toast_landed(cx, &path, thumb, Some(screen), Some(source), park)
+        });
     }
 }
