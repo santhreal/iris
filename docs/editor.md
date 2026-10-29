@@ -55,6 +55,8 @@ Switching tools settles any active text entry, committing non-empty text to the 
 - **Stroke width (`1`, `2`, `3`)**: Sets stroke width stop 0, 1, or 2 (multipliers 0.6x, 1.0x, and 1.8x over the image-relative base stroke width). Default stop is 1. Base stroke width scales with image pixel width (`clamp(width * 0.003, 2.0, 16.0)`).
 - **Color palette (`[`, `]`)**: Eleven color swatches in the tool options bar, in order: White `#f5f5f7`, Light Gray `#9c9ca2`, Gray `#6b6b71`, Dark Gray `#3a3a3f`, Black `#141416`, Red `#ff453a` (default), Orange `#ff9f0a`, Yellow `#ffd60a`, Green `#30d158`, Blue `#0a84ff`, and Purple `#bf5af2`. A blue ring marks the selected color, and a swatch's tooltip shows its name. Clicking a swatch selects that color for subsequent vector shapes, text, and counter badges. `]` selects the next color and `[` the previous one, wrapping at either end.
 
+With an annotation selected by the Select tool, each change in the tool options bar also applies to it, as one undo step: a color to every annotation but a blur, a stroke width to pen strokes, lines, arrows, rectangles, and ellipses, and fill to rectangles and ellipses.
+
 ## Text Tool
 
 Clicking the canvas while the Text tool is active sets an insertion point and displays a blinking bar caret after the text. The caret blinks at approximately 1 Hz via an internal timer.

@@ -121,15 +121,9 @@ impl Editor {
             "w" if meta => {
                 self.finish(window, cx);
             }
-            "f" => {
-                self.fill = !self.fill;
-            }
-            "1" | "2" | "3" => {
-                self.stroke = key.as_bytes()[0] - b'1';
-            }
-            "[" | "]" if !meta => {
-                self.color = step_color(self.color, key == "]");
-            }
+            "f" => self.toggle_fill(),
+            "1" | "2" | "3" => self.set_stroke(key.as_bytes()[0] - b'1'),
+            "[" | "]" if !meta => self.set_color(step_color(self.color, key == "]")),
             // Zoom: 0 fits, +/- step, space+drag pans.
             "0" => {
                 self.zoom = 1.0;

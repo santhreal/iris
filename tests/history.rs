@@ -142,6 +142,8 @@ const DELETE: u32 = 0xffff;
 const W: u32 = 0x77;
 const BRACKET_LEFT: u32 = 0x5b;
 const BRACKET_RIGHT: u32 = 0x5d;
+const F: u32 = 0x66;
+const THREE: u32 = 0x33;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -744,19 +746,17 @@ fn shift_f10_and_the_menu_key_open_the_toolbar_menus() {
 
 #[test]
 fn the_shortcut_sheet_holds_the_keys_meant_for_the_image() {
-    let Some(session) = Session::open("the_shortcut_sheet_holds_the_keys_meant_for_the_image")
-    else {
+    let Some(session) = selected("the_shortcut_sheet_holds_the_keys_meant_for_the_image") else {
         return;
     };
-    // A rectangle, drawn and left selected: Delete, the arrows, and
-    // Return each change it or close the editor.
-    session.draw(R, RECT);
+    // A selected rectangle: Delete, the arrows, the options bar's keys,
+    // and Return each change it or close the editor.
     let before = session.canvas();
     session.keys(&[SLASH]);
     session.daemon.until("/ to open the shortcut sheet", || {
         (session.canvas() != before).then_some(())
     });
-    for key in [DELETE, DOWN, RIGHT, RETURN, R, Z] {
+    for key in [DELETE, DOWN, RIGHT, BRACKET_RIGHT, THREE, F, RETURN, R, Z] {
         session.keys(&[key]);
     }
     session.keys(&[CONTROL, Z]);
@@ -1016,6 +1016,105 @@ fn the_arrow_keys_nudge_the_selected_mark_one_undo_step_each() {
         (RECT[0].0 as u32 + 10, RECT[1].0 as u32 + 10),
         (RECT[0].1 as u32, RECT[1].1 as u32),
         "the rectangle after two Shift+Right nudges and one Undo",
+    );
+}
+
+/// The ink across the image's vertical edge at `x` on `rows`: the mean
+/// over the rows of each pixel's red channel above the image's, as a
+/// share of the most it can be, summed within 8 px of `x`. A stroke's
+/// antialiasing spreads its ink, not its amount, so this is the
+/// stroke's width in image pixels.
+fn edge_ink(img: &image::RgbImage, x: u32, rows: std::ops::Range<u32>) -> f32 {
+    let n = rows.len() as f32;
+    let total: f32 = rows
+        .flat_map(|y| (x - 8..=x + 8).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let r = img.get_pixel(x, y).0[0];
+            r.saturating_sub(IMAGE[0]) as f32 / (255 - IMAGE[0]) as f32
+        })
+        .sum();
+    total / n
+}
+
+// WHY: the options bar sets the color, stroke width, and fill of the
+// next mark and of the selected one, each change one undo step. A
+// change that skips the selected mark, leaves its old shape on the
+// canvas or in the pixels a copy or save takes, folds into another
+// step, or bypasses the history (so Undo takes back the rectangle
+// itself) copies or saves another image here. The reference is a
+// second rectangle drawn fresh with the same options.
+#[test]
+fn the_options_bar_restyles_the_selected_mark_one_undo_step_each() {
+    let Some(session) = selected("the_options_bar_restyles_the_selected_mark_one_undo_step_each")
+    else {
+        return;
+    };
+    // Orange, the widest stroke, and fill.
+    session.keys(&[BRACKET_RIGHT]);
+    session.keys(&[THREE]);
+    session.keys(&[F]);
+    let center = |s: &Session| {
+        let (w, _, px) = s.canvas();
+        let x = (s.origin.0 as f32 + 150.0 * s.scale) as usize;
+        let y = (s.origin.1 as f32 + 140.0 * s.scale) as usize;
+        px[y * w + x]
+    };
+    session
+        .daemon
+        .until("F to fill the selected rectangle", || {
+            let [b, g, r] = center(&session);
+            (r > 230 && (140..180).contains(&g) && b < 40).then_some(())
+        });
+    // The copied image is the one shown: filled orange, no red left.
+    session.keys(&[CONTROL, C]);
+    let copied = session
+        .daemon
+        .until("Ctrl+C to put a PNG on the clipboard", || {
+            let png = clipboard(&session.conn, session.root, b"image/png")?;
+            Some(image::load_from_memory(&png).ok()?.to_rgb8())
+        });
+    let [r, g, b] = copied.get_pixel(150, 140).0;
+    assert_eq!(
+        (
+            r > 230 && (140..180).contains(&g) && b < 40,
+            copied.pixels().any(|p| p.0[0] > 230 && p.0[1] < 100),
+        ),
+        (true, false),
+        "the copied image: the restyled rectangle's center orange, and red anywhere"
+    );
+    // Undo takes back the fill only.
+    session.keys(&[CONTROL, Z]);
+    session.daemon.until("Undo to take back the fill", || {
+        let [b, g, r] = center(&session);
+        ([r, g, b] == IMAGE).then_some(())
+    });
+    // Undo cleared the selection: F turns fill off for the next mark.
+    session.keys(&[F]);
+    session.draw(R, SECOND);
+    let saved = session.save();
+    let orange = |[r, g, b]: [u8; 3]| r > 230 && (140..180).contains(&g) && b < 40;
+    let y = ((RECT[0].1 + RECT[1].1) / 2.0) as u32;
+    let row = |x: std::ops::Range<f32>| {
+        (x.start as u32..x.end as u32)
+            .map(|x| saved.get_pixel(x, y).0)
+            .collect::<Vec<_>>()
+    };
+    let left = row(RECT[0].0 - 3.0..RECT[0].0 + 4.0);
+    let right = row(RECT[1].0 - 3.0..RECT[1].0 + 4.0);
+    let rect = edge_ink(&saved, RECT[0].0 as u32, 110..170);
+    let second = edge_ink(&saved, SECOND[0].0 as u32, 230..290);
+    assert_eq!(
+        (
+            left.iter().any(|&p| orange(p)),
+            right.iter().any(|&p| orange(p)),
+            saved.pixels().any(|p| p.0[0] > 230 && p.0[1] < 100),
+            saved.get_pixel(150, y).0,
+            (rect - second).abs() < 0.5,
+        ),
+        (true, true, false, IMAGE, true),
+        "the restyled rectangle: orange at its left and right sides, red \
+         anywhere, its center, and its stroke {rect} px wide as the fresh \
+         rectangle's {second} px"
     );
 }
 

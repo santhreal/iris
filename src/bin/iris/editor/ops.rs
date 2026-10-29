@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use gpui::*;
 use iris_lib::history::{self, Edit};
 
-use super::action::{stroke_base, text_size, Action, Scene, Step, Tool, Transform};
+use super::action::{stroke_base, text_size, Action, Scene, Step, Tool, Transform, STROKE_MULT};
 use super::raster::{pixelate_region_bgra, png_bytes, rasterize};
 use super::Editor;
 use crate::pipeline;
@@ -330,6 +330,73 @@ impl Editor {
             return;
         }
         let new = self.actions.borrow()[i].clone();
+        let edit = Edit::Move(i, old, new);
+        self.rebuild_for_edit(&edit);
+        self.push_edit(edit);
+    }
+
+    /// Select markup color `color` for the next mark, and give it to
+    /// the selected mark. A blur has no color.
+    pub(crate) fn set_color(&mut self, color: &'static str) {
+        self.color = color;
+        self.restyle_selected(|a| {
+            if a.tool != Tool::Blur {
+                a.color = color;
+            }
+        });
+    }
+
+    /// Select stroke width stop `stop` for the next mark, and give it
+    /// to the selected mark if that is drawn with a stroke.
+    pub(crate) fn set_stroke(&mut self, stop: u8) {
+        self.stroke = stop;
+        let width = stroke_base(self.img_w()) * STROKE_MULT[stop as usize];
+        self.restyle_selected(|a| {
+            if matches!(
+                a.tool,
+                Tool::Pen | Tool::Line | Tool::Arrow | Tool::Rect | Tool::Ellipse
+            ) {
+                a.width = width;
+            }
+        });
+    }
+
+    /// Toggle fill for the next mark, and give the new setting to the
+    /// selected mark if that is a rectangle or an ellipse.
+    pub(crate) fn toggle_fill(&mut self) {
+        self.fill = !self.fill;
+        let fill = self.fill;
+        self.restyle_selected(|a| {
+            if matches!(a.tool, Tool::Rect | Tool::Ellipse) {
+                a.filled = fill;
+            }
+        });
+    }
+
+    /// Apply `style` to a copy of the selected mark and, when that
+    /// changes its color, width, or fill, put the copy in its place as
+    /// one undo step. A key during a move drag does nothing, so the
+    /// drag's one step stays whole.
+    fn restyle_selected(&mut self, style: impl FnOnce(&mut Action)) {
+        if self.move_drag.is_some() {
+            return;
+        }
+        let Some(i) = self.selected else {
+            return;
+        };
+        let Some(old) = self.actions.borrow().get(i).cloned() else {
+            return;
+        };
+        let mut new = old.clone();
+        style(&mut new);
+        if (new.color, new.width, new.filled) == (old.color, old.width, old.filled) {
+            return;
+        }
+        // The cached triangles are keyed on the points only, and a new
+        // width or fill changes the shape the same points draw.
+        new.cached_path = std::cell::RefCell::new(None);
+        new.bbox = Self::compute_bbox(&new);
+        self.actions.borrow_mut()[i] = new.clone();
         let edit = Edit::Move(i, old, new);
         self.rebuild_for_edit(&edit);
         self.push_edit(edit);

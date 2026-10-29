@@ -378,7 +378,7 @@ impl Editor {
     }
 
     /// The tool options bar: stroke width, the fill toggle, and the
-    /// markup colors for new actions.
+    /// markup colors, for the next mark and the selected one.
     pub(super) fn render_options(&self, options: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let mut bar = div()
             .id("tool-options")
@@ -408,7 +408,7 @@ impl Editor {
                 )
                 .tooltip(tip(label, Some(key.into())))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.stroke = i as u8;
+                    this.set_stroke(i as u8);
                     cx.notify();
                 })),
             );
@@ -422,7 +422,7 @@ impl Editor {
             )
             .tooltip(tip("Fill Shapes", Some("F".into())))
             .on_click(cx.listener(|this, _, _, cx| {
-                this.fill = !this.fill;
+                this.toggle_fill();
                 cx.notify();
             })),
         );
@@ -457,7 +457,7 @@ impl Editor {
                             .border_color(theme::HAIRLINE),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.color = c;
+                        this.set_color(c);
                         cx.notify();
                     })),
             );
