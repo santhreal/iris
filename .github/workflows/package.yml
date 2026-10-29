@@ -43,7 +43,7 @@ jobs:
           command -v pkg-config >/dev/null || brew install pkg-config
           packaging/macos/build_ffmpeg.sh --out dist
           packaging/check_ffmpeg.sh dist/ffmpeg macos
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-ffmpeg-macos-${{ matrix.arch }}
           path: dist/
@@ -67,7 +67,7 @@ jobs:
       # Only main saves a Rust cache: a pull request or a tag restores
       # main's, so its saves would only evict main's, the FFmpeg source
       # caches included, from the repository's cache space.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: package-macos-universal
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -89,11 +89,11 @@ jobs:
           lipo -create -output target/universal-apple-darwin/release/iris \
             target/aarch64-apple-darwin/release/iris \
             target/x86_64-apple-darwin/release/iris
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: build-ffmpeg-macos-arm64
           path: .build-staging/ffmpeg/macos-arm64
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: build-ffmpeg-macos-x86_64
           path: .build-staging/ffmpeg/macos-x86_64
@@ -198,7 +198,7 @@ jobs:
           sleep 3
           [ ! -e "$agent" ] || fail "a later start turned Start at login back on"
           quit "$pid"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iris-macos-universal
           path: dist/iris-*-macos-universal.dmg*
@@ -230,7 +230,7 @@ jobs:
           for notice in compiler-rt.txt compiler-rt-CREDITS.txt; do
             cmp "packaging/licenses/$notice" "dist/licenses/$notice"
           done
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-ffmpeg-windows-${{ matrix.arch }}
           path: dist/
@@ -257,7 +257,7 @@ jobs:
           persist-credentials: false
       - name: Install the pinned toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: package-windows-${{ matrix.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -285,7 +285,7 @@ jobs:
           }
           if (-not (Test-Path $makensis)) { throw "5 choco installs left no $makensis" }
           Add-Content $env:GITHUB_PATH (Split-Path $makensis)
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: build-ffmpeg-windows-${{ matrix.arch }}
           path: .build-staging/ffmpeg/windows-${{ matrix.arch }}
@@ -468,7 +468,7 @@ jobs:
           if (Test-Path $uninstall) { throw 'Uninstall key remains after uninstall' }
           if (@(& $irises).Count) { throw 'iris runs after uninstall' }
           if (& $pipe) { throw 'the daemon pipe remains after uninstall' }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iris-windows-${{ matrix.arch }}
           path: dist/iris-*-windows-${{ matrix.arch }}-*
@@ -517,7 +517,7 @@ jobs:
       # Debian container builds with.
       - name: Install the pinned toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: package-linux-${{ matrix.arch }}-bookworm
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -645,7 +645,7 @@ jobs:
             ! command -v ffmpeg
             bash /linux/check_installed.sh "/pkg/iris-${version}-linux-${arch}.AppImage"
           ' --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iris-linux-${{ matrix.arch }}
           path: dist/iris-*-linux-${{ matrix.arch }}.*
