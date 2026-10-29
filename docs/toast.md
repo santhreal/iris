@@ -120,9 +120,10 @@ Triggered via the toast context menu (**Pin to Screen**) or the library's card c
   - **Linux Wayland**: Calls `window.start_window_move()` (`xdg_toplevel.move`).
   - **Linux X11**: Tracks pointer coordinates and moves the window.
   - **Windows and macOS**: Invokes platform window drag routines.
+- Copy: `Ctrl+C` (`Cmd+C` on macOS) copies the image to the clipboard. A status pill in the bottom-left corner reads **Copied**, or the error, for 4 seconds.
 - Closing gestures:
   - Double-click anywhere on the image.
-  - Press `Escape`.
+  - Press `Escape`, or `Ctrl+W` (`Cmd+W` on macOS).
   - Click the close button. It shows as a 22 logical pixel disc with an × glyph 8 logical pixels from the top-left corner while the pointer is over the window.
 
 ## Notices

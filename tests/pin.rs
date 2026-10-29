@@ -40,6 +40,9 @@ const PIN: &str = "Pin - iris";
 const LIBRARY: &str = "Library - iris";
 const RETURN: u32 = 0xff0d;
 const DOWN: u32 = 0xff54;
+/// XK_Control_L and XK_c.
+const CONTROL: u32 = 0xffe3;
+const C: u32 = 0x63;
 
 /// The selection both captures drag, corner to corner.
 const FROM: (i16, i16) = (200, 200);
@@ -186,6 +189,98 @@ fn a_pin_opens_over_its_capture_and_a_second_one_cascades() {
         );
         pins.push(pin);
     }
+}
+
+/// WHY: a pin had no way to copy the image it shows: the capture's own
+/// copy was gone from the clipboard once anything else was copied, and
+/// the pin answered only Escape. The case takes the clipboard from the
+/// daemon, presses Ctrl+C on a pin, and reads the pinned capture back
+/// from the clipboard and the pin's status pill on the screen. Not
+/// covered: a failed copy, whose error the same pill states.
+#[test]
+fn ctrl_c_on_a_pin_copies_its_image_and_states_it() {
+    let case = "ctrl_c_on_a_pin_copies_its_image_and_states_it";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    paint_root(&conn, root, DESKTOP);
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    let size = capture(&conn, root, &daemon, dir.path(), 1);
+    pin_from_toast(&conn, root, &daemon);
+    let pin = daemon.until("the pin to open", || {
+        windows_of(&conn, root, PIN).first().copied()
+    });
+    // With no window manager the keyboard follows the pointer.
+    let (x, y, w, h) = rect(&conn, root, pin);
+    move_to(&conn, root, (x + w as i16 / 2, y + h as i16 / 2));
+    daemon.settle();
+    let shown = client(&conn, root, pin);
+
+    // The capture put itself on the clipboard; another client takes it.
+    let clipboard = conn
+        .intern_atom(false, b"CLIPBOARD")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let other = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        other,
+        root,
+        -1,
+        -1,
+        1,
+        1,
+        0,
+        x11rb::protocol::xproto::WindowClass::INPUT_ONLY,
+        x11rb::COPY_FROM_PARENT,
+        &x11rb::protocol::xproto::CreateWindowAux::new(),
+    )
+    .unwrap();
+    conn.set_selection_owner(other, clipboard, x11rb::CURRENT_TIME)
+        .unwrap();
+    conn.flush().unwrap();
+    assert_eq!(x11::clipboard_owner(&conn), other);
+
+    x11::chord(&conn, root, &[CONTROL, C]);
+    daemon.until("the pin's copy to own the clipboard", || {
+        let owner = x11::clipboard_owner(&conn);
+        (owner != other && owner != x11rb::NONE).then_some(())
+    });
+    let png = daemon.until("the copied image", || {
+        x11::clipboard(&conn, root, b"image/png")
+    });
+    let copied = image::load_from_memory(&png).unwrap().into_rgb8();
+    assert_eq!(
+        (copied.width() as u16, copied.height() as u16),
+        size,
+        "the clipboard holds another image"
+    );
+    let [_, r, g, b] = DESKTOP.to_be_bytes();
+    assert!(
+        copied.pixels().all(|p| p.0 == [r, g, b]),
+        "the clipboard holds pixels the pin does not show"
+    );
+    daemon.until("the pin to state the copy", || {
+        (pill_corner(&client(&conn, root, pin)) != pill_corner(&shown)).then_some(())
+    });
+}
+
+/// The pixels of a pin's bottom-left corner, where its status pill
+/// shows: 100 px across and 40 px up from the bottom edge.
+fn pill_corner((w, h, px): &(usize, usize, Vec<[u8; 3]>)) -> Vec<[u8; 3]> {
+    (h.saturating_sub(40)..*h)
+        .flat_map(|y| px[y * w..y * w + 100.min(*w)].to_vec())
+        .collect()
 }
 
 /// Drag FROM to TO on a capture overlay and commit it, wait for the

@@ -4,22 +4,29 @@
 //! above every other window via _NET_WM_STATE_ABOVE. It opens centered
 //! on the screen rect its pixels came from, so a pin at native scale
 //! covers them exactly. Drag anywhere to move it; double-click, Escape,
-//! or the close button that shows in the top-left corner while the
-//! pointer is over the window closes it. The image is the frozen
-//! capture's own pixels, not a live feed.
+//! Ctrl+W, or the close button that shows in the top-left corner while
+//! the pointer is over the window closes it. Ctrl+C copies the image.
+//! The image is the frozen capture's own pixels, not a live feed.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use gpui::*;
 
 use crate::theme;
 
-/// A pinned reference window: the image.
+/// A pinned reference window: the image and the capture it shows.
 pub struct PinStage {
     img: Arc<RenderImage>,
+    /// The capture file, which Ctrl+C copies.
+    path: PathBuf,
     /// The window's focus: without it no key event reaches this window,
     /// so Escape would be dead code on a plain div.
     focus: FocusHandle,
+    /// The result of the last copy, shown for `widgets::STATUS_FOR`.
+    status: Option<SharedString>,
+    /// Copies run so far: a copy clears the pill only when no later
+    /// copy has run.
+    copies: u64,
 }
 
 /// A rect in screen coordinates, logical pixels: x, y, width, height.
@@ -39,9 +46,11 @@ const CASCADE: f32 = 24.0;
 pub fn open(cx: &mut App, path: &std::path::Path, over: Option<Over>) {
     let path = path.to_path_buf();
     cx.spawn(async move |cx| {
+        let file = path.clone();
         let decoded = cx
             .background_executor()
             .spawn(async move {
+                let path = file;
                 // A just-captured image is already decoded in the
                 // pipeline stash: swizzle it to BGRA (~10ms) instead of
                 // re-decoding the PNG (~100ms). peek leaves the slot for
@@ -60,7 +69,7 @@ pub fn open(cx: &mut App, path: &std::path::Path, over: Option<Over>) {
             })
             .await;
         cx.update(|cx| {
-            if let Err(e) = decoded.and_then(|img| open_with_image(cx, img, over)) {
+            if let Err(e) = decoded.and_then(|img| open_with_image(cx, img, path, over)) {
                 iris_lib::ilog!("pin: {e}");
                 crate::notice::failed(cx, "Pin failed", &e);
             }
@@ -112,7 +121,12 @@ fn pin_origins(cx: &mut App) -> Vec<(f32, f32)> {
         .collect()
 }
 
-fn open_with_image(cx: &mut App, img: Arc<RenderImage>, over: Option<Over>) -> Result<(), String> {
+fn open_with_image(
+    cx: &mut App,
+    img: Arc<RenderImage>,
+    path: PathBuf,
+    over: Option<Over>,
+) -> Result<(), String> {
     // One image pixel per device pixel: a pinned capture shows at the
     // size it had on screen.
     let root = crate::sys::window::root_scale(cx);
@@ -156,12 +170,51 @@ fn open_with_image(cx: &mut App, img: Arc<RenderImage>, over: Option<Over>) -> R
                 // one, so the handle takes GPUI focus here and on a
                 // click inside (track_focus).
                 window.focus(&focus, cx);
-                PinStage { img, focus }
+                PinStage {
+                    img,
+                    path,
+                    focus,
+                    status: None,
+                    copies: 0,
+                }
             })
         },
     )
     .map_err(|e| format!("open pin window: {e}"))?;
     Ok(())
+}
+
+impl PinStage {
+    /// Copy the capture's image to the clipboard off the UI thread, and
+    /// state the result in the status pill.
+    fn copy(&mut self, cx: &mut Context<Self>) {
+        let path = self.path.clone();
+        self.copies += 1;
+        let copy = self.copies;
+        let task = cx
+            .background_executor()
+            .spawn(async move { crate::pipeline::copy_image_file(&path) });
+        cx.spawn(async move |this, cx| {
+            let text = SharedString::from(match task.await {
+                Ok(()) => "Copied".to_owned(),
+                Err(e) => e,
+            });
+            let _ = this.update(cx, |this, cx| {
+                this.status = Some(text);
+                cx.notify();
+            });
+            cx.background_executor()
+                .timer(crate::widgets::STATUS_FOR)
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.copies == copy {
+                    this.status = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
 }
 
 impl Render for PinStage {
@@ -178,9 +231,14 @@ impl Render for PinStage {
             .bg(theme::BG_ELEV)
             .cursor_pointer()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|_, ev: &KeyDownEvent, window, _| {
-                if ev.keystroke.key == "escape" {
-                    window.remove_window();
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                let ks = &ev.keystroke;
+                let meta = ks.modifiers.control || ks.modifiers.platform;
+                match ks.key.as_str() {
+                    "escape" => window.remove_window(),
+                    "w" if meta => window.remove_window(),
+                    "c" if meta => this.copy(cx),
+                    _ => {}
                 }
             }))
             .child(crate::widgets::move_handle(crate::widgets::Double::Close))
@@ -218,6 +276,11 @@ impl Render for PinStage {
                         theme::FG,
                         12.0,
                     )),
+            )
+            .children(
+                self.status
+                    .as_ref()
+                    .map(|text| crate::widgets::status_pill(text, 10.0)),
             )
     }
 }
