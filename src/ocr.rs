@@ -88,13 +88,18 @@ mod tests {
     }
 
     /// The editor's image as shown has no file: the bytes pass through
-    /// the cache, which keeps none of them.
+    /// the cache, which keeps none of them. The cache follows
+    /// IRIS_HOME, which other tests set, so this one runs serially in
+    /// a home of its own.
     #[test]
+    #[serial_test::serial]
     fn vision_reads_an_image_no_file_holds() {
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var(crate::dirs::HOME_ENV, home.path());
         let png = std::fs::read(fixture()).unwrap();
         assert_eq!(recognize_png(&png).as_deref(), Ok(LINES));
         let ours = format!("ocr-{}-", std::process::id());
-        let left: Vec<_> = std::fs::read_dir(crate::dirs::cache_dir().unwrap())
+        let left: Vec<_> = std::fs::read_dir(home.path().join("cache"))
             .unwrap()
             .flatten()
             .map(|e| e.file_name())
