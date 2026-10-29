@@ -126,6 +126,9 @@ pub struct Library {
     preview: Option<preview::Preview>,
     /// The card context menu, while it is open.
     menu: Option<context_menu::ContextMenu>,
+    /// Set by New Screenshot: the window draws empty and closes before
+    /// the capture reads the screen (`widgets::close_then_run`).
+    pub(super) leaving: bool,
 }
 
 /// The library window's minimum logical size, where its resize stops.
@@ -133,7 +136,7 @@ pub(super) const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
 
 /// Open the library window, or raise the one already open.
 pub fn open(cx: &mut App) -> Result<(), String> {
-    if crate::widgets::raise_open::<Library>(cx, |_| true) {
+    if crate::widgets::raise_open::<Library>(cx, |l| !l.leaving) {
         return Ok(());
     }
     let focus = cx.focus_handle();
@@ -199,6 +202,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     scroll: gpui::ScrollHandle::new(),
                     preview: None,
                     menu: None,
+                    leaving: false,
                 };
                 this.refresh(false, cx);
                 this.arm_midnight(cx);

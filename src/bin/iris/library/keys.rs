@@ -50,6 +50,9 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.leaving {
+            return;
+        }
         let ks = &ev.keystroke;
         let key = ks.key.as_str();
         let meta = ks.modifiers.control || ks.modifiers.platform;

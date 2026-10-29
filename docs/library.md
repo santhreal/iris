@@ -18,7 +18,7 @@ The window's title bar is a unified toolbar, 52 pixels high, with the traffic li
 - **No selection**:
   - **Keyboard Shortcuts** (keyboard icon): toggles the shortcut reference sheet.
   - **Settings** (gear icon): opens the Settings window ([configuration.md#settings-window](configuration.md#settings-window)).
-  - **New Screenshot** (viewfinder icon): starts a region capture, as `iris --capture` does.
+  - **New Screenshot** (viewfinder icon): closes the library, then starts a region capture, as `iris --capture` does. The capture does not contain the library.
 - **One or more cards selected**:
   - The selection count (for example, `3 selected`).
   - **Copy**: copies the selection to the clipboard. One capture copies its decoded pixels; several copy their file paths in the platform file-list format.

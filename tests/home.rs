@@ -1,14 +1,16 @@
-//! The home window's capture tile and the overlay's opening hover-snap,
-//! driven on a private Xvfb and read back from the screen.
+//! The home window's capture tile, the library's New Screenshot button,
+//! and the overlay's opening hover-snap, driven on a private Xvfb and
+//! read back from the screen.
 //!
 //! WHY: two classes close here. "A surface iris opens is part of the
 //! picture it takes": the New Screenshot tile ran the capture with Home
-//! still on screen, so the frozen frame held Home under the overlay. A
+//! still on screen, so the frozen frame held Home under the overlay, and
+//! the library's New Screenshot button did the same with the library. A
 //! compositing manager fades a closed window out over its last frame,
-//! so the first case runs picom with a two-second fade: Home must leave
-//! an empty frame behind it, not its tiles. It paints the root white,
-//! clicks the tile, and reads the dimmed frozen frame where Home stood
-//! against the dimmed root beside it.
+//! so the first two cases run picom with a two-second fade: the window
+//! must leave an empty frame behind it, not its content. Each paints the
+//! root white, clicks the button, and reads the dimmed frozen frame
+//! where the window stood against the dimmed root beside it.
 //! "The overlay ignores the pointer until it moves": the overlay
 //! opened with no hover-snap and no readout until the first motion, so
 //! a capture from a hotkey with the pointer resting on a window showed
@@ -47,6 +49,12 @@ const WHITE: u32 = 0x00ff_ffff;
 /// The New Screenshot tile's centre in the home window, at scale 1
 /// (home.rs: 36px margins, 168x124 tiles from y 214).
 const CAPTURE_TILE: (i16, i16) = (120, 276);
+/// The library's title.
+const LIBRARY: &str = "Library - iris";
+/// The library's New Screenshot button's centre from the window's top
+/// right corner, at scale 1: the last of the toolbar's trailing
+/// controls, 28px square, 12px from the right edge of the 52px band.
+const NEW_SCREENSHOT: (i16, i16) = (26, 26);
 /// A point on Home's header, away from the pointer's row and column
 /// and from the readout beside the pointer.
 const HEADER: (i16, i16) = (48, 60);
@@ -115,6 +123,65 @@ fn the_capture_tile_leaves_home_out_of_the_frozen_frame() {
         );
         (b != WHITE && b == i && i == f).then_some(())
     });
+}
+
+#[test]
+fn new_screenshot_leaves_the_library_out_of_the_frozen_frame() {
+    let case = "new_screenshot_leaves_the_library_out_of_the_frozen_frame";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    paint_root(&conn, root, WHITE);
+    let Some(_picom) = fading_compositor(case, &conn, &display) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&["--library"]);
+    let library = daemon.until("the library to open", || {
+        windows_of(&conn, root, LIBRARY).first().copied()
+    });
+    daemon.settle();
+    let (x, y, width, _) = rect(&conn, root, library);
+    assert!(
+        x >= HEADER.0,
+        "the library at x {x} leaves no root beside it"
+    );
+    let inside = (x + HEADER.0, y + 300);
+    assert!(
+        pixel(&conn, root, inside) != WHITE,
+        "the library did not draw its body"
+    );
+    click(
+        &conn,
+        root,
+        (x + width as i16 - NEW_SCREENSHOT.0, y + NEW_SCREENSHOT.1),
+    );
+    overlay_up(&conn, root, &daemon);
+    assert!(
+        windows_of(&conn, root, LIBRARY).is_empty(),
+        "the library stayed open under the overlay"
+    );
+    let beside = (x - HEADER.0 / 2, y + 300);
+    let far = (x + width as i16 + HEADER.0 / 2, y + 300);
+    daemon.until(
+        "the frozen frame to show the root where the library stood",
+        || {
+            let (b, i, f) = (
+                pixel(&conn, root, beside),
+                pixel(&conn, root, inside),
+                pixel(&conn, root, far),
+            );
+            (b != WHITE && b == i && i == f).then_some(())
+        },
+    );
 }
 
 #[test]

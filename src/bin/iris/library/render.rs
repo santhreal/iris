@@ -141,7 +141,7 @@ impl Library {
         .trailing(
             widgets::icon_button("capture", Icon::Viewfinder, false, theme::TOOLBAR_CONTROL_H)
                 .tooltip(tip("New Screenshot", shortcut(&self.cfg)))
-                .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx))),
+                .on_click(cx.listener(|this, _, window, cx| this.start_capture(window, cx))),
         )
     }
 
@@ -196,6 +196,10 @@ impl Library {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.leaving {
+            // The transparent window shows nothing while it closes.
+            return div();
+        }
         self.sync_selection();
         // The cache fills from the background prefetch; a card whose
         // thumb has not landed draws without its image until then.

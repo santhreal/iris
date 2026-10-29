@@ -56,7 +56,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - Library hover animations no longer skip after an idle window.
 - Concurrent captures and recordings reserve distinct output files instead of overwriting a file selected for the same timestamp.
 - A failed portable Windows update preserves and reports recovery files instead of deleting them during cleanup or a retry.
-- The New Screenshot and Record Window tiles close the home window before the capture starts, so it no longer appears in the frozen frame.
+- The New Screenshot and Record Window tiles close the home window, and the library's New Screenshot button closes the library, before the capture starts, so neither appears in the frozen frame.
 - The capture overlay opens with the window under a resting pointer snapped and the pointer readout at the pointer, instead of waiting for the pointer to move.
 - An X11 window pick ignores a click on a menu, a tooltip, or an iris card.
 - An icon in a row whose text overflows keeps its size instead of shrinking to a sliver, as the folder glyph in the settings window's storage rows did.

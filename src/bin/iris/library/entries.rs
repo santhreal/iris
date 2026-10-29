@@ -369,9 +369,15 @@ impl Library {
         cx.notify();
     }
 
-    pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = crate::daemon::dispatch(cx, &crate::daemon::Command::Capture) {
-            self.set_status(e, cx);
+    /// New Screenshot: draw the window empty and close it, then start the
+    /// capture once it is off the screen, so the frozen frame never
+    /// contains the library.
+    pub(super) fn start_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.leaving {
+            return;
         }
+        self.leaving = true;
+        cx.notify();
+        crate::widgets::close_then_run(window, cx, crate::daemon::Command::Capture);
     }
 }
