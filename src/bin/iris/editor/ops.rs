@@ -465,11 +465,23 @@ impl Editor {
 
     pub(crate) fn copy_text_ocr(&mut self, cx: &mut Context<Self>) {
         let path = self.path.clone();
-        // Recognition takes hundreds of ms on a large capture; run it
-        // off the UI thread and report through the status line.
-        let task = cx
-            .background_executor()
-            .spawn(async move { pipeline::copy_ocr_text(&path) });
+        // Copy Text reads the image as shown, as Copy Image does: a crop
+        // narrows what it reads and a blur hides what it covers. Before
+        // the image decodes the file is that image.
+        let shown = self.base_ready.then(|| {
+            self.commit_text(true);
+            self.commit_current();
+            Arc::clone(&self.composite)
+        });
+        // The encode and the recognition take hundreds of ms on a large
+        // capture; run them off the UI thread and report through the
+        // status line.
+        let task = cx.background_executor().spawn(async move {
+            match shown {
+                Some(img) => png_bytes(&img).and_then(|png| pipeline::copy_ocr_png(&png)),
+                None => pipeline::copy_ocr_text(&path),
+            }
+        });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {

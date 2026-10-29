@@ -4,9 +4,10 @@
 //! an error that names the install command.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Recognize text in the image at `path`. Shared by the editor's
-/// Copy Text action and the toast's Copy Text menu row.
+/// Recognize text in the image at `path`: the toast's Copy Text menu
+/// row, over the saved capture.
 pub fn recognize_text(source: &Path) -> Result<String, String> {
     if !source.exists() {
         return Err(format!("image does not exist: {}", source.display()));
@@ -17,6 +18,27 @@ pub fn recognize_text(source: &Path) -> Result<String, String> {
         return Err("no text recognized in this image".to_string());
     }
     Ok(text.to_string())
+}
+
+/// Recognize text in `png`, an encoded image: the editor's Copy Text
+/// reads the image as shown, which no file holds until Done saves it.
+/// The bytes reach the recognizer through a file in the cache
+/// directory, deleted once read.
+pub fn recognize_png(png: &[u8]) -> Result<String, String> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = crate::dirs::cache_dir().ok_or("no cache directory to hold the image for OCR")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let file = dir.join(format!(
+        "ocr-{}-{}.png",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&file, png).map_err(|e| format!("write {}: {e}", file.display()))?;
+    let text = recognize_text(&file);
+    if let Err(e) = std::fs::remove_file(&file) {
+        crate::ilog!("iris: ocr: delete {}: {e}", file.display());
+    }
+    text
 }
 
 #[cfg(target_os = "macos")]
@@ -51,17 +73,34 @@ fn recognize(source: &Path) -> Result<String, String> {
 // where tesseract does the recognition.
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::recognize_text;
-    use std::path::Path;
+    use super::{recognize_png, recognize_text};
+    use std::path::{Path, PathBuf};
+
+    fn fixture() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ocr-two-lines.png")
+    }
+
+    const LINES: &str = "Iris copies this text\nSecond line 2048";
 
     #[test]
     fn vision_reads_each_line_in_order() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ocr-two-lines.png");
-        assert_eq!(
-            recognize_text(&fixture).as_deref(),
-            Ok("Iris copies this text\nSecond line 2048")
-        );
+        assert_eq!(recognize_text(&fixture()).as_deref(), Ok(LINES));
+    }
+
+    /// The editor's image as shown has no file: the bytes pass through
+    /// the cache, which keeps none of them.
+    #[test]
+    fn vision_reads_an_image_no_file_holds() {
+        let png = std::fs::read(fixture()).unwrap();
+        assert_eq!(recognize_png(&png).as_deref(), Ok(LINES));
+        let ours = format!("ocr-{}-", std::process::id());
+        let left: Vec<_> = std::fs::read_dir(crate::dirs::cache_dir().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .filter(|n| n.to_string_lossy().starts_with(&ours))
+            .collect();
+        assert!(left.is_empty(), "the cache still holds {left:?}");
     }
 
     #[test]

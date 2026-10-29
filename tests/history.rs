@@ -38,6 +38,13 @@
 //! leaves open, runs Copy Image, and reads the PNG on the clipboard and
 //! the file's modification time.
 //!
+//! One case closes "Copy Text reads the file on disk": the More menu's
+//! Copy Text read the saved file, so a crop did not narrow what it read
+//! and a blur did not hide what it covered. The case draws the
+//! rectangle, crops, runs Copy Text with a tesseract first on `PATH`
+//! that saves the image it is given, and reads that image and the
+//! clipboard.
+//!
 //! One case closes "Escape drops unsaved work at once": Escape over
 //! marks closed the editor and discarded them with no second chance. It
 //! draws a mark and reads that the first Escape keeps the editor and
@@ -69,7 +76,8 @@ mod daemon;
 mod x11;
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
@@ -159,6 +167,12 @@ const CLEAR: MenuItem = MenuItem {
     separators: 1,
 };
 
+/// Copy Text is the More menu's first row.
+const COPY_TEXT: MenuItem = MenuItem {
+    rows: 0,
+    separators: 0,
+};
+
 /// An editor open on `plain.png` with the image's place on the screen.
 struct Session {
     daemon: Daemon,
@@ -177,6 +191,12 @@ struct Session {
 
 impl Session {
     fn open(case: &str) -> Option<Session> {
+        Self::open_with(case, |_, _| {})
+    }
+
+    /// `open`, with `env` run on the daemon's command and the session's
+    /// directory before the daemon starts.
+    fn open_with(case: &str, env: impl FnOnce(&Path, &mut Command)) -> Option<Session> {
         if !enabled() {
             return None;
         }
@@ -191,6 +211,7 @@ impl Session {
         let written = std::fs::metadata(&file).unwrap().modified().unwrap();
         let daemon = Daemon::start(dir.path(), |cmd| {
             cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+            env(dir.path(), cmd);
         });
         daemon.send(&[OsStr::new("--annotate"), file.as_os_str()]);
         let editor = daemon.until("the editor to open", || {
@@ -431,21 +452,70 @@ fn redo_cuts_the_image_again_with_the_marks_in_it() {
     };
     session.keys(&[CONTROL, Z]);
     session.keys(&[CONTROL, SHIFT, Z]);
-    let saved = session.save();
+    assert_cropped(&session.save(), "the file saved after redoing the crop");
+}
+
+/// Assert that `img` is the crop with the rectangle in it.
+fn assert_cropped(img: &image::RgbImage, what: &str) {
     let want = (
         (CROP[1].0 - CROP[0].0) as u32,
         (CROP[1].1 - CROP[0].1) as u32,
     );
-    let (w, h) = saved.dimensions();
+    let (w, h) = img.dimensions();
     assert!(
         w.abs_diff(want.0) <= 2 && h.abs_diff(want.1) <= 2,
-        "the file saved after redoing the crop is {w}x{h}, not about {}x{}",
+        "{what} is {w}x{h}, not about {}x{}",
         want.0,
         want.1
     );
     let off = |p: (f32, f32)| ((p.0 - CROP[0].0) as u32, (p.1 - CROP[0].1) as u32);
     let (a, b) = (off(RECT[0]), off(RECT[1]));
-    assert_rect(&saved, (a.0, b.0), (a.1, b.1), "after redoing the crop");
+    assert_rect(img, (a.0, b.0), (a.1, b.1), what);
+}
+
+/// A tesseract that copies the image it reads to `read.png` beside
+/// itself and recognizes one line, OCR_LINE.
+const FAKE_TESSERACT: &str =
+    "#!/bin/sh\ncp \"$1\" \"$(dirname \"$0\")/read.png\"\necho 'Iris read this'\n";
+const OCR_LINE: &str = "Iris read this";
+
+#[test]
+fn copy_text_reads_the_image_as_shown() {
+    let Some(session) = Session::open_with("copy_text_reads_the_image_as_shown", |dir, cmd| {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = dir.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let tool = bin.join("tesseract");
+        std::fs::write(&tool, FAKE_TESSERACT).unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::iter::once(bin).chain(std::env::split_paths(&path));
+        cmd.env("PATH", std::env::join_paths(path).unwrap());
+    }) else {
+        return;
+    };
+    session.draw(R, RECT);
+    session.draw(C, CROP);
+    session.keys(&[RETURN]);
+    session.more(COPY_TEXT);
+    session
+        .daemon
+        .until("Copy Text to copy the recognized line", || {
+            (clipboard_text(&session.conn, session.root)? == OCR_LINE).then_some(())
+        });
+    let read = image::open(session._dir.path().join("bin/read.png"))
+        .unwrap()
+        .to_rgb8();
+    assert_cropped(&read, "the image Copy Text read");
+    // The image went to tesseract through the cache, and left it.
+    let left: Vec<_> = std::fs::read_dir(session._dir.path().join("cache"))
+        .map(|d| d.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(
+        left.iter()
+            .all(|n| !n.to_string_lossy().starts_with("ocr-")),
+        "the cache still holds {left:?}"
+    );
 }
 
 #[test]

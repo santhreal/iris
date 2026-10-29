@@ -291,6 +291,14 @@ pub fn copy_ocr_text(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
+/// OCR `png`, an image no file holds yet, to the clipboard. Returns the
+/// recognized text so the caller can report the character count.
+pub fn copy_ocr_png(png: &[u8]) -> Result<String, String> {
+    let text = ocr::recognize_png(png)?;
+    clipboard::set_text(&text)?;
+    Ok(text)
+}
+
 // WHY: the class closed here is "captures land in the wrong place or
 // clobber each other": a template that stops substituting, a suffix
 // collision that overwrites, or a region that crops out of bounds all
