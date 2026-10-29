@@ -40,9 +40,10 @@ const PIN: &str = "Pin - iris";
 const LIBRARY: &str = "Library - iris";
 const RETURN: u32 = 0xff0d;
 const DOWN: u32 = 0xff54;
-/// XK_Control_L and XK_c.
+/// XK_Control_L, XK_c, and XK_w.
 const CONTROL: u32 = 0xffe3;
 const C: u32 = 0x63;
+const W: u32 = 0x77;
 
 /// The selection both captures drag, corner to corner.
 const FROM: (i16, i16) = (200, 200);
@@ -193,13 +194,15 @@ fn a_pin_opens_over_its_capture_and_a_second_one_cascades() {
 
 /// WHY: a pin had no way to copy the image it shows: the capture's own
 /// copy was gone from the clipboard once anything else was copied, and
-/// the pin answered only Escape. The case takes the clipboard from the
-/// daemon, presses Ctrl+C on a pin, and reads the pinned capture back
-/// from the clipboard and the pin's status pill on the screen. Not
-/// covered: a failed copy, whose error the same pill states.
+/// the pin answered only Escape, not the close shortcut every other
+/// iris window takes. The case takes the clipboard from the daemon,
+/// presses Ctrl+C on a pin, reads the pinned capture back from the
+/// clipboard and the pin's status pill on the screen, then closes the
+/// pin with Ctrl+W. Not covered: a failed copy, whose error the same
+/// pill states.
 #[test]
-fn ctrl_c_on_a_pin_copies_its_image_and_states_it() {
-    let case = "ctrl_c_on_a_pin_copies_its_image_and_states_it";
+fn ctrl_c_copies_a_pin_and_ctrl_w_closes_it() {
+    let case = "ctrl_c_copies_a_pin_and_ctrl_w_closes_it";
     if !enabled() {
         return;
     }
@@ -272,6 +275,10 @@ fn ctrl_c_on_a_pin_copies_its_image_and_states_it() {
     );
     daemon.until("the pin to state the copy", || {
         (pill_corner(&client(&conn, root, pin)) != pill_corner(&shown)).then_some(())
+    });
+    x11::chord(&conn, root, &[CONTROL, W]);
+    daemon.until("Ctrl+W to close the pin", || {
+        windows_of(&conn, root, PIN).is_empty().then_some(())
     });
 }
 
