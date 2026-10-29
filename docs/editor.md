@@ -71,9 +71,10 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 ## Navigation and Canvas Controls
 
 - **Zoom to fit (`0`)**: Resets zoom to 1.0 (fit-to-window scale) and resets pan offset to `(0, 0)`.
-- **Zoom in (`+` or `=`)**: Multiplies zoom by 1.25, clamped to a maximum factor of 16.0x.
-- **Zoom out (`-`)**: Divides zoom by 1.25, clamped to a minimum factor of 0.1x.
-- **Mouse wheel zoom**: Scrolling adjusts zoom by factor 1.12 or 1/1.12, clamped between 0.1x and 16.0x. The zoom recomputes pan offsets to anchor the image point under the cursor.
+- **Zoom in (`+` or `=`)**: Multiplies zoom by 1.25, clamped to a maximum factor of 16.0x. The image point at the center of the stage stays in place.
+- **Zoom out (`-`)**: Divides zoom by 1.25, clamped to a minimum factor of 0.1x. The image point at the center of the stage stays in place.
+- **Wheel and touchpad zoom**: Each wheel notch multiplies or divides zoom by 1.12. A touchpad scroll zooms in proportion to the distance scrolled, so a short scroll zooms less than a notch. One scroll event zooms by at most three notches. Zoom stays between 0.1x and 16.0x. The image point under the pointer stays in place.
+- **Pinch zoom**: A touchpad pinch scales zoom by the pinch amount, about the pinch center.
 - **Pan canvas**: Drag with the middle mouse button, or hold `Space` and drag with the left mouse button. Releasing `Space` or the mouse button ends panning.
 
 ## Edit Operations

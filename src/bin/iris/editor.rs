@@ -38,6 +38,8 @@ mod render_chrome;
 mod render_stage;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod zoom_tests;
 
 pub(crate) use action::Action;
 pub(crate) use action::*;

@@ -258,31 +258,19 @@ impl Editor {
 
         // Stage input.
         stage = stage
-            // Scroll zooms around the cursor: the image point under the
-            // pointer stays put while the scale changes.
+            // Scroll and pinch zoom around the cursor: the image point
+            // under the pointer stays put while the scale changes.
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
-                let dy: f32 = match ev.delta {
-                    ScrollDelta::Pixels(p) => f32::from(p.y),
-                    ScrollDelta::Lines(p) => p.y * 20.0,
-                };
-                if dy.abs() < 0.5 {
-                    return;
+                let at = (ev.position.x.into(), ev.position.y.into());
+                if this.zoom_at(at, super::ops::wheel_zoom(ev.delta), window) {
+                    cx.notify();
                 }
-                let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
-                let (ox, oy, scale) = this.view(window);
-                let factor = if dy > 0.0 { 1.12 } else { 1.0 / 1.12 };
-                let new_zoom = (this.zoom * factor).clamp(0.1, 16.0);
-                if (new_zoom - this.zoom).abs() < f32::EPSILON {
-                    return;
+            }))
+            .on_pinch(cx.listener(|this, ev: &PinchEvent, window, cx| {
+                let at = (ev.position.x.into(), ev.position.y.into());
+                if this.zoom_at(at, super::ops::pinch_zoom(ev.delta), window) {
+                    cx.notify();
                 }
-                // Keep the image point under the cursor fixed:
-                // mx = ox' + ix * scale' => solve for new pan.
-                let (ix, iy) = ((mx - ox) / scale, (my - oy) / scale);
-                let (nfx, nfy) = this.fit_origin(window, (scale / this.zoom) * new_zoom);
-                let new_scale = (scale / this.zoom) * new_zoom;
-                this.pan = (mx - nfx - ix * new_scale, my - nfy - iy * new_scale);
-                this.zoom = new_zoom;
-                cx.notify();
             }))
             .on_mouse_down(
                 MouseButton::Middle,

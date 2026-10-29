@@ -12,6 +12,47 @@ use crate::pipeline;
 
 use super::render_chrome::{STAGE_MARGIN, STAGE_TOP};
 
+/// The zoom range, as a multiple of the fit scale.
+const ZOOM_MIN: f32 = 0.1;
+const ZOOM_MAX: f32 = 16.0;
+
+/// The zoom factor of one wheel notch.
+pub(super) const WHEEL_STEP: f32 = 1.12;
+
+/// The line scroll of one wheel notch: gpui reports a notch as three
+/// lines on Linux and Windows (the Windows default) and as one line on
+/// macOS.
+#[cfg(target_os = "macos")]
+pub(super) const NOTCH_LINES: f32 = 1.0;
+#[cfg(not(target_os = "macos"))]
+pub(super) const NOTCH_LINES: f32 = 3.0;
+
+/// The pixel scroll that counts as one notch, for a touchpad that
+/// reports pixels.
+pub(super) const NOTCH_PX: f32 = 60.0;
+
+/// The most notches one scroll event can zoom by: a momentum flick
+/// that reports hundreds of pixels at once stays a few steps.
+pub(super) const MAX_NOTCHES: f32 = 3.0;
+
+/// The zoom factor for one scroll event. A whole notch is one
+/// `WHEEL_STEP` and a fraction of a notch is that fraction of a step,
+/// so a touchpad, which reports a gesture as many small deltas, zooms
+/// by the distance the fingers travel rather than by the event count.
+pub(crate) fn wheel_zoom(delta: ScrollDelta) -> f32 {
+    let notches = match delta {
+        ScrollDelta::Pixels(p) => f32::from(p.y) / NOTCH_PX,
+        ScrollDelta::Lines(p) => p.y / NOTCH_LINES,
+    };
+    WHEEL_STEP.powf(notches.clamp(-MAX_NOTCHES, MAX_NOTCHES))
+}
+
+/// The zoom factor for one pinch event: `delta` is the fractional
+/// change, 0.1 for a 10% increase.
+pub(crate) fn pinch_zoom(delta: f32) -> f32 {
+    (1.0 + delta).clamp(WHEEL_STEP.powf(-MAX_NOTCHES), WHEEL_STEP.powf(MAX_NOTCHES))
+}
+
 impl Editor {
     pub(crate) fn img_w(&self) -> u32 {
         self.base_dims.0
@@ -509,6 +550,23 @@ impl Editor {
         let scale = fit * self.zoom;
         let (fx, fy) = self.fit_origin(window, scale);
         (fx + self.pan.0, fy + self.pan.1, scale)
+    }
+
+    /// Multiply the zoom by `factor`, clamped to the zoom range, and
+    /// pan so the image point under `at` stays under it. Returns
+    /// whether the zoom changed.
+    pub(crate) fn zoom_at(&mut self, at: (f32, f32), factor: f32, window: &Window) -> bool {
+        let new_zoom = (self.zoom * factor).clamp(ZOOM_MIN, ZOOM_MAX);
+        if (new_zoom - self.zoom).abs() < f32::EPSILON {
+            return false;
+        }
+        let (ox, oy, scale) = self.view(window);
+        let (ix, iy) = ((at.0 - ox) / scale, (at.1 - oy) / scale);
+        let new_scale = scale / self.zoom * new_zoom;
+        let (fx, fy) = self.fit_origin(window, new_scale);
+        self.pan = (at.0 - fx - ix * new_scale, at.1 - fy - iy * new_scale);
+        self.zoom = new_zoom;
+        true
     }
 
     pub(crate) fn to_image(&self, pos: Point<Pixels>, window: &Window) -> (f32, f32) {

@@ -9,6 +9,9 @@ use super::action::tool_for_key;
 use super::Editor;
 use crate::widgets;
 
+/// The zoom factor of one `+` or `-` press.
+const KEY_STEP: f32 = 1.25;
+
 impl Editor {
     pub(super) fn handle_key_down(
         &mut self,
@@ -101,11 +104,17 @@ impl Editor {
                 self.zoom = 1.0;
                 self.pan = (0.0, 0.0);
             }
-            "=" | "+" => {
-                self.zoom = (self.zoom * 1.25).min(16.0);
-            }
-            "-" => {
-                self.zoom = (self.zoom / 1.25).max(0.1);
+            "=" | "+" | "-" => {
+                // A key step zooms about the stage's center, so the
+                // part of the image in view stays in view.
+                let size = window.bounds().size;
+                let top = super::render_chrome::STAGE_TOP;
+                let at = (
+                    f32::from(size.width) / 2.0,
+                    top + (f32::from(size.height) - top) / 2.0,
+                );
+                let factor = if key == "-" { 1.0 / KEY_STEP } else { KEY_STEP };
+                self.zoom_at(at, factor, window);
             }
             "space" => {
                 self.space_pan = true;
