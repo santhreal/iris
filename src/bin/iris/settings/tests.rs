@@ -22,7 +22,7 @@ fn temp_home() -> tempfile::TempDir {
 fn edit(s: &mut Settings, field: Field, text: &str) {
     s.editing = Some(Edit {
         field,
-        text: text.into(),
+        line: crate::widgets::Line::new(text),
     });
 }
 
@@ -140,7 +140,7 @@ fn a_text_field_applies_on_commit_and_keeps_a_rejected_value_open() {
     for (field, bad, reason) in cases {
         edit(&mut s, field, bad);
         assert!(!s.blur(), "{bad:?}");
-        assert_eq!(s.editing.as_ref().map(|e| e.text.as_str()), Some(bad));
+        assert_eq!(s.editing.as_ref().map(|e| e.line.text()), Some(bad));
         assert_eq!(s.rejected, Some((field, reason.to_string())), "{bad:?}");
         // A second commit of the same text is rejected again.
         assert!(!s.blur());
@@ -170,13 +170,13 @@ fn opening_a_field_starts_from_the_stored_value_and_keeps_its_own_edit() {
         s.editing,
         Some(Edit {
             field: Field::Template,
-            text: "{date}_{time}".into()
+            line: crate::widgets::Line::new("{date}_{time}")
         })
     );
     // A click into the field already open keeps the typed text.
-    s.editing.as_mut().unwrap().text.push_str("_x");
+    edit(&mut s, Field::Template, "{date}_{time}_x");
     s.begin_edit(Field::Template);
-    assert_eq!(s.editing.as_ref().unwrap().text, "{date}_{time}_x");
+    assert_eq!(s.editing.as_ref().unwrap().line.text(), "{date}_{time}_x");
     // A rejected edit keeps focus: another field does not open.
     edit(&mut s, Field::Fps, "0");
     s.begin_edit(Field::Template);
@@ -403,7 +403,7 @@ fn a_text_field_opens_as_the_ring_reaches_it_and_commits_as_it_leaves() {
     tab_walk(&mut s, true, 4);
     assert_eq!(s.ring, Some(Row::Text(Field::Template)));
     assert_eq!(
-        s.editing.as_ref().map(|e| (e.field, e.text.as_str())),
+        s.editing.as_ref().map(|e| (e.field, e.line.text())),
         Some((Field::Template, s.cfg.screenshot_template.as_str())),
         "the file name opens for typing with its stored text"
     );
@@ -424,7 +424,7 @@ fn tab_stays_in_a_rejected_field_and_continues_from_a_clicked_one() {
     s.tab(true);
     assert_eq!(s.ring, Some(Row::Text(Field::Template)));
     assert_eq!(
-        s.editing.as_ref().map(|e| e.text.as_str()),
+        s.editing.as_ref().map(|e| e.line.text()),
         Some("no placeholder")
     );
     assert!(s.rejected.is_some(), "the reason shows beside the field");

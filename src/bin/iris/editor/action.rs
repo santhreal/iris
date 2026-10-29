@@ -188,7 +188,9 @@ pub(crate) type PathCache = (f32, usize, (f32, f32), (f32, f32), Rc<Vec<[f32; 6]
 
 pub(crate) struct TextEntry {
     pub(crate) point: (f32, f32),
-    pub(crate) buffer: String,
+    /// The typed text and its caret.
+    pub(crate) line: crate::widgets::Line,
+    /// The whole text, as the stage draws it.
     pub(crate) buffer_str: SharedString,
     /// The text mark this entry reopened, hidden while it is open; None
     /// for a new label.

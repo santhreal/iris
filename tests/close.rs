@@ -232,13 +232,14 @@ fn settings_applies(case: &str, how: Close) {
     daemon.settle();
     // The field: the text field left of the card's right padding on the
     // row's center line, once Settings has drawn it. The file name
-    // preview sits left of it.
+    // preview sits left of it; its ink moves with the clock, so the
+    // card's fill is read in the padding.
     let (scale, y, left, right) = daemon.until("the File name field to draw", || {
         let (w, _, px) = client(&conn, root, settings);
         let scale = w as f32 / WIDTH;
         let y = (TEMPLATE_Y * scale) as usize;
         let row = &px[y * w..(y + 1) * w];
-        let card = row[w / 2 - (40.0 * scale) as usize];
+        let card = row[w - ((INSET + 6.0) * scale) as usize];
         let before = w - (INSET * scale) as usize - 1;
         let (left, right) = field_left_of(row, card, before, (FIELD_W * scale) as usize)?;
         Some((scale, y, left, right))

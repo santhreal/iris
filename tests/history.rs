@@ -136,6 +136,7 @@ const V: u32 = 0x76;
 const RIGHT: u32 = 0xff53;
 const LEFT: u32 = 0xff51;
 const F10: u32 = 0xffc7;
+const END: u32 = 0xff57;
 const MENU: u32 = 0xff67;
 const SLASH: u32 = 0x2f;
 const DELETE: u32 = 0xffff;
@@ -455,6 +456,18 @@ impl Session {
                 red([r, g, b])
             })
         })
+    }
+
+    /// The rightmost canvas column the red of an open label at LABEL
+    /// reaches over one whole caret blink, its caret bar included.
+    fn label_reach(&self) -> Option<usize> {
+        let start = std::time::Instant::now();
+        let mut reach = None;
+        while start.elapsed() < std::time::Duration::from_millis(1200) {
+            reach = reach.max(self.label_end());
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+        reach
     }
 
     /// Open the Copy menu.
@@ -1190,6 +1203,49 @@ fn undo_redo_and_clear_markup_commit_a_reopened_label_first() {
         "the label's right end typed as ab ({ab:?}), after Redo ({abc:?}), \
          after the Undo of Clear Markup ({abcd:?}), and after the Undo of \
          abcde ({undone:?})"
+    );
+}
+
+// WHY: Left, Delete, and End act at the caret of an open label, and the
+// caret bar is drawn where the caret is. An entry that only appends at
+// its end and pops from it ignores the three, so the label keeps the
+// letter Delete removes and ends wider than the same text typed whole;
+// a bar drawn after the whole text instead of at the caret still
+// reaches past the label's end with the caret at its start.
+#[test]
+fn caret_keys_edit_a_label_where_the_caret_is() {
+    let Some(session) = Session::open("caret_keys_edit_a_label_where_the_caret_is") else {
+        return;
+    };
+    let (conn, root) = (&session.conn, session.root);
+    session.label(&[B, C, D, E]);
+    let typed = session.label_end();
+    session.keys(&[CONTROL, Z]);
+    // abcd with the caret after it, then back at its start.
+    session.type_label(&[A, B, C, D]);
+    let at_end = session.label_reach();
+    for _ in 0..4 {
+        tap(conn, root, LEFT);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let at_start = session.label_reach();
+    // The a deleted, then e typed at the end.
+    for keysym in [DELETE, END, E] {
+        tap(conn, root, keysym);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    session.keys(&[RETURN]);
+    let edited = session.label_end();
+    assert!(typed.is_some(), "the label bcde was drawn");
+    assert!(
+        at_start < at_end,
+        "the open label reaches column {at_end:?} with the caret after \
+         abcd and {at_start:?} with it at the start"
+    );
+    assert_eq!(
+        edited, typed,
+        "a label typed as abcd, edited at its start and end, ends where \
+         bcde typed whole does"
     );
 }
 

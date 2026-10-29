@@ -1,17 +1,24 @@
-//! A paste into a Settings text field, read from the config it writes.
+//! A paste and the caret keys in a Settings text field, read from the
+//! config it writes.
 //!
-//! WHY: the class closed here is "a text entry takes keys but not the
-//! clipboard", on the Settings side; `paste.rs` reads the editor's side.
+//! WHY: the classes closed here are "a text entry takes keys but not
+//! the clipboard" and "a text entry edits only at its end", on the
+//! Settings side; `paste.rs` and `history.rs` read the editor's side.
 //! Both entries edit their text through one function, whose unit tests
 //! check each key exactly. A Settings field appended typed characters
 //! and dropped Ctrl+V, so a folder path or a template could only be
-//! typed. The case puts two lines on the clipboard, opens the file name
-//! field, pastes, commits with Return, and reads the template as one
-//! line in config.toml.
+//! typed, and it ignored Left, Home, End, and Delete, so a fix at the
+//! start of a value meant deleting it all. The case puts two lines on
+//! the clipboard, opens the file name field, moves the caret back a
+//! word and two characters, pastes, reads the caret bar at the field's
+//! start after Home, types at the start and the end, deletes a
+//! character, commits with Return, and reads the template from
+//! config.toml.
 //!
-//! Not covered: Cmd+V on macOS, which reaches the same key handler. The
-//! case runs only with `IRIS_X11_TEST_DISPLAY` set and needs Xvfb;
-//! without them it prints that it did not run.
+//! Not covered: Cmd+V and the Cmd and Alt caret keys on macOS, which
+//! reach the same key handler. The case runs only with
+//! `IRIS_X11_TEST_DISPLAY` set and needs Xvfb; without them it prints
+//! that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -36,6 +43,13 @@ const SCREEN: &str = "1280x1024x24";
 const SETTINGS: &str = "Settings - iris";
 /// Keysyms.
 const V: u32 = 0x76;
+const S: u32 = 0x73;
+const X: u32 = 0x78;
+const Z: u32 = 0x7a;
+const LEFT: u32 = 0xff51;
+const HOME: u32 = 0xff50;
+const END: u32 = 0xff57;
+const DELETE: u32 = 0xffff;
 const RETURN: u32 = 0xff0d;
 const CONTROL: u32 = 0xffe3;
 /// The Settings window's width, logical px.
@@ -50,10 +64,10 @@ const INSET: f32 = 20.0;
 /// The file name field's width, logical px.
 const FIELD_W: f32 = 200.0;
 /// The clipboard: a tab and two lines, the second ending in a line
-/// break; and the template the field holds before and after the paste.
+/// break; and the template the field holds before and after the edit.
 const CLIPBOARD: &str = "\tteam\nnotes\n";
 const BEFORE: &str = "{date}_{time}";
-const AFTER: &str = "{date}_{time} team notes";
+const AFTER: &str = "s{date} team notes_{time}z";
 
 /// The file name template in `dir`'s config, or `None` while the config
 /// cannot be read whole, as mid-write.
@@ -72,8 +86,8 @@ fn accent(p: [u8; 3]) -> bool {
 }
 
 #[test]
-fn a_paste_into_a_settings_field_writes_the_clipboard_as_one_line() {
-    let case = "a_paste_into_a_settings_field_writes_the_clipboard_as_one_line";
+fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
+    let case = "a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret";
     if !enabled() {
         return;
     }
@@ -99,12 +113,13 @@ fn a_paste_into_a_settings_field_writes_the_clipboard_as_one_line() {
     });
     daemon.settle();
     // The field: the text field left of the card's right padding on the
-    // row's center line. The file name preview sits left of it.
+    // row's center line. The file name preview sits left of it; its ink
+    // moves with the clock, so the card's fill is read in the padding.
     let (w, _, px) = client(&conn, root, settings);
     let scale = w as f32 / WIDTH;
     let y = (TEMPLATE_Y * scale) as usize;
     let row = &px[y * w..(y + 1) * w];
-    let card = row[w / 2 - (40.0 * scale) as usize];
+    let card = row[w - ((INSET + 6.0) * scale) as usize];
     let before = w - (INSET * scale) as usize - 1;
     let (left, right) = field_left_of(row, card, before, (FIELD_W * scale) as usize)
         .unwrap_or_else(|| panic!("the File name row has no field {FIELD_W} px wide"));
@@ -127,12 +142,31 @@ fn a_paste_into_a_settings_field_writes_the_clipboard_as_one_line() {
             .any(|(x, y)| accent(px[y * w + x]))
             .then_some(())
     });
+    // {date}_{time}| to {date}_{|time}, then {date}|_{time}, where the
+    // clipboard goes in as one line.
+    chord(&conn, root, &[CONTROL, LEFT]);
+    tap(&conn, root, LEFT);
+    tap(&conn, root, LEFT);
     chord(&conn, root, &[CONTROL, V]);
-    tap(&conn, root, RETURN);
+    // The caret: the accent column inside the field's border on its
+    // center line, at the start once Home lands.
+    tap(&conn, root, HOME);
+    let start = left + (12.0 * scale) as usize;
+    daemon.until("the caret to be drawn at the field's start", || {
+        let (w, _, px) = client(&conn, root, settings);
+        (left + 3..right - 2)
+            .find(|&x| accent(px[y * w + x]))
+            .filter(|&x| x < start)
+    });
+    // An s at the start, an x after it that Left and Delete remove, and
+    // a z at the end.
+    for keysym in [S, X, LEFT, DELETE, END, Z, RETURN] {
+        tap(&conn, root, keysym);
+    }
     daemon.settle();
     assert_eq!(
         template(dir.path()).as_deref(),
         Some(AFTER),
-        "the field committed without the pasted text as one line"
+        "the field committed without the edits at the caret"
     );
 }

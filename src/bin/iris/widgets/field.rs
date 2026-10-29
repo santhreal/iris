@@ -14,9 +14,10 @@ use crate::theme;
 pub enum FieldState {
     /// At rest: fill and inner border only.
     Rest,
-    /// Being edited: an accent border and ring and a caret after the
-    /// text; `invalid` turns the border and ring destructive red.
-    Editing { invalid: bool },
+    /// Being edited: an accent border and ring and a caret at byte
+    /// offset `caret` of the text; `invalid` turns the border and ring
+    /// destructive red.
+    Editing { invalid: bool, caret: usize },
     /// Capturing a key combination: the accent border and ring, no
     /// caret, the text in secondary color (a prompt such as "Type
     /// shortcut").
@@ -29,8 +30,8 @@ impl FieldState {
     pub fn ring(self) -> Option<Rgba> {
         match self {
             FieldState::Rest => None,
-            FieldState::Editing { invalid: true } => Some(theme::alpha(theme::DANGER, 0.40)),
-            FieldState::Editing { invalid: false } | FieldState::Recording => {
+            FieldState::Editing { invalid: true, .. } => Some(theme::alpha(theme::DANGER, 0.40)),
+            FieldState::Editing { invalid: false, .. } | FieldState::Recording => {
                 Some(theme::FOCUS_RING)
             }
         }
@@ -87,10 +88,10 @@ pub fn text_field(
 ) -> Stateful<Div> {
     let border = match state {
         FieldState::Rest => theme::FIELD_BORDER,
-        FieldState::Editing { invalid: true } => theme::DANGER,
-        FieldState::Editing { invalid: false } | FieldState::Recording => theme::ACCENT,
+        FieldState::Editing { invalid: true, .. } => theme::DANGER,
+        FieldState::Editing { invalid: false, .. } | FieldState::Recording => theme::ACCENT,
     };
-    let mut el = div()
+    let el = div()
         .id(id)
         .h(px(theme::CONTROL_H))
         .px(px(7.))
@@ -108,17 +109,27 @@ pub fn text_field(
         } else {
             theme::FG
         })
-        .cursor_text()
-        .child(text.into());
-    if matches!(state, FieldState::Editing { .. }) {
-        el = el.child(
-            div()
-                .w(px(1.5))
-                .h(px(15.))
-                .ml(px(1.))
-                .flex_shrink_0()
-                .bg(theme::ACCENT),
-        );
+        .cursor_text();
+    let text = text.into();
+    let FieldState::Editing { caret, .. } = state else {
+        return el.child(text);
+    };
+    // The caret sits at the boundary between the text before it and
+    // the text after it, in a zero-width slot: moving it never shifts
+    // the text.
+    let (before, after) = text.split_at(caret.min(text.len()));
+    let bar = div().relative().w(px(0.)).h(px(15.)).flex_shrink_0().child(
+        div()
+            .absolute()
+            .top_0()
+            .left(px(0.5))
+            .w(px(1.5))
+            .h(px(15.))
+            .bg(theme::ACCENT),
+    );
+    let mut el = el.child(SharedString::from(before.to_string())).child(bar);
+    if !after.is_empty() {
+        el = el.child(SharedString::from(after.to_string()));
     }
     el
 }
@@ -201,78 +212,183 @@ pub fn choose_folder(
         .detach();
 }
 
-/// Apply a key press to the buffer of a one-line text entry: Backspace
-/// removes the last character, Ctrl+Backspace or Alt+Backspace the last
-/// word (`pop_word`), and Cmd+Backspace the whole line; Ctrl+V or Cmd+V
-/// appends the text `clipboard` returns as one line, and a key that
-/// types a character without Ctrl or Cmd appends it. Returns whether
-/// the key edited the buffer; the caller restarts its caret or clears a
-/// rejection.
-pub fn edit_line(
-    buffer: &mut String,
-    keystroke: &Keystroke,
-    clipboard: impl FnOnce() -> Option<String>,
-) -> bool {
-    let mods = &keystroke.modifiers;
-    let meta = mods.control || mods.platform;
-    match keystroke.key.as_str() {
-        "backspace" if mods.platform => {
-            let edited = !buffer.is_empty();
-            buffer.clear();
-            edited
+/// The text of a one-line entry and its caret, a byte offset on a
+/// character boundary of the text.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Line {
+    text: String,
+    caret: usize,
+}
+
+impl Line {
+    /// `text` with the caret after its last character.
+    pub fn new(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Line {
+            caret: text.len(),
+            text,
         }
-        "backspace" if mods.control || mods.alt => pop_word(buffer),
-        "backspace" => buffer.pop().is_some(),
-        "v" if meta => clipboard().is_some_and(|text| push_one_line(buffer, &text)),
-        _ => match (&keystroke.key_char, meta) {
-            (Some(ch), false) => {
-                buffer.push_str(ch);
-                true
-            }
-            _ => false,
-        },
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The caret's byte offset in the text.
+    pub fn caret(&self) -> usize {
+        self.caret
+    }
+
+    /// The text before and after the caret.
+    pub fn split(&self) -> (&str, &str) {
+        self.text.split_at(self.caret)
+    }
+
+    /// Move the caret to `to`. Returns whether it moved.
+    fn move_to(&mut self, to: usize) -> bool {
+        let moved = to != self.caret;
+        self.caret = to;
+        moved
+    }
+
+    /// Remove the text between the caret and `to`, on either side of
+    /// it. Returns whether anything was removed.
+    fn delete_to(&mut self, to: usize) -> bool {
+        let (from, to) = (self.caret.min(to), self.caret.max(to));
+        self.text.replace_range(from..to, "");
+        self.caret = from;
+        from < to
+    }
+
+    /// Insert `text` at the caret and move the caret past it. Returns
+    /// whether anything was inserted.
+    fn insert(&mut self, text: &str) -> bool {
+        self.text.insert_str(self.caret, text);
+        self.caret += text.len();
+        !text.is_empty()
+    }
+
+    /// The offset of the character boundary before the caret.
+    fn prev_char(&self) -> usize {
+        self.text[..self.caret]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(i, _)| i)
+    }
+
+    /// The offset of the character boundary after the caret.
+    fn next_char(&self) -> usize {
+        self.text[self.caret..]
+            .chars()
+            .next()
+            .map_or(self.caret, |c| self.caret + c.len_utf8())
+    }
+
+    /// The start of the word before the caret: back over the run of
+    /// characters that are not letters or digits, then over the run of
+    /// letters and digits before it, as readline's `backward-word`.
+    fn word_start(&self) -> usize {
+        let before = &self.text[..self.caret];
+        let word_end = before.trim_end_matches(|c: char| !c.is_alphanumeric());
+        word_end.trim_end_matches(char::is_alphanumeric).len()
+    }
+
+    /// The end of the word after the caret: forward over the run of
+    /// characters that are not letters or digits, then over the run of
+    /// letters and digits after it, as readline's `forward-word`.
+    fn word_end(&self) -> usize {
+        let after = &self.text[self.caret..];
+        let word = after.trim_start_matches(|c: char| !c.is_alphanumeric());
+        let rest = word.trim_start_matches(char::is_alphanumeric);
+        self.text.len() - rest.len()
     }
 }
 
-/// Remove the last word of `buffer` and what follows it: the trailing
-/// run of characters that are not letters or digits, then the run of
-/// letters and digits before it, as readline's `backward-kill-word`.
-/// Returns whether anything was removed.
-fn pop_word(buffer: &mut String) -> bool {
-    let len = buffer.len();
-    let word_end = buffer
-        .trim_end_matches(|c: char| !c.is_alphanumeric())
-        .len();
-    let start = buffer[..word_end]
-        .trim_end_matches(char::is_alphanumeric)
-        .len();
-    buffer.truncate(start);
-    start < len
+/// What a key press did to a one-line entry.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LineKey {
+    /// The key is not one the entry takes, or took nothing: no text to
+    /// remove, no room to move, an empty paste.
+    Ignored,
+    /// The caret moved; the text is unchanged.
+    Moved,
+    /// The text changed.
+    Edited,
 }
 
-/// Append pasted `text` to `buffer` as one line: each line break or tab
-/// is a space, a trailing line break is dropped, and other control
-/// characters are removed. Returns whether anything was appended.
-fn push_one_line(buffer: &mut String, text: &str) -> bool {
-    let before = buffer.len();
-    for (i, line) in text.lines().enumerate() {
+/// Apply a key press to a one-line text entry at its caret.
+///
+/// Left and Right move the caret a character, with Ctrl or Alt a word,
+/// and with Cmd to the start or end; Home and End move it to the start
+/// or end. Backspace removes the character before the caret, with Ctrl
+/// or Alt the word before it, and with Cmd everything before it; Delete
+/// removes the character after the caret, with Ctrl or Alt the word
+/// after it. Ctrl+V or Cmd+V inserts the text `clipboard` returns as
+/// one line, and a key that types a character without Ctrl or Cmd
+/// inserts it. Shift moves the caret as the key alone does: the entry
+/// has no selection. The caller restarts its caret on a move or edit,
+/// and clears a rejection on an edit.
+pub fn edit_line(
+    line: &mut Line,
+    keystroke: &Keystroke,
+    clipboard: impl FnOnce() -> Option<String>,
+) -> LineKey {
+    let mods = &keystroke.modifiers;
+    let meta = mods.control || mods.platform;
+    let word = mods.control || mods.alt;
+    let (moved, edited) = match keystroke.key.as_str() {
+        "left" if mods.platform => (line.move_to(0), false),
+        "left" if word => (line.move_to(line.word_start()), false),
+        "left" => (line.move_to(line.prev_char()), false),
+        "right" if mods.platform => (line.move_to(line.text.len()), false),
+        "right" if word => (line.move_to(line.word_end()), false),
+        "right" => (line.move_to(line.next_char()), false),
+        "home" => (line.move_to(0), false),
+        "end" => (line.move_to(line.text.len()), false),
+        "backspace" if mods.platform => (false, line.delete_to(0)),
+        "backspace" if word => (false, line.delete_to(line.word_start())),
+        "backspace" => (false, line.delete_to(line.prev_char())),
+        "delete" if word => (false, line.delete_to(line.word_end())),
+        "delete" => (false, line.delete_to(line.next_char())),
+        "v" if meta => (
+            false,
+            clipboard().is_some_and(|text| line.insert(&one_line(&text))),
+        ),
+        _ => match (&keystroke.key_char, meta) {
+            (Some(ch), false) => (false, line.insert(ch)),
+            _ => (false, false),
+        },
+    };
+    match (moved, edited) {
+        (_, true) => LineKey::Edited,
+        (true, false) => LineKey::Moved,
+        (false, false) => LineKey::Ignored,
+    }
+}
+
+/// Pasted `text` as one line: each line break or tab is a space, a
+/// trailing line break is dropped, and other control characters are
+/// removed.
+fn one_line(text: &str) -> String {
+    let mut line = String::with_capacity(text.len());
+    for (i, part) in text.lines().enumerate() {
         if i > 0 {
-            buffer.push(' ');
+            line.push(' ');
         }
-        buffer.extend(line.chars().filter_map(|c| match c {
+        line.extend(part.chars().filter_map(|c| match c {
             '\t' | '\r' => Some(' '),
             c if c.is_control() => None,
             c => Some(c),
         }));
     }
-    buffer.len() > before
+    line
 }
 
 #[cfg(test)]
 mod tests {
     use gpui::{Keystroke, Modifiers};
 
-    use super::{edit_line, ring_step};
+    use super::{edit_line, ring_step, Line, LineKey};
 
     // WHY: closes "Tab stalls at an end or skips a stop" for every ring
     // the keyboard moves, Home's tiles and the Settings controls: every
@@ -299,11 +415,15 @@ mod tests {
         }
     }
 
-    fn key(key: &str, key_char: Option<&str>, control: bool, platform: bool) -> Keystroke {
+    /// A keystroke of `key` typing `key_char`, with each modifier
+    /// `mods` names: "ctrl", "alt", "cmd", "shift".
+    fn key(key: &str, key_char: Option<&str>, mods: &str) -> Keystroke {
         Keystroke {
             modifiers: Modifiers {
-                control,
-                platform,
+                control: mods.contains("ctrl"),
+                alt: mods.contains("alt"),
+                platform: mods.contains("cmd"),
+                shift: mods.contains("shift"),
                 ..Modifiers::default()
             },
             key: key.into(),
@@ -311,19 +431,46 @@ mod tests {
         }
     }
 
-    /// The buffer after `start` takes `keystroke` with `clipboard` on
-    /// the clipboard, and whether the key edited it.
-    fn after(start: &str, keystroke: &Keystroke, clipboard: Option<&str>) -> (String, bool) {
-        let mut buffer = start.to_string();
-        let edited = edit_line(&mut buffer, keystroke, || clipboard.map(Into::into));
-        (buffer, edited)
+    /// The line `marked` writes, its caret at the `|`.
+    fn line(marked: &str) -> Line {
+        let caret = marked.find('|').expect("the marked line has a caret");
+        let mut line = Line::new(marked.replacen('|', "", 1));
+        line.caret = caret;
+        line
     }
 
-    /// A paste reaches a one-line entry as one line, from Ctrl+V and
-    /// Cmd+V alike, whatever line breaks, tabs, or control characters the
-    /// clipboard holds.
+    /// `line` written with a `|` at its caret.
+    fn marked(line: &Line) -> String {
+        let (before, after) = line.split();
+        format!("{before}|{after}")
+    }
+
+    /// The marked line after `start` takes `keystroke` with `clipboard`
+    /// on the clipboard, and what the key did.
+    fn after(start: &str, keystroke: &Keystroke, clipboard: Option<&str>) -> (String, LineKey) {
+        let mut line = line(start);
+        let key = edit_line(&mut line, keystroke, || clipboard.map(Into::into));
+        (marked(&line), key)
+    }
+
+    /// Check each `(start, keystroke, end, outcome)` case.
+    fn check(cases: &[(&str, Keystroke, &str, LineKey)]) {
+        for (start, keystroke, end, outcome) in cases {
+            assert_eq!(
+                after(start, keystroke, None),
+                (end.to_string(), *outcome),
+                "{start:?} + {} {:?}",
+                keystroke.key,
+                keystroke.modifiers
+            );
+        }
+    }
+
+    /// A paste reaches a one-line entry as one line at the caret, from
+    /// Ctrl+V and Cmd+V alike, whatever line breaks, tabs, or control
+    /// characters the clipboard holds.
     #[test]
-    fn a_paste_appends_the_clipboard_as_one_line() {
+    fn a_paste_inserts_the_clipboard_as_one_line_at_the_caret() {
         for (pasted, line) in [
             ("Launch day", "Launch day"),
             ("Launch day\n", "Launch day"),
@@ -335,101 +482,297 @@ mod tests {
             ("lone\rreturn", "lone return"),
             ("café ✓", "café ✓"),
         ] {
-            for (control, platform) in [(true, false), (false, true)] {
+            for mods in ["ctrl", "cmd"] {
+                let paste = key("v", Some("v"), mods);
                 assert_eq!(
-                    after("x ", &key("v", Some("v"), control, platform), Some(pasted)),
-                    (format!("x {line}"), true),
-                    "{pasted:?} with control {control} platform {platform}"
+                    after("x |", &paste, Some(pasted)),
+                    (format!("x {line}|"), LineKey::Edited),
+                    "{pasted:?} with {mods}"
+                );
+                assert_eq!(
+                    after("x |.png", &paste, Some(pasted)),
+                    (format!("x {line}|.png"), LineKey::Edited),
+                    "{pasted:?} with {mods} before more text"
                 );
             }
         }
     }
 
-    /// Keys other than a paste type, delete, or do nothing; a paste of
-    /// nothing edits nothing.
+    /// Keys other than a paste type at the caret, delete, or do nothing;
+    /// a paste of nothing edits nothing.
     #[test]
-    fn typing_and_backspace_edit_and_chords_do_not() {
+    fn typing_and_backspace_edit_at_the_caret_and_chords_do_not() {
         let cases = [
-            ("ab", key("c", Some("c"), false, false), None, "abc", true),
             (
-                "ab",
-                key("v", Some("v"), false, false),
+                "ab|",
+                key("c", Some("c"), ""),
+                None,
+                "abc|",
+                LineKey::Edited,
+            ),
+            (
+                "a|c",
+                key("b", Some("b"), ""),
+                None,
+                "ab|c",
+                LineKey::Edited,
+            ),
+            (
+                "|b",
+                key("a", Some("A"), "shift"),
+                None,
+                "A|b",
+                LineKey::Edited,
+            ),
+            (
+                "ab|",
+                key("v", Some("v"), ""),
                 Some("zz"),
-                "abv",
-                true,
+                "abv|",
+                LineKey::Edited,
             ),
-            ("ab", key("backspace", None, false, false), None, "a", true),
-            ("", key("backspace", None, false, false), None, "", false),
-            ("ab", key("c", Some("c"), true, false), None, "ab", false),
-            ("ab", key("a", Some("a"), false, true), None, "ab", false),
-            ("ab", key("v", Some("v"), true, false), None, "ab", false),
             (
-                "ab",
-                key("v", Some("v"), true, false),
+                "ab|",
+                key("backspace", None, ""),
+                None,
+                "a|",
+                LineKey::Edited,
+            ),
+            (
+                "a|b",
+                key("backspace", None, ""),
+                None,
+                "|b",
+                LineKey::Edited,
+            ),
+            (
+                "|ab",
+                key("backspace", None, ""),
+                None,
+                "|ab",
+                LineKey::Ignored,
+            ),
+            ("|", key("backspace", None, ""), None, "|", LineKey::Ignored),
+            (
+                "ab|",
+                key("c", Some("c"), "ctrl"),
+                None,
+                "ab|",
+                LineKey::Ignored,
+            ),
+            (
+                "ab|",
+                key("a", Some("a"), "cmd"),
+                None,
+                "ab|",
+                LineKey::Ignored,
+            ),
+            (
+                "ab|",
+                key("v", Some("v"), "ctrl"),
+                None,
+                "ab|",
+                LineKey::Ignored,
+            ),
+            (
+                "ab|",
+                key("v", Some("v"), "ctrl"),
                 Some(""),
-                "ab",
-                false,
+                "ab|",
+                LineKey::Ignored,
             ),
             (
-                "ab",
-                key("v", Some("v"), true, false),
+                "ab|",
+                key("v", Some("v"), "ctrl"),
                 Some("\n"),
-                "ab",
-                false,
+                "ab|",
+                LineKey::Ignored,
             ),
-            ("ab", key("left", None, false, false), None, "ab", false),
+            ("a|b", key("up", None, ""), None, "a|b", LineKey::Ignored),
+            ("a|b", key("down", None, ""), None, "a|b", LineKey::Ignored),
         ];
-        for (start, keystroke, clipboard, buffer, edited) in cases {
+        for (start, keystroke, clipboard, end, outcome) in cases {
             assert_eq!(
                 after(start, &keystroke, clipboard),
-                (buffer.to_string(), edited),
+                (end.to_string(), outcome),
                 "{start:?} + {keystroke:?} with {clipboard:?}"
             );
         }
     }
 
-    /// Backspace with Ctrl or Alt removes the last word and what follows
-    /// it, a word being letters and digits; with Cmd it removes the line.
-    /// A plain Backspace removes one character, whatever it is.
+    /// Backspace with Ctrl or Alt removes the word before the caret and
+    /// what follows it up to the caret, a word being letters and digits;
+    /// with Cmd it removes everything before the caret. A plain Backspace
+    /// removes one character, whatever it is. Text after the caret stays.
     #[test]
-    fn a_modified_backspace_removes_the_last_word_or_the_line() {
-        let backspace = |control, alt, platform| Keystroke {
-            modifiers: Modifiers {
-                control,
-                alt,
-                platform,
-                ..Modifiers::default()
-            },
-            key: "backspace".into(),
-            key_char: None,
-        };
-        let (plain, ctrl, alt, cmd) = (
-            backspace(false, false, false),
-            backspace(true, false, false),
-            backspace(false, true, false),
-            backspace(false, false, true),
+    fn a_modified_backspace_removes_the_word_or_the_text_before_the_caret() {
+        let backspace = |mods| key("backspace", None, mods);
+        check(&[
+            (
+                "hello world|",
+                backspace("ctrl"),
+                "hello |",
+                LineKey::Edited,
+            ),
+            ("hello world|", backspace("alt"), "hello |", LineKey::Edited),
+            (
+                "hello world  |",
+                backspace("ctrl"),
+                "hello |",
+                LineKey::Edited,
+            ),
+            (
+                "hello wor|ld",
+                backspace("ctrl"),
+                "hello |ld",
+                LineKey::Edited,
+            ),
+            ("hello |world", backspace("alt"), "|world", LineKey::Edited),
+            (
+                "~/Pictures/Screenshots/|",
+                backspace("ctrl"),
+                "~/Pictures/|",
+                LineKey::Edited,
+            ),
+            (
+                "{date}_{time}|",
+                backspace("alt"),
+                "{date}_{|",
+                LineKey::Edited,
+            ),
+            ("naïve café|", backspace("ctrl"), "naïve |", LineKey::Edited),
+            ("shot2024|", backspace("ctrl"), "|", LineKey::Edited),
+            ("--- |", backspace("ctrl"), "|", LineKey::Edited),
+            ("|", backspace("ctrl"), "|", LineKey::Ignored),
+            ("|ab", backspace("alt"), "|ab", LineKey::Ignored),
+            ("ab cd|", backspace("cmd"), "|", LineKey::Edited),
+            ("ab |cd", backspace("cmd"), "|cd", LineKey::Edited),
+            ("|cd", backspace("cmd"), "|cd", LineKey::Ignored),
+            ("café|", backspace(""), "caf|", LineKey::Edited),
+            ("caf|é", backspace(""), "ca|é", LineKey::Edited),
+        ]);
+    }
+
+    /// Delete removes the character after the caret, and with Ctrl or
+    /// Alt the word after it and what precedes that word.
+    #[test]
+    fn delete_removes_the_character_or_the_word_after_the_caret() {
+        let delete = |mods| key("delete", None, mods);
+        check(&[
+            ("a|bc", delete(""), "a|c", LineKey::Edited),
+            ("caf|é!", delete(""), "caf|!", LineKey::Edited),
+            ("abc|", delete(""), "abc|", LineKey::Ignored),
+            ("|hello world", delete("ctrl"), "| world", LineKey::Edited),
+            ("hello| world", delete("alt"), "hello|", LineKey::Edited),
+            (
+                "{date}|_{time}.png",
+                delete("ctrl"),
+                "{date}|}.png",
+                LineKey::Edited,
+            ),
+            ("he|llo world", delete("ctrl"), "he| world", LineKey::Edited),
+            ("ab|--", delete("alt"), "ab|", LineKey::Edited),
+            ("ab|", delete("ctrl"), "ab|", LineKey::Ignored),
+        ]);
+    }
+
+    /// Left and Right move the caret a character, with Ctrl or Alt a
+    /// word, and with Cmd to an end; Home and End move it to an end.
+    /// Shift moves it as the key alone does. None of them changes the
+    /// text, and a move with no room is ignored.
+    #[test]
+    fn arrows_home_and_end_move_the_caret_without_editing() {
+        let (left, right) = (
+            |mods| key("left", None, mods),
+            |mods| key("right", None, mods),
         );
-        let cases = [
-            ("hello world", &ctrl, "hello ", true),
-            ("hello world", &alt, "hello ", true),
-            ("hello world  ", &ctrl, "hello ", true),
-            ("~/Pictures/Screenshots/", &ctrl, "~/Pictures/", true),
-            ("{date}_{time}", &alt, "{date}_{", true),
-            ("naïve café", &ctrl, "naïve ", true),
-            ("shot2024", &ctrl, "", true),
-            ("--- ", &ctrl, "", true),
-            ("", &ctrl, "", false),
-            ("ab cd", &cmd, "", true),
-            ("", &cmd, "", false),
-            ("café", &plain, "caf", true),
+        check(&[
+            ("ab|c", left(""), "a|bc", LineKey::Moved),
+            ("ab|c", left("shift"), "a|bc", LineKey::Moved),
+            ("café|", left(""), "caf|é", LineKey::Moved),
+            ("|abc", left(""), "|abc", LineKey::Ignored),
+            ("a|bc", right(""), "ab|c", LineKey::Moved),
+            ("caf|é", right(""), "café|", LineKey::Moved),
+            ("abc|", right("shift"), "abc|", LineKey::Ignored),
+            ("hello world|", left("ctrl"), "hello |world", LineKey::Moved),
+            ("hello |world", left("alt"), "|hello world", LineKey::Moved),
+            ("hello wo|rld", left("ctrl"), "hello |world", LineKey::Moved),
+            ("~/Pictures/|", left("ctrl"), "~/|Pictures/", LineKey::Moved),
+            ("--|", left("ctrl"), "|--", LineKey::Moved),
+            (
+                "|hello world",
+                right("ctrl"),
+                "hello| world",
+                LineKey::Moved,
+            ),
+            ("hello| world", right("alt"), "hello world|", LineKey::Moved),
+            (
+                "{date}|_{time}",
+                right("ctrl"),
+                "{date}_{time|}",
+                LineKey::Moved,
+            ),
+            ("naï|ve café", right("ctrl"), "naïve| café", LineKey::Moved),
+            ("ab|--", right("alt"), "ab--|", LineKey::Moved),
+            ("ab cd|", left("cmd"), "|ab cd", LineKey::Moved),
+            ("|ab cd", right("cmd"), "ab cd|", LineKey::Moved),
+            ("|abc", left("cmd"), "|abc", LineKey::Ignored),
+            ("ab|c", key("home", None, ""), "|abc", LineKey::Moved),
+            ("ab|c", key("end", None, "shift"), "abc|", LineKey::Moved),
+            ("|abc", key("home", None, ""), "|abc", LineKey::Ignored),
+            ("abc|", key("end", None, ""), "abc|", LineKey::Ignored),
+        ]);
+    }
+
+    // WHY: closes "a caret key lands between the bytes of a character
+    // or reports the wrong outcome" for every key the entry takes, with
+    // every modifier, from every caret position of text with one-, two-,
+    // three-, and four-byte characters. The caret stays on a character
+    // boundary of the text, a move leaves the text, an edit changes it,
+    // and an ignored key changes nothing, so the caller's caret restart
+    // and rejection reset follow what happened.
+    #[test]
+    fn every_key_leaves_the_caret_on_a_character_boundary() {
+        let keys = [
+            "left",
+            "right",
+            "home",
+            "end",
+            "backspace",
+            "delete",
+            "v",
+            "x",
         ];
-        for (start, keystroke, buffer, edited) in cases {
-            assert_eq!(
-                after(start, keystroke, None),
-                (buffer.to_string(), edited),
-                "{start:?} + {:?}",
-                keystroke.modifiers
-            );
+        let mods = ["", "shift", "ctrl", "alt", "cmd", "ctrl shift", "alt shift"];
+        for text in ["", "a", "ab cd", "naïve—café ✓ 𝄞x", "--_{date}"] {
+            let carets = text.char_indices().map(|(i, _)| i).chain([text.len()]);
+            for caret in carets {
+                for name in keys {
+                    for mods in mods {
+                        let mut line = Line::new(text);
+                        line.caret = caret;
+                        let typed = (name == "x").then_some("é");
+                        let keystroke = key(name, typed, mods);
+                        let outcome = edit_line(&mut line, &keystroke, || Some("ü\n".into()));
+                        let at = format!("{text:?} at {caret} + {mods} {name}");
+                        assert!(
+                            line.text().is_char_boundary(line.caret()),
+                            "{at}: caret {} is inside a character",
+                            line.caret()
+                        );
+                        match outcome {
+                            LineKey::Ignored => {
+                                assert_eq!((line.text(), line.caret()), (text, caret), "{at}")
+                            }
+                            LineKey::Moved => {
+                                assert_eq!(line.text(), text, "{at}");
+                                assert_ne!(line.caret(), caret, "{at}");
+                            }
+                            LineKey::Edited => assert_ne!(line.text(), text, "{at}"),
+                        }
+                    }
+                }
+            }
         }
     }
 }

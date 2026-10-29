@@ -59,11 +59,12 @@ Selecting an annotation with the Select tool shows its color, stroke width, and 
 
 ## Text Tool
 
-Clicking the canvas while the Text tool is active sets an insertion point and displays a blinking bar caret after the text. The caret blinks at approximately 1 Hz via an internal timer.
+Clicking the canvas while the Text tool is active sets an insertion point and displays a blinking bar caret. The caret blinks at approximately 1 Hz via an internal timer.
 
-- Type characters to append them to the text buffer.
-- `Ctrl+V` or `Cmd+V` appends the clipboard's text. A label is one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed.
-- `Backspace` deletes the preceding character. `Ctrl+Backspace` (`Option+Backspace` on macOS) deletes the last word, a run of letters and digits, with the spaces and punctuation after it, and `Cmd+Backspace` on macOS deletes the whole label.
+- Type characters to insert them at the caret.
+- `Left` and `Right` move the caret one character, `Ctrl+Left` and `Ctrl+Right` (`Option` on macOS) one word, and `Home` and `End` (`Cmd+Left` and `Cmd+Right` on macOS) to the start or end of the label. `Shift` with these keys moves the caret the same way; a label has no selection.
+- `Ctrl+V` or `Cmd+V` inserts the clipboard's text at the caret. A label is one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed.
+- `Backspace` deletes the character before the caret and `Delete` the character after it. `Ctrl+Backspace` and `Ctrl+Delete` (`Option` on macOS) delete the word before or after the caret, a run of letters and digits, with the spaces and punctuation between it and the caret, and `Cmd+Backspace` on macOS deletes everything before the caret.
 - `Enter` commits the text to the canvas.
 - `Escape` cancels text entry and discards uncommitted buffer text.
 - Clicking the backdrop outside the canvas commits non-empty text.

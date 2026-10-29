@@ -53,8 +53,11 @@ impl Editor {
                 _ => {
                     if let Some(entry) = &mut self.text_entry {
                         let paste = || cx.read_from_clipboard().and_then(|item| item.text());
-                        if widgets::edit_line(&mut entry.buffer, &ev.keystroke, paste) {
-                            entry.buffer_str = SharedString::from(entry.buffer.clone());
+                        let key = widgets::edit_line(&mut entry.line, &ev.keystroke, paste);
+                        if key == widgets::LineKey::Edited {
+                            entry.buffer_str = SharedString::from(entry.line.text().to_string());
+                        }
+                        if key != widgets::LineKey::Ignored {
                             self.caret_started = Instant::now();
                         }
                     }

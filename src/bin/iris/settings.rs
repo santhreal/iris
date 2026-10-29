@@ -78,11 +78,12 @@ impl Field {
     }
 }
 
-/// A text field's edit in progress: the field and the typed text.
+/// A text field's edit in progress: the field and the typed text with
+/// its caret.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Edit {
     pub(super) field: Field,
-    pub(super) text: String,
+    pub(super) line: crate::widgets::Line,
 }
 
 pub struct Settings {

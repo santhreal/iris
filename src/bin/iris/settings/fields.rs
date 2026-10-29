@@ -183,7 +183,7 @@ impl Settings {
         let Some(edit) = self.editing.take() else {
             return true;
         };
-        let text = edit.text.trim();
+        let text = edit.line.text().trim();
         if text == self.field_text(edit.field) {
             self.rejected = None;
             return true;
@@ -234,7 +234,7 @@ impl Settings {
         self.open_pick = None;
         self.editing = Some(Edit {
             field,
-            text: self.field_text(field),
+            line: widgets::Line::new(self.field_text(field)),
         });
     }
 
@@ -537,7 +537,7 @@ impl Settings {
                 }
                 _ => {
                     let paste = || cx.read_from_clipboard().and_then(|item| item.text());
-                    if widgets::edit_line(&mut edit.text, ks, paste) {
+                    if widgets::edit_line(&mut edit.line, ks, paste) == widgets::LineKey::Edited {
                         self.rejected = None;
                     }
                 }
@@ -639,9 +639,10 @@ impl Settings {
         let reason = self.reason(field);
         let (text, state) = match self.editing.as_ref().filter(|e| e.field == field) {
             Some(edit) => (
-                edit.text.clone(),
+                edit.line.text().to_string(),
                 widgets::FieldState::Editing {
                     invalid: reason.is_some(),
+                    caret: edit.line.caret(),
                 },
             ),
             None => (self.field_text(field), widgets::FieldState::Rest),

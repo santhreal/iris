@@ -641,7 +641,7 @@ impl Editor {
         let Some(entry) = self.text_entry.take() else {
             return;
         };
-        let value = entry.buffer.trim();
+        let value = entry.line.text().trim();
         if let Some(i) = entry.edits {
             if keep {
                 self.settle_text_edit(i, value);
@@ -686,7 +686,7 @@ impl Editor {
             self.color = a.color;
             TextEntry {
                 point,
-                buffer: text.to_string(),
+                line: crate::widgets::Line::new(text.to_string()),
                 buffer_str: text,
                 edits: Some(i),
             }
