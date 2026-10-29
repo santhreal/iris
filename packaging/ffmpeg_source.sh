@@ -4,6 +4,9 @@
 
 FFMPEG_SOURCE_URL=https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
 FFMPEG_SOURCE_SHA=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+# Byte-identical copies of the FFmpeg release archive, tried in turn
+# when ffmpeg.org fails. FFMPEG_SOURCE_SHA checks each of them.
+FFMPEG_SOURCE_MIRRORS="https://distfiles.gentoo.org/distfiles/62/ffmpeg-9.0.2.tar.xz https://deb.debian.org/debian/pool/main/f/ffmpeg/ffmpeg_9.0.2.orig.tar.xz"
 X264_SOURCE_URL=https://github.com/mirror/x264/archive/0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz
 X264_SOURCE_SHA=d0967a1348c85dfde363bb52610403be898171493100561efa0dd05d5fd1ae50
 VPX_SOURCE_URL=https://github.com/webmproject/libvpx/archive/refs/tags/v1.15.2.tar.gz
@@ -33,15 +36,16 @@ iris_ffmpeg_source_cleanup() {
 # Downloads every pinned source archive and extracts it into WORK.
 iris_ffmpeg_source_extract() {
   local root=$1 work=$2 cache="$1/.build-staging/ffmpeg-source"
-  local spec file url sha archive
+  local spec file url sha mirrors archive
   for spec in \
-    "ffmpeg-9.0.2.tar.xz|$FFMPEG_SOURCE_URL|$FFMPEG_SOURCE_SHA" \
-    "x264-0480cb05.tar.gz|$X264_SOURCE_URL|$X264_SOURCE_SHA" \
-    "libvpx-1.15.2.tar.gz|$VPX_SOURCE_URL|$VPX_SOURCE_SHA" \
-    "opus-1.6.1.tar.gz|$OPUS_SOURCE_URL|$OPUS_SOURCE_SHA" \
-    "zlib-1.3.1.tar.gz|$ZLIB_SOURCE_URL|$ZLIB_SOURCE_SHA"; do
-    IFS='|' read -r file url sha <<<"$spec"
-    iris_fetch_sha256 "$url" "$sha" "$cache/$file"
+    "ffmpeg-9.0.2.tar.xz|$FFMPEG_SOURCE_URL|$FFMPEG_SOURCE_SHA|$FFMPEG_SOURCE_MIRRORS" \
+    "x264-0480cb05.tar.gz|$X264_SOURCE_URL|$X264_SOURCE_SHA|" \
+    "libvpx-1.15.2.tar.gz|$VPX_SOURCE_URL|$VPX_SOURCE_SHA|" \
+    "opus-1.6.1.tar.gz|$OPUS_SOURCE_URL|$OPUS_SOURCE_SHA|" \
+    "zlib-1.3.1.tar.gz|$ZLIB_SOURCE_URL|$ZLIB_SOURCE_SHA|"; do
+    IFS='|' read -r file url sha mirrors <<<"$spec"
+    # shellcheck disable=SC2086 # MIRRORS is a space-separated URL list.
+    iris_fetch_sha256 "$url" "$sha" "$cache/$file" $mirrors
   done
   for archive in ffmpeg-9.0.2.tar.xz x264-0480cb05.tar.gz libvpx-1.15.2.tar.gz opus-1.6.1.tar.gz zlib-1.3.1.tar.gz; do
     tar -xf "$cache/$archive" -C "$work"

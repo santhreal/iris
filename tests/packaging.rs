@@ -1121,6 +1121,211 @@ fn source_download_bounds_persistent_tls_eof() {
     );
 }
 
+/// WHY: the FFmpeg source came from ffmpeg.org alone. When ffmpeg.org
+/// stopped accepting connections, every FFmpeg runtime build failed
+/// after its retries on every platform, though Gentoo and Debian serve
+/// the same release archive. A download now falls back to each mirror in
+/// turn, checked against the same pinned hash, and the FFmpeg archive
+/// names its mirrors. These cases cover a failed origin, an origin that
+/// serves other bytes, a mirror that fails before one that works, every
+/// source failing, and the mirrors the FFmpeg build passes. A served
+/// file is accepted only when its hash matches.
+///
+/// Not caught: a mirror that disappears (the package workflow's source
+/// cache and the origin both stand in for it) and the wget fallback.
+struct Mirrors {
+    dir: tempfile::TempDir,
+    shim: PathBuf,
+    served: PathBuf,
+    log: PathBuf,
+}
+
+impl Mirrors {
+    /// A curl on PATH that writes `served/<host>` for a URL on `host`,
+    /// fails with a connect error for any other host, and logs every URL.
+    fn new() -> Self {
+        require(&["bash", "sha256sum", "cut"]);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = dir.path().join("bin");
+        let served = dir.path().join("served");
+        std::fs::create_dir(&shim).expect("mkdir shims");
+        std::fs::create_dir(&served).expect("mkdir served");
+        fixture(
+            &shim,
+            "curl",
+            br#"#!/bin/sh
+out=
+url=
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) out=$2; shift 2 ;;
+    --retry|--connect-timeout) shift 2 ;;
+    -*) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+printf '%s\n' "$url" >>"$CURL_LOG"
+host=${url#*://}
+host=${host%%/*}
+[ -f "$CURL_SERVED/$host" ] || exit 7
+cat "$CURL_SERVED/$host" >"$out"
+"#,
+        );
+        let log = dir.path().join("log");
+        Mirrors {
+            dir,
+            shim,
+            served,
+            log,
+        }
+    }
+
+    fn serve(&self, host: &str, bytes: &[u8]) {
+        std::fs::write(self.served.join(host), bytes).expect("write served file");
+    }
+
+    /// Runs `script` under `set -euo pipefail` with the shim first on
+    /// PATH and lib.sh sourced; `args` are $1...
+    fn run(&self, script: &str, args: &[&OsStr]) -> (Output, String) {
+        let out = bash(
+            "022",
+            &format!(
+                "set -euo pipefail\nexport PATH=\"{}:$PATH\" CURL_LOG=\"{}\" CURL_SERVED=\"{}\"\n\
+                 . packaging/lib.sh\n{script}",
+                self.shim.display(),
+                self.log.display(),
+                self.served.display()
+            ),
+            args,
+        );
+        let log = std::fs::read_to_string(&self.log).unwrap_or_default();
+        (out, log)
+    }
+
+    /// Fetches the pinned payload from origin.invalid, then `mirrors`.
+    fn fetch(&self, mirrors: &[&str]) -> (Output, String, PathBuf, String) {
+        let expected = self.dir.path().join("expected");
+        std::fs::write(&expected, b"pinned runtime\n").expect("write expected payload");
+        let sha = lib("iris_sha256_file", &[expected.as_os_str()]).expect("payload hash");
+        let file = self.dir.path().join("downloads/source.tar");
+        let mut args = vec![
+            OsStr::new("https://origin.invalid/pinned.tar"),
+            OsStr::new(sha.as_str()),
+            file.as_os_str(),
+        ];
+        args.extend(mirrors.iter().map(OsStr::new));
+        let (out, log) = self.run("iris_fetch_sha256 \"$@\"", &args);
+        (out, log, file, sha)
+    }
+}
+
+#[test]
+fn source_download_falls_back_to_a_mirror() {
+    let m = Mirrors::new();
+    m.serve("one.invalid", b"pinned runtime\n");
+    let (out, log, file, _) = m.fetch(&[
+        "https://one.invalid/pinned.tar",
+        "https://two.invalid/pinned.tar",
+    ]);
+    assert_success("fetch from a mirror", &out);
+    assert_eq!(
+        log,
+        "https://origin.invalid/pinned.tar\nhttps://one.invalid/pinned.tar\n"
+    );
+    assert_eq!(std::fs::read(&file).expect("payload"), b"pinned runtime\n");
+}
+
+#[test]
+fn source_download_rejects_other_bytes_and_tries_the_next_mirror() {
+    let m = Mirrors::new();
+    m.serve("origin.invalid", b"tampered runtime\n");
+    m.serve("two.invalid", b"pinned runtime\n");
+    let (out, log, file, sha) = m.fetch(&[
+        "https://one.invalid/pinned.tar",
+        "https://two.invalid/pinned.tar",
+    ]);
+    assert_success("fetch past a tampered origin", &out);
+    assert_eq!(
+        log,
+        "https://origin.invalid/pinned.tar\nhttps://one.invalid/pinned.tar\n\
+         https://two.invalid/pinned.tar\n"
+    );
+    assert_eq!(std::fs::read(&file).expect("payload"), b"pinned runtime\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Error: https://origin.invalid/pinned.tar has SHA-256 ")
+            && stderr.contains(&format!("not the pinned {sha}; deleted it")),
+        "the rejection does not state the source and the pinned hash:\n{stderr}"
+    );
+}
+
+#[test]
+fn source_download_fails_when_every_mirror_fails() {
+    let m = Mirrors::new();
+    m.serve("one.invalid", b"tampered runtime\n");
+    let (out, log, file, sha) = m.fetch(&[
+        "https://one.invalid/pinned.tar",
+        "https://two.invalid/pinned.tar",
+    ]);
+    assert!(
+        !out.status.success(),
+        "every source failed yet it succeeded"
+    );
+    assert_eq!(
+        log,
+        "https://origin.invalid/pinned.tar\nhttps://one.invalid/pinned.tar\n\
+         https://two.invalid/pinned.tar\n"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "Error: downloading https://origin.invalid/pinned.tar and its mirrors \
+             https://one.invalid/pinned.tar https://two.invalid/pinned.tar failed; \
+             rerun the build, or save the file with SHA-256 {sha} as {}",
+            file.display()
+        )),
+        "the failure does not state every source, the hash, and the path:\n{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_dir(file.parent().expect("download directory"))
+            .expect("read download directory")
+            .count(),
+        0,
+        "a failed download left a final or partial payload"
+    );
+}
+
+/// The FFmpeg archive is fetched from ffmpeg.org, then from every mirror
+/// in FFMPEG_SOURCE_MIRRORS, before the build fails.
+#[test]
+fn ffmpeg_source_tries_its_mirrors() {
+    let m = Mirrors::new();
+    let root = m.dir.path().join("root");
+    let work = m.dir.path().join("work");
+    std::fs::create_dir_all(&work).expect("mkdir work");
+    let (out, log) = m.run(
+        ". packaging/ffmpeg_source.sh\n\
+         printf '%s\\n' \"$FFMPEG_SOURCE_URL\" $FFMPEG_SOURCE_MIRRORS >\"$3\"\n\
+         iris_ffmpeg_source_extract \"$1\" \"$2\"",
+        &[
+            root.as_os_str(),
+            work.as_os_str(),
+            m.dir.path().join("sources").as_os_str(),
+        ],
+    );
+    assert!(
+        !out.status.success(),
+        "no source was served yet it succeeded"
+    );
+    let sources = std::fs::read_to_string(m.dir.path().join("sources")).expect("sources");
+    assert_eq!(
+        sources.lines().count(),
+        3,
+        "the FFmpeg archive has fewer than two mirrors:\n{sources}"
+    );
+    assert_eq!(log, sources, "the build did not try every FFmpeg source");
+}
+
 /// WHY: the AppImage embeds the type2-runtime and is assembled by
 /// appimagetool, both downloaded while it builds. They came from the
 /// moving `continuous` releases with no checksum, so a release AppImage

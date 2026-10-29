@@ -126,43 +126,50 @@ iris_sha256_file() {
   fi
 }
 
-# iris_fetch_sha256 URL SHA256 FILE
+# iris_fetch_sha256 URL SHA256 FILE [MIRROR...]
 # Downloads URL to FILE unless a cached FILE already has SHA256. The
 # download goes to a temporary sibling and replaces FILE only after its
 # hash matches. A rejected temporary file is deleted. A download makes
 # seven attempts; curl retries every error, a TLS reset included, after
-# a delay that doubles from one second.
+# a delay that doubles from one second. When URL fails or serves other
+# bytes, each MIRROR is tried in turn under the same rules; a mirror
+# serves the same file, so SHA256 checks it as it checks URL.
 iris_fetch_sha256() {
-  local url=$1 want=$2 file=$3 actual tmp
+  local url=$1 want=$2 file=$3 actual tmp source
+  shift 3
   if [[ -f "$file" ]] && [[ "$(iris_sha256_file "$file")" == "$want" ]]; then
     return 0
   fi
   rm -f "$file"
   mkdir -p "$(dirname "$file")"
   tmp="$file.part.$$"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 -o "$tmp" "$url" || {
-      rm -f "$tmp"
-      echo "Error: downloading $url failed; rerun the build, or save the file with SHA-256 $want as $file" >&2
-      return 1
-    }
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q --tries=7 --timeout=20 -O "$tmp" "$url" || {
-      rm -f "$tmp"
-      echo "Error: downloading $url failed; rerun the build, or save the file with SHA-256 $want as $file" >&2
-      return 1
-    }
-  else
+  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     echo "Error: downloading $url requires curl or wget" >&2
     return 1
   fi
-  actual=$(iris_sha256_file "$tmp")
-  if [[ "$actual" != "$want" ]]; then
-    echo "Error: $url has SHA-256 $actual, not the pinned $want; deleted it" >&2
+  for source in "$url" "$@"; do
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 -o "$tmp" "$source"
+    else
+      wget -q --tries=7 --timeout=20 -O "$tmp" "$source"
+    fi || {
+      rm -f "$tmp"
+      continue
+    }
+    actual=$(iris_sha256_file "$tmp")
+    if [[ "$actual" == "$want" ]]; then
+      mv "$tmp" "$file"
+      return 0
+    fi
+    echo "Error: $source has SHA-256 $actual, not the pinned $want; deleted it" >&2
     rm -f "$tmp"
-    return 1
+  done
+  if (($#)); then
+    echo "Error: downloading $url and its mirrors $* failed; rerun the build, or save the file with SHA-256 $want as $file" >&2
+  else
+    echo "Error: downloading $url failed; rerun the build, or save the file with SHA-256 $want as $file" >&2
   fi
-  mv "$tmp" "$file"
+  return 1
 }
 
 # iris_ffmpeg_bin DIR [EXE_SUFFIX]
