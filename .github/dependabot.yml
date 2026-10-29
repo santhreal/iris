@@ -10,6 +10,11 @@ updates:
       cargo:
         patterns: ["*"]
         update-types: [minor, patch]
+    # blocking stays on 1.6 (Cargo.toml): a 1.7 pool thread wakes every
+    # 500 ms for the life of the process. tests/idle.rs fails on 1.7.
+    ignore:
+      - dependency-name: blocking
+        versions: [">= 1.7"]
 
   # Every action update arrives as one pull request a week, the pinned
   # commit SHA and its version comment updated together.
