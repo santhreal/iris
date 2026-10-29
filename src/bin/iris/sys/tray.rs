@@ -66,7 +66,7 @@ const MENU: &[Row] = &[
         when: When::Always,
     },
     Row::Item {
-        label: "Record Window",
+        label: crate::sys::record::START_TITLE,
         command: Command::RecordToggle,
         when: When::Idle,
     },

@@ -22,7 +22,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `Ctrl+Backspace` or `Option+Backspace` in the editor's text entry and in a Settings text field deletes the last word, and `Cmd+Backspace` deletes the whole text.
 - `Up`, `Down`, `Return`, and `Space` move through and choose from an open menu: a Settings pop-up, the editor's Copy and More menus, and the Library's context menu.
 - Window and region recording through ffmpeg writes MP4, GIF, or WebM, with pause, a microphone toggle, and an indicator chip that is excluded from the recording where the platform allows it.
-- The tray menu shows Stop Recording in place of Record Window while a recording runs.
+- The tray menu shows Stop Recording in place of Record Window, or Record Screen on Windows and macOS, while a recording runs.
 - A touchpad pinch zooms the editor's image about the pinch center.
 - The capture library shows every capture in a thumbnail grid with multiple selection, file drag-out, copy, and reveal in the file manager.
 - The library has keyboard navigation, a context menu on each card, and a Quick Look preview on `Space`.
@@ -32,7 +32,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The Windows installer creates a desktop shortcut from a checkbox on its last page or from `/DESKTOP` in a silent installation.
 - Moving a capture to the trash from the library or the toast moves the file to the freedesktop Trash on Linux, the Trash on macOS, or the Recycle Bin on Windows, where the file manager can restore it.
 - Every window sets its text in the bundled Inter typeface, and the editor's text tool draws in Inter Bold.
-- The home window shows the app icon, the running version, and New Screenshot, Record Window, and Library tiles captioned with their shortcuts.
+- The home window shows the app icon, the running version, and New Screenshot, Record Window (Record Screen on Windows and macOS), and Library tiles captioned with their shortcuts.
 - The home, settings, library, and editor windows share one toolbar control style.
 - The settings window groups its options in General, Capture, Recording, Shortcuts, and Updates panes selected from its toolbar.
 - The settings window writes each change to `config.toml` as it is made: a toggle or menu choice on the click, a text field on `Return` or when it loses focus, and a shortcut when it is pressed.
@@ -65,7 +65,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - Library hover animations no longer skip after an idle window.
 - Concurrent captures and recordings reserve distinct output files instead of overwriting a file selected for the same timestamp.
 - A failed portable Windows update preserves and reports recovery files instead of deleting them during cleanup or a retry.
-- The New Screenshot and Record Window tiles close the home window, and the library's New Screenshot button closes the library, before the capture starts, so neither appears in the frozen frame.
+- The New Screenshot and Record Window or Record Screen tiles close the home window, and the library's New Screenshot button closes the library, before the capture starts, so neither appears in the frozen frame.
 - The capture overlay opens with the window under a resting pointer snapped and the pointer readout at the pointer, instead of waiting for the pointer to move.
 - An X11 window pick ignores a click on a menu, a tooltip, or an iris card.
 - An icon in a row whose text overflows keeps its size instead of shrinking to a sliver, as the folder glyph in the settings window's storage rows did.

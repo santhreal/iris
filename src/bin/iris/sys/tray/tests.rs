@@ -15,6 +15,14 @@ fn debug(cmd: Option<crate::daemon::Command>) -> String {
     format!("{cmd:?}")
 }
 
+/// The record row's label: Linux records a picked window, Windows and
+/// macOS the desktop.
+const RECORD: &str = if cfg!(target_os = "linux") {
+    "Record Window"
+} else {
+    "Record Screen"
+};
+
 #[test]
 fn every_row_id_maps_to_that_rows_command() {
     for (id, row) in rows() {
@@ -81,7 +89,7 @@ fn each_label_runs_its_documented_command() {
         menu,
         [
             "New Screenshot: Capture (Always)",
-            "Record Window: RecordToggle (Idle)",
+            format!("{RECORD}: RecordToggle (Idle)").as_str(),
             "Stop Recording: RecordStop (Recording)",
             "Library: Library (Always)",
             "Settings: Settings (Always)",
@@ -122,7 +130,7 @@ fn the_drawn_rows_follow_the_offer_and_the_recording() {
     };
     let plain: Vec<(usize, String)> = [
         (1, "New Screenshot"),
-        (2, "Record Window"),
+        (2, RECORD),
         (4, "Library"),
         (5, "Settings"),
         (7, "---"),
@@ -176,7 +184,8 @@ fn the_drawn_rows_follow_the_offer_and_the_recording() {
     assert_eq!(labels(drawn()), plain, "an offer withdrawn");
 }
 
-/// The usage chapter's tray table lists the item labels in menu order.
+/// The usage chapter's tray table lists the item labels in menu order. A
+/// row's first cell names the item in bold, once per platform label.
 #[test]
 fn the_usage_chapter_lists_every_item_in_order() {
     let doc = include_str!("../../../../../docs/usage.md");
@@ -184,14 +193,14 @@ fn the_usage_chapter_lists_every_item_in_order() {
         .split_once("The tray menu holds the same actions:")
         .expect("usage.md introduces the tray table")
         .1;
-    let documented: Vec<&str> = table
+    let documented: Vec<Vec<&str>> = table
         .lines()
         .skip_while(|l| !l.starts_with('|'))
         .take_while(|l| l.starts_with('|'))
         .filter_map(|l| {
-            l.strip_prefix("| **")?
-                .split_once("**")
-                .map(|(label, _)| label)
+            let cell = l.split('|').nth(1)?;
+            let labels: Vec<&str> = cell.split("**").skip(1).step_by(2).collect();
+            (!labels.is_empty()).then_some(labels)
         })
         .collect();
     let shipped: Vec<&str> = MENU
@@ -202,5 +211,8 @@ fn the_usage_chapter_lists_every_item_in_order() {
             Row::Separator => None,
         })
         .collect();
-    assert_eq!(documented, shipped);
+    assert_eq!(documented.len(), shipped.len(), "{documented:?}");
+    for (labels, label) in documented.iter().zip(&shipped) {
+        assert!(labels.contains(label), "{label:?} is not in {labels:?}");
+    }
 }

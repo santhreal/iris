@@ -24,6 +24,21 @@ use desktop as native;
 #[cfg(target_os = "linux")]
 use linux as native;
 
+/// The name of the command that starts a recording (the home tile, the
+/// tray menu, the settings, the shortcut sheet), after what it records: a
+/// picked window on Linux, the desktop on Windows and macOS. Title Case
+/// for the tile and the menu row, sentence case for a setting.
+pub const START_TITLE: &str = if cfg!(target_os = "linux") {
+    "Record Window"
+} else {
+    "Record Screen"
+};
+pub const START_NAME: &str = if cfg!(target_os = "linux") {
+    "Record window"
+} else {
+    "Record screen"
+};
+
 /// The parameters every source shares: output path under the
 /// configured template, frame rate, mic default, container and codec.
 pub struct Params {

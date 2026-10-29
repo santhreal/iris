@@ -416,7 +416,7 @@ pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, Sh
             widgets::chord_label(&cfg.capture_hotkey).into(),
         ),
         (
-            "Record window",
+            crate::sys::record::START_NAME,
             widgets::chord_label(&cfg.record_hotkey).into(),
         ),
         ("Open", "Return or click".into()),

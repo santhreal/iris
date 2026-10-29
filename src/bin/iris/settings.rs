@@ -69,7 +69,7 @@ impl Field {
             Field::Template => "File name",
             Field::Fps => "Frames per second",
             Field::CaptureHotkey => "New screenshot",
-            Field::RecordHotkey => "Record window",
+            Field::RecordHotkey => crate::sys::record::START_NAME,
             Field::CancelKeybind => "Cancel",
             Field::ConfirmKeybind => "Confirm selection",
         }

@@ -698,7 +698,12 @@ fn the_shortcuts_sheet_shows_the_configured_global_hotkeys() {
     };
     let rows = help_rows(&cfg);
     assert_eq!(rows[0], ("New screenshot", "Super+P".into()));
-    assert_eq!(rows[1], ("Record window", "Ctrl+Shift+5".into()));
+    let record = if cfg!(target_os = "linux") {
+        "Record window"
+    } else {
+        "Record screen"
+    };
+    assert_eq!(rows[1], (record, "Ctrl+Shift+5".into()));
     assert_eq!(
         rows[6],
         (

@@ -1,11 +1,11 @@
 //! Home: the launch surface, a welcome window. The app icon, the
 //! "iris" title, and a tagline sit over three action tiles (New
-//! Screenshot, Record Window, Library), each with a colored badge and
-//! the keys that run it drawn as key caps; Settings is a gear in the
-//! toolbar and the version sits in the footer. The window draws its
-//! final layout on its first frame and requests no further frames:
-//! hover and press are style states, not animations. Bare `iris`
-//! launches here.
+//! Screenshot, Record Window or Record Screen, Library), each with a
+//! colored badge and the keys that run it drawn as key caps; Settings
+//! is a gear in the toolbar and the version sits in the footer. The
+//! window draws its final layout on its first frame and requests no
+//! further frames: hover and press are style states, not animations.
+//! Bare `iris` launches here.
 
 use gpui::*;
 
@@ -50,7 +50,7 @@ const TILES: [(&str, Icon, Rgba, &str, Tile); 3] = [
         "act-rec",
         Icon::Record,
         theme::DANGER,
-        "Record Window",
+        crate::sys::record::START_TITLE,
         Tile::Record,
     ),
     (
