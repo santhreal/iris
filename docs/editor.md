@@ -87,7 +87,7 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 - **Clear Markup** (More menu): Removes all committed actions as one undoable step. The row is dimmed and inert while the image has no markup.
 - **Commit crop (`Enter`)**: Flattens committed annotations into the base image, crops the composite image to the selection box (minimum 8x8 pixels), updates dimensions, and recalculates fit scale. The crop is one undoable step.
 - **Discard crop (`Escape`)**: Clears the active crop rectangle without modifying the image.
-- **Shortcut sheet (`?` or `/`, or Keyboard Shortcuts in the More menu)**: Toggles the keyboard shortcut reference sheet.
+- **Shortcut sheet (`?` or `/`, or Keyboard Shortcuts in the More menu)**: Opens the keyboard shortcut reference sheet. `Escape`, `?`, `/`, or a click closes it. While it is open, `Ctrl+W` or `Cmd+W` closes the editor and other keys do nothing.
 - **Image transformations** (More menu): Whole-image operations that flatten committed annotations into the base. Each is one undoable step:
   - **Rotate Right**: Rotates the image 90 degrees clockwise.
   - **Flip Horizontal**: Mirrors the image horizontally.

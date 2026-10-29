@@ -73,6 +73,21 @@ impl Library {
             self.menu_key(key, window, cx);
             return;
         }
+        // The shortcut sheet is modal: no key acts on the window under
+        // it. Its own button closes it as it opened it.
+        if self.help {
+            match key {
+                "w" if meta => {
+                    window.remove_window();
+                    return;
+                }
+                "escape" | "?" | "/" => self.help = false,
+                "enter" | "space" if self.ring == Some(Tool::Shortcuts) => self.help = false,
+                _ => return,
+            }
+            cx.notify();
+            return;
+        }
         if meta {
             match key {
                 "a" => self.select_all(),
@@ -86,17 +101,6 @@ impl Library {
                         self.set_status(e, cx);
                     }
                 }
-                _ => return,
-            }
-            cx.notify();
-            return;
-        }
-        // The shortcut sheet is modal: no key acts on the window under
-        // it. Its own button closes it as it opened it.
-        if self.help {
-            match key {
-                "escape" | "?" | "/" => self.help = false,
-                "enter" | "space" if self.ring == Some(Tool::Shortcuts) => self.help = false,
                 _ => return,
             }
             cx.notify();

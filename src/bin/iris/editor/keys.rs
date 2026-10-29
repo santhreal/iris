@@ -28,6 +28,18 @@ impl Editor {
             cx.notify();
             return;
         }
+        let meta = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
+        // The shortcut sheet is modal: no key acts on the image under
+        // it.
+        if self.help {
+            match key {
+                "w" if meta => self.finish(window, cx),
+                "escape" | "?" | "/" => self.help = false,
+                _ => return,
+            }
+            cx.notify();
+            return;
+        }
         if self.text_entry.is_some() {
             match key {
                 "enter" => {
@@ -49,12 +61,9 @@ impl Editor {
             cx.notify();
             return;
         }
-        let meta = ev.keystroke.modifiers.control || ev.keystroke.modifiers.platform;
         match key {
             "escape" => {
-                if self.help {
-                    self.help = false;
-                } else if self.crop_rect.is_some() {
+                if self.crop_rect.is_some() {
                     self.crop_rect = None;
                 } else if self.selected.is_some() {
                     self.selected = None;
@@ -107,7 +116,7 @@ impl Editor {
                 self.finish(window, cx);
             }
             "?" | "/" => {
-                self.help = !self.help;
+                self.help = true;
             }
             "w" if meta => {
                 self.finish(window, cx);

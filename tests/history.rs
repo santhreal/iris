@@ -28,6 +28,13 @@
 //! runs Copy Path from the Copy menu, and `Right` from the More menu
 //! runs Copy Image.
 //!
+//! One case closes "keys act on the image under the shortcut sheet":
+//! with the sheet open, Return saved and closed the editor, Delete
+//! removed the selected mark, and the arrows moved it. It presses those
+//! keys, a tool key, and Ctrl+Z under the sheet, closes the sheet, and
+//! reads the canvas as it was; Ctrl+W under the sheet still closes the
+//! editor.
+//!
 //! Two cases close "looking at a capture rewrites it": the editor's save
 //! ran with nothing changed, so closing an image only viewed re-encoded
 //! the file, moved its library entry to the top, and took the clipboard.
@@ -130,6 +137,9 @@ const RIGHT: u32 = 0xff53;
 const LEFT: u32 = 0xff51;
 const F10: u32 = 0xffc7;
 const MENU: u32 = 0xff67;
+const SLASH: u32 = 0x2f;
+const DELETE: u32 = 0xffff;
+const W: u32 = 0x77;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -728,6 +738,40 @@ fn shift_f10_and_the_menu_key_open_the_toolbar_menus() {
         !windows_of(&session.conn, session.root, EDITOR).is_empty(),
         "a menu row run from the keyboard closed the editor"
     );
+}
+
+#[test]
+fn the_shortcut_sheet_holds_the_keys_meant_for_the_image() {
+    let Some(session) = Session::open("the_shortcut_sheet_holds_the_keys_meant_for_the_image")
+    else {
+        return;
+    };
+    // A rectangle, drawn and left selected: Delete, the arrows, and
+    // Return each change it or close the editor.
+    session.draw(R, RECT);
+    let before = session.canvas();
+    session.keys(&[SLASH]);
+    session.daemon.until("/ to open the shortcut sheet", || {
+        (session.canvas() != before).then_some(())
+    });
+    for key in [DELETE, DOWN, RIGHT, RETURN, R, Z] {
+        session.keys(&[key]);
+    }
+    session.keys(&[CONTROL, Z]);
+    session.keys(&[ESCAPE]);
+    session.daemon.until("Escape to close the sheet", || {
+        (session.canvas() == before).then_some(())
+    });
+    // Ctrl+W under the sheet closes the editor.
+    session.keys(&[SLASH]);
+    session.keys(&[CONTROL, W]);
+    session
+        .daemon
+        .until("Ctrl+W under the sheet to close the editor", || {
+            windows_of(&session.conn, session.root, EDITOR)
+                .is_empty()
+                .then_some(())
+        });
 }
 
 /// Wait for the editor to close and the daemon to finish what the close

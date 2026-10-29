@@ -37,7 +37,7 @@
 //! the grid; a ring that wraps inside the toolbar toggles the sheet
 //! where Return should open a capture. They also close "keys act on
 //! the grid under the shortcut sheet": End under the open sheet moved
-//! the cursor to the last capture.
+//! the cursor to the last capture, and Ctrl+A selected every capture.
 //!
 //! Not covered: a read on a timer, which `tests/idle.rs` rejects; the
 //! watches of Wayland, Windows, and macOS, which the tests of
@@ -79,6 +79,9 @@ const F10: u32 = 0xffc7;
 const MENU: u32 = 0xff67;
 const SLASH: u32 = 0x2f;
 const TAB: u32 = 0xff09;
+const CONTROL: u32 = 0xffe3;
+const A: u32 = 0x61;
+const W: u32 = 0x77;
 const SPACE: u32 = 0x20;
 const LEFT: u32 = 0xff51;
 const RIGHT: u32 = 0xff53;
@@ -418,6 +421,11 @@ fn the_shortcut_sheet_fits_a_minimum_window_and_holds_the_wheel() {
             "the wheel over the card moved the window beside it at x {x}"
         );
     }
+    // Ctrl+W under the sheet closes the window.
+    chord(&conn, root, &[CONTROL, W]);
+    daemon.until("Ctrl+W under the sheet to close the library", || {
+        windows_of(&conn, root, LIBRARY).is_empty().then_some(())
+    });
 }
 
 /// A library of three captures under a private display, the pointer
@@ -558,8 +566,11 @@ fn tab_runs_the_selection_buttons() {
     open.keys(&[RIGHT, RIGHT, RETURN, TAB, SPACE]);
     open.sheet(true, "Tab after Done to open the shortcut sheet");
     // The sheet holds the keys: End under it leaves the cursor on the
-    // first capture.
-    open.keys(&[END, ESCAPE]);
+    // first capture, and Ctrl+A selects nothing.
+    open.keys(&[END]);
+    chord(&open.conn, open.root, &[CONTROL, A]);
+    open.daemon.settle();
+    open.keys(&[ESCAPE]);
     open.sheet(false, "Escape to close the sheet");
     // Tab past New Screenshot returns to the grid, where Return opens
     // the capture under the cursor.

@@ -93,7 +93,7 @@ A right-click on a card opens a context menu at the pointer: **Open**, **Quick L
 | `Ctrl+,` / `Cmd+,` | Open Settings |
 | `Ctrl+W` / `Cmd+W` | Close the window |
 | `Escape` | Close the menu, Quick Look, or the shortcut sheet; clear the selection; or close the window |
-| `?` or `/` | Open the shortcut reference sheet; its rows scroll when the window is too short to show them all. While the sheet is open, other keys do nothing |
+| `?` or `/` | Open the shortcut reference sheet; its rows scroll when the window is too short to show them all. `Escape`, `?`, or `/` closes it. While it is open, `Ctrl+W` or `Cmd+W` closes the window and other keys do nothing |
 | Title bar double-click | Run the platform title bar action: toggle maximize on Linux and Windows, or the action set in the macOS Desktop & Dock settings |
 
 The traffic lights in the top-left corner close (red), minimize (yellow), and zoom (green: fullscreen on macOS, maximize on Linux and Windows) the window. On X11 with no compositing manager, the window manager frames the window and the toolbar has no traffic lights ([Window Frame](platforms.md)).
