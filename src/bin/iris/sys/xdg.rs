@@ -55,18 +55,12 @@ fn control(path: &Path) -> String {
     )
 }
 
-/// Write `bytes` to `path` through a sibling a desktop does not read
-/// (no .desktop suffix) and one rename, so a desktop that reads the
-/// file meanwhile reads the old one or the new one.
+/// Write `bytes` to `path` through a sibling a desktop does not read (no
+/// .desktop suffix) and one rename (`output::replace`), so a desktop
+/// that reads the file meanwhile reads the old one or the new one.
 pub fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let staged = dir.join(format!(".{name}.new"));
     std::fs::create_dir_all(dir)
-        .and_then(|()| std::fs::write(&staged, bytes))
-        .and_then(|()| std::fs::rename(&staged, path))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&staged);
-            format!("write {}: {e}", path.display())
-        })
+        .and_then(|()| iris_lib::output::replace(path, bytes))
+        .map_err(|e| format!("write {}: {e}", path.display()))
 }

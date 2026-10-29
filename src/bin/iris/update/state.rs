@@ -5,7 +5,6 @@
 //! channel does not run, and a version is announced once.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use iris_lib::config::UpdateChannel;
@@ -111,17 +110,8 @@ fn update(path: &Path, change: impl FnOnce(&mut State)) -> Result<(), String> {
             .map_err(|e| format!("update: create {}: {e}", dir.display()))?;
     }
     // A rename replaces the file whole: a reader never sees half of it.
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let tmp = path.with_extension(format!(
-        "json.{}.{}.tmp",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&tmp, text).map_err(|e| format!("update: write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("update: replace {}: {e}", path.display())
-    })
+    iris_lib::output::replace(path, &text)
+        .map_err(|e| format!("update: replace {}: {e}", path.display()))
 }
 
 /// Record a check on `channel` at `now` that found `found`.

@@ -67,14 +67,9 @@ fn set_at(agent: &Path, program: &Path, on: bool) -> Result<(), String> {
         )
     })?;
     let dir = agent.parent().unwrap_or(Path::new("."));
-    let staged = dir.join(format!(".{}.plist.new", iris_lib::APP_ID));
     std::fs::create_dir_all(dir)
-        .and_then(|()| std::fs::write(&staged, plist(program)))
-        .and_then(|()| std::fs::rename(&staged, agent))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&staged);
-            format!("start at login: write {}: {e}", agent.display())
-        })
+        .and_then(|()| iris_lib::output::replace(agent, plist(program).as_bytes()))
+        .map_err(|e| format!("start at login: write {}: {e}", agent.display()))
 }
 
 /// The LaunchAgent that runs `program --daemon` once at login, in the

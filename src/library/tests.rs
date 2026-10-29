@@ -1,7 +1,8 @@
 // WHY: the class closed here is "the library loses or corrupts captures":
 // a store that does not round-trip, a trash that leaves the file or loses
-// it outright, a cap that keeps the wrong end, or a path_key that
-// collides all surface as missing thumbnails or vanished shots; a
+// it outright, a cap that drops the oldest captures, a store a reader
+// finds half written, or a path_key that collides all surface as
+// missing thumbnails or vanished shots; a
 // thumbnail smaller than the card's 2x box, or one kept at an older
 // build's size, shows as a soft card on a HiDPI display. Env-mutating
 // tests run serially with IRIS_HOME (and the freedesktop trash) pointed
@@ -145,29 +146,78 @@ fn corrupt_store_starts_fresh() {
     assert!(list().is_empty());
 }
 
+/// A capture's entry for `name` in `dir`, taken at `ms`, with no file.
+fn listed(dir: &Path, name: &str, ms: i64) -> CaptureEntry {
+    CaptureEntry {
+        path: dir.join(name),
+        thumb: PathBuf::new(),
+        width: 1,
+        height: 1,
+        created_ms: ms,
+        edited_ms: 0,
+    }
+}
+
 #[test]
 #[serial_test::serial]
-fn store_caps_at_max_entries() {
+fn a_new_capture_keeps_every_older_one_listed() {
     let d = isolated_home();
-    for i in 0..5 {
-        let (shot, img) = png(d.path(), &format!("s{i}.png"));
-        add(&shot, &img).unwrap();
-    }
-    // Push past the cap directly: 200 adds of real PNGs is slow.
-    let mut entries = read_store();
-    for i in 0..MAX_ENTRIES + 10 {
-        entries.push(CaptureEntry {
-            path: d.path().join(format!("extra{i}.png")),
-            thumb: PathBuf::new(),
-            width: 1,
-            height: 1,
-            created_ms: i as i64,
-            edited_ms: 0,
+    // Seeded directly: a thousand adds of real PNGs is slow.
+    let older: Vec<CaptureEntry> = (0..1000)
+        .map(|i| listed(d.path(), &format!("old{i}.png"), 1000 - i))
+        .collect();
+    write_store(&older).unwrap();
+    let (shot, img) = png(d.path(), "new.png");
+    add(&shot, &img).unwrap();
+    let stored: Vec<PathBuf> = read_store().into_iter().map(|e| e.path).collect();
+    assert_eq!(stored.len(), 1001);
+    assert_eq!(stored[0], shot);
+    let paths: Vec<PathBuf> = older.into_iter().map(|e| e.path).collect();
+    assert_eq!(stored[1..], paths[..]);
+}
+
+#[test]
+#[serial_test::serial]
+#[cfg(unix)]
+fn a_reader_never_finds_the_store_half_written() {
+    let d = isolated_home();
+    let store = store_path().unwrap();
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let (done, reads) = (AtomicBool::new(false), AtomicUsize::new(0));
+    std::thread::scope(|s| {
+        let reader = s.spawn(|| {
+            while !done.load(Ordering::Acquire) {
+                let Ok(bytes) = std::fs::read(&store) else {
+                    continue;
+                };
+                let parsed = serde_json::from_slice::<Vec<CaptureEntry>>(&bytes);
+                assert!(parsed.is_ok(), "a torn read of {} bytes", bytes.len());
+                reads.fetch_add(1, Ordering::Release);
+            }
         });
-    }
-    entries.truncate(MAX_ENTRIES);
-    write_store(&entries).unwrap();
-    assert_eq!(read_store().len(), MAX_ENTRIES);
+        // Stores large enough that a write takes many reads' time, until
+        // the reader has read a few, and at most 400.
+        let wrote = (0..400)
+            .take_while(|&round| round < 40 || reads.load(Ordering::Acquire) < 10)
+            .try_for_each(|round| {
+                let entries: Vec<CaptureEntry> = (0..2000 + round)
+                    .map(|i| listed(d.path(), &format!("s{round}-{i}.png"), i))
+                    .collect();
+                write_store(&entries)
+            });
+        // The reader stops before a writer's error is raised: a scope
+        // joins every thread, and a reader left running never ends.
+        done.store(true, Ordering::Release);
+        let read = reader.join();
+        wrote.unwrap();
+        read.expect("reader");
+    });
+    assert!(reads.into_inner() >= 10, "the reader read too little");
+    let names: Vec<_> = std::fs::read_dir(store.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["library.json"]);
 }
 
 /// A `w`x`h` PNG of one color at `path`.

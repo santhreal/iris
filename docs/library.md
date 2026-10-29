@@ -112,4 +112,4 @@ When the `IRIS_HOME` environment variable is defined and non-empty, paths resolv
 - Metadata: `$IRIS_HOME/data/library.json`
 - Thumbnail cache: `$IRIS_HOME/cache/thumbs/`
 
-Each thumbnail file is stored in PNG format named after an FNV-1a hash of the source image path (`<hash>.png`). A thumbnail is the capture box-filtered to cover 432×264 pixels, the card's image area at 2x, and cropped to that aspect around its center; a capture smaller than that box is cropped, not enlarged. A thumbnail of another size, such as one written by an earlier release, is rebuilt from the capture when the library shows it. The library store retains up to 200 entries.
+Each thumbnail file is stored in PNG format named after an FNV-1a hash of the source image path (`<hash>.png`). A thumbnail is the capture box-filtered to cover 432×264 pixels, the card's image area at 2x, and cropped to that aspect around its center; a capture smaller than that box is cropped, not enlarged. A thumbnail of another size, such as one written by an earlier release, is rebuilt from the capture when the library shows it. The library lists every capture whose file exists.

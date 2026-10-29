@@ -434,8 +434,10 @@ impl Editor {
             let result = cx
                 .background_executor()
                 .spawn(async move {
+                    // A rename: a full disk or an exit midway leaves the
+                    // capture as it was, not cut short.
                     let saved = png_bytes(&img).and_then(|png| {
-                        std::fs::write(&path, &png)
+                        iris_lib::output::replace(&path, &png)
                             .map_err(|e| format!("write {}: {e}", path.display()))
                     });
                     saved.map_err(|e| ("Save failed", e))?;

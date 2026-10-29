@@ -280,7 +280,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             if std::fs::create_dir_all(parent).is_ok() {
                 if let Ok(text) = cfg.to_toml() {
-                    let _ = std::fs::write(&path, text);
+                    let _ = crate::output::replace(&path, text.as_bytes());
                 }
             }
         }
@@ -326,7 +326,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("create config dir: {e}"))?;
         }
-        std::fs::write(&path, self.to_toml()?)
+        crate::output::replace(&path, self.to_toml()?.as_bytes())
             .map_err(|e| format!("write {}: {e}", path.display()))?;
         // Keep the load() cache coherent: a save must be visible to the
         // next reader even when the mtime granularity misses the write.

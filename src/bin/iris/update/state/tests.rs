@@ -1,5 +1,6 @@
 use super::*;
 use crate::update::tests::{info, ASSET};
+use std::sync::atomic::Ordering;
 
 // WHY: the class closed here is "update.json resurrects or loses what
 // the last check found": a recorded check reads back whole, an

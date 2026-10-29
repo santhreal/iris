@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const MAX_ENTRIES: usize = 200;
 /// Thumbnails cover this pixel box: the library card's 216x132 logical
 /// image area at 2x device scale, so a HiDPI display draws the card
 /// from at least as many pixels as it shows.
@@ -125,7 +124,8 @@ fn read_store() -> Vec<CaptureEntry> {
 fn write_store(entries: &[CaptureEntry]) -> Result<(), String> {
     let path = store_path()?;
     let text = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("write library.json: {e}"))?;
+    crate::output::replace(&path, text.as_bytes())
+        .map_err(|e| format!("write library.json: {e}"))?;
     // Write-through: the next read sees the new bytes without a parse.
     let stamp = std::fs::metadata(&path)
         .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
@@ -173,7 +173,9 @@ fn make_thumb(img: &image::RgbaImage) -> image::RgbaImage {
     image::imageops::crop_imm(base, (sw - cw) / 2, (sh - ch) / 2, cw, ch).to_image()
 }
 
-/// Register a fresh capture: build its thumbnail, prepend it, cap the list.
+/// Register a fresh capture: build its thumbnail and list it first. The
+/// library lists every capture whose file exists; nothing drops one for
+/// age or count.
 /// The caller passes the already-decoded image so a save does not pay a
 /// second PNG decode just to make the thumbnail.
 pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
@@ -219,7 +221,6 @@ fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<Capture
         };
         entries.retain(|e| e.path != entry.path);
         entries.insert(0, entry.clone());
-        entries.truncate(MAX_ENTRIES);
         entry
     };
     write_store(&entries)?;
