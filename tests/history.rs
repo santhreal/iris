@@ -57,10 +57,20 @@
 //! A third reads that the report of an image that fails to decode
 //! stays: the editor has nothing else to show.
 //!
+//! Three cases close the Select tool's keys and clicks. "Selecting a
+//! mark is an edit": the click that selected a mark pushed a move that
+//! moved nothing, so Undo then did nothing and closing saved the file.
+//! The case selects the rectangle, undoes once, and reads the file
+//! untouched. "The arrow keys do not move a mark": it nudges the
+//! selected rectangle with Shift+Right twice, undoes one nudge, and reads
+//! the rectangle 10 pixels right in the saved file. "Ctrl+C does nothing
+//! in the editor": it reads the PNG Ctrl+C puts on the clipboard.
+//!
 //! Not covered: the two flips, which go through the rotation's path;
 //! redo after a rotation or Clear, which goes through the crop's swap;
 //! the Library's context menu, whose keys `widgets::menu_key` runs as
-//! these menus'; Windows and macOS. The cases run only with
+//! these menus'; the arrow keys on a pending crop, which share the
+//! nudge's key path; Windows and macOS. The cases run only with
 //! `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without them they print
 //! that they did not run.
 
@@ -108,6 +118,8 @@ const SPACE: u32 = 0x20;
 const T: u32 = 0x74;
 const A: u32 = 0x61;
 const ESCAPE: u32 = 0xff1b;
+const V: u32 = 0x76;
+const RIGHT: u32 = 0xff53;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -798,6 +810,69 @@ fn copy_image_copies_the_marks_drawn_before_it() {
         session.written,
         "Copy Image saved the file"
     );
+}
+
+/// Draw the rectangle and select it with the Select tool: a click on its
+/// left side.
+fn selected(case: &str) -> Option<Session> {
+    let session = Session::open(case)?;
+    session.draw(R, RECT);
+    tap(&session.conn, session.root, V);
+    session.daemon.settle();
+    let side = (RECT[0].0, (RECT[0].1 + RECT[1].1) / 2.0);
+    click(&session.conn, session.root, session.screen_at(side));
+    session.daemon.settle();
+    Some(session)
+}
+
+#[test]
+fn selecting_a_mark_adds_no_undo_step() {
+    let Some(session) = selected("selecting_a_mark_adds_no_undo_step") else {
+        return;
+    };
+    let before = std::fs::read(&session.file).unwrap();
+    // The one undo step is the rectangle's.
+    session.keys(&[CONTROL, Z]);
+    wm_close(&session.conn, session.editor);
+    assert_untouched(
+        session,
+        &before,
+        "closing after selecting the mark and one Undo",
+    );
+}
+
+#[test]
+fn the_arrow_keys_nudge_the_selected_mark_one_undo_step_each() {
+    let Some(session) = selected("the_arrow_keys_nudge_the_selected_mark_one_undo_step_each")
+    else {
+        return;
+    };
+    session.keys(&[SHIFT, RIGHT]);
+    session.keys(&[SHIFT, RIGHT]);
+    session.keys(&[CONTROL, Z]);
+    let saved = session.save();
+    assert_rect(
+        &saved,
+        (RECT[0].0 as u32 + 10, RECT[1].0 as u32 + 10),
+        (RECT[0].1 as u32, RECT[1].1 as u32),
+        "the rectangle after two Shift+Right nudges and one Undo",
+    );
+}
+
+#[test]
+fn ctrl_c_copies_the_image_as_shown() {
+    let Some(session) = Session::open("ctrl_c_copies_the_image_as_shown") else {
+        return;
+    };
+    session.draw(R, RECT);
+    session.keys(&[CONTROL, C]);
+    let copied = session
+        .daemon
+        .until("Ctrl+C to put a PNG on the clipboard", || {
+            let png = clipboard(&session.conn, session.root, b"image/png")?;
+            Some(image::load_from_memory(&png).ok()?.to_rgb8())
+        });
+    assert_original(&copied, "the image Ctrl+C copied");
 }
 
 #[test]

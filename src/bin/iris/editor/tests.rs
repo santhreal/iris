@@ -335,7 +335,8 @@ fn pixelate_region_respects_offsets_and_leaves_outside() {
 // through tool_for_key, so one table backs both. A tool whose key is
 // missing, shared, or mapped to another tool fails here, as does a tool
 // key that collides with the editor's other unmodified keys (F fill,
-// 1 to 3 stroke, 0 zoom) or with the Ctrl chords' letters.
+// 1 to 3 stroke, 0 zoom) or with the Ctrl chords' letters. C is the
+// exception: C alone picks Crop and Ctrl+C copies, as in the library.
 #[test]
 fn every_tool_key_selects_its_tool_and_no_key_is_shared() {
     use super::action::{tool_for_key, TOOLS};

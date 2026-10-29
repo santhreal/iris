@@ -297,6 +297,44 @@ impl Editor {
         (dx, dy)
     }
 
+    /// An arrow key: move the pending crop, or the selected mark, by `d`
+    /// image pixels, clamped to the image. Each move of a mark is one
+    /// undo step. A key during a pointer drag does nothing, so the
+    /// drag's one step stays whole.
+    pub(crate) fn nudge(&mut self, d: (f32, f32)) {
+        if self.move_drag.is_some() || self.crop_anchor.is_some() || self.crop_move.is_some() {
+            return;
+        }
+        if let Some((x, y, w, h)) = self.crop_rect {
+            let (iw, ih) = (self.base.width() as f32, self.base.height() as f32);
+            self.crop_rect = Some((
+                (x + d.0).clamp(0.0, (iw - w).max(0.0)),
+                (y + d.1).clamp(0.0, (ih - h).max(0.0)),
+                w,
+                h,
+            ));
+            return;
+        }
+        let Some(i) = self.selected else {
+            return;
+        };
+        let Some((old, bbox)) = self
+            .actions
+            .borrow()
+            .get(i)
+            .and_then(|a| Some((a.clone(), a.bbox?)))
+        else {
+            return;
+        };
+        if self.move_action(i, d, bbox) == (0.0, 0.0) {
+            return;
+        }
+        let new = self.actions.borrow()[i].clone();
+        let edit = Edit::Move(i, old, new);
+        self.rebuild_for_edit(&edit);
+        self.push_edit(edit);
+    }
+
     /// Apply the pending crop: everything committed flattens into the
     /// new base, then the image is cut to the rect. Undo restores the
     /// uncut image and its actions.

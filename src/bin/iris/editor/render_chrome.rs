@@ -107,7 +107,8 @@ pub(super) fn help_rows() -> Vec<(&'static str, SharedString)> {
         ("Save and close", save_close.into()),
         ("Discard changes", "Esc twice".into()),
         ("Undo / Redo", undo_redo.into()),
-        ("Delete selected action", "Delete".into()),
+        ("Copy image", crate::widgets::meta_shortcut!("C").into()),
+        ("Nudge / delete selection", "Arrows / Delete".into()),
         ("Apply crop", "Enter".into()),
         ("This sheet", "?".into()),
     ]

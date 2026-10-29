@@ -15,6 +15,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The toast drags out as a file, copies the image or the file, shows the file in its folder, opens the editor, pins the capture in an always-on-top window, and copies the text in the image through OCR (Vision on macOS, Tesseract on Linux and Windows).
 - The annotation editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops.
 - Undo and redo in the editor cover crops, rotations, flips, and Clear Markup, and undoing a crop or transformation restores the previous image with its annotations editable.
+- The arrow keys move the editor's selected annotation or pending crop box by 1 pixel, or 10 with `Shift`, and `Ctrl+C` or `Cmd+C` copies the image as shown.
 - `Ctrl+V` or `Cmd+V` in the editor's text entry and in a Settings text field appends the clipboard's text as one line.
 - `Ctrl+Backspace` or `Option+Backspace` in the editor's text entry and in a Settings text field deletes the last word, and `Cmd+Backspace` deletes the whole text.
 - `Up`, `Down`, `Return`, and `Space` move through and choose from an open menu: a Settings pop-up, the editor's Copy and More menus, and the Library's context menu.

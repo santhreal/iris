@@ -11,6 +11,9 @@ use crate::widgets;
 
 /// The zoom factor of one `+` or `-` press.
 const KEY_STEP: f32 = 1.25;
+/// Image pixels an arrow key moves the selection with `Shift`; one
+/// without.
+const NUDGE_SHIFT: f32 = 10.0;
 
 impl Editor {
     pub(super) fn handle_key_down(
@@ -74,6 +77,22 @@ impl Editor {
                         self.push_edit(Edit::Remove(i, removed));
                     }
                 }
+            }
+            "left" | "right" | "up" | "down" if !meta => {
+                let step = if ev.keystroke.modifiers.shift {
+                    NUDGE_SHIFT
+                } else {
+                    1.0
+                };
+                self.nudge(match key {
+                    "left" => (-step, 0.0),
+                    "right" => (step, 0.0),
+                    "up" => (0.0, -step),
+                    _ => (0.0, step),
+                });
+            }
+            "c" if meta => {
+                self.copy_variant("image", cx);
             }
             "z" if meta && ev.keystroke.modifiers.shift => {
                 self.redo(cx);

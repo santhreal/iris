@@ -82,6 +82,8 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 - **Undo (`Ctrl+Z` or `Cmd+Z`)**: Reverts the most recent markup action, deletion, move, crop, transformation, or Clear Markup. Undoing a crop or transformation restores the previous image with its annotations editable. **Undo** in the toolbar does the same.
 - **Redo (`Ctrl+Shift+Z`, `Cmd+Shift+Z`, `Ctrl+Y`, or `Cmd+Y`)**: Re-applies the most recently undone step. **Redo** in the toolbar does the same.
 - **Delete selected action (`Delete` or `Backspace`)**: Removes the currently selected annotation item when Select mode is active.
+- **Nudge (arrow keys)**: Moves the selected annotation by 1 image pixel, or 10 with `Shift`, and stops at the image's edges. Each press is one undoable step. With a pending crop box, the arrow keys move the box instead. A click that selects an annotation without moving it is not an undoable step.
+- **Copy Image (`Ctrl+C` or `Cmd+C`)**: Copies the image as shown, annotations included, as the Copy menu's **Copy Image** does.
 - **Clear Markup** (More menu): Removes all committed actions as one undoable step. The row is dimmed and inert while the image has no markup.
 - **Commit crop (`Enter`)**: Flattens committed annotations into the base image, crops the composite image to the selection box (minimum 8x8 pixels), updates dimensions, and recalculates fit scale. The crop is one undoable step.
 - **Discard crop (`Escape`)**: Clears the active crop rectangle without modifying the image.

@@ -415,9 +415,12 @@ impl Editor {
                         cx.notify();
                         return;
                     }
-                    if let Some((i, _, old_action, _)) = this.move_drag.take() {
+                    // A press that selects a mark without moving it is no
+                    // edit: it adds no undo step.
+                    if let Some((i, _, old_action, start_bbox)) = this.move_drag.take() {
                         let new_action = this.actions.borrow().get(i).cloned();
-                        if let Some(new_action) = new_action {
+                        if let Some(new_action) = new_action.filter(|a| a.bbox != Some(start_bbox))
+                        {
                             let edit = Edit::Move(i, old_action, new_action);
                             this.rebuild_for_edit(&edit);
                             this.push_edit(edit);
