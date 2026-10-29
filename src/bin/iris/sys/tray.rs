@@ -192,12 +192,14 @@ pub fn set_offer(version: Option<&semver::Version>) {
 /// none does. Call it on the daemon's main thread: macOS draws the menu
 /// there.
 pub fn set_recording(on: bool) {
-    if RECORDING.swap(on, Ordering::AcqRel) == on {
-        return;
-    }
+    let changed = RECORDING.swap(on, Ordering::AcqRel) != on;
     // Windows draws the menu on each click and reads `drawn` then.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    imp::redraw();
+    if changed {
+        imp::redraw();
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = changed;
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
