@@ -108,6 +108,7 @@ pub(super) fn help_rows() -> Vec<(&'static str, SharedString)> {
         ("Discard changes", "Esc twice".into()),
         ("Undo / Redo", undo_redo.into()),
         ("Copy image", crate::widgets::meta_shortcut!("C").into()),
+        ("More and Copy menus", "Shift+F10, then Left / Right".into()),
         ("Nudge / delete selection", "Arrows / Delete".into()),
         ("Apply crop", "Enter".into()),
         ("This sheet", "?".into()),
@@ -139,7 +140,7 @@ impl Editor {
 
     /// Open the Copy menu (`copy`) or the More menu with nothing lit,
     /// closing the other; `open` false closes both.
-    fn open_toolbar_menu(&mut self, copy: bool, open: bool) {
+    pub(super) fn open_toolbar_menu(&mut self, copy: bool, open: bool) {
         self.copy_menu = open && copy;
         self.more_menu = open && !copy;
         self.menu_lit = None;
@@ -154,6 +155,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The Copy and More menus sit side by side on the toolbar, as in
+        // a menu bar: either arrow moves to the other one.
+        if matches!(key, "left" | "right") {
+            self.open_toolbar_menu(!self.copy_menu, true);
+            return;
+        }
         if self.copy_menu {
             match widgets::menu_key(&mut self.menu_lit, COPY_ROWS.len(), |_| true, key) {
                 MenuKey::Choose(i) => self.copy_variant(COPY_ROWS[i].0, cx),

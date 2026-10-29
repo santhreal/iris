@@ -138,6 +138,9 @@ impl Editor {
             "space" => {
                 self.space_pan = true;
             }
+            // The editor's actions menu: More, with Copy beside it.
+            "menu" => self.open_toolbar_menu(false, true),
+            "f10" if ev.keystroke.modifiers.shift => self.open_toolbar_menu(false, true),
             _ if !meta => {
                 if let Some(tool) = tool_for_key(key) {
                     self.set_tool(tool, cx);

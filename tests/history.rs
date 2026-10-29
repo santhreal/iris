@@ -21,6 +21,13 @@
 //! Return, then Copy Path from the Copy menu, and reads the image and the
 //! clipboard.
 //!
+//! One case closes "the toolbar menus open only under a pointer": no
+//! key opened the More or Copy menu, so Rotate, the flips, Copy Text,
+//! Copy File, and Copy Path had no keyboard path. `Shift+F10` and the
+//! Menu key each open the More menu and run Rotate Right; `Left` then
+//! runs Copy Path from the Copy menu, and `Right` from the More menu
+//! runs Copy Image.
+//!
 //! Two cases close "looking at a capture rewrites it": the editor's save
 //! ran with nothing changed, so closing an image only viewed re-encoded
 //! the file, moved its library entry to the top, and took the clipboard.
@@ -95,7 +102,7 @@ use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, entries, store, stored, xvfb_sized, Daemon, Server};
 use x11::{
-    chord, click, client, clipboard, clipboard_owner, clipboard_text, drag, extent, tap,
+    chord, click, client, clipboard, clipboard_owner, clipboard_text, drag, extent, move_to, tap,
     windows_of, wm_close,
 };
 
@@ -120,6 +127,9 @@ const A: u32 = 0x61;
 const ESCAPE: u32 = 0xff1b;
 const V: u32 = 0x76;
 const RIGHT: u32 = 0xff53;
+const LEFT: u32 = 0xff51;
+const F10: u32 = 0xffc7;
+const MENU: u32 = 0xff67;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -653,6 +663,66 @@ fn the_arrow_keys_and_return_run_a_toolbar_menu_row() {
         .daemon
         .until("Down and Return to run Copy Path", || {
             (clipboard_text(&session.conn, session.root)? == path.to_string_lossy()).then_some(())
+        });
+    assert!(
+        !windows_of(&session.conn, session.root, EDITOR).is_empty(),
+        "a menu row run from the keyboard closed the editor"
+    );
+}
+
+#[test]
+fn shift_f10_and_the_menu_key_open_the_toolbar_menus() {
+    let Some(session) = Session::open("shift_f10_and_the_menu_key_open_the_toolbar_menus") else {
+        return;
+    };
+    // With no window manager the keyboard follows the pointer.
+    move_to(
+        &session.conn,
+        session.root,
+        session.screen_at((300.0, 200.0)),
+    );
+    session.daemon.settle();
+    // Down from nothing lights Copy Text, then Rotate Right.
+    session.keys(&[SHIFT, F10]);
+    session.keys(&[DOWN]);
+    session.keys(&[DOWN]);
+    session.keys(&[RETURN]);
+    session
+        .daemon
+        .until("Shift+F10, Down, and Return to run Rotate Right", || {
+            session.on_its_side()?.then_some(())
+        });
+    session.keys(&[MENU]);
+    session.keys(&[DOWN]);
+    session.keys(&[DOWN]);
+    session.keys(&[RETURN]);
+    session
+        .daemon
+        .until("the Menu key, Down, and Return to run Rotate Right", || {
+            (!session.on_its_side()?).then_some(())
+        });
+    // Copy Path is the Copy menu's third row.
+    session.keys(&[SHIFT, F10]);
+    session.keys(&[LEFT]);
+    for _ in 0..3 {
+        session.keys(&[DOWN]);
+    }
+    session.keys(&[RETURN]);
+    let path = session.file.canonicalize().unwrap();
+    session
+        .daemon
+        .until("Left from the More menu to run Copy Path", || {
+            (clipboard_text(&session.conn, session.root)? == path.to_string_lossy()).then_some(())
+        });
+    // Copy Image is its first.
+    session.keys(&[MENU]);
+    session.keys(&[RIGHT]);
+    session.keys(&[DOWN]);
+    session.keys(&[RETURN]);
+    session
+        .daemon
+        .until("Right from the More menu to run Copy Image", || {
+            clipboard(&session.conn, session.root, b"image/png").map(|_| ())
         });
     assert!(
         !windows_of(&session.conn, session.root, EDITOR).is_empty(),

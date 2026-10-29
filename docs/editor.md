@@ -25,7 +25,7 @@ The toolbar holds, from left to right:
 - **More** (`…`), a menu with **Copy Text**, **Rotate Right**, **Flip Horizontal**, **Flip Vertical**, **Clear Markup**, **Keyboard Shortcuts**, and **Discard**.
 - **Done**, which saves and closes the editor.
 
-In an open Copy or More menu, `Up` and `Down` move the highlight, as the pointer does, and pass over a dimmed row; `Return` or `Space` runs the highlighted row, and `Escape` closes the menu. Other keys do nothing while a menu is open.
+`Shift+F10` or the Menu key opens the More menu. In an open Copy or More menu, `Up` and `Down` move the highlight, as the pointer does, and pass over a dimmed row; `Left` and `Right` open the other menu; `Return` or `Space` runs the highlighted row, and `Escape` closes the menu. Other keys do nothing while a menu is open.
 
 The tool options bar under the toolbar holds the three stroke widths, the fill toggle, and the color swatches (see [Tool Options](#tool-options)). The image sits under both bars, fit to the window with a 24-pixel margin on every side.
 
