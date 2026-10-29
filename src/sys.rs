@@ -13,3 +13,5 @@ pub mod record;
 pub mod session;
 pub(crate) mod time;
 pub(crate) mod tools;
+#[cfg(target_os = "macos")]
+pub(crate) mod vision;

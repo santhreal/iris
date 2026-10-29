@@ -1,5 +1,5 @@
 //! Minimal Objective-C runtime access for the macOS code paths (tray,
-//! pasteboard).
+//! pasteboard, text recognition).
 //!
 //! `objc_msgSend` has no fixed signature: each call site must invoke it
 //! through a function pointer of the exact callee type. Calling it as a
@@ -93,6 +93,19 @@ pub fn nsstring(s: &str) -> Id {
             s.len(),
             NS_UTF8_STRING_ENCODING,
         )
+    }
+}
+
+/// The UTF-8 contents of an `NSString`; empty for nil.
+///
+/// # Safety
+/// `s` must be nil or an `NSString`.
+pub unsafe fn string(s: Id) -> String {
+    let p: *const c_char = send(s, sel(c"UTF8String"));
+    if p.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(p).to_string_lossy().into_owned()
     }
 }
 

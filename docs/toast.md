@@ -82,10 +82,10 @@ When an action produces feedback, a status line takes the capsule's place over t
 
 Trigger OCR text extraction via the **Copy Text** item in the right-click context menu:
 - Sets the status line to `"Reading text…"` and holds the auto-dismiss timer open.
-- Executes `tesseract <source> stdout` as a background process.
-- Requires Tesseract installed on the host system. Missing binary errors report platform installation instructions:
+- Recognizes text off the UI thread: on macOS through the Vision framework, which needs no installed tool; on Linux and Windows by running `tesseract <source> stdout`.
+- On macOS, a file Vision cannot read reports `text recognition failed: <reason>`.
+- On Linux and Windows, a missing Tesseract reports the installation instruction:
   - **Linux**: `tesseract is not installed: install the tesseract package (tesseract-ocr on Debian and Ubuntu)`
-  - **macOS**: `tesseract is not installed: run `brew install tesseract``
   - **Windows**: `tesseract is not installed: run `winget install UB-Mannheim.TesseractOCR``
 - If the image contains no recognized characters, reports `"no text recognized in this image"`.
 - On completion, copies extracted text to the system clipboard as UTF-8 text and displays `"Copied <count> characters"` on the status line.

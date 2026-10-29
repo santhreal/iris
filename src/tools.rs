@@ -17,7 +17,8 @@ use std::process::Command;
 pub enum Tool {
     /// Recording (every platform) and the NVENC probe.
     Ffmpeg,
-    /// OCR for "Copy Text".
+    /// OCR for "Copy Text". macOS recognizes text with Vision instead.
+    #[cfg(not(target_os = "macos"))]
     Tesseract,
 }
 
@@ -25,28 +26,23 @@ impl Tool {
     fn name(self) -> &'static str {
         match self {
             Tool::Ffmpeg => "ffmpeg",
+            #[cfg(not(target_os = "macos"))]
             Tool::Tesseract => "tesseract",
         }
     }
 
     /// The instruction that installs the tool on this platform.
     fn install(self) -> &'static str {
-        let (linux, macos, windows) = match self {
-            Tool::Ffmpeg => (
-                "install the ffmpeg package (ffmpeg-free on Fedora)",
-                "run `brew install ffmpeg`",
-                "run `winget install Gyan.FFmpeg`",
-            ),
-            Tool::Tesseract => (
-                "install the tesseract package (tesseract-ocr on Debian and Ubuntu)",
-                "run `brew install tesseract`",
-                "run `winget install UB-Mannheim.TesseractOCR`",
-            ),
-        };
-        match std::env::consts::OS {
-            "windows" => windows,
-            "macos" => macos,
-            _ => linux,
+        match self {
+            Tool::Ffmpeg => match std::env::consts::OS {
+                "windows" => "run `winget install Gyan.FFmpeg`",
+                "macos" => "run `brew install ffmpeg`",
+                _ => "install the ffmpeg package (ffmpeg-free on Fedora)",
+            },
+            #[cfg(windows)]
+            Tool::Tesseract => "run `winget install UB-Mannheim.TesseractOCR`",
+            #[cfg(not(any(windows, target_os = "macos")))]
+            Tool::Tesseract => "install the tesseract package (tesseract-ocr on Debian and Ubuntu)",
         }
     }
 
@@ -91,6 +87,7 @@ impl Tool {
     fn search_dirs(self) -> Vec<PathBuf> {
         let mut dirs = match self {
             Tool::Ffmpeg => crate::sys::tools::bundled_dirs(),
+            #[cfg(not(target_os = "macos"))]
             Tool::Tesseract => Vec::new(),
         };
         dirs.extend(
@@ -121,6 +118,12 @@ mod tests {
     use super::*;
     use crate::sys::tools::extra_dirs;
     use std::path::Path;
+
+    /// Every tool this platform spawns.
+    #[cfg(not(target_os = "macos"))]
+    const TOOLS: [Tool; 2] = [Tool::Ffmpeg, Tool::Tesseract];
+    #[cfg(target_os = "macos")]
+    const TOOLS: [Tool; 1] = [Tool::Ffmpeg];
 
     fn tool(dir: &Path, name: &str) -> PathBuf {
         let p = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
@@ -168,6 +171,7 @@ mod tests {
         assert!(exe_dir.is_some_and(|dir| bundled.contains(&dir)));
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn unbundled_tools_keep_path_precedence() {
         let path: Vec<PathBuf> = std::env::var_os("PATH")
@@ -201,7 +205,7 @@ mod tests {
     fn a_missing_tool_reports_its_install_instruction() {
         let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
         let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        for tool in [Tool::Ffmpeg, Tool::Tesseract] {
+        for tool in TOOLS {
             assert_eq!(
                 tool.spawn_error(&missing),
                 format!("{} is not installed: {}", tool.name(), tool.install())

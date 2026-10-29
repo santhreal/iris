@@ -465,7 +465,7 @@ impl Editor {
 
     pub(crate) fn copy_text_ocr(&mut self, cx: &mut Context<Self>) {
         let path = self.path.clone();
-        // Tesseract takes hundreds of ms on a large capture; run it
+        // Recognition takes hundreds of ms on a large capture; run it
         // off the UI thread and report through the status line.
         let task = cx
             .background_executor()

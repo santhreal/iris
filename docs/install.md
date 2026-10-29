@@ -244,11 +244,10 @@ Every release package includes `ffmpeg` for video recording and for probing NVID
 
 ### tesseract
 
-`tesseract` is required for optical character recognition (OCR) when copying text from captures.
+On Linux and Windows, `tesseract` is required for optical character recognition (OCR) when copying text from captures. macOS recognizes text with the Vision framework and needs no tool.
 
 Installation instructions:
 - Linux: `sudo apt install tesseract-ocr` on Debian and Ubuntu, `sudo dnf install tesseract` on Fedora. The deb and the rpm suggest it; `apt` and `dnf` do not install a suggested package by default.
-- macOS: `brew install tesseract`
 - Windows: `winget install UB-Mannheim.TesseractOCR`
 
 ## Updates

@@ -202,7 +202,7 @@ impl ToastStage {
         );
     }
 
-    /// OCR the capture to the clipboard. tesseract takes hundreds of
+    /// OCR the capture to the clipboard. Recognition takes hundreds of
     /// ms on a large capture; the card holds until it finishes.
     pub(super) fn copy_text(&mut self, cx: &mut Context<Self>) {
         self.busy = true;
