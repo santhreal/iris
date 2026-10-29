@@ -371,26 +371,38 @@ Section "Uninstall"
     Delete "$SMPROGRAMS\iris.lnk"
     Delete "$DESKTOP\iris.lnk"
 
-    ; 4. Remove installed files
-    DetailPrint "Removing application files..."
-    Delete "$INSTDIR\iris.exe"
-    Delete "$INSTDIR\ffmpeg.exe"
-    Delete "$INSTDIR\iris.ico"
-    Delete "$INSTDIR\LICENSE-MIT"
-    Delete "$INSTDIR\LICENSE-APACHE"
-    Delete "$INSTDIR\Inter-OFL.txt"
-    Delete "$INSTDIR\uninstall.exe"
-    RMDir /r "$INSTDIR\licenses\ffmpeg"
-    RMDir "$INSTDIR\licenses"
-
-    ; 5. Remove registry entries
+    ; 4. Remove registry entries
     DetailPrint "Cleaning registry entries..."
     DeleteRegKey HKCU "${UNINST_KEY}"
     DeleteRegKey HKCU "${APP_KEY}"
 
-    ; 6. Remove installation directory if empty
-    DetailPrint "Removing installation directory..."
-    RMDir "$INSTDIR"
+    ; 5. Remove the installed files, then the installation directory if
+    ;    empty. A file a scanner or indexer holds open as it is deleted
+    ;    stays listed until that handle closes, and keeps its directory
+    ;    in place: retry for up to 10 seconds.
+    DetailPrint "Removing application files..."
+    StrCpy $R1 0
+    ${Do}
+        Delete "$INSTDIR\iris.exe"
+        Delete "$INSTDIR\ffmpeg.exe"
+        Delete "$INSTDIR\iris.ico"
+        Delete "$INSTDIR\LICENSE-MIT"
+        Delete "$INSTDIR\LICENSE-APACHE"
+        Delete "$INSTDIR\Inter-OFL.txt"
+        Delete "$INSTDIR\uninstall.exe"
+        RMDir /r "$INSTDIR\licenses\ffmpeg"
+        RMDir "$INSTDIR\licenses"
+        RMDir "$INSTDIR"
+        ${IfNot} ${FileExists} "$INSTDIR\*.*"
+            ${Break}
+        ${EndIf}
+        IntOp $R1 $R1 + 1
+        ${If} $R1 >= 100
+            DetailPrint "$INSTDIR is not empty; it stays."
+            ${Break}
+        ${EndIf}
+        Sleep 100
+    ${Loop}
     ; Attempt to clean up Programs directory if empty (safe no-op if other apps exist)
     RMDir "$LOCALAPPDATA\Programs"
 SectionEnd

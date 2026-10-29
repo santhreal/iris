@@ -107,7 +107,7 @@ To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
 "%LOCALAPPDATA%\Programs\iris\uninstall.exe"
 ```
 
-The uninstaller sends `--quit` to a running iris daemon, waits for both executables in the same way, then removes installed files and shortcuts, deletes the autostart registry value, and removes application registry entries.
+The uninstaller sends `--quit` to a running iris daemon, waits for both executables in the same way, then removes shortcuts, the autostart registry value, application registry entries, and the installed files. It deletes the installation directory once it is empty, retrying for up to 10 seconds while another process, such as a virus scanner, holds a deleted file open. A directory that holds other files stays.
 
 ### Portable zip
 

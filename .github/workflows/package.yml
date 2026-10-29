@@ -457,6 +457,13 @@ jobs:
           $again.TargetPath = "$dir\iris.exe"
           $again.Arguments = '--home'
           $again.Save()
+          # A process holding an installed file (a virus scanner) as the
+          # uninstaller deletes it: the uninstaller retries until it closes.
+          $held = Join-Path $env:RUNNER_TEMP 'ico-held'
+          $hold = "`$f = [IO.File]::Open('$dir\iris.ico', 'Open', 'Read', 'Read'); New-Item '$held' | Out-Null; Start-Sleep 5; `$f.Close()"
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
+          Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
+          Wait-Until { Test-Path $held } 'the process holding iris.ico'
           # The uninstaller runs from a copy in %TEMP% and returns at once.
           Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S'
           $deadline = (Get-Date).AddSeconds(60)
