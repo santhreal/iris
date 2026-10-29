@@ -78,6 +78,7 @@ documents! {
     Keyboard => r##"<path d="M2.4 4.8L15.6 4.8L15.6 13.2L2.4 13.2Z"/><circle cx="5.4" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="8" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="10.6" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="13.2" cy="7.6" r="0.85" fill="#fff" stroke="none"/><path d="M6.2 10.6L11.8 10.6"/>"##,
     Download => r##"<circle cx="9" cy="9" r="6.6"/><path d="M9 5L9 12.4"/><path d="M6.2 9.8L9 12.6L11.8 9.8"/>"##,
     Sliders => r##"<path d="M3 6L15 6"/><path d="M3 12L15 12"/><circle cx="6.6" cy="6" r="2.3" fill="#fff" stroke="none"/><circle cx="11.4" cy="12" r="2.3" fill="#fff" stroke="none"/>"##,
+    Timer => r##"<circle cx="9" cy="10" r="5.6"/><path d="M7.2 2.6L10.8 2.6"/><path d="M9 2.6L9 4.4"/><path d="M9 10L9 7.2"/><path d="M13.2 4.8L14.2 5.8"/>"##,
 }
 
 // WHY: the class closed here is "an icon draws outside its box or not

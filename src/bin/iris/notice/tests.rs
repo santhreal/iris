@@ -260,3 +260,26 @@ fn a_toast_elsewhere_leaves_the_corner_alone() {
         assert_eq!(card, corner(primary, left, top, h), "left={left} top={top}");
     }
 }
+
+/// The card reads the whole seconds left, rounded up: it never reads 0
+/// while the capture is still ahead, and it reads the full delay at the
+/// start rather than one second less.
+#[test]
+fn a_countdown_reads_the_seconds_left_rounded_up() {
+    let ms = Duration::from_millis;
+    for (left, title) in [
+        (ms(3000), "Screenshot in 3 seconds"),
+        (ms(2999), "Screenshot in 3 seconds"),
+        (ms(2300), "Screenshot in 3 seconds"),
+        (Duration::from_micros(1_000_001), "Screenshot in 2 seconds"),
+        (ms(2001), "Screenshot in 3 seconds"),
+        (ms(2000), "Screenshot in 2 seconds"),
+        (ms(1001), "Screenshot in 2 seconds"),
+        (ms(1000), "Screenshot in 1 second"),
+        (ms(1), "Screenshot in 1 second"),
+        (Duration::from_micros(100), "Screenshot in 1 second"),
+        (Duration::ZERO, "Screenshot in 1 second"),
+    ] {
+        assert_eq!(countdown_title(left), title, "{left:?} left");
+    }
+}

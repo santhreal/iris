@@ -63,6 +63,7 @@ pub enum Icon {
     Keyboard,
     Download,
     Sliders,
+    Timer,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`. It neither

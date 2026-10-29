@@ -12,6 +12,7 @@ mod menu;
 mod resize;
 mod scroll;
 mod tooltip;
+mod vanish;
 mod window_frame;
 mod window_move;
 mod window_open;
@@ -47,6 +48,7 @@ pub use self::menu::{
 pub use self::resize::resize_edges;
 pub use self::scroll::scroll_y;
 pub use self::tooltip::tip;
+pub use self::vanish::{close_then_run, run_after_vanish};
 pub use self::window_frame::{
     close_route, toolbar_bar, toolbar_frame, window_corner, window_edge, OnClose, Toolbar,
 };

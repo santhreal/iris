@@ -13,15 +13,20 @@
 //! A guide is the one notice that does not time out: it states the
 //! next step of an interaction that is waiting on input (click a
 //! window to record it) and leaves when that interaction ends.
+//!
+//! A countdown is the card of a delayed capture. It counts the seconds
+//! down, and its close button cancels the capture. At zero the card
+//! closes, and the capture reads the screen once it is gone.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::*;
 
 use crate::icons::{icon, Icon};
-use crate::widgets::icon_button;
-use crate::{motion, theme};
+use crate::widgets::{self, icon_button};
+use crate::{daemon, motion, theme};
 
 #[cfg(test)]
 mod tests;
@@ -62,6 +67,9 @@ const REPLACE_EXIT: Duration = Duration::from_millis(180);
 
 /// The live notice, so a newer one replaces it.
 static NOTICE: parking_lot::Mutex<Option<WindowHandle<Notice>>> = parking_lot::Mutex::new(None);
+/// The delayed capture that runs: a newer one or a cancel moves it on,
+/// and a countdown whose number has moved on does not capture.
+static COUNTDOWN: AtomicU64 = AtomicU64::new(0);
 
 /// What a card reports, which sets its glyph, its buttons, and how
 /// long it stays.
@@ -71,6 +79,8 @@ enum Kind {
     Failure,
     Update,
     Guide,
+    /// A delayed capture that runs at the deadline.
+    Countdown(Instant),
 }
 
 /// A file was written: its name, and Show in Folder.
@@ -105,6 +115,91 @@ pub fn end_guide(cx: &mut App) {
                 n.leave(REPLACE_EXIT, cx);
             }
         });
+    }
+}
+
+/// Capture every display in `secs` seconds, counting down on a card
+/// whose close button cancels the capture. A newer countdown replaces
+/// this one, card and capture. A newer notice that replaces the card
+/// leaves the capture to run. Zero seconds captures at once.
+pub fn countdown(cx: &mut App, secs: u64) {
+    let run = COUNTDOWN.fetch_add(1, Ordering::Relaxed) + 1;
+    if secs == 0 {
+        capture_now(cx);
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    show(cx, "", String::new(), None, Kind::Countdown(deadline));
+    cx.spawn(async move |cx| {
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            // Wake when the whole second the card shows changes.
+            let part = left - Duration::from_secs(left.as_secs());
+            let wait = if part.is_zero() {
+                Duration::from_secs(1)
+            } else {
+                part
+            };
+            cx.background_executor().timer(wait).await;
+            cx.update(|cx| on_countdown(cx, |_, _, cx| cx.notify()));
+        }
+        cx.update(|cx| {
+            if COUNTDOWN.load(Ordering::Relaxed) == run {
+                capture_now(cx);
+            }
+        });
+    })
+    .detach();
+}
+
+/// Run `f` on the live notice when it is a countdown on screen. False
+/// when there is none.
+fn on_countdown(
+    cx: &mut App,
+    f: impl FnOnce(&mut Notice, &mut Window, &mut Context<Notice>),
+) -> bool {
+    let Some(handle) = *NOTICE.lock() else {
+        return false;
+    };
+    handle
+        .update(cx, |n, window, cx| {
+            let live = matches!(n.kind, Kind::Countdown(_)) && n.closing.is_none();
+            if live {
+                f(n, window, cx);
+            }
+            live
+        })
+        .unwrap_or(false)
+}
+
+/// The countdown reached zero: its card closes, then the capture runs
+/// on a screen without it.
+fn capture_now(cx: &mut App) {
+    let closed = on_countdown(cx, |n, window, cx| {
+        if crate::sys::window::blended(window) {
+            n.hidden = true;
+            cx.notify();
+            widgets::close_then_run(window, cx, daemon::Command::CaptureFullscreen);
+        } else {
+            // A card cut to its shape leaves the screen as it closes.
+            window.remove_window();
+            widgets::run_after_vanish(cx, daemon::Command::CaptureFullscreen);
+        }
+    });
+    if !closed {
+        daemon::run(cx, &daemon::Command::CaptureFullscreen);
+    }
+}
+
+/// The title of a countdown with `left` to go: the whole seconds,
+/// rounded up, so the card reads 1 in the last second.
+fn countdown_title(left: Duration) -> String {
+    match left.as_nanos().div_ceil(1_000_000_000).max(1) {
+        1 => "Screenshot in 1 second".to_string(),
+        n => format!("Screenshot in {n} seconds"),
     }
 }
 
@@ -166,6 +261,8 @@ pub struct Notice {
     armed: u64,
     /// The card, where a screen that does not blend the window shows it.
     cutout: crate::sys::window::Cutout,
+    /// Draw nothing: a countdown at zero leaves the screen to the capture.
+    hidden: bool,
 }
 
 /// Width of the detail text beside the glyph and `buttons` buttons.
@@ -254,7 +351,7 @@ fn open(
     let hold = Duration::from_millis(u64::from(cfg.toast_duration_ms));
     let hold = match kind {
         Kind::Failure | Kind::Update => hold.max(FAILURE_HOLD),
-        Kind::Saved | Kind::Guide => hold,
+        Kind::Saved | Kind::Guide | Kind::Countdown(_) => hold,
     };
     let buttons = buttons(kind, file.is_some());
     // The detail wraps as GPUI's text element wraps it, measured before
@@ -292,6 +389,7 @@ fn open(
         hovered: false,
         armed: 0,
         cutout: Default::default(),
+        hidden: false,
     };
     let handle = crate::widgets::open_window(
         cx,
@@ -322,7 +420,7 @@ fn open(
     if let Some(previous) = previous {
         let _ = previous.update(cx, |n, _, cx| n.leave(REPLACE_EXIT, cx));
     }
-    if kind != Kind::Guide {
+    if !matches!(kind, Kind::Guide | Kind::Countdown(_)) {
         handle
             .update(cx, |n, _, cx| {
                 let wait = motion::tempo(motion::ENTER) + n.hold;
@@ -335,8 +433,9 @@ fn open(
 
 impl Notice {
     /// Leave after `wait`, or later while the pointer rests on the card.
+    /// A guide and a countdown stay until their interaction ends.
     fn arm(&mut self, wait: Duration, cx: &mut Context<Self>) {
-        if self.closing.is_some() || self.kind == Kind::Guide {
+        if self.closing.is_some() || matches!(self.kind, Kind::Guide | Kind::Countdown(_)) {
             return;
         }
         self.armed += 1;
@@ -369,6 +468,9 @@ impl Notice {
 
 impl Render for Notice {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.hidden {
+            return div();
+        }
         // A screen that does not blend the window shows the card still,
         // in its cut-out area: it arrives and leaves at once.
         let still = !crate::sys::window::blended(window);
@@ -421,6 +523,13 @@ impl Render for Notice {
             Kind::Update => (Icon::Download, theme::ACCENT),
             Kind::Guide => (Icon::Record, theme::DANGER),
             Kind::Saved => (Icon::Check, theme::FG),
+            Kind::Countdown(_) => (Icon::Timer, theme::FG),
+        };
+        let title = match self.kind {
+            Kind::Countdown(at) => {
+                countdown_title(at.saturating_duration_since(Instant::now())).into()
+            }
+            _ => self.title.clone(),
         };
         let mut text = div()
             .flex()
@@ -435,7 +544,7 @@ impl Render for Notice {
                     .line_height(px(TITLE_LINE))
                     .text_color(theme::FG)
                     .truncate()
-                    .child(self.title.clone()),
+                    .child(title),
             );
         if self.lines > 0 {
             text = text.child(
@@ -468,10 +577,19 @@ impl Render for Notice {
                     n.leave(EXIT, cx);
                 }))
         });
+        let countdown = matches!(self.kind, Kind::Countdown(_));
         let close = (self.kind != Kind::Guide).then(|| {
             icon_button("notice-close", Icon::Close, false, BUTTON)
-                .tooltip(crate::widgets::tip("Close", None))
-                .on_click(cx.listener(|n, _, _, cx| n.leave(EXIT, cx)))
+                .tooltip(crate::widgets::tip(
+                    if countdown { "Cancel" } else { "Close" },
+                    None,
+                ))
+                .on_click(cx.listener(move |n, _, _, cx| {
+                    if countdown {
+                        COUNTDOWN.fetch_add(1, Ordering::Relaxed);
+                    }
+                    n.leave(EXIT, cx);
+                }))
         });
 
         let mut card = div()

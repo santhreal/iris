@@ -9,7 +9,7 @@
 | `--capture` | None | Open region capture overlay, then display [toast notification](toast.md#toast-notifications). |
 | `--capture-fullscreen` | None | Capture entire virtual display without opening overlay, then display [toast notification](toast.md#toast-notifications). |
 | `--capture-window` | None | Capture focused window, then display [toast notification](toast.md#toast-notifications). |
-| `--delay` | `<secs>` | Wait specified integer seconds (`u64`), capture entire virtual display, then display [toast notification](toast.md#toast-notifications). |
+| `--delay` | `<secs>` | Count down the specified integer seconds (`u64`) on a corner card with a cancel button, capture entire virtual display, then display [toast notification](toast.md#toast-notifications) ([Delayed Capture](capture.md#delayed-capture)). |
 | `--record-window` | None | Toggle window recording. Prompts for window selection, or stops active recording. |
 | `--record-region` | None | Open region selection overlay to record selected screen rectangle. |
 | `--record-pause` | None | Pause or resume active screen recording. Requires running daemon. |

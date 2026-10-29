@@ -52,7 +52,7 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{windows_of, Compositor};
+use x11::{rect, windows_of, Compositor};
 
 /// A server's compositing manager and window manager, before the daemon
 /// connects and when the window opens.
@@ -283,17 +283,6 @@ fn the_overlay_asks_for_no_window_manager_frame() {
             },
         );
     }
-}
-
-/// The window's client area in root pixels: x, y, width, height.
-fn rect(conn: &RustConnection, root: u32, window: u32) -> (i16, i16, u16, u16) {
-    let at = conn
-        .translate_coordinates(window, root, 0, 0)
-        .unwrap()
-        .reply()
-        .unwrap();
-    let size = conn.get_geometry(window).unwrap().reply().unwrap();
-    (at.dst_x, at.dst_y, size.width, size.height)
 }
 
 /// Press the first button at `from`, move the pointer `dx` pixels in

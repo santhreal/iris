@@ -7,10 +7,6 @@
 //! hover and press are style states, not animations. Bare `iris`
 //! launches here.
 
-use std::cell::Cell;
-use std::rc::Rc;
-use std::time::Duration;
-
 use gpui::*;
 
 use crate::sys::hotkeys::{self, Binding, Chord};
@@ -31,13 +27,6 @@ const BADGE_GLYPH: f32 = 20.0;
 /// the tile.
 const RING: f32 = 2.0;
 const RING_GAP: f32 = 2.0;
-
-/// After a tile hides home, how long the capture waits for the
-/// compositor to drop home's last pixels from the screen it grabs.
-const VANISH: Duration = Duration::from_millis(34);
-/// The longest a tile waits for home's empty frame: a window that gets
-/// no frames (minimized mid-press) still runs the tile.
-const VANISH_FALLBACK: Duration = Duration::from_millis(250);
 
 /// What a home tile runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,22 +195,11 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
-/// Run `cmd` once the compositor has had `VANISH` to drop home.
-fn run_after_vanish(cx: &mut App, cmd: daemon::Command) {
-    cx.spawn(async move |cx| {
-        cx.background_executor().timer(VANISH).await;
-        cx.update(|cx| daemon::run(cx, &cmd));
-    })
-    .detach();
-}
-
 impl Home {
     /// Run `tile`. A tile that reads the screen first draws home empty
-    /// and closes it, then starts once the compositor has dropped it, so
-    /// the capture never contains home: a window closed in the same
-    /// turn as the grab is still on the screen the grab reads, and a
-    /// window manager's close animation keeps it there longer. The
-    /// library opens at once.
+    /// and closes it, then starts once the compositor has dropped it
+    /// (`widgets::close_then_run`), so the capture never contains home.
+    /// The library opens at once.
     fn activate(&mut self, tile: Tile, window: &mut Window, cx: &mut Context<Self>) {
         if self.leaving {
             return;
@@ -233,29 +211,7 @@ impl Home {
         }
         self.leaving = true;
         cx.notify();
-        let pending = Rc::new(Cell::new(Some(tile.command())));
-        // Next-frame callbacks run before that frame draws: the first
-        // runs before the empty frame, the second after it presented.
-        let on_frame = pending.clone();
-        window.on_next_frame(move |window, _| {
-            window.on_next_frame(move |window, cx| {
-                if let Some(cmd) = on_frame.take() {
-                    window.remove_window();
-                    run_after_vanish(cx, cmd);
-                }
-            });
-        });
-        let handle = window.window_handle();
-        cx.spawn(async move |_, cx| {
-            cx.background_executor().timer(VANISH_FALLBACK).await;
-            cx.update(|cx| {
-                if let Some(cmd) = pending.take() {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                    run_after_vanish(cx, cmd);
-                }
-            });
-        })
-        .detach();
+        widgets::close_then_run(window, cx, tile.command());
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {

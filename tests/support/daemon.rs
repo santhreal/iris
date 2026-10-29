@@ -90,6 +90,42 @@ pub fn xvfb_sized(case: &str, geometry: &str) -> Option<(Server, String)> {
     Some((xvfb, format!(":{}", number.trim())))
 }
 
+/// picom on `display` with no config file, an instant fade in, and a
+/// two-second fade out, once it owns the compositing selection of
+/// `conn`'s first screen; `None`, printed, without picom on PATH.
+pub fn fading_compositor(
+    case: &str,
+    conn: &impl x11rb::connection::Connection,
+    display: &str,
+) -> Option<Server> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    let Some(picom) = Server::spawn(
+        Command::new("picom")
+            .env("DISPLAY", display)
+            .args(["--config", "/dev/null", "--backend", "xrender", "--fading"])
+            .args(["--fade-in-step", "1", "--fade-out-step", "0.005"])
+            .args(["--fade-delta", "10"]),
+    ) else {
+        eprintln!("{case} did not run: no picom on PATH");
+        return None;
+    };
+    let selection = conn
+        .intern_atom(false, b"_NET_WM_CM_S0")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    until("picom to own the compositing selection", || {
+        let owner = conn
+            .get_selection_owner(selection)
+            .unwrap()
+            .reply()
+            .unwrap();
+        (owner.owner != x11rb::NONE).then_some(())
+    });
+    Some(picom)
+}
+
 /// A private session bus listening in `dir` and its address, or `None`,
 /// printed, without dbus-daemon on PATH. --print-address: the daemon
 /// writes its address to stdout once it accepts clients.

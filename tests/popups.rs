@@ -46,9 +46,7 @@ mod x11;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::ConnectionExt as _;
-use x11rb::protocol::xproto::{
-    ChangeWindowAttributesAux, ConnectionExt as _, EventMask, ImageFormat,
-};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, EventMask};
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
@@ -239,23 +237,7 @@ fn card(
         .unwrap()
         .reply()
         .unwrap();
-    let pixel = |x: i16, y: i16| {
-        let image = conn
-            .get_image(
-                ImageFormat::Z_PIXMAP,
-                root,
-                at.dst_x + x,
-                at.dst_y + y,
-                1,
-                1,
-                !0,
-            )
-            .unwrap()
-            .reply()
-            .unwrap();
-        // Xvfb stores depth 24 in 32 bits a pixel, blue first.
-        u32::from_le_bytes(image.data[..4].try_into().unwrap()) & 0xff_ffff
-    };
+    let pixel = |x: i16, y: i16| x11::pixel(conn, root, (at.dst_x + x, at.dst_y + y));
     let shown: Vec<((i16, i16), u32)> = [(BLEED / 2, BLEED / 2), (BLEED, BLEED)]
         .into_iter()
         .map(|(x, y)| ((x, y), pixel(x, y)))

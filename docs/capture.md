@@ -59,9 +59,9 @@ Captures the focused window bounding rectangle, including window decorations, di
 iris --delay 5
 ```
 
-Accepts a non-negative integer representing seconds (`u64`). If omitted or non-numeric, iris ignores the option.
+Takes a whole number of seconds (`u64`). Any other value is an error ([Command-Line Interface](cli.md#command-reference)).
 
-Pauses execution for the specified duration using an asynchronous timer, then triggers fullscreen capture. Does not render an on-screen visual countdown.
+A card in the corner set by `toast_position` ([configuration.md#toast](configuration.md#toast)) counts down the seconds left: **Screenshot in 3 seconds**, then 2, then 1. At zero the card closes, and iris captures every display once the card is off the screen. The card's close button (tooltip **Cancel**) closes the card and cancels the capture. A second `--delay` replaces the pending one, card and capture. `--delay 0` captures at once with no card.
 
 ## Post-Capture Pipeline
 

@@ -3,9 +3,11 @@
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    self, AtomEnum, ConnectionExt as _, CreateWindowAux, ImageFormat, MapState, WindowClass,
+    self, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, CreateGCAux, CreateWindowAux,
+    ImageFormat, MapState, PropMode, Rectangle, WindowClass,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
+use x11rb::wrapper::ConnectionExt as _;
 
 /// The top-level iris windows titled `title`, mapped or not: WM_CLASS
 /// instance and class both `APP_ID`, and WM_NAME `title`.
@@ -75,6 +77,66 @@ pub fn client(conn: &impl Connection, root: u32, window: u32) -> (usize, usize, 
     assert_eq!(image.data.len(), w * h * 4, "depth {}", image.depth);
     let px = image.data.chunks(4).map(|p| [p[0], p[1], p[2]]).collect();
     (w, h, px)
+}
+
+/// The window's client area in root pixels: x, y, width, height.
+pub fn rect(conn: &impl Connection, root: u32, window: u32) -> (i16, i16, u16, u16) {
+    let at = conn
+        .translate_coordinates(window, root, 0, 0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let size = conn.get_geometry(window).unwrap().reply().unwrap();
+    (at.dst_x, at.dst_y, size.width, size.height)
+}
+
+/// The colour the screen shows at `spot`, 0xRRGGBB.
+pub fn pixel(conn: &impl Connection, root: u32, spot: (i16, i16)) -> u32 {
+    let image = conn
+        .get_image(ImageFormat::Z_PIXMAP, root, spot.0, spot.1, 1, 1, !0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    // Xvfb stores depth 24 in 32 bits a pixel, blue first.
+    u32::from_le_bytes(image.data[..4].try_into().unwrap()) & 0xff_ffff
+}
+
+/// Paint the root `rgb`, behind every window, as a desktop does: a root
+/// pixmap of that colour, named in `_XROOTPMAP_ID`. A compositing
+/// manager such as picom paints the root from that pixmap, and paints
+/// black where a root has none. The pixmap lives as long as `conn`.
+pub fn paint_root(conn: &impl Connection, root: u32, rgb: u32) {
+    let geometry = conn.get_geometry(root).unwrap().reply().unwrap();
+    let (width, height) = (geometry.width, geometry.height);
+    let pixmap = conn.generate_id().unwrap();
+    conn.create_pixmap(geometry.depth, pixmap, root, width, height)
+        .unwrap();
+    let gc = conn.generate_id().unwrap();
+    conn.create_gc(gc, pixmap, &CreateGCAux::new().foreground(rgb))
+        .unwrap();
+    let all = Rectangle {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    };
+    conn.poly_fill_rectangle(pixmap, gc, &[all]).unwrap();
+    conn.free_gc(gc).unwrap();
+    let name = conn
+        .intern_atom(false, b"_XROOTPMAP_ID")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    conn.change_property32(PropMode::REPLACE, root, name, AtomEnum::PIXMAP, &[pixmap])
+        .unwrap();
+    conn.change_window_attributes(
+        root,
+        &ChangeWindowAttributesAux::new().background_pixmap(pixmap),
+    )
+    .unwrap();
+    conn.clear_area(false, root, 0, 0, 0, 0).unwrap();
+    conn.flush().unwrap();
 }
 
 /// The left, top, right, and bottom pixels, inclusive, of color `[r, g,

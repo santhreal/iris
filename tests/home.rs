@@ -32,17 +32,13 @@ mod daemon;
 #[path = "support/x11.rs"]
 mod x11;
 
-use std::process::Command;
-
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{
-    self, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux, ImageFormat, WindowClass,
-};
+use x11rb::protocol::xproto::{self, ConnectionExt as _, CreateWindowAux, WindowClass};
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
-use daemon::{enabled, until, xvfb_sized, Daemon, Server};
-use x11::{click, windows_of};
+use daemon::{enabled, fading_compositor, xvfb_sized, Daemon};
+use x11::{click, paint_root, pixel, rect, windows_of};
 
 const HOME: &str = "iris";
 const OVERLAY: &str = "Capture - iris";
@@ -58,39 +54,6 @@ const HEADER: (i16, i16) = (48, 60);
 const TARGET: (i16, i16, u16, u16) = (200, 200, 320, 240);
 const TARGET_RGB: u32 = 0x0033_66cc;
 
-/// A pixel of the screen as 0xRRGGBB.
-fn pixel(conn: &RustConnection, root: u32, at: (i16, i16)) -> u32 {
-    let image = conn
-        .get_image(ImageFormat::Z_PIXMAP, root, at.0, at.1, 1, 1, !0)
-        .unwrap()
-        .reply()
-        .unwrap();
-    let d = &image.data;
-    (u32::from(d[2]) << 16) | (u32::from(d[1]) << 8) | u32::from(d[0])
-}
-
-/// The window's client area in root pixels: x, y, width, height.
-fn rect(conn: &RustConnection, root: u32, window: u32) -> (i16, i16, u16, u16) {
-    let at = conn
-        .translate_coordinates(window, root, 0, 0)
-        .unwrap()
-        .reply()
-        .unwrap();
-    let size = conn.get_geometry(window).unwrap().reply().unwrap();
-    (at.dst_x, at.dst_y, size.width, size.height)
-}
-
-/// Paint the root `rgb`, behind every window.
-fn paint_root(conn: &RustConnection, root: u32, rgb: u32) {
-    conn.change_window_attributes(
-        root,
-        &ChangeWindowAttributesAux::new().background_pixel(rgb),
-    )
-    .unwrap();
-    conn.clear_area(false, root, 0, 0, 0, 0).unwrap();
-    conn.flush().unwrap();
-}
-
 /// Wait until the overlay holds the focus and its frozen frame landed.
 fn overlay_up(conn: &RustConnection, root: u32, daemon: &Daemon) {
     daemon.until("the overlay to take the focus", || {
@@ -101,37 +64,6 @@ fn overlay_up(conn: &RustConnection, root: u32, daemon: &Daemon) {
     daemon.until("the frozen frame to land", || {
         daemon.log().contains("frame landed").then_some(())
     });
-}
-
-/// picom on `display` with no config file, an instant fade in, and a
-/// two-second fade out, once it owns the screen's compositing
-/// selection; `None`, printed, without picom on PATH.
-fn fading_compositor(case: &str, conn: &RustConnection, display: &str) -> Option<Server> {
-    let Some(picom) = Server::spawn(
-        Command::new("picom")
-            .env("DISPLAY", display)
-            .args(["--config", "/dev/null", "--backend", "xrender", "--fading"])
-            .args(["--fade-in-step", "1", "--fade-out-step", "0.005"])
-            .args(["--fade-delta", "10"]),
-    ) else {
-        eprintln!("{case} did not run: no picom on PATH");
-        return None;
-    };
-    let selection = conn
-        .intern_atom(false, b"_NET_WM_CM_S0")
-        .unwrap()
-        .reply()
-        .unwrap()
-        .atom;
-    until("picom to own the compositing selection", || {
-        let owner = conn
-            .get_selection_owner(selection)
-            .unwrap()
-            .reply()
-            .unwrap();
-        (owner.owner != x11rb::NONE).then_some(())
-    });
-    Some(picom)
 }
 
 #[test]

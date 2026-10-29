@@ -190,14 +190,7 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         Command::CaptureFullscreen => capture::capture_fullscreen(cx),
         Command::CaptureWindow => capture::capture_active_window(cx),
         Command::Delayed(secs) => {
-            let secs = *secs;
-            cx.spawn(async move |cx| {
-                cx.background_executor()
-                    .timer(Duration::from_secs(secs))
-                    .await;
-                cx.update(|cx| run(cx, &Command::CaptureFullscreen));
-            })
-            .detach();
+            crate::notice::countdown(cx, *secs);
             Ok(())
         }
         Command::Library => library::open(cx),

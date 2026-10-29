@@ -37,11 +37,11 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, ImageFormat};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
 use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{click, tap, windows_of, Compositor};
+use x11::{click, pixel, tap, windows_of, Compositor};
 
 /// The screen: large enough for the editor's window and the toast.
 const SCREEN: &str = "1280x1024x24";
@@ -204,15 +204,4 @@ fn colours(
         }
         std::thread::sleep(Duration::from_millis(1));
     }
-}
-
-/// The colour the screen shows at `spot`, 0xRRGGBB.
-fn pixel(conn: &RustConnection, root: u32, spot: (i16, i16)) -> u32 {
-    let image = conn
-        .get_image(ImageFormat::Z_PIXMAP, root, spot.0, spot.1, 1, 1, !0)
-        .unwrap()
-        .reply()
-        .unwrap();
-    // Xvfb stores depth 24 in 32 bits a pixel, blue first.
-    u32::from_le_bytes(image.data[..4].try_into().unwrap()) & 0xff_ffff
 }
