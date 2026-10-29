@@ -112,7 +112,7 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 
 ## Copy Controls
 
-- **Copy Text** (More menu): Recognizes text in the image as shown, after crops, rotations, and blurs, on a background thread (Vision on macOS, Tesseract on Linux and Windows), copies extracted text to the clipboard, and displays the character count in a status pill.
+- **Copy Text** (More menu): Recognizes text in the image as shown, after crops, rotations, and blurs, on a background thread (Vision on macOS, Windows.Media.Ocr on Windows, Tesseract on Linux), copies extracted text to the clipboard, and displays the character count in a status pill.
 - **Copy** (toolbar): Opens a menu with three export options:
   - **Copy Image**: Copies the image as shown, markup included, to the system clipboard. An active text entry is committed first.
   - **Copy File**: Copies the file to the system clipboard in platform file-list format for pasting into file managers. The file holds markup once **Done** saves it.

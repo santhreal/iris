@@ -49,7 +49,7 @@ A thumbnail card, the toast, slides in at a corner of the screen ([Toast Notific
 - Drag it into another application to drop the PNG file there.
 - Swipe it away to dismiss it. It also dismisses itself after its countdown.
 - Point at it to show its actions: keep it open, copy the image or the file, show the file in its folder, open the editor, or move the capture to the trash.
-- Right-click it to copy the text in the image (OCR; on Linux and Windows, with Tesseract installed) or to pin the capture in a window of its own.
+- Right-click it to copy the text in the image (OCR; on Linux, with Tesseract installed) or to pin the capture in a window of its own.
 
 The editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops. **Done** (`Ctrl+S`, `Cmd+S` on macOS) writes the image back to its file and copies it to the clipboard. `Escape` pressed twice discards the changes ([Annotation Editor](editor.md)).
 

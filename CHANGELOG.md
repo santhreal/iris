@@ -14,7 +14,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - A delayed capture counts down on a corner card whose close button cancels it, and the card leaves the screen before the capture.
 - A capture is saved as a PNG, copied to the clipboard, and shown in a thumbnail toast.
 - The Settings file name field shows the name a screenshot taken at that moment is saved under.
-- The toast drags out as a file, copies the image or the file, shows the file in its folder, opens the editor, pins the capture in an always-on-top window, and copies the text in the image through OCR (Vision on macOS, Tesseract on Linux and Windows).
+- The toast drags out as a file, copies the image or the file, shows the file in its folder, opens the editor, pins the capture in an always-on-top window, and copies the text in the image through OCR (Vision on macOS, Windows.Media.Ocr on Windows, Tesseract on Linux).
 - The annotation editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops.
 - Undo and redo in the editor cover crops, rotations, flips, and Clear Markup, and undoing a crop or transformation restores the previous image with its annotations editable.
 - The arrow keys move the editor's selected annotation or pending crop box by 1 pixel, or 10 with `Shift`, and `Ctrl+C` or `Cmd+C` copies the image as shown.

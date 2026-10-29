@@ -1,7 +1,8 @@
 //! OCR: copy all recognized text in a capture to the clipboard. macOS
-//! recognizes text with the Vision framework. Linux and Windows run
-//! tesseract, a runtime dependency resolved by `tools`; its absence is
-//! an error that names the install command.
+//! recognizes text with the Vision framework and Windows with
+//! Windows.Media.Ocr. Linux runs tesseract, a runtime dependency
+//! resolved by `tools`; its absence is an error that names the install
+//! command.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,7 +47,12 @@ fn recognize(source: &Path) -> Result<String, String> {
     crate::sys::vision::recognize_text(source)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn recognize(source: &Path) -> Result<String, String> {
+    crate::sys::media_ocr::recognize_text(source)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn recognize(source: &Path) -> Result<String, String> {
     use crate::tools::Tool;
     let out = Tool::Tesseract
@@ -65,13 +71,14 @@ fn recognize(source: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-// WHY: the class closed here is "Copy Text depends on a tool the macOS
-// app does not ship": macOS reads text through Vision, so a packaged
-// app with nothing else installed copies text. These run on the macOS
-// CI runner, which has no tesseract. Not covered: recognition of
-// anything harder than clean rendered text, and Linux and Windows,
-// where tesseract does the recognition.
-#[cfg(all(test, target_os = "macos"))]
+// WHY: the class closed here is "Copy Text depends on a tool the app
+// does not ship": macOS reads text through Vision and Windows through
+// Windows.Media.Ocr, so a packaged app with nothing else installed
+// copies text. These run on the macOS and Windows CI runners, which
+// have no tesseract. Not covered: recognition of anything harder than
+// clean rendered text, a Windows profile with no OCR language, and
+// Linux, where tesseract does the recognition.
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     use super::{recognize_png, recognize_text};
     use std::path::{Path, PathBuf};
@@ -83,7 +90,7 @@ mod tests {
     const LINES: &str = "Iris copies this text\nSecond line 2048";
 
     #[test]
-    fn vision_reads_each_line_in_order() {
+    fn the_system_ocr_reads_each_line_in_order() {
         assert_eq!(recognize_text(&fixture()).as_deref(), Ok(LINES));
     }
 
@@ -93,7 +100,7 @@ mod tests {
     /// a home of its own.
     #[test]
     #[serial_test::serial]
-    fn vision_reads_an_image_no_file_holds() {
+    fn the_system_ocr_reads_an_image_no_file_holds() {
         let home = tempfile::tempdir().unwrap();
         std::env::set_var(crate::dirs::HOME_ENV, home.path());
         let png = std::fs::read(fixture()).unwrap();
@@ -122,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_is_not_an_image_reports_the_vision_failure() {
+    fn a_file_that_is_not_an_image_reports_the_recognition_failure() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("notes.png");
         std::fs::write(&file, b"plain text, not a PNG").unwrap();

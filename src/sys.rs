@@ -7,6 +7,8 @@ pub mod capture;
 mod clipboard;
 pub mod dragcopy;
 pub mod exe;
+#[cfg(windows)]
+pub(crate) mod media_ocr;
 #[cfg(target_os = "macos")]
 pub mod objc;
 pub mod record;

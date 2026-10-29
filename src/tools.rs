@@ -4,8 +4,7 @@
 //! the process PATH, then locations the process PATH can miss: a macOS
 //! app started from Finder or a login item inherits launchd's PATH,
 //! which has no Homebrew or MacPorts prefix; a Windows daemon keeps the
-//! PATH it started with, so a tool installed while it runs is not on it,
-//! and the Windows Tesseract installer adds no PATH entry at all.
+//! PATH it started with, so a tool installed while it runs is not on it.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -17,8 +16,9 @@ use std::process::Command;
 pub enum Tool {
     /// Recording (every platform) and the NVENC probe.
     Ffmpeg,
-    /// OCR for "Copy Text". macOS recognizes text with Vision instead.
-    #[cfg(not(target_os = "macos"))]
+    /// OCR for "Copy Text". macOS and Windows recognize text with the
+    /// system's own OCR instead.
+    #[cfg(not(any(windows, target_os = "macos")))]
     Tesseract,
 }
 
@@ -26,7 +26,7 @@ impl Tool {
     fn name(self) -> &'static str {
         match self {
             Tool::Ffmpeg => "ffmpeg",
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             Tool::Tesseract => "tesseract",
         }
     }
@@ -39,8 +39,6 @@ impl Tool {
                 "macos" => "run `brew install ffmpeg`",
                 _ => "install the ffmpeg package (ffmpeg-free on Fedora)",
             },
-            #[cfg(windows)]
-            Tool::Tesseract => "run `winget install UB-Mannheim.TesseractOCR`",
             #[cfg(not(any(windows, target_os = "macos")))]
             Tool::Tesseract => "install the tesseract package (tesseract-ocr on Debian and Ubuntu)",
         }
@@ -87,7 +85,7 @@ impl Tool {
     fn search_dirs(self) -> Vec<PathBuf> {
         let mut dirs = match self {
             Tool::Ffmpeg => crate::sys::tools::bundled_dirs(),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             Tool::Tesseract => Vec::new(),
         };
         dirs.extend(
@@ -108,11 +106,11 @@ fn find_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 }
 
 // WHY: the class closed here is "an installed tool is reported
-// missing": the macOS app's launchd PATH without Homebrew, the Windows
-// Tesseract installer that adds no PATH entry, a daemon PATH older than
-// the install. Every spawn resolves through `Tool::find`; these pin its
-// search order and what counts as a hit. Not covered: which extra
-// directories a platform lists (data, checked on each OS by use).
+// missing": the macOS app's launchd PATH without Homebrew, a Windows
+// daemon PATH older than the install. Every spawn resolves through
+// `Tool::find`; these pin its search order and what counts as a hit.
+// Not covered: which extra directories a platform lists (data, checked
+// on each OS by use).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,9 +118,9 @@ mod tests {
     use std::path::Path;
 
     /// Every tool this platform spawns.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     const TOOLS: [Tool; 2] = [Tool::Ffmpeg, Tool::Tesseract];
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     const TOOLS: [Tool; 1] = [Tool::Ffmpeg];
 
     fn tool(dir: &Path, name: &str) -> PathBuf {
@@ -171,7 +169,7 @@ mod tests {
         assert!(exe_dir.is_some_and(|dir| bundled.contains(&dir)));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
     fn unbundled_tools_keep_path_precedence() {
         let path: Vec<PathBuf> = std::env::var_os("PATH")

@@ -1,7 +1,6 @@
 //! Windows tool locations: the PATH a new login gets, read from the
 //! registry because the daemon's own PATH predates any install made
-//! while it runs, and the Tesseract installer's default folders, which
-//! it does not add to PATH.
+//! while it runs.
 
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
@@ -22,7 +21,7 @@ pub(crate) fn hide_console(cmd: &mut Command) {
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
-/// The registry PATH (user, then machine), then the Tesseract folders.
+/// The registry PATH, user then machine.
 pub(crate) fn extra_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     for (key, sub) in [
@@ -34,15 +33,6 @@ pub(crate) fn extra_dirs() -> Vec<PathBuf> {
     ] {
         if let Some(path) = registry_path(key, sub) {
             dirs.extend(std::env::split_paths(&path));
-        }
-    }
-    for (base, sub) in [
-        ("ProgramFiles", "Tesseract-OCR"),
-        ("ProgramFiles(x86)", "Tesseract-OCR"),
-        ("LOCALAPPDATA", r"Programs\Tesseract-OCR"),
-    ] {
-        if let Some(base) = std::env::var_os(base) {
-            dirs.push(PathBuf::from(base).join(sub));
         }
     }
     dirs

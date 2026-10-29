@@ -129,6 +129,15 @@ windows-sys = { version = "0.59", features = [
 # The UTF-16 security descriptor string interprocess takes for the
 # daemon's pipe. Already in the tree through interprocess.
 widestring = "1"
+# Windows.Media.Ocr for Copy Text, through WinRT. Already in the tree
+# through gpui.
+windows = { version = "0.61", features = [
+    "Foundation_Collections",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Security_Cryptography",
+    "Storage_Streams",
+] }
 
 [target.'cfg(windows)'.build-dependencies]
 # Embeds packaging/windows/iris.rc (icon + version info) into iris.exe.

@@ -89,11 +89,10 @@ When an action produces feedback, a status line takes the capsule's place over t
 
 Trigger OCR text extraction via the **Copy Text** item in the right-click context menu:
 - Sets the status line to `"Reading text…"` and holds the auto-dismiss timer open.
-- Recognizes text off the UI thread: on macOS through the Vision framework, which needs no installed tool; on Linux and Windows by running `tesseract <source> stdout`.
-- On macOS, a file Vision cannot read reports `text recognition failed: <reason>`.
-- On Linux and Windows, a missing Tesseract reports the installation instruction:
-  - **Linux**: `tesseract is not installed: install the tesseract package (tesseract-ocr on Debian and Ubuntu)`
-  - **Windows**: `tesseract is not installed: run `winget install UB-Mannheim.TesseractOCR``
+- Recognizes text off the UI thread: on macOS through the Vision framework and on Windows through Windows.Media.Ocr, neither of which needs an installed tool; on Linux by running `tesseract <source> stdout`.
+- On macOS and Windows, a file the recognizer cannot read reports `text recognition failed: <reason>`.
+- On Windows, a user profile with no language that has the Optical character recognition feature reports `text recognition failed: Windows has no OCR recognizer for your languages; add a language with Optical character recognition in Settings > Time & language > Language & region`.
+- On Linux, a missing Tesseract reports the installation instruction: `tesseract is not installed: install the tesseract package (tesseract-ocr on Debian and Ubuntu)`.
 - If the image contains no recognized characters, reports `"no text recognized in this image"`.
 - On completion, copies extracted text to the system clipboard as UTF-8 text and displays `"Copied <count> characters"` on the status line.
 
@@ -104,7 +103,7 @@ Right-clicking the toast card opens a context menu that fades in over 140 millis
 Menu choices in order:
 1. **Markup**: Opens the annotation editor over the capture.
 2. **Copy**: Copies raw image pixels to the system clipboard.
-3. **Copy Text**: Extracts text using Tesseract OCR and copies it to the clipboard.
+3. **Copy Text**: Extracts text through OCR and copies it to the clipboard.
 4. **Pin to Screen**: Opens the capture in a [pinned window](#pinned-windows) and dismisses the toast.
 5. **Move to Trash**: Moves the PNG file to the system trash, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
 6. **Close**: Dismisses the toast card immediately.

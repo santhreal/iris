@@ -254,7 +254,7 @@ Search path order:
 2. Directories in the process `PATH` environment variable.
 3. Platform-specific directories:
    - **macOS**: `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`.
-   - **Windows**: Registry `Path` values under `HKEY_CURRENT_USER\\Environment` and `HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment` (with `%VAR%` variables expanded), and default Tesseract directories.
+   - **Windows**: Registry `Path` values under `HKEY_CURRENT_USER\\Environment` and `HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment` (with `%VAR%` variables expanded).
    - **Linux**: Process `PATH` directories.
 
 Release packages need no separate FFmpeg installation. A source build uses `ffmpeg` from `PATH`.

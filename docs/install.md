@@ -243,7 +243,7 @@ To remove the AppImage, turn off **Start iris at login**, quit iris, and delete 
 
 ## Runtime Tools
 
-For FFmpeg, iris searches a package's own runtime directory before `PATH`. Other tools use `PATH` first. On macOS, iris then inspects Homebrew and MacPorts directories (`/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`). On Windows, it also inspects user and machine `Path` values in the registry and default Tesseract directories (`%ProgramFiles%\Tesseract-OCR`, `%LOCALAPPDATA%\Programs\Tesseract-OCR`).
+For FFmpeg, iris searches a package's own runtime directory before `PATH`. Other tools use `PATH` first. On macOS, iris then inspects Homebrew and MacPorts directories (`/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`). On Windows, it also inspects user and machine `Path` values in the registry.
 
 ### ffmpeg
 
@@ -251,11 +251,9 @@ Every release package includes `ffmpeg` for video recording and for probing NVID
 
 ### tesseract
 
-On Linux and Windows, `tesseract` is required for optical character recognition (OCR) when copying text from captures. macOS recognizes text with the Vision framework and needs no tool.
+On Linux, `tesseract` is required for optical character recognition (OCR) when copying text from captures. macOS recognizes text with the Vision framework and Windows with Windows.Media.Ocr; neither needs a tool. Windows recognizes the languages of the user profile that have the Optical character recognition feature installed (Settings > Time & language > Language & region).
 
-Installation instructions:
-- Linux: `sudo apt install tesseract-ocr` on Debian and Ubuntu, `sudo dnf install tesseract` on Fedora. The deb and the rpm suggest it; `apt` and `dnf` do not install a suggested package by default.
-- Windows: `winget install UB-Mannheim.TesseractOCR`
+Install it with `sudo apt install tesseract-ocr` on Debian and Ubuntu, or `sudo dnf install tesseract` on Fedora. The deb and the rpm suggest it; `apt` and `dnf` do not install a suggested package by default.
 
 ## Updates
 

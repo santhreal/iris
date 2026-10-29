@@ -2907,6 +2907,7 @@ dependencies = [
  "trash",
  "ureq",
  "widestring",
+ "windows 0.61.3",
  "windows-sys 0.59.0",
  "x11rb",
  "zbus",
