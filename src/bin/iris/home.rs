@@ -128,19 +128,6 @@ impl Tile {
     }
 }
 
-/// The tile keyboard selection lands on after one Tab or arrow step
-/// from `from`, wrapping at both ends. With nothing selected, a forward
-/// step selects the first tile and a backward step the last.
-fn step(from: Option<usize>, forward: bool) -> usize {
-    let n = TILES.len();
-    match (from, forward) {
-        (None, true) => 0,
-        (None, false) => n - 1,
-        (Some(i), true) => (i + 1) % n,
-        (Some(i), false) => (i + n - 1) % n,
-    }
-}
-
 pub struct Home {
     focus: FocusHandle,
     /// The tile Tab and the arrow keys selected; Return or Space runs
@@ -226,11 +213,11 @@ impl Home {
             "," if meta => daemon::run(cx, &daemon::Command::Settings),
             k if meta && k == LIBRARY_KEY => self.activate(Tile::Library, window, cx),
             "tab" => {
-                self.selected = Some(step(self.selected, !ks.modifiers.shift));
+                self.selected = widgets::ring_step(self.selected, TILES.len(), !ks.modifiers.shift);
                 cx.notify();
             }
             "right" | "left" => {
-                self.selected = Some(step(self.selected, ks.key == "right"));
+                self.selected = widgets::ring_step(self.selected, TILES.len(), ks.key == "right");
                 cx.notify();
             }
             "enter" | "space" => {
@@ -558,25 +545,6 @@ mod tests {
         assert_eq!(got, ["Capture:true", "RecordToggle:true", "Library:false"]);
         let chords: Vec<Option<Chord>> = TILES.iter().map(|t| t.4.chord()).collect();
         assert_eq!(chords, [Some(Chord::Capture), Some(Chord::Record), None]);
-    }
-
-    #[test]
-    fn selection_cycles_every_tile_in_both_directions() {
-        let n = TILES.len();
-        assert_eq!(step(None, true), 0);
-        assert_eq!(step(None, false), n - 1);
-        for forward in [true, false] {
-            let mut seen = vec![false; n];
-            let mut at = step(None, forward);
-            for _ in 0..n {
-                assert!(at < n, "selection {at} is past the last tile");
-                seen[at] = true;
-                at = step(Some(at), forward);
-            }
-            assert!(seen.iter().all(|&s| s), "forward={forward}: {seen:?}");
-            // n steps return to the start.
-            assert_eq!(at, step(None, forward));
-        }
     }
 
     #[test]

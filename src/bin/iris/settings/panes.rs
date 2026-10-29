@@ -97,6 +97,18 @@ impl Pane {
         Pane::ALL.get(n.checked_sub(1)?).copied()
     }
 
+    /// The tab after this one, or before it with `forward` false,
+    /// wrapping at either end: Ctrl+Tab and Ctrl+Shift+Tab.
+    pub(super) fn step(self, forward: bool) -> Pane {
+        crate::widgets::ring_step(Some(self.index()), Pane::ALL.len(), forward)
+            .map_or(self, |ix| Pane::ALL[ix])
+    }
+
+    /// The pane's rows in drawn order, top to bottom.
+    pub(super) fn rows(self) -> impl Iterator<Item = Row> {
+        self.groups().iter().flat_map(|g| g.rows.iter().copied())
+    }
+
     pub(super) fn groups(self) -> &'static [Group] {
         match self {
             Pane::General => &[

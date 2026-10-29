@@ -300,10 +300,7 @@ fn a_pop_up_opens_with_its_selected_option_lit() {
 // rendered row heights matching Row::height, which docshots check.
 #[test]
 fn every_setting_has_exactly_one_row_and_every_pane_fits_its_window() {
-    let rows: Vec<Row> = Pane::ALL
-        .iter()
-        .flat_map(|p| p.groups().iter().flat_map(|g| g.rows.iter().copied()))
-        .collect();
+    let rows: Vec<Row> = Pane::ALL.iter().flat_map(|p| p.rows()).collect();
     let count = |want: Row| rows.iter().filter(|&&r| r == want).count();
     for sw in Switch::ALL {
         assert_eq!(count(Row::Switch(sw)), 1, "{sw:?}");
@@ -341,6 +338,125 @@ fn pane_shortcuts_follow_tab_order_and_reject_other_keys() {
     let past = (Pane::ALL.len() + 1).to_string();
     for key in ["0", past.as_str(), "9", "a", "", "-1", "f1"] {
         assert_eq!(Pane::for_key(key), None, "{key:?}");
+    }
+}
+
+// WHY: Ctrl+Tab and Ctrl+Shift+Tab walk the tabs in drawn order and wrap
+// at both ends. An off-by-one skips a tab or stalls at the last, and a
+// step back that underflows panics on the first tab; both fail here.
+#[test]
+fn ctrl_tab_walks_the_panes_in_order_and_wraps() {
+    let n = Pane::ALL.len();
+    for (i, &p) in Pane::ALL.iter().enumerate() {
+        assert_eq!(p.step(true), Pane::ALL[(i + 1) % n], "{p:?} forward");
+        assert_eq!(p.step(false), Pane::ALL[(i + n - 1) % n], "{p:?} back");
+    }
+}
+
+/// The rings `presses` Tab presses (Shift+Tab with `forward` false)
+/// move through, from a pane with no ring.
+fn tab_walk(s: &mut Settings, forward: bool, presses: usize) -> Vec<Option<Row>> {
+    (0..presses)
+        .map(|_| {
+            s.tab(forward);
+            s.ring
+        })
+        .collect()
+}
+
+// WHY: closes "a control the keyboard cannot reach": Tab moves the ring
+// over every control of every pane in drawn order and wraps at the end,
+// and Shift+Tab walks the same controls backward from the last. The
+// rows are read from the pane tables, so a row added to a pane is
+// covered. A text field opens for typing as the ring reaches it and
+// commits when the ring leaves. Not covered: Space and Return running
+// the control and the ring's drawing, which the X11 settings_keys case
+// reads.
+#[test]
+fn tab_reaches_every_control_of_every_pane_in_drawn_order() {
+    for pane in Pane::ALL {
+        let rows: Vec<Option<Row>> = pane.rows().map(Some).collect();
+        let n = rows.len();
+        let mut s = settings(Release::None);
+        s.pane = pane;
+        let walk = tab_walk(&mut s, true, n + 1);
+        assert_eq!(walk[..n], rows[..], "{pane:?}: Tab order");
+        assert_eq!(walk[n], rows[0], "{pane:?}: Tab wraps to the first");
+
+        let mut s = settings(Release::None);
+        s.pane = pane;
+        let back = tab_walk(&mut s, false, n + 1);
+        let reversed: Vec<Option<Row>> = rows.iter().rev().copied().collect();
+        assert_eq!(back[..n], reversed[..], "{pane:?}: Shift+Tab order");
+        assert_eq!(
+            back[n],
+            rows[n - 1],
+            "{pane:?}: Shift+Tab wraps to the last"
+        );
+    }
+}
+
+#[test]
+fn a_text_field_opens_as_the_ring_reaches_it_and_commits_as_it_leaves() {
+    let mut s = settings(Release::None);
+    // General: Start at login, the two folders, then the file name.
+    tab_walk(&mut s, true, 4);
+    assert_eq!(s.ring, Some(Row::Text(Field::Template)));
+    assert_eq!(
+        s.editing.as_ref().map(|e| (e.field, e.text.as_str())),
+        Some((Field::Template, s.cfg.screenshot_template.as_str())),
+        "the file name opens for typing with its stored text"
+    );
+    s.tab(true);
+    assert_eq!(s.ring, Some(Row::Restore));
+    assert_eq!(s.editing, None, "the field closes as the ring leaves it");
+}
+
+// WHY: closes "Tab drops a rejected value" and "Tab after a click starts
+// over": a typed value that does not commit keeps the keyboard in its
+// field with the reason beside it, and a field a click opened is where
+// Tab continues from.
+#[test]
+fn tab_stays_in_a_rejected_field_and_continues_from_a_clicked_one() {
+    let mut s = settings(Release::None);
+    tab_walk(&mut s, true, 4);
+    edit(&mut s, Field::Template, "no placeholder");
+    s.tab(true);
+    assert_eq!(s.ring, Some(Row::Text(Field::Template)));
+    assert_eq!(
+        s.editing.as_ref().map(|e| e.text.as_str()),
+        Some("no placeholder")
+    );
+    assert!(s.rejected.is_some(), "the reason shows beside the field");
+
+    let mut s = settings(Release::None);
+    s.begin_edit(Field::Template);
+    s.tab(false);
+    assert_eq!(
+        s.ring,
+        Some(Row::Folder(Field::RecordingsDir)),
+        "Shift+Tab from the clicked file name reaches the folder above it"
+    );
+}
+
+// WHY: closes "the ring on a control that is not drawn": the version row
+// shows no button while a check or an install runs, and Tab passes over
+// it until the button shows again.
+#[test]
+fn tab_passes_over_the_version_row_while_it_shows_no_button() {
+    for (checking, release) in [(true, Release::None), (false, Release::Installing)] {
+        let mut s = settings(release);
+        s.pane = Pane::Updates;
+        s.checking = checking;
+        assert_eq!(
+            tab_walk(&mut s, true, 3),
+            [
+                Some(Row::Switch(Switch::AutoCheck)),
+                Some(Row::Pick(Pick::UpdateChannel)),
+                Some(Row::Switch(Switch::AutoCheck)),
+            ],
+            "checking {checking}"
+        );
     }
 }
 

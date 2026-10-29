@@ -8,7 +8,9 @@
 //! Return or when it loses focus, a shortcut field as soon as the
 //! combination is pressed, and the global hotkey grabs reload after a
 //! shortcut changes. A rejected value keeps its field open with the
-//! reason beside it; Esc restores the stored value.
+//! reason beside it; Esc restores the stored value. Tab and Shift+Tab
+//! move a focus ring over the pane's controls, Space or Return runs the
+//! control under it, and Ctrl+Tab and Ctrl+Shift+Tab switch panes.
 
 use gpui::*;
 use iris_lib::config::Config;
@@ -96,6 +98,9 @@ pub struct Settings {
     /// The highlighted option of the open pop-up menu: the selected one
     /// when it opens, then the one the pointer or an arrow key moves to.
     pub(super) menu_lit: Option<usize>,
+    /// The control the keyboard focus ring is on, which Space or Return
+    /// runs. Tab sets it; a pane change or a mouse press clears it.
+    pub(super) ring: Option<Row>,
     /// A failure to apply a setting (config.toml, the login entry, the
     /// folder picker), shown in the status pill until the next change
     /// applies.
@@ -127,6 +132,7 @@ impl Settings {
             rejected: None,
             open_pick: None,
             menu_lit: None,
+            ring: None,
             status: None,
             release,
             update_note: None,
@@ -149,6 +155,7 @@ impl Settings {
         self.open_pick = None;
         if pane != self.pane {
             self.pane = pane;
+            self.ring = None;
             self.scroll = ScrollHandle::new();
             window.resize(size(px(panes::WIDTH), px(pane.height())));
         }
@@ -333,6 +340,13 @@ impl Render for Settings {
         }
         let mut root = root
             .on_key_down(cx.listener(Self::on_key))
+            // The pointer takes over from the keyboard: the ring goes
+            // before the press reaches a control.
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                if this.ring.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .child(widgets::toolbar_frame(
                 window,
                 widgets::Toolbar {

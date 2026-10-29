@@ -171,7 +171,7 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 
 Open the settings window by executing `iris --settings`, selecting **Settings** from the system tray menu, or clicking the gear button in the home window's toolbar. One settings window is open at a time: each of these raises and focuses the settings window when it is already open.
 
-The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`Cmd+1` through `Cmd+5` on macOS), to show its pane. The window resizes to the height of the pane.
+The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`Cmd+1` through `Cmd+5` on macOS), to show its pane. `Ctrl+Tab` shows the next pane and `Ctrl+Shift+Tab` the previous one. The window resizes to the height of the pane.
 
 | Tab | Settings |
 | --- | --- |
@@ -182,6 +182,8 @@ The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`C
 | **Updates** | Automatic update checks, update channel, the running version, the time of the last check, **Check Now**, and **Install** once a check finds a newer release (see [Updates](updates.md#settings)) |
 
 Press `Ctrl+W` (`Cmd+W` on macOS) or `Escape`, or click the close control, to close the window. Drag the toolbar to move it.
+
+`Tab` and `Shift+Tab` move a focus ring over the controls of the pane, top to bottom, and wrap at either end. `Space` or `Return` runs the control under the ring as a click does: it turns a switch, opens a pop-up menu, opens the folder picker, starts recording a shortcut, or presses a button. A text field opens for typing when the ring reaches it and applies its value when the ring leaves it; a rejected value keeps the ring in the field. A mouse press or a pane change removes the ring.
 
 ### Applying Changes
 

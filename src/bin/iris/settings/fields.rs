@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use gpui::*;
 use iris_lib::config::Config;
 
-use super::panes::{Pane, Pick, Switch};
+use super::panes::{Pane, Pick, Row, Switch};
 use super::{Edit, Field, Settings};
 use crate::sys::hotkeys::{self, Binding, Chord};
 use crate::theme;
@@ -404,6 +404,81 @@ impl Settings {
         Some(parts.join("+"))
     }
 
+    /// The row the keyboard is at: the ring's, or the field a click
+    /// opened for typing.
+    fn keyboard_row(&self) -> Option<Row> {
+        self.ring.or_else(|| {
+            let field = self.editing.as_ref()?.field;
+            self.pane
+                .rows()
+                .find(|r| matches!(*r, Row::Text(f) | Row::Folder(f) if f == field))
+        })
+    }
+
+    /// Whether Tab stops at `row`: every control, and the version row
+    /// while it shows a button.
+    fn reaches(&self, row: Row) -> bool {
+        row != Row::Version || self.offers_action()
+    }
+
+    /// The color of the keyboard focus ring around the control of `row`:
+    /// the focus ring color when the ring is on it.
+    pub(super) fn keyboard_ring(&self, row: Row) -> Option<Rgba> {
+        (self.ring == Some(row)).then_some(theme::FOCUS_RING)
+    }
+
+    /// Move the focus ring to the pane's next control, or the previous
+    /// one with `forward` false, wrapping at either end. With no ring,
+    /// Tab starts at the first control and Shift+Tab at the last. The
+    /// open edit commits first, and a rejected one keeps the keyboard in
+    /// its field. A text field opens for typing as the ring reaches it.
+    pub(super) fn tab(&mut self, forward: bool) {
+        let from = self.keyboard_row();
+        if !self.blur() {
+            return;
+        }
+        self.open_pick = None;
+        let stops = || self.pane.rows().filter(|&r| self.reaches(r));
+        let at = from.and_then(|from| stops().position(|r| r == from));
+        let next = widgets::ring_step(at, stops().count(), forward).and_then(|ix| stops().nth(ix));
+        self.ring = next;
+        if let Some(Row::Text(field)) = next {
+            self.begin_edit(field);
+        }
+    }
+
+    /// What a folder picker for `field` runs with the directory chosen.
+    fn on_picked(
+        field: Field,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(Result<PathBuf, String>, &mut Window, &mut App) + 'static {
+        let this = cx.entity().downgrade();
+        move |picked, _, cx| {
+            this.update(cx, |this, cx| {
+                this.picked(field, picked);
+                cx.notify();
+            })
+            .ok();
+        }
+    }
+
+    /// Run the control of `row` as a click on it does: Space or Return
+    /// on the control the ring is on.
+    fn activate(&mut self, row: Row, window: &mut Window, cx: &mut Context<Self>) {
+        match row {
+            Row::Switch(s) => self.flip(s),
+            Row::Pick(p) => self.open_menu(p),
+            Row::Text(field) => self.begin_edit(field),
+            Row::Folder(field) => {
+                let on_pick = Self::on_picked(field, cx);
+                widgets::choose_folder(window, cx, on_pick);
+            }
+            Row::Hotkey(field) => self.begin_recording(field),
+            Row::Restore => self.restore_defaults(),
+            Row::Version => self.run_version_action(cx),
+        }
+    }
+
     pub(super) fn on_key(
         &mut self,
         ev: &KeyDownEvent,
@@ -427,6 +502,15 @@ impl Settings {
         }
         if let Some(pane) = Pane::for_key(&ks.key).filter(|_| meta) {
             self.select_pane(pane, window);
+            cx.notify();
+            return;
+        }
+        if ks.key == "tab" {
+            if ks.modifiers.control {
+                self.select_pane(self.pane.step(!ks.modifiers.shift), window);
+            } else {
+                self.tab(!ks.modifiers.shift);
+            }
             cx.notify();
             return;
         }
@@ -461,6 +545,14 @@ impl Settings {
             cx.notify();
             return;
         }
+        if let Some(row) = self
+            .ring
+            .filter(|_| matches!(ks.key.as_str(), "space" | "enter"))
+        {
+            self.activate(row, window, cx);
+            cx.notify();
+            return;
+        }
         if ks.key == "escape" {
             self.close(window, cx);
         }
@@ -469,12 +561,16 @@ impl Settings {
     pub(super) fn switch_row(&self, s: Switch, cx: &mut Context<Self>) -> Div {
         row_shell(
             s.label(),
-            widgets::toggle(s.id(), self.switch_on(s)).on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.flip(s);
-                    cx.notify();
-                },
-            )),
+            widgets::ringed(
+                widgets::toggle(s.id(), self.switch_on(s)).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.flip(s);
+                        cx.notify();
+                    },
+                )),
+                None,
+                self.keyboard_ring(Row::Switch(s)),
+            ),
         )
     }
 
@@ -484,16 +580,20 @@ impl Settings {
         // The press toggles from the state this frame drew: with the
         // menu open, its press-outside dismissal runs first, and the
         // button must not open it again.
-        let button = widgets::popup_button(p.id(), p.current(&self.cfg), open).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| {
-                if open {
-                    this.open_pick = None;
-                } else {
-                    this.open_menu(p);
-                }
-                cx.notify();
-            }),
+        let button = widgets::ringed(
+            widgets::popup_button(p.id(), p.current(&self.cfg), open).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    if open {
+                        this.open_pick = None;
+                    } else {
+                        this.open_menu(p);
+                    }
+                    cx.notify();
+                }),
+            ),
+            Some(theme::RADIUS_CONTROL),
+            self.keyboard_ring(Row::Pick(p)).filter(|_| !open),
         );
         let mut control = div().relative().child(button);
         if open {
@@ -554,6 +654,11 @@ impl Settings {
                 .flatten()
                 .map(|name| (SharedString::from(name), theme::FG_DIM))
         });
+        // An open field has the ring of its state.
+        let ring = state
+            .ring()
+            .or(self.keyboard_ring(Row::Text(field)))
+            .or(self.keyboard_ring(Row::Folder(field)));
         let input = widgets::text_field(field.id(), text, state)
             .w(px(width))
             .flex_shrink_0()
@@ -561,6 +666,7 @@ impl Settings {
                 this.begin_edit(field);
                 cx.notify();
             }));
+        let input = widgets::ringed(input, Some(theme::RADIUS_CONTROL), ring);
         with_note(note, input)
     }
 
@@ -577,20 +683,14 @@ impl Settings {
         if self.editing.as_ref().is_some_and(|e| e.field == field) {
             return row_shell(field.label(), self.typed_field(field, PATH_W, cx));
         }
-        let this = cx.entity().downgrade();
         row_shell(
             field.label(),
             widgets::folder_field(
                 field.id(),
                 self.field_text(field),
                 PATH_W,
-                move |picked, _, cx| {
-                    this.update(cx, |this, cx| {
-                        this.picked(field, picked);
-                        cx.notify();
-                    })
-                    .ok();
-                },
+                self.keyboard_ring(Row::Folder(field)),
+                Self::on_picked(field, cx),
             ),
         )
     }
@@ -601,6 +701,7 @@ impl Settings {
         } else {
             (self.field_text(field), widgets::FieldState::Rest)
         };
+        let ring = state.ring().or(self.keyboard_ring(Row::Hotkey(field)));
         let input = widgets::text_field(field.id(), text, state)
             .w(px(SHORTCUT_W))
             .flex_shrink_0()
@@ -611,6 +712,7 @@ impl Settings {
                 this.begin_recording(field);
                 cx.notify();
             }));
+        let input = widgets::ringed(input, Some(theme::RADIUS_CONTROL), ring);
         // A chord another app holds, or one this session cannot bind,
         // reads as refused beside the chord until it is changed.
         let refused = match field {
@@ -632,15 +734,19 @@ impl Settings {
     pub(super) fn restore_row(&self, cx: &mut Context<Self>) -> Div {
         row_shell(
             "Restore every setting to its default",
-            widgets::push_button(
-                "restore-defaults",
-                "Restore Defaults",
-                widgets::ButtonStyle::Destructive,
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.restore_defaults();
-                cx.notify();
-            })),
+            widgets::ringed(
+                widgets::push_button(
+                    "restore-defaults",
+                    "Restore Defaults",
+                    widgets::ButtonStyle::Destructive,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.restore_defaults();
+                    cx.notify();
+                })),
+                Some(theme::RADIUS_CONTROL),
+                self.keyboard_ring(Row::Restore),
+            ),
         )
     }
 }

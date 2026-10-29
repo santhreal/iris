@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use gpui::*;
 
-use super::Settings;
+use super::{Row, Settings};
 use crate::update::UpdateInfo;
 use crate::{theme, widgets};
 
@@ -174,26 +174,45 @@ impl Settings {
         });
     }
 
+    /// Whether the version row shows Check Now or Install: neither
+    /// shows while a check or an install runs.
+    pub(super) fn offers_action(&self) -> bool {
+        !self.checking && !matches!(self.release, Release::Installing)
+    }
+
+    /// Run the version row's button: Install when a check found a newer
+    /// release, Check Now otherwise.
+    pub(super) fn run_version_action(&mut self, cx: &mut Context<Self>) {
+        match self.release {
+            _ if !self.offers_action() => {}
+            Release::Found(_) => self.install_update(cx),
+            Release::None | Release::Installing => self.check_updates(cx),
+        }
+    }
+
     /// The version row: the running version over the update state, and
     /// Install when a check found a newer release, Check Now otherwise.
-    /// Neither shows while a check or an install runs.
     pub(super) fn version_row(&self, _: &mut Window, cx: &mut Context<Self>) -> Div {
         let action = match &self.release {
-            _ if self.checking => None,
-            Release::Installing => None,
-            Release::Found(info) => Some(
-                widgets::push_button(
-                    "install-update",
-                    format!("Install {}", info.version),
-                    widgets::ButtonStyle::Primary,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
-            ),
-            Release::None => Some(
-                widgets::push_button("check-update", "Check Now", widgets::ButtonStyle::Bordered)
-                    .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx))),
-            ),
-        };
+            _ if !self.offers_action() => None,
+            Release::Found(info) => Some(widgets::push_button(
+                "install-update",
+                format!("Install {}", info.version),
+                widgets::ButtonStyle::Primary,
+            )),
+            Release::None | Release::Installing => Some(widgets::push_button(
+                "check-update",
+                "Check Now",
+                widgets::ButtonStyle::Bordered,
+            )),
+        }
+        .map(|button| {
+            widgets::ringed(
+                button.on_click(cx.listener(|this, _, _, cx| this.run_version_action(cx))),
+                Some(theme::RADIUS_CONTROL),
+                self.keyboard_ring(Row::Version),
+            )
+        });
         div()
             .h(px(theme::ROW_H_TALL))
             .px(px(theme::ROW_PAD_X))

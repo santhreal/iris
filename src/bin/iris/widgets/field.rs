@@ -14,42 +14,81 @@ use crate::theme;
 pub enum FieldState {
     /// At rest: fill and inner border only.
     Rest,
-    /// Being edited: an accent focus ring and a caret after the text;
-    /// `invalid` turns the ring destructive red.
+    /// Being edited: an accent border and ring and a caret after the
+    /// text; `invalid` turns the border and ring destructive red.
     Editing { invalid: bool },
-    /// Capturing a key combination: the focus ring, no caret, the text
-    /// in secondary color (a prompt such as "Type shortcut").
+    /// Capturing a key combination: the accent border and ring, no
+    /// caret, the text in secondary color (a prompt such as "Type
+    /// shortcut").
     Recording,
 }
 
-/// The 3px focus ring around a control, drawn as a spread shadow so it
-/// takes no layout space.
-pub fn focus_ring(color: Rgba) -> Vec<BoxShadow> {
-    vec![BoxShadow {
-        color: color.into(),
-        offset: point(px(0.), px(0.)),
-        blur_radius: px(0.),
-        spread_radius: px(3.),
-        inset: false,
-    }]
+impl FieldState {
+    /// The color of the ring around a field in this state, drawn by
+    /// [`ringed`], or None at rest.
+    pub fn ring(self) -> Option<Rgba> {
+        match self {
+            FieldState::Rest => None,
+            FieldState::Editing { invalid: true } => Some(theme::alpha(theme::DANGER, 0.40)),
+            FieldState::Editing { invalid: false } | FieldState::Recording => {
+                Some(theme::FOCUS_RING)
+            }
+        }
+    }
+}
+
+/// The focus ring's width, logical px.
+const RING: f32 = 3.0;
+
+/// `control` inside a focus ring of color `ring`, or none: the field
+/// being typed into, or the control Tab moved to, which Space or Return
+/// runs. The ring is a 3px border outside the control that takes no
+/// layout space and leaves a translucent fill untinted, as a spread
+/// shadow under it would not. `radius` is the control's corner radius,
+/// None for a pill.
+pub fn ringed(control: impl IntoElement, radius: Option<f32>, ring: Option<Rgba>) -> Div {
+    let el = div()
+        .flex()
+        .flex_shrink_0()
+        .m(px(-RING))
+        .border_3()
+        .border_color(ring.map_or(transparent_black(), Hsla::from))
+        .child(control);
+    match radius {
+        Some(r) => el.rounded(px(r + RING)),
+        None => el.rounded_full(),
+    }
+}
+
+/// The index keyboard focus lands on after one Tab or arrow step from
+/// `from` among `n` stops, wrapping at both ends. With nothing focused,
+/// a forward step lands on the first stop and a backward step on the
+/// last. None when there is no stop.
+pub fn ring_step(from: Option<usize>, n: usize, forward: bool) -> Option<usize> {
+    if n == 0 {
+        return None;
+    }
+    Some(match (from, forward) {
+        (None, true) => 0,
+        (None, false) => n - 1,
+        (Some(i), true) => (i + 1) % n,
+        (Some(i), false) => (i + n - 1) % n,
+    })
 }
 
 /// Single-line text field box, CONTROL_H tall: a dark fill with a 1px
-/// inner border; editing adds the focus ring and the caret. The caller
-/// has the text buffer and commits it (Return or blur).
+/// inner border, and a caret while editing. The caller draws the ring
+/// of `state` ([`FieldState::ring`]) with [`ringed`], has the text
+/// buffer, and commits it (Return or blur).
 pub fn text_field(
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
     state: FieldState,
 ) -> Stateful<Div> {
-    let (border, ring) = match state {
-        FieldState::Rest => (theme::FIELD_BORDER, None),
-        FieldState::Editing { invalid: true } => {
-            (theme::DANGER, Some(theme::alpha(theme::DANGER, 0.40)))
-        }
-        FieldState::Editing { invalid: false } | FieldState::Recording => {
-            (theme::ACCENT, Some(theme::FOCUS_RING))
-        }
+    let border = match state {
+        FieldState::Rest => theme::FIELD_BORDER,
+        FieldState::Editing { invalid: true } => theme::DANGER,
+        FieldState::Editing { invalid: false } | FieldState::Recording => theme::ACCENT,
     };
     let mut el = div()
         .id(id)
@@ -69,11 +108,8 @@ pub fn text_field(
         } else {
             theme::FG
         })
-        .cursor_text();
-    if let Some(ring) = ring {
-        el = el.shadow(focus_ring(ring));
-    }
-    el = el.child(text.into());
+        .cursor_text()
+        .child(text.into());
     if matches!(state, FieldState::Editing { .. }) {
         el = el.child(
             div()
@@ -89,13 +125,13 @@ pub fn text_field(
 
 /// A folder row control: a folder glyph and the path, middle-truncated
 /// to `width` (the head and the folder name stay readable), then a
-/// "Choose…" button that opens the platform's directory picker. A
-/// chosen directory runs `on_pick(Ok(dir))`; a picker that fails to
-/// open runs `on_pick(Err(message))`; a cancelled picker runs nothing.
+/// "Choose…" button that opens the platform's directory picker
+/// ([`choose_folder`]), inside a focus ring of color `ring` ([`ringed`]).
 pub fn folder_field(
     id: &'static str,
     shown: impl Into<SharedString>,
     width: f32,
+    ring: Option<Rgba>,
     on_pick: impl Fn(Result<PathBuf, String>, &mut Window, &mut App) + 'static,
 ) -> Div {
     let on_pick = Rc::new(on_pick);
@@ -123,31 +159,46 @@ pub fn folder_field(
                         .child(shown.into()),
                 ),
         )
-        .child(
+        .child(ringed(
             push_button(id, "Choose\u{2026}", ButtonStyle::Bordered).on_click(
                 move |_, window, cx| {
-                    let rx = cx.prompt_for_paths(PathPromptOptions {
-                        files: false,
-                        directories: true,
-                        multiple: false,
-                        prompt: Some("Choose".into()),
-                    });
                     let on_pick = on_pick.clone();
-                    window
-                        .spawn(cx, async move |cx| {
-                            let picked = match rx.await {
-                                Ok(Ok(Some(mut dirs))) => dirs.pop().map(Ok),
-                                Ok(Ok(None)) | Err(_) => None,
-                                Ok(Err(e)) => Some(Err(format!("folder picker: {e}"))),
-                            };
-                            if let Some(picked) = picked {
-                                cx.update(|window, cx| on_pick(picked, window, cx)).ok();
-                            }
-                        })
-                        .detach();
+                    choose_folder(window, cx, move |picked, window, cx| {
+                        on_pick(picked, window, cx)
+                    });
                 },
             ),
-        )
+            Some(theme::RADIUS_CONTROL),
+            ring,
+        ))
+}
+
+/// Open the platform's directory picker. A chosen directory runs
+/// `on_pick(Ok(dir))`; a picker that fails to open runs
+/// `on_pick(Err(message))`; a cancelled picker runs nothing.
+pub fn choose_folder(
+    window: &mut Window,
+    cx: &mut App,
+    on_pick: impl FnOnce(Result<PathBuf, String>, &mut Window, &mut App) + 'static,
+) {
+    let rx = cx.prompt_for_paths(PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: Some("Choose".into()),
+    });
+    window
+        .spawn(cx, async move |cx| {
+            let picked = match rx.await {
+                Ok(Ok(Some(mut dirs))) => dirs.pop().map(Ok),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(e)) => Some(Err(format!("folder picker: {e}"))),
+            };
+            if let Some(picked) = picked {
+                cx.update(|window, cx| on_pick(picked, window, cx)).ok();
+            }
+        })
+        .detach();
 }
 
 /// Apply a key press to the buffer of a one-line text entry: Backspace
@@ -221,7 +272,32 @@ fn push_one_line(buffer: &mut String, text: &str) -> bool {
 mod tests {
     use gpui::{Keystroke, Modifiers};
 
-    use super::edit_line;
+    use super::{edit_line, ring_step};
+
+    // WHY: closes "Tab stalls at an end or skips a stop" for every ring
+    // the keyboard moves, Home's tiles and the Settings controls: every
+    // stop is reached in both directions, n steps return to the start,
+    // and a surface with no stops lands nowhere instead of panicking.
+    #[test]
+    fn a_ring_step_reaches_every_stop_in_both_directions() {
+        assert_eq!(ring_step(None, 0, true), None);
+        assert_eq!(ring_step(None, 0, false), None);
+        for n in 1..=9 {
+            assert_eq!(ring_step(None, n, true), Some(0));
+            assert_eq!(ring_step(None, n, false), Some(n - 1));
+            for forward in [true, false] {
+                let mut seen = vec![false; n];
+                let mut at = ring_step(None, n, forward).unwrap();
+                for _ in 0..n {
+                    assert!(at < n, "n={n}: stop {at} is past the last");
+                    seen[at] = true;
+                    at = ring_step(Some(at), n, forward).unwrap();
+                }
+                assert!(seen.iter().all(|&s| s), "n={n} forward={forward}: {seen:?}");
+                assert_eq!(Some(at), ring_step(None, n, forward), "n={n}");
+            }
+        }
+    }
 
     fn key(key: &str, key_char: Option<&str>, control: bool, platform: bool) -> Keystroke {
         Keystroke {
