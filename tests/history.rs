@@ -28,6 +28,9 @@
 //! mark, and closes from the window manager. Both read the file's bytes,
 //! the library store, and the clipboard's owner after the daemon goes
 //! idle.
+//! A third case closes "an edit moves a capture to Today": the save
+//! re-added the file's library entry at the top with the save's time.
+//! It saves over the older of two stored captures and reads the store.
 //!
 //! Not covered: the two flips, which go through the rotation's path;
 //! redo after a rotation or Clear, which goes through the crop's swap;
@@ -54,7 +57,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
-use daemon::{enabled, stored, xvfb_sized, Daemon, Server};
+use daemon::{enabled, entries, store, stored, xvfb_sized, Daemon, Server};
 use x11::{
     chord, click, client, clipboard_owner, clipboard_text, drag, extent, tap, windows_of, wm_close,
 };
@@ -566,5 +569,41 @@ fn closing_with_every_edit_undone_leaves_the_file_alone() {
         session,
         &before,
         "the window manager's close after undoing the mark",
+    );
+}
+
+#[test]
+fn a_save_keeps_the_capture_in_its_place_in_the_library() {
+    let Some(session) = Session::open("a_save_keeps_the_capture_in_its_place_in_the_library")
+    else {
+        return;
+    };
+    let dir = session._dir.path();
+    let newer = dir.join("newer.png");
+    image::RgbImage::from_pixel(8, 6, image::Rgb(IMAGE))
+        .save(&newer)
+        .unwrap();
+    store(dir, &[newer, session.file.clone()]);
+    let taken: Vec<_> = entries(dir)
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.path, e.created_ms))
+        .collect();
+    session.draw(R, RECT);
+    tap(&session.conn, session.root, RETURN);
+    let after = session.daemon.until("the save to refresh the library", || {
+        let after = entries(dir)?;
+        after
+            .iter()
+            .any(|e| e.path == session.file && e.revision() != (taken[1].1, 0))
+            .then_some(after)
+    });
+    assert_eq!(
+        after
+            .iter()
+            .map(|e| (e.path.clone(), e.created_ms))
+            .collect::<Vec<_>>(),
+        taken,
+        "the library after the save: its order and the capture times"
     );
 }

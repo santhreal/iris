@@ -96,7 +96,7 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
   1. Commits any active text entry and in-progress drawing action.
   2. Encodes the composite RGBA image to PNG bytes on a background thread.
   3. Overwrites the original image file at its path on disk.
-  4. Generates a fresh thumbnail and updates the library entry in `library.json`.
+  4. Generates a fresh thumbnail and updates the file's entry in `library.json`. The entry keeps its place and its capture time. A file the library does not list is added as a new capture.
   5. Copies the composite image pixels to the system clipboard.
   6. Initiates a 160 ms fade outro and closes the editor window.
 - With no step left to undo, as before any edit or after undoing every edit, **Save and close** closes the editor without writing the file, updating the library, or copying the image.

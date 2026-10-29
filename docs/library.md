@@ -31,6 +31,8 @@ A pointer that rests on a toolbar button for half a second shows a tooltip with 
 
 The grid lists captures newest first under a title per local day: **Today**, **Yesterday**, then the weekday and date (`Tuesday, October 6`), with the year for a day in another year. The titles change at local midnight while the window is open. Each day starts a new row. The columns are 216 pixels wide with 16 pixels between them, as many as fit the window with 20 pixels of margin on each side, and the grid is centered in the window.
 
+A capture saved from the editor keeps its place and the time it was taken, and its card shows the saved image.
+
 - **Auto-refresh**: A capture that the daemon saves, re-saves from the editor, or moves to the trash shows in the grid at once. A capture file that another program deletes, or moves out of its folder, leaves the grid at once: the library watches the folders that hold its captures. Where the system refuses the watch, the library reads `library.json` every 1.5 seconds and writes the reason to the log. A watch does not report a change that another computer makes to a folder on a network filesystem.
 - **Opening**: The window opens empty and shows the grid when `library.json` is read on a background thread. Thumbnails decode in the background and appear as each lands.
 - **Empty library**: With no captures, the window shows a viewfinder glyph, **No Captures**, and the capture hotkey.

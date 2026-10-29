@@ -358,7 +358,8 @@ impl Editor {
                     // The file changed under the library's feet:
                     // regenerate the thumbnail and refresh the entry,
                     // or the card shows the pre-edit image forever.
-                    if let Err(e) = iris_lib::library::add(&path, &img) {
+                    // The entry keeps its place and day.
+                    if let Err(e) = iris_lib::library::update(&path, &img) {
                         iris_lib::ilog!("iris: library refresh after save: {e}");
                     }
                     pipeline::copy_image(&img).map_err(|e| ("Copy failed", e))

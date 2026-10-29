@@ -162,6 +162,7 @@ fn store_caps_at_max_entries() {
             width: 1,
             height: 1,
             created_ms: i as i64,
+            edited_ms: 0,
         });
     }
     entries.truncate(MAX_ENTRIES);
@@ -359,4 +360,109 @@ fn every_store_write_runs_the_write_hook_once() {
     assert_eq!(hooked(|| trash(&a)), 0, "trash of an unstored path");
     assert_eq!(hooked(|| trash_many(&[b])), 1, "trash_many");
     assert!(list().is_empty());
+}
+
+// WHY: the library groups captures by the day they were taken, and an
+// editor save over a capture re-added it: the capture moved to the top
+// under Today with the save's time as its caption. Closed here: a save
+// that moves the entry or changes `created_ms`, a save whose revision
+// does not change (the open window keeps the old thumbnail), a save
+// after the clock went back that repeats a revision, a save that skips
+// the write hook, a thumbnail rebuild from a snapshot older than the
+// save that overwrites the save's thumbnail, a save over a file the
+// library does not list that is dropped, and a store from before
+// `edited_ms` that no longer reads. Not covered: the editor's call,
+// which tests/history.rs exercises through the store an editor save
+// leaves.
+#[test]
+#[serial_test::serial]
+fn an_editor_save_keeps_the_capture_in_its_place() {
+    let d = isolated_home();
+    let a = d.path().join("a.png");
+    let b = d.path().join("b.png");
+    let added = add(&a, &solid(&a, 880, 495, GREEN)).unwrap();
+    add(&b, &solid(&b, 880, 495, GREEN)).unwrap();
+    let edit = solid(&a, 495, 880, RED);
+    let mut saved = None;
+    assert_eq!(hooked(|| saved = update(&a, &edit).ok()), 1, "update");
+    let saved = saved.unwrap();
+    let listed = list();
+    assert_eq!(
+        listed.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+        [b.clone(), a.clone()],
+        "the store's order after the save"
+    );
+    let stored = &listed[1];
+    assert_eq!(
+        (stored.created_ms, stored.width, stored.height),
+        (added.created_ms, 495, 880),
+        "the saved entry's capture time and size"
+    );
+    assert_eq!(stored.revision(), saved.revision());
+    assert_ne!(
+        saved.revision(),
+        added.revision(),
+        "a save is a new revision"
+    );
+    assert_eq!(
+        image::open(&saved.thumb)
+            .unwrap()
+            .into_rgba8()
+            .get_pixel(0, 0)
+            .0,
+        RED,
+        "the saved thumbnail"
+    );
+    // A clock set back an hour after the save: the next save is still a
+    // new revision.
+    let ahead = saved.edited_ms + 3_600_000;
+    let mut store = read_store();
+    store.iter_mut().find(|e| e.path == a).unwrap().edited_ms = ahead;
+    write_store(&store).unwrap();
+    let again = update(&a, &edit).unwrap();
+    assert!(
+        again.edited_ms > ahead,
+        "a save after the clock went back is a new revision"
+    );
+    // The window decoding from its snapshot of before the save.
+    std::fs::remove_file(&again.thumb).unwrap();
+    solid(&a, 880, 495, GREEN);
+    thumbnail(&added).unwrap();
+    assert!(
+        !again.thumb.exists(),
+        "a rebuild from before the save wrote over the save's thumbnail"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn an_editor_save_over_an_unlisted_file_adds_it() {
+    let d = isolated_home();
+    let a = d.path().join("a.png");
+    let saved = update(&a, &solid(&a, 8, 6, GREEN)).unwrap();
+    let listed = list();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (&listed[0].path, listed[0].revision()),
+        (&a, saved.revision())
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn a_store_written_before_edited_ms_reads() {
+    let d = isolated_home();
+    let a = d.path().join("a.png");
+    solid(&a, 8, 6, GREEN);
+    let old = serde_json::json!([{
+        "path": a,
+        "thumb": d.path().join("t.png"),
+        "width": 8,
+        "height": 6,
+        "created_ms": 7,
+    }]);
+    std::fs::write(store_path().unwrap(), old.to_string()).unwrap();
+    let listed = list();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].revision(), (7, 0));
 }

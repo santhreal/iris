@@ -244,6 +244,7 @@ pub fn store(dir: &Path, shots: &[PathBuf]) {
                 width,
                 height,
                 created_ms: 1_000 - i,
+                edited_ms: 0,
             }
         })
         .collect();
@@ -255,9 +256,13 @@ pub fn store(dir: &Path, shots: &[PathBuf]) {
 /// The captures the store of an [`iris`] of `dir` lists, or `None` while
 /// it cannot be read whole, as mid-write.
 pub fn stored(dir: &Path) -> Option<Vec<PathBuf>> {
+    Some(entries(dir)?.into_iter().map(|e| e.path).collect())
+}
+
+/// The entries of the store of an [`iris`] of `dir`, as [`stored`].
+pub fn entries(dir: &Path) -> Option<Vec<iris_lib::library::CaptureEntry>> {
     let text = std::fs::read_to_string(store_path(dir)).ok()?;
-    let entries: Vec<iris_lib::library::CaptureEntry> = serde_json::from_str(&text).ok()?;
-    Some(entries.into_iter().map(|e| e.path).collect())
+    serde_json::from_str(&text).ok()
 }
 
 /// A daemon with every iris location, its socket, and its captures under

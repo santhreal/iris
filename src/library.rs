@@ -16,6 +16,18 @@ pub struct CaptureEntry {
     pub width: u32,
     pub height: u32,
     pub created_ms: i64,
+    /// When the editor last saved over the capture, or 0. A save keeps
+    /// the capture's place and day in the library and changes this.
+    #[serde(default)]
+    pub edited_ms: i64,
+}
+
+impl CaptureEntry {
+    /// The capture as last written: a new capture at the path or an
+    /// editor save over it changes it, and with it the thumbnail.
+    pub fn revision(&self) -> (i64, i64) {
+        (self.created_ms, self.edited_ms)
+    }
 }
 
 /// The shared data directory, created on first use.
@@ -165,6 +177,18 @@ fn make_thumb(img: &image::RgbaImage) -> image::RgbaImage {
 /// The caller passes the already-decoded image so a save does not pay a
 /// second PNG decode just to make the thumbnail.
 pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
+    record(path, img, false)
+}
+
+/// Record an editor save over `path`: a fresh thumbnail, the image's
+/// size, and a new `edited_ms`, with the entry kept where it is. A path
+/// the library does not list (the editor opens any PNG) is added as a
+/// fresh capture.
+pub fn update(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
+    record(path, img, true)
+}
+
+fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<CaptureEntry, String> {
     let _write = store_lock().lock();
     let (width, height) = img.dimensions();
     let thumb = thumbs_dir()?.join(format!("{}.png", path_key(path)));
@@ -172,17 +196,32 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
         .save(&thumb)
         .map_err(|e| format!("save thumbnail: {e}"))?;
 
-    let entry = CaptureEntry {
-        path: path.to_path_buf(),
-        thumb,
-        width,
-        height,
-        created_ms: crate::time::now_millis(),
-    };
+    let now = crate::time::now_millis();
     let mut entries = read_store();
-    entries.retain(|e| e.path != entry.path);
-    entries.insert(0, entry.clone());
-    entries.truncate(MAX_ENTRIES);
+    let listed = entries
+        .iter_mut()
+        .find(|e| e.path == path)
+        .filter(|_| in_place);
+    let entry = if let Some(e) = listed {
+        (e.thumb, e.width, e.height) = (thumb, width, height);
+        // A new revision within one millisecond and after the clock
+        // went back.
+        e.edited_ms = now.max(e.edited_ms + 1);
+        e.clone()
+    } else {
+        let entry = CaptureEntry {
+            path: path.to_path_buf(),
+            thumb,
+            width,
+            height,
+            created_ms: now,
+            edited_ms: 0,
+        };
+        entries.retain(|e| e.path != entry.path);
+        entries.insert(0, entry.clone());
+        entries.truncate(MAX_ENTRIES);
+        entry
+    };
     write_store(&entries)?;
     Ok(entry)
 }
@@ -204,7 +243,7 @@ pub fn thumbnail(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
 /// Rebuild `entry`'s thumbnail from its capture. The file is written
 /// back only while the store still holds this exact entry: an entry
 /// that changed meanwhile (an editor save) got a fresh thumbnail from
-/// its own add. A failed write still returns the pixels.
+/// its own save. A failed write still returns the pixels.
 fn rebuild_thumb(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
     let src = image::open(&entry.path)
         .map_err(|e| format!("cannot open {}: {e}", entry.path.display()))?
@@ -214,7 +253,7 @@ fn rebuild_thumb(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
     let mut entries = read_store();
     let Some(stored) = entries
         .iter_mut()
-        .find(|e| e.path == entry.path && e.created_ms == entry.created_ms)
+        .find(|e| e.path == entry.path && e.revision() == entry.revision())
     else {
         return Ok(thumb);
     };

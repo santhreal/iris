@@ -86,8 +86,9 @@ impl Listing {
 
     /// Show `fresh` and drop from `selected` each path it does not
     /// list. Returns the paths whose capture changed in place (an
-    /// editor re-save keeps the path and moves `created_ms`), whose
-    /// thumbnails are stale, or None when `fresh` is what is shown.
+    /// editor save keeps the path and `created_ms` and moves
+    /// `edited_ms`), whose thumbnails are stale, or None when `fresh` is
+    /// what is shown.
     /// The listing is ordered newest first by `created_ms`, so each day
     /// is one section; captures with equal times keep the store's order.
     pub(super) fn set(
@@ -104,22 +105,22 @@ impl Listing {
             && fresh
                 .iter()
                 .zip(&self.entries)
-                .all(|(f, e)| f.path == e.path && f.created_ms == e.created_ms);
+                .all(|(f, e)| f.path == e.path && f.revision() == e.revision());
         if unchanged {
             self.relabel(today);
             return None;
         }
-        let shown: HashMap<&Path, i64> = self
+        let shown: HashMap<&Path, (i64, i64)> = self
             .entries
             .iter()
-            .map(|e| (e.path.as_path(), e.created_ms))
+            .map(|e| (e.path.as_path(), e.revision()))
             .collect();
         let stale = fresh
             .iter()
             .filter(|e| {
                 shown
                     .get(e.path.as_path())
-                    .is_some_and(|&t| t != e.created_ms)
+                    .is_some_and(|&t| t != e.revision())
             })
             .map(|e| e.path.clone())
             .collect();

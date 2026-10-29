@@ -339,7 +339,13 @@ fn entry(file: &str, created_ms: i64) -> CaptureEntry {
         width: 1920,
         height: 1080,
         created_ms,
+        edited_ms: 0,
     }
+}
+
+/// `e` saved over by the editor at `edited_ms`.
+fn edited(e: CaptureEntry, edited_ms: i64) -> CaptureEntry {
+    CaptureEntry { edited_ms, ..e }
 }
 
 fn shot(file: &str) -> PathBuf {
@@ -433,15 +439,23 @@ fn a_new_listing_prunes_the_selection_and_names_resaved_captures() {
     let first = vec![entry("c.png", 3), entry("b.png", 2), entry("a.png", 1)];
     listing.set(first, &mut Vec::new(), TODAY);
     let mut selected = vec![shot("c.png"), shot("a.png"), shot("b.png")];
-    // b.png trashed, a.png re-saved in place, d.png new.
-    let second = vec![entry("d.png", 4), entry("a.png", 5), entry("c.png", 3)];
+    // b.png trashed, a.png saved over in place, d.png new.
+    let second = vec![
+        entry("d.png", 4),
+        entry("c.png", 3),
+        edited(entry("a.png", 1), 5),
+    ];
     assert_eq!(
         listing.set(second, &mut selected, TODAY),
         Some(vec![shot("a.png")])
     );
     assert_eq!(selected, [shot("c.png"), shot("a.png")]);
-    // The same paths with one re-saved again: still a new listing.
-    let third = vec![entry("d.png", 4), entry("a.png", 6), entry("c.png", 3)];
+    // The same paths with one saved over again: still a new listing.
+    let third = vec![
+        entry("d.png", 4),
+        entry("c.png", 3),
+        edited(entry("a.png", 1), 6),
+    ];
     assert_eq!(
         listing.set(third, &mut selected, TODAY),
         Some(vec![shot("a.png")])
