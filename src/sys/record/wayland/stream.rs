@@ -10,14 +10,14 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Instant;
 
-use pipewire::main_loop::WeakMainLoop;
+use pipewire::main_loop::MainLoopWeak;
 use pipewire::spa::buffer::{ChunkFlags, Data, DataType};
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
 use pipewire::spa::param::video::{VideoFormat, VideoInfoRaw};
 use pipewire::spa::param::ParamType;
 use pipewire::spa::pod;
 use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, SpaTypes};
-use pipewire::stream::{StreamRef, StreamState};
+use pipewire::stream::{Stream, StreamState};
 
 use super::gl::{GlContext, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR};
 use crate::record::RecControl;
@@ -60,7 +60,7 @@ pub(crate) struct Shared {
     /// Taken at teardown to finish the recording.
     pub(crate) recorder: Option<Recorder>,
     pub(crate) error: Option<String>,
-    pub(crate) quit: WeakMainLoop,
+    pub(crate) quit: MainLoopWeak,
 }
 
 impl Shared {
@@ -182,7 +182,7 @@ impl Reader {
     }
 }
 
-pub(crate) fn on_process(stream: &StreamRef, data: &mut StreamData) {
+pub(crate) fn on_process(stream: &Stream, data: &mut StreamData) {
     // The newest queued buffer: older ones go back unread, so a slow
     // read never falls further behind the window.
     let Some(mut buffer) = stream.dequeue_buffer() else {
@@ -242,7 +242,7 @@ pub(crate) fn on_process(stream: &StreamRef, data: &mut StreamData) {
 }
 
 pub(crate) fn on_state_changed(
-    _stream: &StreamRef,
+    _stream: &Stream,
     data: &mut StreamData,
     _old: StreamState,
     new: StreamState,
@@ -364,7 +364,7 @@ pub(crate) fn copy_frame(
 }
 
 pub(crate) fn on_param_changed(
-    _stream: &StreamRef,
+    _stream: &Stream,
     data: &mut StreamData,
     id: u32,
     param: Option<&pod::Pod>,

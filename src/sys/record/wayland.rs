@@ -49,12 +49,12 @@ pub fn record_window(spec: RecordingSpec) -> Result<PathBuf, String> {
     let (portal, fd) = Portal::open(&spec.stop, &spec.bell, &wake)?;
 
     pipewire::init();
-    let mainloop =
-        pipewire::main_loop::MainLoop::new(None).map_err(|e| format!("PipeWire main loop: {e}"))?;
-    let context =
-        pipewire::context::Context::new(&mainloop).map_err(|e| format!("PipeWire context: {e}"))?;
+    let mainloop = pipewire::main_loop::MainLoopRc::new(None)
+        .map_err(|e| format!("PipeWire main loop: {e}"))?;
+    let context = pipewire::context::ContextRc::new(&mainloop, None)
+        .map_err(|e| format!("PipeWire context: {e}"))?;
     let core = context
-        .connect_fd(fd, None)
+        .connect_fd_rc(fd, None)
         .map_err(|e| format!("PipeWire connect (is pipewire running?): {e}"))?;
 
     let shared = Rc::new(RefCell::new(Shared {
@@ -62,8 +62,8 @@ pub fn record_window(spec: RecordingSpec) -> Result<PathBuf, String> {
         error: None,
         quit: mainloop.downgrade(),
     }));
-    let stream = pipewire::stream::Stream::new(
-        &core,
+    let stream = pipewire::stream::StreamRc::new(
+        core,
         "iris-rec",
         properties! {
             *pipewire::keys::MEDIA_TYPE => "Video",
