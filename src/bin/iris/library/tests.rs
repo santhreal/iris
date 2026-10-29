@@ -790,6 +790,10 @@ fn the_shortcuts_sheet_shows_the_configured_global_hotkeys() {
         rows[11],
         ("Settings", crate::widgets::meta_shortcut!(",").into())
     );
+    assert_eq!(
+        rows[12],
+        ("Close", crate::widgets::meta_shortcut!("W").into())
+    );
 }
 
 // WHY: the class closed here is "the empty library points at a shortcut

@@ -432,6 +432,7 @@ pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, Sh
         ("Move to Trash", "Delete".into()),
         ("Clear selection", "Esc".into()),
         ("Settings", crate::widgets::meta_shortcut!(",").into()),
+        ("Close", crate::widgets::meta_shortcut!("W").into()),
         ("This sheet", "?".into()),
     ]
 }
