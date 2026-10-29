@@ -116,6 +116,8 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
   - **Copy File**: Copies the file to the system clipboard in platform file-list format for pasting into file managers. The file holds markup once **Done** saves it.
   - **Copy Path**: Copies the canonical absolute path string of the image file to the system clipboard.
 
+A copy reports **Copied** or the error on the status line over the stage's lower left corner. A message on the status line leaves 4 seconds after it shows, and a newer message replaces it. A message shown before the image finishes decoding stays until 4 seconds after the image decodes; the message of an image that fails to decode stays.
+
 ## Window
 
 Drag the toolbar to move the window. Double-click it to run the platform's title bar action: maximize on Linux and Windows, the Desktop & Dock setting on macOS. Drag an edge or corner to resize the window; it stops at 760×480. The toolbar and the tool options bar stay over a zoomed or panned image. See [Platform Backends](platforms.md#platform-capabilities-matrix) for the move and resize mechanism on each platform.

@@ -45,6 +45,10 @@
 //! later leaves on its own, each time leaving the next Escape to ask
 //! again, and that a second Escape while the prompt shows closes the
 //! editor with the file, the library, and the clipboard untouched.
+//! Another closes "a status message never leaves": Copied and the
+//! other reports stayed on the status line until the editor closed.
+//! A third reads that the report of an image that fails to decode
+//! stays: the editor has nothing else to show.
 //!
 //! Not covered: the two flips, which go through the rotation's path;
 //! redo after a rotation or Clear, which goes through the crop's swap;
@@ -112,7 +116,7 @@ const STATUS_H: usize = 22;
 const STATUS_W: usize = 160;
 /// Past the editor's 160 ms outro.
 const OUTRO_PAST: std::time::Duration = std::time::Duration::from_millis(600);
-/// How long the discard prompt shows: `widgets::STATUS_FOR`.
+/// How long a status message shows: `widgets::STATUS_FOR`.
 const PROMPT_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 /// The More menu's geometry, from `theme` and `widgets::menu`: the
 /// menu drops 4 px under the 28 px button centered in the 52 px toolbar,
@@ -765,4 +769,74 @@ fn escape_over_unsaved_changes_asks_before_it_discards() {
     session.escape_keeps_open("the first Escape after the prompt left");
     tap(&session.conn, session.root, ESCAPE);
     assert_untouched(session, &before, "the second Escape");
+}
+
+#[test]
+fn a_copy_report_leaves_the_status_line() {
+    let Some(session) = Session::open("a_copy_report_leaves_the_status_line") else {
+        return;
+    };
+    let blank = session.status_line();
+    // Copy Path is the Copy menu's third row.
+    session.open_copy();
+    for _ in 0..3 {
+        session.keys(&[DOWN]);
+    }
+    session.keys(&[RETURN]);
+    let shown = session
+        .daemon
+        .until("Copy Path to report on the status line", || {
+            (session.status_line() != blank).then(std::time::Instant::now)
+        });
+    session.daemon.until("the copy report to leave", || {
+        (session.status_line() == blank).then_some(())
+    });
+    assert!(
+        shown.elapsed() < PROMPT_FOR + OUTRO_PAST,
+        "the copy report stayed {:?}, past {PROMPT_FOR:?}",
+        shown.elapsed()
+    );
+}
+
+#[test]
+fn a_decode_failure_stays_on_the_status_line() {
+    let case = "a_decode_failure_stays_on_the_status_line";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plain.png");
+    image::RgbImage::from_pixel(SIZE.0, SIZE.1, image::Rgb(IMAGE))
+        .save(&file)
+        .unwrap();
+    // The header the editor sizes its window from, and no pixels.
+    let png = std::fs::read(&file).unwrap();
+    std::fs::write(&file, &png[..64]).unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&[OsStr::new("--annotate"), file.as_os_str()]);
+    let editor = daemon.until("the editor to open", || {
+        windows_of(&conn, root, EDITOR).first().copied()
+    });
+    // The status line's text shows as more than one color.
+    let shown = || {
+        let (w, h, px) = client(&conn, root, editor);
+        let px = &px;
+        let mut line = (h - STATUS_BOTTOM - STATUS_H..h - STATUS_BOTTOM)
+            .flat_map(|y| (STATUS_LEFT..STATUS_LEFT + STATUS_W).map(move |x| px[y * w + x]));
+        let first = line.next()?;
+        line.any(|p| p != first).then_some(())
+    };
+    daemon.until("the decode failure to show on the status line", &shown);
+    std::thread::sleep(PROMPT_FOR + OUTRO_PAST);
+    assert!(
+        shown().is_some(),
+        "the decode failure left the status line of an editor with no image"
+    );
 }

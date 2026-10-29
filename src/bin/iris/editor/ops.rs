@@ -435,34 +435,18 @@ impl Editor {
     }
 
     /// Escape with nothing open to dismiss: discard, unless that drops
-    /// unsaved changes. Then the first press shows `DISCARD_PROMPT` for
-    /// `widgets::STATUS_FOR`, and a second press while it shows discards.
+    /// unsaved changes. Then the first press shows `DISCARD_PROMPT`, and
+    /// a second press while it shows discards.
     pub(crate) fn escape_discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let armed = self.discard_armed.is_some() && self.status.as_deref() == Some(DISCARD_PROMPT);
-        if self.undos.is_empty() || armed {
+        if self.undos.is_empty() || self.status.as_deref() == Some(DISCARD_PROMPT) {
             self.discard(window, cx);
-            return;
+        } else {
+            self.status = Some(DISCARD_PROMPT.to_string());
         }
-        let at = Instant::now();
-        self.discard_armed = Some(at);
-        self.status = Some(DISCARD_PROMPT.to_string());
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(crate::widgets::STATUS_FOR)
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if this.discard_armed == Some(at) {
-                    this.disarm_discard();
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
     }
 
-    /// Drop an armed discard and its prompt.
+    /// Drop the discard prompt, and with it the second Escape's discard.
     fn disarm_discard(&mut self) {
-        self.discard_armed = None;
         if self.status.as_deref() == Some(DISCARD_PROMPT) {
             self.status = None;
         }

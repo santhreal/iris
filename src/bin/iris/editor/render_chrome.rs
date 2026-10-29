@@ -1,6 +1,8 @@
 //! Editor chrome: the toolbar, the tool options bar, the toolbar menus,
 //! the status pill, and the shortcuts sheet.
 
+use std::time::Instant;
+
 use gpui::*;
 
 use super::action::{hex_rgba, Transform, COLORS, TOOLS};
@@ -460,9 +462,30 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        // Transient status line (copy results, OCR counts, save errors).
-        if let Some(status) = &self.status {
-            root = root.child(widgets::status_pill(status, STAGE_MARGIN));
+        // Transient status line (copy results, OCR counts, save errors,
+        // the discard prompt). It leaves `widgets::STATUS_FOR` after it
+        // first shows over the decoded image; a decode failure stays.
+        match &self.status {
+            None => self.status_since = None,
+            Some(text) => {
+                let timed = self.status_since.as_ref().is_some_and(|(t, _)| t == text);
+                if self.base_ready && !timed {
+                    let at = Instant::now();
+                    self.status_since = Some((text.clone(), at));
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(widgets::STATUS_FOR).await;
+                        let _ = this.update(cx, |this, cx| {
+                            if this.status_since.as_ref().is_some_and(|(_, s)| *s == at) {
+                                this.status = None;
+                                this.status_since = None;
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .detach();
+                }
+                root = root.child(widgets::status_pill(text, STAGE_MARGIN));
+            }
         }
 
         if self.help {

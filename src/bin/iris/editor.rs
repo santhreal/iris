@@ -118,10 +118,12 @@ pub struct Editor {
     /// pointer and the arrow keys.
     pub(crate) menu_lit: Option<usize>,
     pub(crate) help: bool,
+    /// The status line, shown over the stage's lower left corner.
     pub(crate) status: Option<String>,
-    /// When a first Escape over unsaved changes showed `DISCARD_PROMPT`;
-    /// a second Escape while it shows discards.
-    pub(crate) discard_armed: Option<Instant>,
+    /// The status text the running expiry timer is for, and when it
+    /// first showed: the timer clears the status only if it is still
+    /// that showing.
+    pub(crate) status_since: Option<(String, Instant)>,
     pub(crate) focus: FocusHandle,
     /// Expand-morph from a toast/library card: the image's starting
     /// rect in window coordinates. The clock starts at first render:
@@ -342,7 +344,7 @@ pub fn open(
                 menu_lit: None,
                 help: false,
                 status: None,
-                discard_armed: None,
+                status_since: None,
                 focus,
                 morph,
                 morph_started: None,
