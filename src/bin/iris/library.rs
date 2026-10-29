@@ -58,6 +58,26 @@ pub(super) fn evict_thumbs(cache: &mut ThumbCache, keep: impl Fn(&Path) -> bool,
     });
 }
 
+/// A toolbar button. The toolbar shows the selection's buttons while
+/// cards are selected and the window's otherwise; Tab moves the keyboard
+/// across the buttons shown, then back to the grid.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Tool {
+    Copy,
+    Trash,
+    Done,
+    Shortcuts,
+    Settings,
+    Capture,
+}
+
+impl Tool {
+    /// The buttons a selection shows, left to right.
+    pub(super) const SELECTION: [Tool; 3] = [Tool::Copy, Tool::Trash, Tool::Done];
+    /// The buttons the window shows with nothing selected.
+    pub(super) const WINDOW: [Tool; 3] = [Tool::Shortcuts, Tool::Settings, Tool::Capture];
+}
+
 pub struct Library {
     listing: listing::Listing,
     /// The grid at the window's width, rebuilt when the listing or the
@@ -109,6 +129,9 @@ pub struct Library {
     pub(super) help: bool,
     /// The shortcut sheet's rows, at the top whenever the sheet opens.
     pub(super) help_scroll: ScrollHandle,
+    /// The toolbar button Tab moved the keyboard to, which Space and
+    /// Return run; None while the keyboard is on the grid.
+    pub(super) ring: Option<Tool>,
     pub(super) status: Option<String>,
     pub(super) focus: FocusHandle,
     /// The config snapshot: render reads the hotkey every frame, and
@@ -198,6 +221,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     drag_fired: false,
                     help: false,
                     help_scroll: ScrollHandle::new(),
+                    ring: None,
                     status: None,
                     focus,
                     cfg,

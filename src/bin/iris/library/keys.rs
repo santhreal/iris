@@ -1,11 +1,12 @@
 //! The library's keyboard paths: arrow, Home, End, and page
-//! selection, open, preview, the card menu, select all, trash, and the
-//! window keys.
+//! selection, open, preview, the card menu, select all, trash, the
+//! toolbar buttons Tab reaches, and the window keys.
 
 use gpui::*;
 
 use super::layout::{Layout, Step};
-use super::Library;
+use super::{Library, Tool};
+use crate::widgets;
 
 /// The selection after an arrow key `step`: the new cursor, the new
 /// range anchor, and the inclusive index range to select. With no card
@@ -90,6 +91,47 @@ impl Library {
             cx.notify();
             return;
         }
+        // The shortcut sheet is modal: no key acts on the window under
+        // it. Its own button closes it as it opened it.
+        if self.help {
+            match key {
+                "escape" | "?" | "/" => self.help = false,
+                "enter" | "space" if self.ring == Some(Tool::Shortcuts) => self.help = false,
+                _ => return,
+            }
+            cx.notify();
+            return;
+        }
+        if self.preview.is_none() {
+            if key == "tab" {
+                self.tab(!ks.modifiers.shift);
+                cx.notify();
+                return;
+            }
+            if let Some(tool) = self.ring {
+                match key {
+                    "enter" | "space" => {
+                        self.run_tool(tool, window, cx);
+                        return;
+                    }
+                    "left" | "right" => {
+                        let tools = self.tools();
+                        let at = tools.iter().position(|&t| t == tool);
+                        self.ring =
+                            widgets::ring_step(at, tools.len(), key == "right").map(|ix| tools[ix]);
+                        cx.notify();
+                        return;
+                    }
+                    "escape" => {
+                        self.ring = None;
+                        cx.notify();
+                        return;
+                    }
+                    // Any other key takes the keyboard back to the grid.
+                    _ => self.ring = None,
+                }
+            }
+        }
         let page = f32::from(self.scroll.bounds().size.height);
         if let Some(step) = arrow_step(key, page) {
             self.move_cursor(step, ks.modifiers.shift, cx);
@@ -110,8 +152,7 @@ impl Library {
             return;
         }
         match key {
-            "escape" if self.help => self.help = false,
-            "?" | "/" => self.help = !self.help,
+            "?" | "/" => self.help = true,
             "escape" if !self.selected.is_empty() => {
                 self.selected.clear();
                 self.sel_dirty = true;
@@ -142,6 +183,52 @@ impl Library {
             }
             "delete" | "backspace" if !self.selected.is_empty() => self.trash_selection(cx),
             _ => return,
+        }
+        cx.notify();
+    }
+
+    /// The toolbar buttons shown, left to right.
+    pub(super) fn tools(&self) -> &'static [Tool] {
+        if self.selected.is_empty() {
+            &Tool::WINDOW
+        } else {
+            &Tool::SELECTION
+        }
+    }
+
+    /// Move the keyboard to the next toolbar button, or the previous one
+    /// with `forward` false. The grid is the stop after the last button:
+    /// Tab from the grid reaches the first button, Shift+Tab the last.
+    fn tab(&mut self, forward: bool) {
+        let tools = self.tools();
+        let grid = tools.len();
+        let at = self
+            .ring
+            .and_then(|r| tools.iter().position(|&t| t == r))
+            .unwrap_or(grid);
+        self.ring =
+            widgets::ring_step(Some(at), grid + 1, forward).and_then(|ix| tools.get(ix).copied());
+    }
+
+    /// Run toolbar button `tool`, as a click on it does.
+    pub(super) fn run_tool(&mut self, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
+        match tool {
+            Tool::Copy => self.copy_selection(cx),
+            Tool::Trash => self.trash_selection(cx),
+            Tool::Done => {
+                self.selected.clear();
+                self.sel_dirty = true;
+            }
+            Tool::Shortcuts => self.help = !self.help,
+            Tool::Settings => {
+                if let Err(e) = crate::settings::open(cx) {
+                    self.set_status(e, cx);
+                }
+            }
+            Tool::Capture => {
+                self.start_capture(window, cx);
+                return;
+            }
         }
         cx.notify();
     }

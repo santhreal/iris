@@ -27,6 +27,8 @@ The window's title bar is a unified toolbar, 52 pixels high, with the traffic li
 
 A pointer that rests on a toolbar button for half a second shows a tooltip with the button's name and its keyboard shortcut.
 
+`Tab` moves a focus ring to the first trailing button and `Shift+Tab` to the last. `Tab`, `Shift+Tab`, `Left`, and `Right` move the ring across the buttons, and `Space` or `Return` runs the ringed button. `Tab` past the last button, `Escape`, a press in the grid, or a grid key returns the keyboard to the grid.
+
 ## Grid
 
 The grid lists captures newest first under a title per local day: **Today**, **Yesterday**, then the weekday and date (`Tuesday, October 6`), with the year for a day in another year. The titles change at local midnight while the window is open. Each day starts a new row. The columns are 216 pixels wide with 16 pixels between them, as many as fit the window with 20 pixels of margin on each side, and the grid is centered in the window.
@@ -87,10 +89,11 @@ A right-click on a card opens a context menu at the pointer: **Open**, **Quick L
 | `Ctrl+A` / `Cmd+A` | Select every capture |
 | `Ctrl+C` / `Cmd+C` | Copy the selection |
 | `Delete` / `Backspace` | Move the selection to the trash |
+| `Tab` / `Shift+Tab` | Move the focus ring across the toolbar buttons and back to the grid |
 | `Ctrl+,` / `Cmd+,` | Open Settings |
 | `Ctrl+W` / `Cmd+W` | Close the window |
 | `Escape` | Close the menu, Quick Look, or the shortcut sheet; clear the selection; or close the window |
-| `?` or `/` | Toggle the shortcut reference sheet; its rows scroll when the window is too short to show them all |
+| `?` or `/` | Open the shortcut reference sheet; its rows scroll when the window is too short to show them all. While the sheet is open, other keys do nothing |
 | Title bar double-click | Run the platform title bar action: toggle maximize on Linux and Windows, or the action set in the macOS Desktop & Dock settings |
 
 The traffic lights in the top-left corner close (red), minimize (yellow), and zoom (green: fullscreen on macOS, maximize on Linux and Windows) the window. On X11 with no compositing manager, the window manager frames the window and the toolbar has no traffic lights ([Window Frame](platforms.md)).

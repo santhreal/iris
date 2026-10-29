@@ -28,6 +28,17 @@
 //! inside the window, the wheel over the dim layer moves nothing, and
 //! the wheel over the card scrolls its rows.
 //!
+//! The sixth and seventh cases close "the toolbar's buttons have no
+//! keyboard path": Tab did nothing in the library, so New Screenshot
+//! had no key once its hotkey was unset, and Copy, Move to Trash, and
+//! Done were reachable only through their own shortcuts. Tab, Shift+Tab,
+//! Left, and Right move a ring across the buttons shown, Space and
+//! Return run the ringed one, and Tab past the last button returns to
+//! the grid; a ring that wraps inside the toolbar toggles the sheet
+//! where Return should open a capture. They also close "keys act on
+//! the grid under the shortcut sheet": End under the open sheet moved
+//! the cursor to the last capture.
+//!
 //! Not covered: a read on a timer, which `tests/idle.rs` rejects; the
 //! watches of Wayland, Windows, and macOS, which the tests of
 //! `src/bin/iris/sys/watch.rs` cover; the menu's other rows, whose keys
@@ -52,7 +63,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt as _};
 
 use daemon::{enabled, store, stored, xvfb, xvfb_sized, Daemon};
-use x11::{chord, click_with, client, extent, move_to, tap, windows_of};
+use x11::{chord, click_with, client, clipboard, extent, move_to, tap, windows_of};
 
 /// The title of the library window.
 const LIBRARY: &str = "Library - iris";
@@ -67,6 +78,14 @@ const SHIFT: u32 = 0xffe1;
 const F10: u32 = 0xffc7;
 const MENU: u32 = 0xff67;
 const SLASH: u32 = 0x2f;
+const TAB: u32 = 0xff09;
+const SPACE: u32 = 0x20;
+const LEFT: u32 = 0xff51;
+const RIGHT: u32 = 0xff53;
+const ESCAPE: u32 = 0xff1b;
+/// The titles of the settings window and the capture overlay.
+const SETTINGS: &str = "Settings - iris";
+const OVERLAY: &str = "Capture - iris";
 /// The wheel's down button.
 const WHEEL_DOWN: u8 = 5;
 /// The shortcut sheet's card, theme::BG_ELEV, as [b, g, r].
@@ -398,5 +417,158 @@ fn the_shortcut_sheet_fits_a_minimum_window_and_holds_the_wheel() {
             column(&after, x),
             "the wheel over the card moved the window beside it at x {x}"
         );
+    }
+}
+
+/// A library of three captures under a private display, the pointer
+/// resting on the window away from its cards so the keys go to it.
+/// Fields drop in order: the daemon before the display it draws on.
+struct Open {
+    daemon: Daemon,
+    conn: x11rb::rust_connection::RustConnection,
+    root: u32,
+    library: u32,
+    corner: (i16, i16),
+    _dir: tempfile::TempDir,
+    _xvfb: daemon::Server,
+}
+
+impl Open {
+    fn start(case: &str) -> Option<Open> {
+        if !enabled() {
+            return None;
+        }
+        let (xvfb, display) = xvfb_sized(case, "1600x1200x24")?;
+        let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = Daemon::start(dir.path(), |cmd| {
+            cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+        });
+        let shots = dir.path().join("shots");
+        let listed: Vec<_> = ["first.png", "middle.png", "last.png"]
+            .iter()
+            .map(|name| png(&shots.join(name)))
+            .collect();
+        store(dir.path(), &listed);
+        daemon.send(&["--library"]);
+        let library = daemon.until("the library window to map", || {
+            windows_of(&conn, root, LIBRARY).first().copied()
+        });
+        daemon.until("the cards' thumbnails to draw", || {
+            let [r, g, b, _] = CAPTURE;
+            extent(&client(&conn, root, library), [r, g, b])
+        });
+        daemon.settle();
+        let at = conn
+            .translate_coordinates(library, root, 0, 0)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let open = Open {
+            daemon,
+            conn,
+            root,
+            library,
+            corner: (at.dst_x + 4, at.dst_y + 4),
+            _dir: dir,
+            _xvfb: xvfb,
+        };
+        open.point();
+        Some(open)
+    }
+
+    /// Rest the pointer on the library: with no window manager the
+    /// keyboard follows it.
+    fn point(&self) {
+        move_to(&self.conn, self.root, self.corner);
+        self.daemon.settle();
+    }
+
+    /// Where the cards' thumbnails draw, if any shows.
+    fn thumbs(&self) -> Option<(usize, usize, usize, usize)> {
+        let [r, g, b, _] = CAPTURE;
+        extent(&client(&self.conn, self.root, self.library), [r, g, b])
+    }
+
+    /// Press `keys` in turn, letting the window draw after each.
+    fn keys(&self, keys: &[u32]) {
+        for &key in keys {
+            tap(&self.conn, self.root, key);
+            self.daemon.settle();
+        }
+    }
+
+    /// Wait until the shortcut sheet's dim layer covers every card, or
+    /// with `open` false until the cards show again.
+    fn sheet(&self, open: bool, what: &str) {
+        self.daemon
+            .until(what, || (self.thumbs().is_none() == open).then_some(()));
+        self.daemon.settle();
+    }
+
+    fn mapped(&self, title: &str) -> bool {
+        !windows_of(&self.conn, self.root, title).is_empty()
+    }
+}
+
+#[test]
+fn tab_runs_the_window_buttons() {
+    let Some(open) = Open::start("tab_runs_the_window_buttons") else {
+        return;
+    };
+    // Tab reaches Keyboard Shortcuts; Space on it opens the sheet and
+    // closes it again.
+    open.keys(&[TAB, SPACE]);
+    open.sheet(true, "Tab and Space to open the shortcut sheet");
+    open.keys(&[SPACE]);
+    open.sheet(false, "Space on Keyboard Shortcuts to close the sheet");
+    // Tab moves on to Settings.
+    open.keys(&[TAB, RETURN]);
+    open.daemon.until("Tab and Return to open Settings", || {
+        open.mapped(SETTINGS).then_some(())
+    });
+    open.point();
+    // Right moves on to New Screenshot, which closes the library for
+    // the overlay.
+    open.keys(&[RIGHT, RETURN]);
+    open.daemon
+        .until("Right and Return to start a capture", || {
+            (open.mapped(OVERLAY) && !open.mapped(LIBRARY)).then_some(())
+        });
+}
+
+#[test]
+fn tab_runs_the_selection_buttons() {
+    let Some(open) = Open::start("tab_runs_the_selection_buttons") else {
+        return;
+    };
+    // Home selects the first capture. Shift+Tab reaches the last of the
+    // selection's buttons, Done; Left twice reaches Copy.
+    open.keys(&[HOME]);
+    chord(&open.conn, open.root, &[SHIFT, TAB]);
+    open.daemon.settle();
+    open.keys(&[LEFT, LEFT, SPACE]);
+    open.daemon
+        .until("Shift+Tab, Left, and Space to copy the capture", || {
+            clipboard(&open.conn, open.root, b"image/png").map(|_| ())
+        });
+    // Right twice reaches Done, which clears the selection: the
+    // window's buttons return, and Tab reaches Keyboard Shortcuts.
+    open.keys(&[RIGHT, RIGHT, RETURN, TAB, SPACE]);
+    open.sheet(true, "Tab after Done to open the shortcut sheet");
+    // The sheet holds the keys: End under it leaves the cursor on the
+    // first capture.
+    open.keys(&[END, ESCAPE]);
+    open.sheet(false, "Escape to close the sheet");
+    // Tab past New Screenshot returns to the grid, where Return opens
+    // the capture under the cursor.
+    open.keys(&[TAB, TAB, TAB, RETURN]);
+    open.daemon.until(
+        "Tab past the last button and Return to open the capture",
+        || open.mapped("first.png - iris").then_some(()),
+    );
+    for other in ["middle.png - iris", "last.png - iris"] {
+        assert!(!open.mapped(other), "{other} opened");
     }
 }

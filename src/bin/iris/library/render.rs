@@ -13,7 +13,7 @@ use crate::theme;
 use crate::widgets::{self, tip, ButtonStyle, Toolbar};
 
 use super::layout::{Layout, Row, HEADER_H};
-use super::{evict_thumbs, Library, MIN_SIZE, THUMB_KEEP_ROWS};
+use super::{evict_thumbs, Library, Tool, MIN_SIZE, THUMB_KEEP_ROWS};
 
 /// Space between a day title's baseline row and the cards under it.
 const HEADER_PAD_B: f32 = 10.0;
@@ -79,6 +79,17 @@ impl Library {
         if !self.listing.count().is_empty() {
             bar = bar.caption(self.listing.count().clone());
         }
+        // Every button draws the keyboard ring while Tab is on it, and a
+        // click runs it as Space on it does.
+        let ring = |tool: Tool, control: Stateful<Div>| {
+            widgets::ringed(
+                control.on_click(
+                    cx.listener(move |this, _, window, cx| this.run_tool(tool, window, cx)),
+                ),
+                Some(theme::RADIUS_CONTROL),
+                (self.ring == Some(tool)).then_some(theme::FOCUS_RING),
+            )
+        };
         if !self.selected.is_empty() {
             return bar
                 .trailing(
@@ -88,61 +99,47 @@ impl Library {
                         .font_features(theme::tabular())
                         .child(self.sel_label.clone()),
                 )
-                .trailing(
-                    widgets::button("sel-copy", "Copy", false)
-                        .tooltip(tip(
-                            "Copy",
-                            Some(crate::widgets::meta_shortcut!("C").into()),
-                        ))
-                        .on_click(cx.listener(|this, _, _, cx| this.copy_selection(cx))),
-                )
-                .trailing(
+                .trailing(ring(
+                    Tool::Copy,
+                    widgets::button("sel-copy", "Copy", false).tooltip(tip(
+                        "Copy",
+                        Some(crate::widgets::meta_shortcut!("C").into()),
+                    )),
+                ))
+                .trailing(ring(
+                    Tool::Trash,
                     widgets::push_button("sel-trash", "Move to Trash", ButtonStyle::Destructive)
                         .h(px(theme::TOOLBAR_CONTROL_H))
                         .px(px(12.))
-                        .tooltip(tip("Move to Trash", Some("Delete".into())))
-                        .on_click(cx.listener(|this, _, _, cx| this.trash_selection(cx))),
-                )
-                .trailing(
+                        .tooltip(tip("Move to Trash", Some("Delete".into()))),
+                ))
+                .trailing(ring(
+                    Tool::Done,
                     widgets::button("sel-done", "Done", false)
-                        .tooltip(tip("Clear Selection", Some("Esc".into())))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.selected.clear();
-                            this.sel_dirty = true;
-                            cx.notify();
-                        })),
-                );
+                        .tooltip(tip("Clear Selection", Some("Esc".into()))),
+                ));
         }
-        bar.trailing(
+        bar.trailing(ring(
+            Tool::Shortcuts,
             widgets::icon_button(
                 "shortcuts",
                 Icon::Keyboard,
                 self.help,
                 theme::TOOLBAR_CONTROL_H,
             )
-            .tooltip(tip("Keyboard Shortcuts", Some("?".into())))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.help = !this.help;
-                cx.notify();
-            })),
-        )
-        .trailing(
-            widgets::icon_button("settings", Icon::Gear, false, theme::TOOLBAR_CONTROL_H)
-                .tooltip(tip(
-                    "Settings",
-                    Some(crate::widgets::meta_shortcut!(",").into()),
-                ))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if let Err(e) = crate::settings::open(cx) {
-                        this.set_status(e, cx);
-                    }
-                })),
-        )
-        .trailing(
+            .tooltip(tip("Keyboard Shortcuts", Some("?".into()))),
+        ))
+        .trailing(ring(
+            Tool::Settings,
+            widgets::icon_button("settings", Icon::Gear, false, theme::TOOLBAR_CONTROL_H).tooltip(
+                tip("Settings", Some(crate::widgets::meta_shortcut!(",").into())),
+            ),
+        ))
+        .trailing(ring(
+            Tool::Capture,
             widgets::icon_button("capture", Icon::Viewfinder, false, theme::TOOLBAR_CONTROL_H)
-                .tooltip(tip("New Screenshot", shortcut(&self.cfg)))
-                .on_click(cx.listener(|this, _, window, cx| this.start_capture(window, cx))),
-        )
+                .tooltip(tip("New Screenshot", shortcut(&self.cfg))),
+        ))
     }
 
     /// A day's title row, `layout.x0` from the left.
@@ -201,6 +198,11 @@ impl Render for Library {
             return div();
         }
         self.sync_selection();
+        // The ring leaves with its button: a selection's buttons go when
+        // it clears, and the window's when one begins.
+        if self.ring.is_some_and(|r| !self.tools().contains(&r)) {
+            self.ring = None;
+        }
         // The cache fills from the background prefetch; a card whose
         // thumb has not landed draws without its image until then.
         // A set, not a nested scan, rebuilt only when entries changed.
@@ -310,6 +312,9 @@ impl Render for Library {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                    // A press in the grid takes the keyboard back from
+                    // the toolbar.
+                    this.ring = None;
                     // A card's own mousedown set drag_start first; only
                     // empty grid space starts a rubber band.
                     if this.drag_start.is_none() {
@@ -438,6 +443,7 @@ pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, Sh
         ("Clear selection", "Esc".into()),
         ("Settings", crate::widgets::meta_shortcut!(",").into()),
         ("Close", crate::widgets::meta_shortcut!("W").into()),
+        ("Toolbar buttons", "Tab, then Space".into()),
         ("This sheet", "?".into()),
     ]
 }
