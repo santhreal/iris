@@ -73,16 +73,9 @@ impl More {
 }
 
 /// A toolbar menu panel dropped 4 px under its button, inside the
-/// window. The anchor follows the button in its parent, so it is at the
-/// button's bottom left already.
+/// window.
 fn drop_menu(panel: impl IntoElement) -> impl IntoElement {
-    deferred(
-        anchored()
-            .offset(point(px(0.), px(4.)))
-            .snap_to_window_with_margin(px(8.))
-            .child(panel),
-    )
-    .with_priority(1)
+    widgets::menu_at(point(px(0.), px(theme::TOOLBAR_CONTROL_H + 4.)), panel)
 }
 
 fn chord_labels(macos: bool) -> (&'static str, &'static str) {

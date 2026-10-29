@@ -192,10 +192,11 @@ pub fn popup_button(
 }
 
 /// The option menu of a pop-up button, to be added as a child of a
-/// `relative` box that holds the button at its top-left. The selected
-/// row opens over the button, as on macOS; the menu stays inside the
-/// window. Rows mark the selected option. A row click runs
-/// `on_select(index)`; a press outside the menu runs `on_dismiss`.
+/// `relative` box that holds the button at its top-left (see
+/// [`menu_at`]). The selected row opens over the button, as on macOS;
+/// the menu stays inside the window. Rows mark the selected option. A
+/// row click runs `on_select(index)`; a press outside the menu runs
+/// `on_dismiss`.
 pub fn popup_menu(
     id: &'static str,
     options: &[&'static str],
@@ -218,13 +219,27 @@ pub fn popup_menu(
                 .on_click(move |_, window, cx| on_select(i, window, cx)),
         );
     }
-    deferred(
-        anchored()
-            .offset(point(px(-(MENU_PAD + 4.)), px(popup_offset(selected))))
-            .snap_to_window_with_margin(px(8.))
-            .child(panel),
+    menu_at(
+        point(px(-(MENU_PAD + 4.)), px(popup_offset(selected))),
+        panel,
     )
-    .with_priority(1)
+}
+
+/// A floating menu `panel` placed `offset` from the top-left of its
+/// `relative` parent, painted over every other element and kept 8 px
+/// inside the window. The zero-size absolute box pins the anchor to the
+/// parent's top-left: an `anchored` element with no inset sits at its
+/// static place in the parent's flow, after the parent's other children.
+pub fn menu_at(offset: Point<Pixels>, panel: impl IntoElement) -> Div {
+    div().absolute().top_0().left_0().child(
+        deferred(
+            anchored()
+                .offset(offset)
+                .snap_to_window_with_margin(px(8.))
+                .child(panel),
+        )
+        .with_priority(1),
+    )
 }
 
 /// Vertical offset of a pop-up menu from its button's top, logical px:
