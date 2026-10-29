@@ -256,7 +256,7 @@ impl Overlay {
         let frame_for_finalize = frame_img.clone();
         let finalize = cx.background_executor().spawn(async move {
             let bgra = frame_for_finalize.as_bytes(0).unwrap_or(&[]);
-            let (path, _) = pipeline::finalize_bgra(bgra, fw, fh, region)?;
+            let path = pipeline::finalize_bgra(bgra, fw, fh, region)?;
             // The toast's pixels scale from finalize's stash while the
             // card is still in flight: the landing opens it at once.
             let thumb = show_toast.then(|| stage::prepare_thumb(&path, sf));

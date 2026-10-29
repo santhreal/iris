@@ -166,7 +166,7 @@ fn a_new_capture_keeps_every_older_one_listed() {
     let older: Vec<CaptureEntry> = (0..1000)
         .map(|i| listed(d.path(), &format!("old{i}.png"), 1000 - i))
         .collect();
-    write_store(&older).unwrap();
+    write_store(older.clone()).unwrap();
     let (shot, img) = png(d.path(), "new.png");
     add(&shot, &img).unwrap();
     let stored: Vec<PathBuf> = read_store().into_iter().map(|e| e.path).collect();
@@ -203,7 +203,7 @@ fn a_reader_never_finds_the_store_half_written() {
                 let entries: Vec<CaptureEntry> = (0..2000 + round)
                     .map(|i| listed(d.path(), &format!("s{round}-{i}.png"), i))
                     .collect();
-                write_store(&entries)
+                write_store(entries)
             });
         // The reader stops before a writer's error is raised: a scope
         // joins every thread, and a reader left running never ends.
@@ -365,8 +365,32 @@ fn rebuild_adopts_a_capture_resized_outside_iris() {
 
 static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// What the write hook saw, when a test asks: per run, the paths list()
+/// returned (None when it did not return within 5 seconds) and the paths
+/// the store file held.
+type Seen = Vec<(Option<Vec<PathBuf>>, Vec<PathBuf>)>;
+static PROBE: parking_lot::Mutex<Option<Seen>> = parking_lot::Mutex::new(None);
+
 fn count_write() {
     WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut probe = PROBE.lock();
+    let Some(seen) = probe.as_mut() else {
+        return;
+    };
+    // On a thread of its own, as a library window lists: a list that
+    // waits on the writer shows as a timeout, not a hang.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(list().into_iter().map(|e| e.path).collect());
+    });
+    let on_disk: Vec<CaptureEntry> = std::fs::read(store_path().unwrap())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    seen.push((
+        rx.recv_timeout(std::time::Duration::from_secs(5)).ok(),
+        on_disk.into_iter().map(|e| e.path).collect(),
+    ));
 }
 
 /// How many times `op` runs the store write hook.
@@ -410,6 +434,132 @@ fn every_store_write_runs_the_write_hook_once() {
     assert_eq!(hooked(|| trash(&a)), 0, "trash of an unstored path");
     assert_eq!(hooked(|| trash_many(&[b])), 1, "trash_many");
     assert!(list().is_empty());
+}
+
+// WHY: a library window lists a new capture when the write hook runs,
+// and a rename over library.json can wait tens of milliseconds on the
+// filesystem journal. Closed here: a hook that runs only after the disk
+// write (the window waits on the journal), a list() that waits on the
+// writer's lock, and a read during the write that returns the store
+// file's older entries (the window shows the old listing and nothing
+// makes it read again). Not covered: a reader in another process, which
+// reads the file.
+#[test]
+#[serial_test::serial]
+fn a_write_is_listed_while_its_bytes_are_in_flight() {
+    let d = isolated_home();
+    let (a, img) = png(d.path(), "a.png");
+    let (b, _) = png(d.path(), "b.png");
+    add(&a, &img).unwrap();
+    on_write(count_write);
+    *PROBE.lock() = Some(Vec::new());
+    let added = add(&b, &img);
+    let seen = PROBE.lock().take().unwrap();
+    added.unwrap();
+    assert_eq!(
+        seen,
+        [(Some(vec![b.clone(), a.clone()]), vec![a.clone()])],
+        "what the hook listed, and what the store file held"
+    );
+    assert_eq!(stored(), [b, a]);
+}
+
+/// The paths the store file holds, newest first.
+fn stored() -> Vec<PathBuf> {
+    let bytes = std::fs::read(store_path().unwrap()).unwrap();
+    serde_json::from_slice::<Vec<CaptureEntry>>(&bytes)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.path)
+        .collect()
+}
+
+// WHY: a write that fails after readers got its entries must take them
+// back. Closed here: a failed write whose entries stay readable (the
+// window lists a capture the store never held) and one that skips the
+// second hook run (the window keeps showing it). Not covered: a failure
+// that leaves the store file itself damaged, which the rename rules out.
+#[test]
+#[serial_test::serial]
+#[cfg(unix)]
+fn a_failed_write_is_taken_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = isolated_home();
+    let (a, img) = png(d.path(), "a.png");
+    let (b, _) = png(d.path(), "b.png");
+    add(&a, &img).unwrap();
+    let data = store_path().unwrap().parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let mut failed = None;
+    let runs = hooked(|| failed = Some(add(&b, &img)));
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(failed.unwrap().is_err(), "a write into a read-only folder");
+    assert_eq!(runs, 2, "the hook runs at the write and at its failure");
+    let read: Vec<PathBuf> = read_store().into_iter().map(|e| e.path).collect();
+    assert_eq!(read, std::slice::from_ref(&a));
+    assert_eq!(list().into_iter().map(|e| e.path).collect::<Vec<_>>(), [a]);
+}
+
+// WHY: list() sweeps for vanished files without the store lock, and
+// prunes under it, so a capture can land between the two. Closed here: a
+// prune that drops every path the sweep found gone, a capture saved
+// again under one of them since included (the new capture leaves the
+// library). Not covered: the interleaving itself, which this test sets
+// up by calling the prune with a stale sweep.
+#[test]
+#[serial_test::serial]
+fn a_prune_keeps_a_capture_saved_again_since_the_sweep() {
+    let d = isolated_home();
+    let (back, img) = png(d.path(), "back.png");
+    let (kept, _) = png(d.path(), "kept.png");
+    let gone = d.path().join("gone.png");
+    add(&back, &img).unwrap();
+    add(&kept, &img).unwrap();
+    let write = store_lock().lock();
+    let mut entries = read_store();
+    entries.insert(0, listed(d.path(), "gone.png", 1));
+    write_store(entries).unwrap();
+    drop(write);
+    let dead = std::collections::HashSet::from([back.as_path(), gone.as_path()]);
+    let paths = |e: Vec<CaptureEntry>| e.into_iter().map(|e| e.path).collect::<Vec<_>>();
+    assert_eq!(paths(prune(&dead)), [kept.clone(), back.clone()]);
+    assert_eq!(paths(read_store()), [kept, back]);
+}
+
+// WHY: the capture path shows its toast without waiting on the library
+// add, and the toast offers Markup, whose save updates the same entry.
+// Closed here: a detached add that takes the store after a change made
+// once it returned (the save finds no entry, and the add then writes
+// over the save's thumbnail and revision). Not covered: a change made
+// in another process.
+#[test]
+#[serial_test::serial]
+fn a_detached_add_lands_before_any_later_change() {
+    let d = isolated_home();
+    let red = image::RgbaImage::from_pixel(300, 300, image::Rgba(RED));
+    let green = image::RgbaImage::from_pixel(300, 300, image::Rgba(GREEN));
+    for round in 0..20 {
+        let shot = d.path().join(format!("{round}.png"));
+        red.save(&shot).unwrap();
+        add_detached(shot.clone(), std::sync::Arc::new(red.clone()), |e| {
+            panic!("the detached add failed: {e}")
+        })
+        .unwrap();
+        let saved = update(&shot, &green).unwrap();
+        assert!(
+            saved.edited_ms > 0,
+            "round {round}: the save found no entry"
+        );
+        let entries = read_store();
+        assert_eq!(entries.len(), round + 1, "round {round}");
+        assert_eq!(entries[0].path, shot, "round {round}");
+        assert_eq!(entries[0].revision(), saved.revision(), "round {round}");
+        assert_eq!(
+            thumbnail(&entries[0]).unwrap().get_pixel(0, 0).0,
+            GREEN,
+            "round {round}: the saved thumbnail"
+        );
+    }
 }
 
 // WHY: the library groups captures by the day they were taken, and an
@@ -468,7 +618,7 @@ fn an_editor_save_keeps_the_capture_in_its_place() {
     let ahead = saved.edited_ms + 3_600_000;
     let mut store = read_store();
     store.iter_mut().find(|e| e.path == a).unwrap().edited_ms = ahead;
-    write_store(&store).unwrap();
+    write_store(store).unwrap();
     let again = update(&a, &edit).unwrap();
     assert!(
         again.edited_ms > ahead,

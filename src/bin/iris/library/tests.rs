@@ -543,6 +543,73 @@ fn titles_move_on_at_midnight() {
     assert_eq!(listing.sections()[0].title, "Yesterday");
 }
 
+// WHY: a capture landing in a library of thousands rebuilds only the new
+// cards' captions; everything else is kept from the shown listing.
+// Closed here: a kept listing that differs from the one a fresh build of
+// the same store answer shows (captions or days out of step with the
+// entries, a section not split or extended, a stale count), a kept
+// listing taken for a change that is not a pure landing (a capture
+// trashed, re-saved, or re-captured under its path), and a landing that
+// names a capture as re-saved or drops a selected one. Not covered: the
+// store answer itself.
+#[test]
+fn a_landing_capture_lists_as_a_fresh_build_would() {
+    let shown = |l: &Listing| {
+        (
+            l.entries()
+                .iter()
+                .map(|e| (e.path.clone(), e.revision()))
+                .collect::<Vec<_>>(),
+            l.captions().to_vec(),
+            l.sections().to_vec(),
+            l.count().clone(),
+        )
+    };
+    let older: Vec<_> = (0..6)
+        .map(|i| entry(&format!("{i}.png"), at(TODAY - 2 - i / 2, -i)))
+        .collect();
+    let with = |new: &[CaptureEntry], rest: &[CaptureEntry]| [new, rest].concat();
+    let one = with(&[entry("n1.png", at(TODAY - 2, 30))], &older);
+    let two = with(
+        &[entry("n3.png", at(TODAY, 1)), entry("n2.png", at(TODAY, 0))],
+        &one,
+    );
+    let mut trashed = two.clone();
+    trashed.remove(5);
+    let mut resaved = trashed.clone();
+    resaved[3] = edited(resaved[3].clone(), 9);
+    let mut recaptured = resaved.clone();
+    recaptured[0].created_ms += 1;
+    // Each step: what changed, the store answer, and the captures it
+    // names as re-saved.
+    let steps: [(&str, &[CaptureEntry], Vec<PathBuf>); 6] = [
+        ("the first answer", &older, Vec::new()),
+        ("one capture on the newest day", &one, Vec::new()),
+        ("two captures on a new day", &two, Vec::new()),
+        ("a capture trashed", &trashed, Vec::new()),
+        ("a capture re-saved", &resaved, vec![shot("0.png")]),
+        ("a path captured again", &recaptured, vec![shot("n3.png")]),
+    ];
+    let mut listing = Listing::default();
+    let mut selected = vec![shot("0.png"), shot("1.png")];
+    for (step, fresh, stale) in steps {
+        let generation = listing.generation();
+        assert_eq!(
+            listing.set(fresh.to_vec(), &mut selected, TODAY),
+            Some(stale),
+            "{step}"
+        );
+        assert!(listing.generation() > generation, "{step}");
+        let mut built = Listing::default();
+        built.set(fresh.to_vec(), &mut Vec::new(), TODAY);
+        assert_eq!(shown(&listing), shown(&built), "{step}");
+        assert_eq!(selected, [shot("0.png"), shot("1.png")], "{step}");
+    }
+    assert_eq!(listing.sections().len(), 4);
+    assert_eq!(listing.sections()[0].title, "Today");
+    assert_eq!(listing.set(recaptured, &mut selected, TODAY), None);
+}
+
 // WHY: a capture another program removes leaves the grid because the
 // window watches every folder that holds a listed capture. Closed here:
 // a listed capture whose folder goes unwatched, a folder watched twice,

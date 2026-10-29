@@ -63,49 +63,78 @@ fn path_key(path: &Path) -> String {
     format!("{hash:016x}")
 }
 
-/// mtime, length, and parsed entries of the store file.
-type StoreCache = parking_lot::Mutex<(Option<std::time::SystemTime>, u64, Vec<CaptureEntry>)>;
+/// The store as this process last read or wrote it.
+#[derive(Default)]
+struct Cached {
+    /// The file's mtime and length when it held `entries`; None until a
+    /// read, while a write is in flight, and after a write failed.
+    stamp: Option<(std::time::SystemTime, u64)>,
+    entries: Vec<CaptureEntry>,
+    /// A write of `entries` is in flight: they are newer than the file.
+    writing: bool,
+    /// Bumped by every write, so a read that parsed the file before a
+    /// write began does not cache the older entries over it.
+    version: u64,
+}
 
 /// The parsed store behind an mtime+len check: the library window
 /// calls list() on every change it learns of, and an unchanged file
 /// should not re-parse.
-fn store_cache() -> &'static StoreCache {
+fn store_cache() -> &'static parking_lot::Mutex<Cached> {
     use std::sync::LazyLock;
-    static CACHE: LazyLock<StoreCache> =
-        LazyLock::new(|| parking_lot::Mutex::new((None, 0, Vec::new())));
+    static CACHE: LazyLock<parking_lot::Mutex<Cached>> = LazyLock::new(Default::default);
     &CACHE
 }
 
-/// Serializes read-modify-write passes over the store: list()'s prune
-/// and add()'s prepend both read then write, and an unsynchronized
-/// pair can drop a capture that landed between the two calls.
+/// Serializes read-modify-write passes over the store: list()'s prune,
+/// add()'s prepend, a trash, and a thumbnail rebuild each read then
+/// write, and an unsynchronized pair can drop a capture that landed
+/// between the two calls. A read alone takes no lock.
 fn store_lock() -> &'static parking_lot::Mutex<()> {
     use std::sync::LazyLock;
     static LOCK: LazyLock<parking_lot::Mutex<()>> = LazyLock::new(|| parking_lot::Mutex::new(()));
     &LOCK
 }
 
-/// Runs after every store write in this process. The process that shows
-/// the library sets it, so an open library window reads a write at once.
+/// Runs at every store write in this process, once the new entries are
+/// readable and before their bytes reach the disk, and again when that
+/// disk write fails. The process that shows the library sets it, so an
+/// open library window reads a write at once.
 static ON_WRITE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 
-/// Run `hook` after each store write in this process. The first call
-/// sets it for the process lifetime.
+/// Run `hook` at each store write in this process. The first call sets
+/// it for the process lifetime.
 pub fn on_write(hook: fn()) {
     let _ = ON_WRITE.set(hook);
+}
+
+fn run_write_hook() {
+    if let Some(hook) = ON_WRITE.get() {
+        hook();
+    }
+}
+
+fn file_stamp(path: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 fn read_store() -> Vec<CaptureEntry> {
     let Ok(path) = store_path() else {
         return Vec::new();
     };
-    let stamp = std::fs::metadata(&path)
-        .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
-        .unwrap_or((None, 0));
+    let version = {
+        let cached = store_cache().lock();
+        if cached.writing {
+            return cached.entries.clone();
+        }
+        cached.version
+    };
+    let stamp = file_stamp(&path);
     {
-        let guard = store_cache().lock();
-        if guard.0 == stamp.0 && guard.1 == stamp.1 && stamp.0.is_some() {
-            return guard.2.clone();
+        let cached = store_cache().lock();
+        if cached.writing || (stamp.is_some() && cached.stamp == stamp) {
+            return cached.entries.clone();
         }
     }
     let entries: Vec<CaptureEntry> = std::fs::read_to_string(&path)
@@ -117,22 +146,41 @@ fn read_store() -> Vec<CaptureEntry> {
             })
         })
         .unwrap_or_default();
-    *store_cache().lock() = (stamp.0, stamp.1, entries.clone());
+    let mut cached = store_cache().lock();
+    if !cached.writing && cached.version == version {
+        cached.stamp = stamp;
+        cached.entries = entries.clone();
+    }
     entries
 }
 
-fn write_store(entries: &[CaptureEntry]) -> Result<(), String> {
+/// Write `entries` as the store. Readers in this process get them from
+/// the moment the write starts: a rename over a file can wait tens of
+/// milliseconds on the filesystem journal, and an open library window
+/// shows a new capture without waiting on it. A failed write leaves the
+/// file as it was, and the next read parses it again. The caller holds
+/// [`store_lock`].
+fn write_store(entries: Vec<CaptureEntry>) -> Result<(), String> {
     let path = store_path()?;
-    let text = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
-    crate::output::replace(&path, text.as_bytes())
-        .map_err(|e| format!("write library.json: {e}"))?;
-    // Write-through: the next read sees the new bytes without a parse.
-    let stamp = std::fs::metadata(&path)
-        .and_then(|m| m.modified().map(|t| (Some(t), m.len())))
-        .unwrap_or((None, 0));
-    *store_cache().lock() = (stamp.0, stamp.1, entries.to_vec());
-    if let Some(hook) = ON_WRITE.get() {
-        hook();
+    let text = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+    {
+        let mut cached = store_cache().lock();
+        cached.entries = entries;
+        cached.stamp = None;
+        cached.writing = true;
+        cached.version += 1;
+    }
+    run_write_hook();
+    let written = crate::output::replace(&path, text.as_bytes());
+    {
+        let mut cached = store_cache().lock();
+        cached.writing = false;
+        cached.stamp = written.as_ref().ok().and_then(|()| file_stamp(&path));
+    }
+    if let Err(e) = written {
+        // The window read entries the file does not hold: read again.
+        run_write_hook();
+        return Err(format!("write library.json: {e}"));
     }
     Ok(())
 }
@@ -179,7 +227,34 @@ fn make_thumb(img: &image::RgbaImage) -> image::RgbaImage {
 /// The caller passes the already-decoded image so a save does not pay a
 /// second PNG decode just to make the thumbnail.
 pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
+    let _write = store_lock().lock();
     record(path, img, false)
+}
+
+/// [`add`] on a thread of its own, for a caller that shows the capture
+/// without waiting on the thumbnail and the store write. Returns once
+/// that thread holds the store lock, so every store change this process
+/// starts after the return lands after the add. `failed` receives the
+/// reason a started add failed.
+pub fn add_detached(
+    path: PathBuf,
+    img: std::sync::Arc<image::RgbaImage>,
+    failed: impl FnOnce(String) + Send + 'static,
+) -> Result<(), String> {
+    let (held, holds) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("iris-library".into())
+        .spawn(move || {
+            let _write = store_lock().lock();
+            let _ = held.send(());
+            if let Err(e) = record(&path, &img, false) {
+                failed(e);
+            }
+        })
+        .map_err(|e| format!("spawn library thread: {e}"))?;
+    holds
+        .recv()
+        .map_err(|_| "the library thread ended before it took the store".to_string())
 }
 
 /// Record an editor save over `path`: a fresh thumbnail, the image's
@@ -187,11 +262,12 @@ pub fn add(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> 
 /// the library does not list (the editor opens any PNG) is added as a
 /// fresh capture.
 pub fn update(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, String> {
+    let _write = store_lock().lock();
     record(path, img, true)
 }
 
+/// [`add`] or [`update`]; the caller holds [`store_lock`].
 fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<CaptureEntry, String> {
-    let _write = store_lock().lock();
     let (width, height) = img.dimensions();
     let thumb = thumbs_dir()?.join(format!("{}.png", path_key(path)));
     make_thumb(img)
@@ -223,7 +299,7 @@ fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<Capture
         entries.insert(0, entry.clone());
         entry
     };
-    write_store(&entries)?;
+    write_store(entries)?;
     Ok(entry)
 }
 
@@ -271,7 +347,7 @@ fn rebuild_thumb(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
     // every load would find the thumbnail stale and rebuild it again.
     if src.dimensions() != (stored.width, stored.height) {
         (stored.width, stored.height) = src.dimensions();
-        if let Err(e) = write_store(&entries) {
+        if let Err(e) = write_store(entries) {
             crate::ilog!("iris: {e}");
         }
     }
@@ -292,25 +368,21 @@ fn dir_stamps() -> &'static DirStamps {
 }
 
 pub fn list() -> Vec<CaptureEntry> {
-    let _write = store_lock().lock();
     let entries = read_store();
     // Fast path: every entry's parent dir unchanged since the last
     // sweep means no capture file appeared or vanished.
-    let mut dirs: Vec<PathBuf> = entries
-        .iter()
-        .filter_map(|e| e.path.parent().map(|p| p.to_path_buf()))
-        .collect();
-    dirs.sort();
-    dirs.dedup();
-    let stamps: Vec<(PathBuf, Option<std::time::SystemTime>)> = dirs
-        .iter()
+    let dirs: std::collections::HashSet<&Path> =
+        entries.iter().filter_map(|e| e.path.parent()).collect();
+    let mut stamps: Vec<(PathBuf, Option<std::time::SystemTime>)> = dirs
+        .into_iter()
         .map(|d| {
             (
-                d.clone(),
+                d.to_path_buf(),
                 std::fs::metadata(d).and_then(|m| m.modified()).ok(),
             )
         })
         .collect();
+    stamps.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     if !entries.is_empty() && *dir_stamps().lock() == stamps {
         return entries;
     }
@@ -323,7 +395,7 @@ pub fn list() -> Vec<CaptureEntry> {
         .map(|n| n.get().min(8))
         .unwrap_or(4)
         .min(entries.len().max(1));
-    let mut alive_flags: Vec<std::sync::atomic::AtomicBool> = (0..entries.len())
+    let alive_flags: Vec<std::sync::atomic::AtomicBool> = (0..entries.len())
         .map(|_| std::sync::atomic::AtomicBool::new(false))
         .collect();
     std::thread::scope(|scope| {
@@ -347,17 +419,36 @@ pub fn list() -> Vec<CaptureEntry> {
             let _ = h.join();
         }
     });
-    let alive_flags: Vec<bool> = alive_flags.iter_mut().map(|f| *f.get_mut()).collect();
-    let (alive, dead): (Vec<_>, Vec<_>) = entries
-        .into_iter()
-        .zip(alive_flags)
-        .partition(|(_, ok)| *ok);
-    let alive: Vec<_> = alive.into_iter().map(|(e, _)| e).collect();
-    if !dead.is_empty() {
-        let _ = write_store(&alive);
-    }
+    let dead: std::collections::HashSet<&Path> = entries
+        .iter()
+        .zip(&alive_flags)
+        .filter(|(_, alive)| !alive.load(std::sync::atomic::Ordering::Relaxed))
+        .map(|(e, _)| e.path.as_path())
+        .collect();
+    let listed = if dead.is_empty() {
+        drop(dead);
+        entries
+    } else {
+        prune(&dead)
+    };
+    // Stamps read before the sweep: a change since then reads as a
+    // changed directory on the next list, which sweeps again.
     *dir_stamps().lock() = stamps;
-    alive
+    listed
+}
+
+/// Drop the entries of `dead` from the store as it is now: a capture
+/// recorded since the sweep keeps its entry, and so does one whose file
+/// was saved again since.
+fn prune(dead: &std::collections::HashSet<&Path>) -> Vec<CaptureEntry> {
+    let _write = store_lock().lock();
+    let mut entries = read_store();
+    let before = entries.len();
+    entries.retain(|e| !dead.contains(e.path.as_path()) || e.path.exists());
+    if entries.len() != before {
+        let _ = write_store(entries.clone());
+    }
+    entries
 }
 
 /// What the platform calls its trash, for messages and menu items.
@@ -406,7 +497,7 @@ pub fn trash_many(paths: &[PathBuf]) -> Vec<String> {
     if dropped.is_empty() {
         return errors;
     }
-    if let Err(e) = write_store(&kept) {
+    if let Err(e) = write_store(kept) {
         errors.push(e);
     }
     for entry in dropped {

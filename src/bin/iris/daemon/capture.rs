@@ -146,8 +146,7 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
 /// screen, decorations included, on X11, Windows, and macOS. The
 /// Wayland portal cannot name a window, so there this returns an error.
 pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
-    type Shot = (PathBuf, iris_lib::library::CaptureEntry);
-    fn grab_and_finish() -> Result<(Shot, iris_lib::capture::WinRect), String> {
+    fn grab_and_finish() -> Result<(PathBuf, iris_lib::capture::WinRect), String> {
         let rect = iris_lib::sys::capture::active_window_rect()?;
         // Grab only the window's rect off the root: the whole-screen
         // grab + crop this replaced moved up to 200MB for a window
@@ -183,13 +182,9 @@ pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
 
 /// A capture with no overlay finished: its toast, or why it failed.
 /// `source` is the capture's screen rect where the capture has one.
-fn landed(
-    cx: &mut App,
-    done: Result<(PathBuf, iris_lib::library::CaptureEntry), String>,
-    source: Option<crate::pin::Over>,
-) {
+fn landed(cx: &mut App, done: Result<PathBuf, String>, source: Option<crate::pin::Over>) {
     match done {
-        Ok((path, _)) => {
+        Ok(path) => {
             if Config::load().show_toast_after_capture {
                 stage::show_toast(cx, &path, source);
             }

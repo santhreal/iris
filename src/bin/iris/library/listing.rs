@@ -74,13 +74,13 @@ impl Listing {
 
     /// The folders that hold the shown captures, sorted, each once.
     pub(super) fn folders(&self) -> Vec<PathBuf> {
-        let mut dirs: Vec<PathBuf> = self
+        let dirs: HashSet<&Path> = self
             .entries
             .iter()
-            .filter_map(|e| e.path.parent().map(Path::to_path_buf))
+            .filter_map(|e| e.path.parent())
             .collect();
+        let mut dirs: Vec<PathBuf> = dirs.into_iter().map(Path::to_path_buf).collect();
         dirs.sort_unstable();
-        dirs.dedup();
         dirs
     }
 
@@ -100,15 +100,34 @@ impl Listing {
         if !fresh.is_sorted_by(|a, b| a.created_ms >= b.created_ms) {
             fresh.sort_by_key(|e| std::cmp::Reverse(e.created_ms));
         }
-        let unchanged = self.listed.is_some()
-            && fresh.len() == self.entries.len()
-            && fresh
+        // The shown listing, unchanged, behind `added` new captures: the
+        // common change, a capture landing. Only the new captions are
+        // built; a library of thousands pays for the few that landed.
+        let added = fresh.len().checked_sub(self.entries.len());
+        if let Some(added) = added.filter(|_| self.listed.is_some()) {
+            let kept = fresh[added..]
                 .iter()
                 .zip(&self.entries)
                 .all(|(f, e)| f.path == e.path && f.revision() == e.revision());
-        if unchanged {
-            self.relabel(today);
-            return None;
+            if kept && added == 0 {
+                self.relabel(today);
+                return None;
+            }
+            if kept {
+                fresh.truncate(added);
+                let (days, captions): (Vec<Day>, Vec<Caption>) = fresh
+                    .iter()
+                    .map(|e| {
+                        let (day, time) = layout::day_and_time(e.created_ms);
+                        (day, caption(e, time))
+                    })
+                    .unzip();
+                self.days.splice(0..0, days);
+                self.captions.splice(0..0, captions);
+                self.entries.splice(0..0, fresh.into_iter().map(Rc::new));
+                self.derive(today);
+                return Some(Vec::new());
+            }
         }
         let shown: HashMap<&Path, (i64, i64)> = self
             .entries
@@ -133,19 +152,25 @@ impl Listing {
                 (day, caption(e, time))
             })
             .unzip();
+        self.entries = fresh.into_iter().map(Rc::new).collect();
+        self.derive(today);
+        Some(stale)
+    }
+
+    /// Rebuild what follows from the entries and days: the sections
+    /// against `today`, and the count.
+    fn derive(&mut self, today: Day) {
         self.today = today;
         self.sections = layout::sections(&self.days, today);
         // An empty library shows its empty state, which states the
         // count: the toolbar shows none.
-        self.count = SharedString::from(match fresh.len() {
+        self.count = SharedString::from(match self.entries.len() {
             0 => String::new(),
             1 => "1 capture".to_owned(),
             n => format!("{n} captures"),
         });
-        self.entries = fresh.into_iter().map(Rc::new).collect();
         self.listed.get_or_insert_with(Instant::now);
         self.generation += 1;
-        Some(stale)
     }
 
     /// Rewrite the section titles against `today`: past midnight,

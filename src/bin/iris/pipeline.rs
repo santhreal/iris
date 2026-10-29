@@ -186,7 +186,7 @@ pub fn finalize_bgra(
     width: u32,
     height: u32,
     region: Region,
-) -> Result<(PathBuf, library::CaptureEntry), String> {
+) -> Result<PathBuf, String> {
     let rgba = crop_bgra_to_rgba(bgra, width, height, region)?;
     let img = image::RgbaImage::from_raw(region.width, region.height, rgba)
         .ok_or_else(|| "crop buffer size mismatch".to_string())?;
@@ -195,8 +195,9 @@ pub fn finalize_bgra(
 
 /// Save an RGBA image to the screenshots dir, put it on the clipboard and
 /// register it in the library. The capture is durable and paste-able
-/// before any surface shows it.
-pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry), String> {
+/// before any surface shows it; the library entry lands on a thread of
+/// its own while the toast opens.
+pub fn finalize(img: image::RgbaImage) -> Result<PathBuf, String> {
     let t_png = std::time::Instant::now();
     let cfg = Config::load();
     let img = std::sync::Arc::new(img);
@@ -246,8 +247,16 @@ pub fn finalize(img: image::RgbaImage) -> Result<(PathBuf, library::CaptureEntry
     // and no failed save leaves pixels cached for a missing file.
     stash_decoded(path.clone(), img.clone());
     iris_lib::ilog!("iris: capture: png written in {:?}", t_png.elapsed());
-    let entry = library::add(&path, &img)?;
-    Ok((path, entry))
+    // The thumbnail and the store write leave the toast's path: a rename
+    // over library.json can wait tens of milliseconds on the filesystem
+    // journal. A store change made after this returns lands after the
+    // entry. The capture is saved either way: a failure here costs the
+    // library entry, and a notice reports it.
+    let failed = |e| crate::daemon::report_failure("Library update failed", e);
+    if let Err(e) = library::add_detached(path.clone(), img, failed) {
+        failed(e);
+    }
+    Ok(path)
 }
 
 pub fn copy_image(img: &image::RgbaImage) -> Result<(), String> {
