@@ -358,3 +358,71 @@ fn the_default_hotkeys_avoid_chords_desktops_and_apps_hold() {
         "one press would run both commands"
     );
 }
+
+/// WHY: the class closed here is "a screenshot file name template that
+/// names no single file in the screenshots folder": a path separator
+/// writes into a missing subdirectory or out of the folder, and a
+/// character Windows rejects fails the save there, so the capture is
+/// lost. Every ASCII character and a few non-ASCII ones are tried in a
+/// template; an accepted one must expand to a name whose parent is the
+/// folder. It does not catch Windows reserved device names such as
+/// `CON`, which a `{date}` or `{time}` in the name already avoids.
+#[test]
+fn a_template_names_one_file_in_the_screenshots_folder() {
+    let folder = std::path::Path::new("shots");
+    let chars = (0u8..=0x7f)
+        .map(char::from)
+        .chain(['é', 'ß', '中', '\u{85}']);
+    for c in chars {
+        let template = format!("a{c}{{date}}");
+        match check_template(&template) {
+            Ok(()) => {
+                let name = format!("{}.png", template.replace("{date}", "2024-01-02"));
+                let path = folder.join(&name);
+                assert_eq!(path.parent(), Some(folder), "{template:?}");
+                assert_eq!(path.file_name(), Some(name.as_ref()), "{template:?}");
+                assert!(!c.is_control(), "{template:?} holds a control character");
+                assert!(!TEMPLATE_FORBIDDEN.contains(&c), "{template:?}");
+            }
+            Err(e) if TEMPLATE_FORBIDDEN.contains(&c) => {
+                assert_eq!(e, format!("Remove {c}"), "{template:?}")
+            }
+            Err(e) => {
+                assert!(c.is_control(), "{template:?} rejected: {e}");
+                assert_eq!(e, "Remove the control character");
+            }
+        }
+    }
+    assert_eq!(check_template(""), Err("Enter a file name".into()));
+    // No placeholder is required here; Settings asks for one.
+    for ok in [DEFAULT_TEMPLATE, "capture", "shot {date} {time}", ".."] {
+        assert_eq!(check_template(ok), Ok(()), "{ok:?}");
+    }
+    assert_eq!(
+        check_template(&Config::default().screenshot_template),
+        Ok(())
+    );
+}
+
+/// WHY: a template edited into config.toml by hand is not checked by
+/// Settings. Load replaces one that names no single file with the
+/// default and keeps every other field and the file as written, the
+/// same as an unparsable file keeps its text.
+#[test]
+#[serial_test::serial]
+fn load_replaces_an_unusable_template_and_keeps_the_rest() {
+    let d = isolated_home();
+    let path = Config::path().unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for bad in ["a/{date}", "..\\\\{date}", "{date}:{time}", ""] {
+        let text = format!("recording_fps = 24\nscreenshot_template = \"{bad}\"\n");
+        std::fs::write(&path, &text).unwrap();
+        let cfg = Config::load();
+        assert_eq!(cfg.screenshot_template, DEFAULT_TEMPLATE, "{bad:?}");
+        assert_eq!(cfg.recording_fps, 24, "{bad:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+    std::fs::write(&path, "screenshot_template = \"shot_{time}\"\n").unwrap();
+    assert_eq!(Config::load().screenshot_template, "shot_{time}");
+    drop(d);
+}

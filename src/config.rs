@@ -151,7 +151,7 @@ impl Default for Config {
         Self {
             screenshots_dir: pictures.join("iris"),
             recordings_dir: videos.join("iris"),
-            screenshot_template: "{date}_{time}".to_string(),
+            screenshot_template: DEFAULT_TEMPLATE.to_string(),
             record_mic_default: false,
             recording_fps: 30,
             recording_format: RecordingFormat::Mp4,
@@ -174,6 +174,29 @@ impl Default for Config {
             update_channel: UpdateChannel::Stable,
         }
     }
+}
+
+/// The screenshot file name template a fresh config holds.
+pub const DEFAULT_TEMPLATE: &str = "{date}_{time}";
+
+/// The characters a screenshot file name template cannot hold: a path
+/// separator, or a character Windows rejects in a file name, so a
+/// template names one file in the screenshots folder on every platform.
+pub const TEMPLATE_FORBIDDEN: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
+/// Ok when `template` expands to one file name in the screenshots
+/// folder on every platform, else the correction to make.
+pub fn check_template(template: &str) -> Result<(), String> {
+    if template.is_empty() {
+        return Err("Enter a file name".into());
+    }
+    if let Some(c) = template.chars().find(|c| TEMPLATE_FORBIDDEN.contains(c)) {
+        return Err(format!("Remove {c}"));
+    }
+    if template.chars().any(char::is_control) {
+        return Err("Remove the control character".into());
+    }
+    Ok(())
 }
 
 impl Config {
@@ -224,6 +247,7 @@ impl Config {
             Ok(text) => match toml::from_str::<Config>(&text) {
                 Ok(mut cfg) => {
                     cfg.expand_dirs();
+                    cfg.check_fields(&path);
                     return cfg;
                 }
                 // The file stays as written: replacing it with defaults
@@ -259,6 +283,19 @@ impl Config {
     fn expand_dirs(&mut self) {
         for dir in [&mut self.screenshots_dir, &mut self.recordings_dir] {
             *dir = expand_home(dir);
+        }
+    }
+
+    /// Replace a field config.toml holds that iris cannot use with its
+    /// default, and log why. The file stays as written.
+    fn check_fields(&mut self, path: &Path) {
+        if let Err(e) = check_template(&self.screenshot_template) {
+            crate::ilog!(
+                "iris: {}: screenshot_template {:?}: {e}; using {DEFAULT_TEMPLATE:?}",
+                path.display(),
+                self.screenshot_template
+            );
+            self.screenshot_template = DEFAULT_TEMPLATE.to_string();
         }
     }
 

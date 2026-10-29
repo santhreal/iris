@@ -106,7 +106,7 @@ fn a_text_field_applies_on_commit_and_keeps_a_rejected_value_open() {
 
     // A rejected value stays in its field, as typed, with the reason
     // beside it; config.toml keeps the last good value.
-    let cases: [(Field, &str, &str); 8] = [
+    let cases: [(Field, &str, &str); 12] = [
         (Field::ScreenshotsDir, "   ", "Enter a folder"),
         (
             Field::ScreenshotsDir,
@@ -123,6 +123,11 @@ fn a_text_field_applies_on_commit_and_keeps_a_rejected_value_open() {
             "no_tokens_here",
             "Include {date} or {time}",
         ),
+        (Field::Template, "shots/{date}", "Remove /"),
+        (Field::Template, "..\\{date}", "Remove \\"),
+        (Field::Template, "{date}_{time}?", "Remove ?"),
+        // Trimmed to empty before the check.
+        (Field::Template, "   ", "Enter a file name"),
         (Field::Fps, "0", "Enter 1 to 120"),
         (Field::Fps, "121", "Enter 1 to 120"),
         (Field::Fps, "sixty", "Enter a number"),

@@ -178,6 +178,7 @@ impl Settings {
             Field::ScreenshotsDir => self.cfg.screenshots_dir = typed_dir(text)?,
             Field::RecordingsDir => self.cfg.recordings_dir = typed_dir(text)?,
             Field::Template => {
+                iris_lib::config::check_template(text)?;
                 if !text.contains("{date}") && !text.contains("{time}") {
                     return Err("Include {date} or {time}".into());
                 }
