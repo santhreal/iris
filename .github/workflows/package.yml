@@ -64,9 +64,13 @@ jobs:
         run: |
           rustup toolchain install
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      # Only main saves a Rust cache: a pull request or a tag restores
+      # main's, so its saves would only evict main's, the FFmpeg source
+      # caches included, from the repository's cache space.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: package-macos-universal
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Version forms (packaging/lib.sh): the cargo version names the
       # assets and `iris --version` prints it; the bundle versions hold
       # its numeric core.
@@ -256,6 +260,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: package-windows-${{ matrix.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Version forms (packaging/lib.sh): the cargo version names the
       # assets and fills the string versions; the numeric VERSIONINFO
       # holds its core plus .0.
@@ -493,6 +498,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: package-linux-${{ matrix.arch }}-bookworm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .build-staging/ffmpeg-source

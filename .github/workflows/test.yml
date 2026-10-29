@@ -12,6 +12,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  # Line tables keep file and line in a backtrace and leave out the
+  # rest of the debug info, which holds most of a test build's target
+  # directory and of the cache saved from it.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   fmt:
@@ -46,9 +50,12 @@ jobs:
           persist-credentials: false
       - name: Install the pinned toolchain
         run: rustup toolchain install
+      # Only main saves a cache: a pull request restores main's, so its
+      # saves would only evict main's from the repository's cache space.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: test-${{ matrix.platform }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # ffmpeg: the recorder tests encode, join, and ffprobe real files.
       - name: Install Linux build deps (gpui + pipewire + X11) and ffmpeg
         if: runner.os == 'Linux'
