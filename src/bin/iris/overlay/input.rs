@@ -290,8 +290,8 @@ impl Overlay {
                 crate::widgets::release_render(&frame, cx);
             }
             // The toast lands on the monitor under the selection's
-            // center, in that monitor's own bottom-right corner. The
-            // selection in root space: the frame plus the origin.
+            // center, in the toast's corner of that monitor's work area.
+            // The selection in root space: the frame plus the origin.
             let root = WinRect {
                 x: region.x as i32 + self.origin.0,
                 y: region.y as i32 + self.origin.1,
@@ -305,6 +305,7 @@ impl Overlay {
                 width: self.view.0,
                 height: self.view.1,
             });
+            let host = crate::sys::window::work_area(cx, host);
             let (mx, my, mw, mh) = Self::to_logical(self.origin, &host, sf, sx, sy);
             let (r, card) = stage::card_rest_rect(mw, mh, cw, ch);
             let rest = (mx + r.0, my + r.1, r.2, r.3);

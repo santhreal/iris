@@ -111,6 +111,34 @@ pub fn monitors() -> Result<Vec<WinRect>, String> {
     Ok(found.into_iter().map(|(r, _)| r).collect())
 }
 
+/// `monitor` less the taskbar and the app bars docked on its edges: the
+/// work area of the monitor nearest `monitor`, from `GetMonitorInfoW`.
+/// `monitor` itself where Windows reports none.
+pub fn work_area(monitor: WinRect) -> WinRect {
+    use windows_sys::Win32::Graphics::Gdi::{
+        MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    let rect = RECT {
+        left: monitor.x,
+        top: monitor.y,
+        right: monitor.x.saturating_add_unsigned(monitor.width),
+        bottom: monitor.y.saturating_add_unsigned(monitor.height),
+    };
+    // SAFETY: `rect` and `info` outlive both calls, and `info.cbSize`
+    // states the struct GetMonitorInfoW fills.
+    unsafe {
+        let handle = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if handle.is_null() || GetMonitorInfoW(handle, &mut info) != TRUE {
+            return monitor;
+        }
+        monitor
+            .intersect(&rect_to_winrect(info.rcWork))
+            .unwrap_or(monitor)
+    }
+}
+
 /// The rect a window draws on screen, or None for a window that shows
 /// nothing: one cloaked by DWM (on another virtual desktop, or a
 /// suspended store app) or one with an empty frame. DWM's extended

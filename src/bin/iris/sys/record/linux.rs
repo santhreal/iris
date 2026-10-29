@@ -40,7 +40,7 @@ pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, S
     if iris_lib::sys::session::wayland() {
         return p.spawn(record::wayland::record_window);
     }
-    let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
+    let monitors = crate::sys::window::work_areas(cx);
     let (picked, landed) = oneshot::channel();
     let follower = XcbChip::new(
         0,
@@ -116,7 +116,7 @@ pub(super) fn start_region(
         h: u16::try_from(rect.height)
             .map_err(|_| format!("region height {} out of range", rect.height))?,
     };
-    let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
+    let monitors = crate::sys::window::work_areas(cx);
     let xid = chip::open(cx, p.chip_mic(), Some(rect), &monitors)?;
     let follower = XcbChip::new(xid, monitors, crate::sys::window::root_scale(cx), None);
     p.spawn(move |spec| record::x11::record_region(spec, follower, root))

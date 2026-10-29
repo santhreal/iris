@@ -7,7 +7,7 @@ mod query;
 mod shm;
 
 pub use query::{
-    active_window_rect, layout, list_top_level_windows, monitors, pointer, shared_conn,
+    active_window_rect, layout, list_top_level_windows, monitors, pointer, shared_conn, work_area,
 };
 pub(crate) use shm::shm_supported;
 use shm::try_shm_grab_into;

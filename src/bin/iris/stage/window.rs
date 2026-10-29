@@ -220,7 +220,7 @@ fn open_toast_window(
     let cfg = iris_lib::config::Config::load();
     let (win_w, win_h) = window_size((w, h));
     let win_size = size(px(win_w), px(win_h));
-    let screen = anchor.or_else(|| crate::sys::window::primary_monitor_rect(cx));
+    let screen = anchor.or_else(|| crate::sys::window::primary_work_area(cx));
     stage.pin_over = source.or(screen);
     let origin = match screen {
         Some((sx, sy, sw, sh)) => match cfg.toast_position {

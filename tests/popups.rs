@@ -48,12 +48,15 @@ mod x11;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::ConnectionExt as _;
-use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, EventMask};
+use x11rb::protocol::xproto::{
+    AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, PropMode,
+};
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{move_to, windows_of, Compositor};
+use x11::{drag, move_to, rect, tap, windows_of, Compositor};
 
 /// The screen, and its width and height in pixels.
 const SCREEN: &str = "1280x1024x24";
@@ -138,6 +141,125 @@ fn a_popup_shows_only_its_card_where_no_compositor_blends_it() {
         leaves(&conn, root, &daemon, TOAST, window, rest, &mut wrong);
     }
     assert!(wrong.is_empty(), "pop-ups:\n{}", wrong.join("\n"));
+}
+
+/// The work area panels leave on the screen in the second case: a 30
+/// pixel top bar and a 40 pixel right dock, x, y, width, height.
+const WORK_AREA: [u32; 4] = [0, 30, 1240, 934];
+
+/// The Return key's keysym.
+const RETURN: u32 = 0xff0d;
+
+// WHY: a pop-up placed from the whole monitor rests under a panel, a
+// dock, or a taskbar along the toast's corner, and the card is hidden or
+// covers the panel. The class closed here: a toast, from a command line
+// or from a region capture's flight, or a notice, whose window does not
+// end at the corner of the work area the window manager publishes
+// (`_NET_WORKAREA` of `_NET_CURRENT_DESKTOP`, EWMH), or does not end at
+// the screen's corner when none is published. Not covered: the other
+// corners, which share the placement with the default one; a work area
+// over several monitors; Wayland, Windows, and macOS, which read theirs
+// from the platform.
+#[test]
+fn a_popup_rests_in_the_corner_of_the_work_area() {
+    if !enabled() {
+        return;
+    }
+    let mut wrong = Vec::new();
+    for published in [false, true] {
+        let case = format!("work area, published {published}");
+        let Some((_xvfb, display)) = xvfb_sized(&case, SCREEN) else {
+            return;
+        };
+        let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let corner = if published {
+            // Desktop 1 is current; desktop 0's area, the whole screen,
+            // is the wrong one to read.
+            let atom = |name: &str| {
+                conn.intern_atom(false, name.as_bytes())
+                    .unwrap()
+                    .reply()
+                    .unwrap()
+                    .atom
+            };
+            let (w, h) = (u32::from(SIZE.0), u32::from(SIZE.1));
+            let areas = [[0, 0, w, h], WORK_AREA].concat();
+            conn.change_property32(
+                PropMode::REPLACE,
+                root,
+                atom("_NET_WORKAREA"),
+                AtomEnum::CARDINAL,
+                &areas,
+            )
+            .unwrap();
+            conn.change_property32(
+                PropMode::REPLACE,
+                root,
+                atom("_NET_CURRENT_DESKTOP"),
+                AtomEnum::CARDINAL,
+                &[1],
+            )
+            .unwrap();
+            conn.flush().unwrap();
+            (
+                (WORK_AREA[0] + WORK_AREA[2]) as i32,
+                (WORK_AREA[1] + WORK_AREA[3]) as i32,
+            )
+        } else {
+            (i32::from(SIZE.0), i32::from(SIZE.1))
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = Daemon::start(dir.path(), |cmd| {
+            cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+        });
+        let mut check = |what: &str, window: u32| {
+            let (x, y, w, h) = rect(&conn, root, window);
+            let end = (i32::from(x) + i32::from(w), i32::from(y) + i32::from(h));
+            if end != corner {
+                wrong.push(format!(
+                    "published {published}: the {what} window ends at {end:?}, not {corner:?}"
+                ));
+            }
+        };
+
+        // A notice, before a toast opens: a toast moves it aside.
+        let broken = dir.path().join("broken.png");
+        std::fs::write(&broken, "not an image").unwrap();
+        daemon.send(&[std::ffi::OsStr::new("--toast"), broken.as_os_str()]);
+        let notice = daemon.until("the notice to open", || {
+            windows_of(&conn, root, NOTICE).first().copied()
+        });
+        daemon.settle();
+        check("notice", notice);
+
+        // A toast with no region to land beside.
+        daemon.send(&["--capture-fullscreen"]);
+        let toast = daemon.until("the toast to open", || {
+            windows_of(&conn, root, TOAST).first().copied()
+        });
+        daemon.settle();
+        check("full-screen toast", toast);
+        daemon.until("the toast to leave", || {
+            windows_of(&conn, root, TOAST).is_empty().then_some(())
+        });
+
+        // A toast landing from a region capture's flight.
+        let landed = daemon.log().matches("frame landed").count();
+        daemon.send(&["--capture"]);
+        daemon.until("the frozen frame to land", || {
+            (daemon.log().matches("frame landed").count() > landed).then_some(())
+        });
+        daemon.settle();
+        drag(&conn, root, (200, 200), (400, 350), 40);
+        tap(&conn, root, RETURN);
+        let toast = daemon.until("the region's toast to open", || {
+            windows_of(&conn, root, TOAST).first().copied()
+        });
+        daemon.settle();
+        check("region toast", toast);
+    }
+    assert!(wrong.is_empty(), "work area:\n{}", wrong.join("\n"));
 }
 
 /// Check that a click on the room around the resting card of the pop-up

@@ -71,6 +71,30 @@ pub fn monitors() -> Result<Vec<WinRect>, String> {
     native::monitors()
 }
 
+/// `monitor`, one of `monitors`, less the edges that panels, docks, and
+/// the taskbar reserve: the area a pop-up rests in, in root space.
+/// `monitor` itself where the platform reports no work area. macOS
+/// reports it through AppKit, which the UI toolkit reads; see
+/// `display_ids`.
+#[cfg(not(target_os = "macos"))]
+pub fn work_area(monitor: WinRect) -> WinRect {
+    #[cfg(target_os = "linux")]
+    return if crate::sys::session::wayland() {
+        monitor
+    } else {
+        x11::work_area(monitor)
+    };
+    #[cfg(windows)]
+    native::work_area(monitor)
+}
+
+/// The CoreGraphics display id of each monitor, in the order of
+/// `monitors`.
+#[cfg(target_os = "macos")]
+pub fn display_ids() -> Result<Vec<u32>, String> {
+    native::displays()
+}
+
 /// Monitors plus top-level windows for the overlay's hover-snap. The
 /// windows are listed bottom to top on every platform, so the last
 /// window holding a point is the one drawn there.

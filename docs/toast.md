@@ -6,17 +6,23 @@ After a capture commits, iris displays an interactive toast notification card in
 
 ## Placement and Geometry
 
-The toast lands in the display corner configured by `toast_position` in [configuration.md#toast](configuration.md#toast) (default: `bottom-right`; options: `bottom-right`, `bottom-left`, `top-right`, `top-left`):
+The toast lands in the corner configured by `toast_position` in [configuration.md#toast](configuration.md#toast) (default: `bottom-right`; options: `bottom-right`, `bottom-left`, `top-right`, `top-left`) of a monitor's work area:
 - **Region capture**: Lands on the monitor containing the center coordinates of the captured region.
 - **Fullscreen, window, and CLI invocations**: Lands on the primary monitor.
+
+The work area is the part of the monitor that panels, docks, the taskbar, and the menu bar leave free:
+- **Linux (X11)**: The monitor's overlap with `_NET_WORKAREA` of the current desktop, read from the root window. Without the property, the whole monitor.
+- **Linux (Wayland)**: The whole display. The compositor places the window.
+- **Windows**: `rcWork` from `GetMonitorInfoW`.
+- **macOS**: The screen's `visibleFrame`.
 
 Dimensions and styling:
 - The thumbnail scales aspect-true to fit within 200×140 logical pixels. Its pixels are box-filtered from the full capture to the thumbnail's size in device pixels: on a 2x display the card holds up to 400×280 pixels of the capture.
 - The card is at least 185×44 logical pixels, the size of the hover action capsule and its inset. A thumbnail narrower or shorter than that is centered on the card's fill. The capture flight lands the thumbnail on its place on the card while the fill grows around it.
 - Corner radius is 12.0 logical pixels.
-- Edge margin is 12.0 logical pixels from display boundaries.
+- Edge margin is 12.0 logical pixels from the work area's edges.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.
-- Entrance: Slides in from beyond the display edge over 280 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
+- Entrance: Slides in from beyond the work area's edge over 280 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
 - On X11 with no compositing manager, the window shows only the card, with its corners cut to whole pixels and no shadow. The card appears at rest, stays in place during a dismiss swipe, and closes at once when dismissed or replaced. See [Pop-up Windows](platforms.md#linux-x11).
 
 ## Interaction and Actions
@@ -129,7 +135,7 @@ Triggered via the toast context menu (**Pin to Screen**) or the library's card c
 
 ## Notices
 
-A notice is a 380 logical pixel wide card in the toast corner of the primary display. It reports an outcome of a command whose trigger (a hotkey, the tray menu, the recording chip, or a forwarded command line) has already returned:
+A notice is a 380 logical pixel wide card in the toast corner of the primary monitor's work area (see [Placement and Geometry](#placement-and-geometry)). It reports an outcome of a command whose trigger (a hotkey, the tray menu, the recording chip, or a forwarded command line) has already returned:
 - A saved recording: a check mark, the title, the file name, and a folder button that reveals the file in the system file manager (see [Reveal in Folder](#reveal-in-folder) and [recording.md](recording.md#completion-and-failure-notices)).
 - A failed command: an alert mark in red, the title, and the error on up to three lines, ending in an ellipsis when longer.
 - A window pick on X11: a record mark in red, **Click a window to record it**, and **Press Esc to cancel.** The card has no buttons: the pick holds the pointer. The card stays until the pick lands or is cancelled, then leaves.

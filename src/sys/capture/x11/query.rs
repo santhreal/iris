@@ -67,6 +67,45 @@ pub fn monitors() -> Result<Vec<WinRect>, String> {
     Ok(primary)
 }
 
+/// `monitor` less the edges that panels and docks reserve: its overlap
+/// with the window manager's `_NET_WORKAREA` for the current desktop
+/// (EWMH). `monitor` itself where no window manager sets one, or where
+/// they do not overlap.
+pub fn work_area(monitor: WinRect) -> WinRect {
+    net_workarea()
+        .and_then(|area| monitor.intersect(&area))
+        .unwrap_or(monitor)
+}
+
+/// The current desktop's `_NET_WORKAREA` rect, in root pixels.
+fn net_workarea() -> Option<WinRect> {
+    let (conn, screen_num) = shared_conn().ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let cardinals = |name: &'static [u8], offset: u32, length: u32| -> Option<Vec<u32>> {
+        let atom = atom_cached(conn, name)?;
+        let reply = conn
+            .get_property(false, root, atom, AtomEnum::CARDINAL, offset, length)
+            .ok()?
+            .reply()
+            .ok()?;
+        let values = reply.value32()?.collect();
+        Some(values)
+    };
+    let desktop = cardinals(b"_NET_CURRENT_DESKTOP", 0, 1)
+        .and_then(|d| d.first().copied())
+        .unwrap_or(0);
+    let area = cardinals(b"_NET_WORKAREA", desktop.checked_mul(4)?, 4)?;
+    let [x, y, width, height] = area[..] else {
+        return None;
+    };
+    Some(WinRect {
+        x: i32::try_from(x).ok()?,
+        y: i32::try_from(y).ok()?,
+        width,
+        height,
+    })
+}
+
 /// Monitors and snappable windows over one X connection: the capture
 /// path queries both back to back, and a connection handshake is
 /// tens of ms of dead latency before the overlay can open.

@@ -10,7 +10,7 @@ pub struct Frame {
 }
 
 /// Root-space rectangle of a top-level window, used by overlay hover-snap.
-#[derive(Clone, Copy, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct WinRect {
     pub x: i32,
     pub y: i32,
@@ -50,6 +50,23 @@ impl WinRect {
             }
         })
     }
+
+    /// The part of this rect inside `other`, or None when they do not
+    /// overlap.
+    pub fn intersect(&self, other: &WinRect) -> Option<WinRect> {
+        let x0 = self.x.max(other.x);
+        let y0 = self.y.max(other.y);
+        let x1 = (i64::from(self.x) + i64::from(self.width))
+            .min(i64::from(other.x) + i64::from(other.width));
+        let y1 = (i64::from(self.y) + i64::from(self.height))
+            .min(i64::from(other.y) + i64::from(other.height));
+        (x1 > i64::from(x0) && y1 > i64::from(y0)).then(|| WinRect {
+            x: x0,
+            y: y0,
+            width: (x1 - i64::from(x0)) as u32,
+            height: (y1 - i64::from(y0)) as u32,
+        })
+    }
 }
 
 pub trait CaptureBackend {
@@ -58,10 +75,11 @@ pub trait CaptureBackend {
 }
 
 // WHY: the class closed here is "a window placed for a rect lands on
-// the wrong monitor": the recording chip picks the rect's monitor
-// through `host`, and the overlay's shell and frozen frame both span
-// `union`. Not covered: monitor enumeration itself, which the
-// per-platform backends own.
+// the wrong monitor, or under a panel": the recording chip picks the
+// rect's monitor through `host`, the overlay's shell and frozen frame
+// both span `union`, and a pop-up rests in its monitor's `intersect`
+// with the work area. Not covered: monitor enumeration itself, which
+// the per-platform backends own.
 #[cfg(test)]
 mod tests {
     use super::WinRect;
@@ -116,5 +134,32 @@ mod tests {
             Some((1920, 0, 1920, 1080))
         );
         assert_eq!(span(&[]), None);
+    }
+
+    #[test]
+    fn intersect_is_the_overlap_or_none() {
+        let screen = rect(0, 0, 1280, 1024);
+        // A bottom panel and a left dock: the monitor less both.
+        assert_eq!(
+            screen.intersect(&rect(48, 0, 1232, 964)),
+            Some(rect(48, 0, 1232, 964))
+        );
+        // A work area spanning two monitors cuts each to its own part.
+        assert_eq!(
+            MONITORS[1].intersect(&rect(-800, 0, 1800, 960)),
+            Some(rect(-800, 200, 800, 600))
+        );
+        assert_eq!(
+            MONITORS[0].intersect(&rect(-800, 0, 1800, 960)),
+            Some(rect(0, 0, 1000, 960))
+        );
+        // Edges that only touch, and rects apart, do not overlap.
+        assert_eq!(MONITORS[0].intersect(&rect(1000, 0, 500, 500)), None);
+        assert_eq!(MONITORS[0].intersect(&rect(0, 1000, 500, 500)), None);
+        assert_eq!(MONITORS[0].intersect(&rect(-800, 200, 800, 600)), None);
+        assert_eq!(screen.intersect(&rect(0, 0, 0, 0)), None);
+        // Far coordinates do not overflow.
+        let far = rect(i32::MAX - 10, 0, u32::MAX, 10);
+        assert_eq!(far.intersect(&far), Some(far));
     }
 }

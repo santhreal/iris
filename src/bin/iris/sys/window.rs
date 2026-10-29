@@ -9,6 +9,8 @@
 //! cross-platform helpers (root scale, monitor-aware centering) are
 //! defined here; the per-OS parts are in submodules.
 
+use iris_lib::capture::WinRect;
+
 /// Root pixels per GPUI logical pixel. Root space (randr monitors,
 /// window rects, captured frames) is physical; GPUI window bounds are
 /// logical. X11 defines no logical unit: GPUI's X11 backend picks one
@@ -60,6 +62,82 @@ pub fn primary_monitor_rect(cx: &gpui::App) -> Option<(f32, f32, f32, f32)> {
             b.size.height.into(),
         )
     })
+}
+
+/// `monitor`, one of `capture::monitors`, less the edges panels, docks,
+/// and the taskbar reserve, in root pixels: where a pop-up rests on it.
+/// `monitor` itself where the platform reports no work area.
+pub fn work_area(cx: &gpui::App, monitor: WinRect) -> WinRect {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        iris_lib::sys::capture::work_area(monitor)
+    }
+    // AppKit's visible frame, which GPUI reads per display, relative to
+    // the display's own origin, in points.
+    #[cfg(target_os = "macos")]
+    {
+        let ids = iris_lib::sys::capture::display_ids().unwrap_or_default();
+        let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
+        let Some(id) = monitors
+            .iter()
+            .zip(&ids)
+            .find_map(|(m, &id)| (*m == monitor).then_some(id))
+        else {
+            return monitor;
+        };
+        let Some(display) = cx
+            .displays()
+            .into_iter()
+            .find(|d| u64::from(d.id()) == u64::from(id))
+        else {
+            return monitor;
+        };
+        let visible = display.visible_bounds();
+        let s = iris_lib::sys::capture::root_scale();
+        let root = |v: gpui::Pixels| (f32::from(v) * s).round() as i32;
+        let area = WinRect {
+            x: monitor.x + root(visible.origin.x),
+            y: monitor.y + root(visible.origin.y),
+            width: root(visible.size.width).max(0) as u32,
+            height: root(visible.size.height).max(0) as u32,
+        };
+        monitor.intersect(&area).unwrap_or(monitor)
+    }
+}
+
+/// Every monitor's work area in root pixels, primary first: the
+/// recording chip stays inside them.
+pub fn work_areas(cx: &gpui::App) -> Vec<WinRect> {
+    let mut monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
+    for m in &mut monitors {
+        *m = work_area(cx, *m);
+    }
+    monitors
+}
+
+/// The primary monitor's work area in logical pixels: where the toast
+/// and notices rest. On Wayland, where no client reads the monitors,
+/// the primary display.
+pub fn primary_work_area(cx: &gpui::App) -> Option<(f32, f32, f32, f32)> {
+    #[cfg(target_os = "linux")]
+    if iris_lib::sys::session::wayland() {
+        return primary_monitor_rect(cx);
+    }
+    let Some(monitor) = iris_lib::sys::capture::monitors()
+        .ok()
+        .and_then(|m| m.first().copied())
+    else {
+        return primary_monitor_rect(cx);
+    };
+    let area = work_area(cx, monitor);
+    let s = root_scale(cx);
+    Some((
+        area.x as f32 / s,
+        area.y as f32 / s,
+        area.width as f32 / s,
+        area.height as f32 / s,
+    ))
 }
 
 /// Window origin that centers a `w`x`h` window on the primary display,

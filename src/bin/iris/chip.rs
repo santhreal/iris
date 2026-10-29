@@ -125,8 +125,8 @@ impl Chip {
 /// Open the chip, replacing one already open. `mic` is the mic track's
 /// state, or `None` for a format without audio. `anchor` is the recorded
 /// rect in root pixels (`None`: the primary monitor) and `monitors` the
-/// root-space monitors, primary first. Returns the chip's X11 window id
-/// on X11, 0 elsewhere.
+/// root-space monitor work areas, primary first. Returns the chip's X11
+/// window id on X11, 0 elsewhere.
 pub fn open(
     cx: &mut App,
     mic: Option<bool>,

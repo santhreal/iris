@@ -116,8 +116,8 @@ fn display_list() -> Result<Vec<u32>, String> {
     Ok(ids[..count as usize].to_vec())
 }
 
-/// Active displays, main display first.
-fn displays() -> Result<Vec<u32>, String> {
+/// Active displays, main display first: the order of `monitors`.
+pub fn displays() -> Result<Vec<u32>, String> {
     let main = unsafe { CGMainDisplayID() };
     let mut out = display_list()?;
     out.sort_by_key(|&d| d != main);

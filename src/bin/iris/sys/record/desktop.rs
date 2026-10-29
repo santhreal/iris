@@ -32,7 +32,7 @@ pub(super) fn picking() -> bool {
 }
 
 fn start(cx: &mut App, p: Params, region: Option<WinRect>) -> Result<ActiveRecording, String> {
-    let monitors = iris_lib::sys::capture::monitors().unwrap_or_default();
+    let monitors = crate::sys::window::work_areas(cx);
     chip::open(cx, p.chip_mic(), region, &monitors)?;
     p.spawn(move |spec| record::desktop::record_desktop(spec, region))
 }

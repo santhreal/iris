@@ -390,7 +390,7 @@ fn open(
         .min(MAX_LINES)
     };
     let height = card_height(lines);
-    let screen = crate::sys::window::primary_monitor_rect(cx).ok_or("no display")?;
+    let screen = crate::sys::window::primary_work_area(cx).ok_or("no display")?;
     let toast = crate::stage::live_card_rect(cx);
     let (win, card) = place(screen, left, top, height, toast);
 
