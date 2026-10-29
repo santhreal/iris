@@ -178,6 +178,20 @@ pub fn control_left_of(row: &[[u8; 3]], ground: [u8; 3], before: usize) -> Optio
     Some((left, right))
 }
 
+/// The pixel span of the text field `width` px wide that ends nearest
+/// left of `before` on one row of pixels: the last `width` px of the
+/// `control_left_of` span, which also holds a note drawn left of the
+/// field. `None` when that span is more than 4 px narrower than `width`.
+pub fn field_left_of(
+    row: &[[u8; 3]],
+    ground: [u8; 3],
+    before: usize,
+    width: usize,
+) -> Option<(usize, usize)> {
+    let (left, right) = control_left_of(row, ground, before)?;
+    (right + 4 >= left + width).then_some(((right + 1).saturating_sub(width).max(left), right))
+}
+
 /// Move the pointer to `at`, through XTest.
 pub fn move_to(conn: &impl Connection, root: u32, at: (i16, i16)) {
     conn.xtest_fake_input(

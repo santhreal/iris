@@ -37,7 +37,7 @@ use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{click, client, control_left_of, drag, extent, tap, windows_of, wm_close, Compositor};
+use x11::{click, client, drag, extent, field_left_of, tap, windows_of, wm_close, Compositor};
 
 const SCREEN: &str = "1280x1024x24";
 const EDITOR: &str = "plain.png - iris";
@@ -230,16 +230,18 @@ fn settings_applies(case: &str, how: Close) {
         windows_of(&conn, root, SETTINGS).first().copied()
     });
     daemon.settle();
-    // The field: the control left of the card's right padding on the
-    // row's center line, once Settings has drawn it.
+    // The field: the text field left of the card's right padding on the
+    // row's center line, once Settings has drawn it. The file name
+    // preview sits left of it.
     let (scale, y, left, right) = daemon.until("the File name field to draw", || {
         let (w, _, px) = client(&conn, root, settings);
         let scale = w as f32 / WIDTH;
         let y = (TEMPLATE_Y * scale) as usize;
         let row = &px[y * w..(y + 1) * w];
         let card = row[w / 2 - (40.0 * scale) as usize];
-        let (left, right) = control_left_of(row, card, w - (INSET * scale) as usize - 1)?;
-        ((right - left) as f32 >= FIELD_W * scale - 4.0).then_some((scale, y, left, right))
+        let before = w - (INSET * scale) as usize - 1;
+        let (left, right) = field_left_of(row, card, before, (FIELD_W * scale) as usize)?;
+        Some((scale, y, left, right))
     });
     let at = conn
         .translate_coordinates(settings, root, 0, 0)
