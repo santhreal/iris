@@ -107,6 +107,8 @@ pub struct Library {
     pub(super) sel_label: SharedString,
     pub(super) drag_fired: bool,
     pub(super) help: bool,
+    /// The shortcut sheet's rows, at the top whenever the sheet opens.
+    pub(super) help_scroll: ScrollHandle,
     pub(super) status: Option<String>,
     pub(super) focus: FocusHandle,
     /// The config snapshot: render reads the hotkey every frame, and
@@ -195,6 +197,7 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     entries_dirty: false,
                     drag_fired: false,
                     help: false,
+                    help_scroll: ScrollHandle::new(),
                     status: None,
                     focus,
                     cfg,

@@ -215,14 +215,29 @@ pub fn raise_open<V: Render>(cx: &mut App, is: impl Fn(&V) -> bool) -> bool {
     })
 }
 
+/// The least space between the shortcuts sheet and the window edge.
+const SHEET_MARGIN: f32 = 16.0;
+
 /// A keyboard-shortcuts sheet: centered card over a dim layer, rows
 /// of action / key combination. The surface owns the open state and
-/// closes on Esc or a press on the dim layer.
-pub fn shortcuts_sheet(rows: Vec<(&'static str, SharedString)>) -> Stateful<Div> {
-    let mut list = div().flex().flex_col().gap(px(2.)).mt(px(10.));
+/// closes on Esc or a press on the dim layer. The dim layer takes the
+/// pointer from the surface under it, and the card stays inside the
+/// window: rows that do not fit scroll under the title on `scroll`,
+/// which the surface keeps across renders.
+pub fn shortcuts_sheet(
+    rows: Vec<(&'static str, SharedString)>,
+    scroll: &ScrollHandle,
+) -> Stateful<Div> {
+    let mut list = scroll_y(div().id("sheet-rows"), scroll)
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .gap(px(2.))
+        .mt(px(10.));
     for (action, keys) in rows {
         list = list.child(
             div()
+                .flex_shrink_0()
                 .h(px(30.))
                 .flex()
                 .items_center()
@@ -253,6 +268,8 @@ pub fn shortcuts_sheet(rows: Vec<(&'static str, SharedString)>) -> Stateful<Div>
         .left_0()
         .size_full()
         .bg(theme::alpha(theme::BG, 0.55))
+        .p(px(SHEET_MARGIN))
+        .occlude()
         .flex()
         .items_center()
         .justify_center()
@@ -260,6 +277,7 @@ pub fn shortcuts_sheet(rows: Vec<(&'static str, SharedString)>) -> Stateful<Div>
             div()
                 .flex()
                 .flex_col()
+                .max_h_full()
                 .p(px(20.))
                 .rounded(px(12.))
                 .bg(theme::BG_ELEV)

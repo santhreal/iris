@@ -375,12 +375,16 @@ impl Render for Library {
             root = root.child(self.context_menu(menu, window, cx));
         }
         if self.help {
-            root = root.child(widgets::shortcuts_sheet(help_rows(&self.cfg)).on_click(
-                cx.listener(|this, _, _, cx| {
-                    this.help = false;
-                    cx.notify();
-                }),
-            ));
+            root = root.child(
+                widgets::shortcuts_sheet(help_rows(&self.cfg), &self.help_scroll).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        this.help = false;
+                        cx.notify();
+                    }),
+                ),
+            );
+        } else {
+            self.help_scroll.set_offset(Point::default());
         }
         if let Some(status) = &self.status {
             root = root.child(widgets::status_pill(status, 10.0));
@@ -421,6 +425,7 @@ pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, Sh
         ),
         ("Open", "Return or click".into()),
         ("Quick Look", "Space".into()),
+        ("Actions menu", "Shift+F10 or right-click".into()),
         ("Move selection", "Arrows, Home, End, Page Up/Down".into()),
         ("Extend selection", "Shift+Arrow or Shift+click".into()),
         (

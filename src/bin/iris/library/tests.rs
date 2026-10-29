@@ -771,27 +771,28 @@ fn the_shortcuts_sheet_shows_the_configured_global_hotkeys() {
         "Record screen"
     };
     assert_eq!(rows[1], (record, "Ctrl+Shift+5".into()));
+    assert_eq!(rows[4], ("Actions menu", "Shift+F10 or right-click".into()));
     assert_eq!(
-        rows[6],
+        rows[7],
         (
             "Add to selection",
             crate::widgets::meta_shortcut!("click").into()
         )
     );
     assert_eq!(
-        rows[7],
+        rows[8],
         ("Select all", crate::widgets::meta_shortcut!("A").into())
     );
     assert_eq!(
-        rows[8],
+        rows[9],
         ("Copy", crate::widgets::meta_shortcut!("C").into())
     );
     assert_eq!(
-        rows[11],
+        rows[12],
         ("Settings", crate::widgets::meta_shortcut!(",").into())
     );
     assert_eq!(
-        rows[12],
+        rows[13],
         ("Close", crate::widgets::meta_shortcut!("W").into())
     );
 }

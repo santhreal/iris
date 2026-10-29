@@ -66,7 +66,7 @@ A pointer on a card lifts its shadow and shows three buttons in the thumbnail's 
    - Windows: calls `SHOpenFolderAndSelectItems`. Without it, runs `explorer.exe <folder>`.
 3. **Move to Trash** (trash icon): moves the capture to the system trash ([Move to Trash](#move-to-trash)).
 
-A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Pin to Screen**, **Copy**, **Show in Folder**, and **Move to Trash**. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. **Pin to Screen** opens the card's capture in a [pinned window](toast.md#pinned-windows) centered on the library window. In the open menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` runs the highlighted row, and other keys do nothing. A click outside the menu or `Escape` closes it.
+A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Pin to Screen**, **Copy**, **Show in Folder**, and **Move to Trash**. `Shift+F10` or the Menu key opens the same menu on the selected card, at the center of its thumbnail, and scrolls the card into view. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. **Pin to Screen** opens the card's capture in a [pinned window](toast.md#pinned-windows) centered on the library window. In the open menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` runs the highlighted row, and other keys do nothing. A click outside the menu or `Escape` closes it.
 
 ## Quick Look
 
@@ -83,13 +83,14 @@ A right-click on a card opens a context menu at the pointer: **Open**, **Quick L
 | Arrow keys, `Home`, `End`, `Page Up`, `Page Down` | Move the selection; `Shift` extends it |
 | `Return` | Open the selected capture in the editor |
 | `Space` | Show or close Quick Look |
+| `Shift+F10` or Menu key | Open the selected card's context menu |
 | `Ctrl+A` / `Cmd+A` | Select every capture |
 | `Ctrl+C` / `Cmd+C` | Copy the selection |
 | `Delete` / `Backspace` | Move the selection to the trash |
 | `Ctrl+,` / `Cmd+,` | Open Settings |
 | `Ctrl+W` / `Cmd+W` | Close the window |
 | `Escape` | Close the menu, Quick Look, or the shortcut sheet; clear the selection; or close the window |
-| `?` or `/` | Toggle the shortcut reference sheet |
+| `?` or `/` | Toggle the shortcut reference sheet; its rows scroll when the window is too short to show them all |
 | Title bar double-click | Run the platform title bar action: toggle maximize on Linux and Windows, or the action set in the macOS Desktop & Dock settings |
 
 The traffic lights in the top-left corner close (red), minimize (yellow), and zoom (green: fullscreen on macOS, maximize on Linux and Windows) the window. On X11 with no compositing manager, the window manager frames the window and the toolbar has no traffic lights ([Window Frame](platforms.md)).

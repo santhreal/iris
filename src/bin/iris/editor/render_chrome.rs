@@ -491,13 +491,15 @@ impl Editor {
 
         if self.help {
             root = root.child(
-                widgets::shortcuts_sheet(help_rows())
+                widgets::shortcuts_sheet(help_rows(), &self.help_scroll)
                     .opacity(topbar)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.help = false;
                         cx.notify();
                     })),
             );
+        } else {
+            self.help_scroll.set_offset(Point::default());
         }
 
         root

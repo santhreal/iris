@@ -5,7 +5,7 @@ use gpui::*;
 
 use crate::widgets::{self, menu, menu_separator, MenuItem, MenuKey, MENU_PAD, MENU_ROW_H, MENU_W};
 
-use super::Library;
+use super::{Library, CARD_W, THUMB_H};
 use crate::sys::reveal::LABEL as REVEAL_LABEL;
 
 /// An open context menu: the card it opened on, the window point it
@@ -131,6 +131,27 @@ impl Library {
             lit: None,
         });
         cx.notify();
+    }
+
+    /// Open the menu from the keyboard (`Shift+F10` or the Menu key) on
+    /// the card Return would open, scrolled into view, at its
+    /// thumbnail's center.
+    pub(super) fn open_menu_at_focus(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.focused() else {
+            return;
+        };
+        self.reveal(index);
+        let Some((x, y, ..)) = self.layout.card_rect(index) else {
+            return;
+        };
+        // Document space starts at the scroll viewport's origin and moves
+        // up by the scroll amount (the offset is <= 0).
+        let view = self.scroll.bounds().origin;
+        let at = point(
+            view.x + px(x + CARD_W / 2.0),
+            view.y + self.scroll.offset().y + px(y + THUMB_H / 2.0),
+        );
+        self.open_menu(index, at, cx);
     }
 
     pub(super) fn close_menu(&mut self, cx: &mut Context<Self>) {

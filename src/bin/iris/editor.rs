@@ -118,6 +118,8 @@ pub struct Editor {
     /// pointer and the arrow keys.
     pub(crate) menu_lit: Option<usize>,
     pub(crate) help: bool,
+    /// The shortcut sheet's rows, at the top whenever the sheet opens.
+    pub(crate) help_scroll: ScrollHandle,
     /// The status line, shown over the stage's lower left corner.
     pub(crate) status: Option<String>,
     /// The status text the running expiry timer is for, and when it
@@ -343,6 +345,7 @@ pub fn open(
                 more_menu: false,
                 menu_lit: None,
                 help: false,
+                help_scroll: ScrollHandle::new(),
                 status: None,
                 status_since: None,
                 focus,

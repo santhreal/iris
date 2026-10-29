@@ -1,5 +1,6 @@
 //! The library's keyboard paths: arrow, Home, End, and page
-//! selection, open, preview, select all, trash, and the window keys.
+//! selection, open, preview, the card menu, select all, trash, and the
+//! window keys.
 
 use gpui::*;
 
@@ -129,6 +130,14 @@ impl Library {
                 if let Some(i) = self.focused() {
                     self.open_preview(i, cx);
                 }
+                return;
+            }
+            "menu" => {
+                self.open_menu_at_focus(cx);
+                return;
+            }
+            "f10" if ks.modifiers.shift => {
+                self.open_menu_at_focus(cx);
                 return;
             }
             "delete" | "backspace" if !self.selected.is_empty() => self.trash_selection(cx),
