@@ -12,6 +12,9 @@ use crate::pipeline;
 
 use super::render_chrome::{STAGE_MARGIN, STAGE_TOP};
 
+/// The status line a first Escape over unsaved changes shows.
+const DISCARD_PROMPT: &str = "Press Esc again to discard changes";
+
 /// The zoom range, as a multiple of the fit scale.
 const ZOOM_MIN: f32 = 0.1;
 const ZOOM_MAX: f32 = 16.0;
@@ -127,6 +130,8 @@ impl Editor {
     fn push_step(&mut self, step: Step) {
         self.undos.push(step);
         self.redos.clear();
+        // A new edit is work the prompt did not warn about.
+        self.disarm_discard();
     }
 
     pub(crate) fn apply_forward(&mut self, edit: &Edit<Action>) {
@@ -427,6 +432,40 @@ impl Editor {
 
     pub(crate) fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.begin_close(window, cx);
+    }
+
+    /// Escape with nothing open to dismiss: discard, unless that drops
+    /// unsaved changes. Then the first press shows `DISCARD_PROMPT` for
+    /// `widgets::STATUS_FOR`, and a second press while it shows discards.
+    pub(crate) fn escape_discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let armed = self.discard_armed.is_some() && self.status.as_deref() == Some(DISCARD_PROMPT);
+        if self.undos.is_empty() || armed {
+            self.discard(window, cx);
+            return;
+        }
+        let at = Instant::now();
+        self.discard_armed = Some(at);
+        self.status = Some(DISCARD_PROMPT.to_string());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::widgets::STATUS_FOR)
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.discard_armed == Some(at) {
+                    this.disarm_discard();
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Drop an armed discard and its prompt.
+    fn disarm_discard(&mut self) {
+        self.discard_armed = None;
+        if self.status.as_deref() == Some(DISCARD_PROMPT) {
+            self.status = None;
+        }
     }
 
     /// A close from the close control or the window manager: save and

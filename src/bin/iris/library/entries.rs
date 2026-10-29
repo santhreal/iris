@@ -7,9 +7,6 @@ use crate::{editor, pipeline};
 
 use super::{layout, Library, CARD_W, REFRESH, THUMB_H};
 
-/// How long a status message stays up.
-const STATUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
-
 /// The status line after a trash of `asked` captures that left `errors`
 /// behind: None when every capture moved, else the count that stayed
 /// and the first reason.
@@ -167,12 +164,14 @@ impl Library {
         .detach();
     }
 
-    /// Show `text` in the status pill for STATUS_FOR; a newer message
+    /// Show `text` in the status pill for `widgets::STATUS_FOR`; a newer message
     /// replaces it and gets its own time.
     pub(super) fn set_status(&mut self, text: String, cx: &mut Context<Self>) {
         self.status = Some(text.clone());
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(STATUS_FOR).await;
+            cx.background_executor()
+                .timer(crate::widgets::STATUS_FOR)
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.status.as_ref() == Some(&text) {
                     this.status = None;

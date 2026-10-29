@@ -181,6 +181,9 @@ pub fn overlay_icon_button_active(
             theme::ICON_ROW,
         ))
 }
+/// How long a transient status message stays up.
+pub const STATUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
+
 /// Transient status line, `left` px from the window's left edge,
 /// bottom-aligned, frosted.
 pub fn status_pill(text: &str, left: f32) -> Div {

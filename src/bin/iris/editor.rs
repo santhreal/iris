@@ -119,6 +119,9 @@ pub struct Editor {
     pub(crate) menu_lit: Option<usize>,
     pub(crate) help: bool,
     pub(crate) status: Option<String>,
+    /// When a first Escape over unsaved changes showed `DISCARD_PROMPT`;
+    /// a second Escape while it shows discards.
+    pub(crate) discard_armed: Option<Instant>,
     pub(crate) focus: FocusHandle,
     /// Expand-morph from a toast/library card: the image's starting
     /// rect in window coordinates. The clock starts at first render:
@@ -339,6 +342,7 @@ pub fn open(
                 menu_lit: None,
                 help: false,
                 status: None,
+                discard_armed: None,
                 focus,
                 morph,
                 morph_started: None,

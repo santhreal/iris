@@ -56,7 +56,7 @@ impl Editor {
                 } else if self.selected.is_some() {
                     self.selected = None;
                 } else {
-                    self.discard(window, cx);
+                    self.escape_discard(window, cx);
                 }
             }
             "enter" => {

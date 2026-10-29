@@ -38,6 +38,14 @@
 //! leaves open, runs Copy Image, and reads the PNG on the clipboard and
 //! the file's modification time.
 //!
+//! One case closes "Escape drops unsaved work at once": Escape over
+//! marks closed the editor and discarded them with no second chance. It
+//! draws a mark and reads that the first Escape keeps the editor and
+//! shows the prompt, that a new mark removes the prompt and the prompt
+//! later leaves on its own, each time leaving the next Escape to ask
+//! again, and that a second Escape while the prompt shows closes the
+//! editor with the file, the library, and the clipboard untouched.
+//!
 //! Not covered: the two flips, which go through the rotation's path;
 //! redo after a rotation or Clear, which goes through the crop's swap;
 //! the Library's context menu, whose keys `widgets::menu_key` runs as
@@ -87,11 +95,25 @@ const DOWN: u32 = 0xff54;
 const SPACE: u32 = 0x20;
 const T: u32 = 0x74;
 const A: u32 = 0x61;
+const ESCAPE: u32 = 0xff1b;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
 /// Where a label is typed, in image pixels.
 const LABEL: (f32, f32) = (380.0, 280.0);
+/// A second rectangle's corners, in image pixels.
+const SECOND: [(f32, f32); 2] = [(300.0, 220.0), (400.0, 300.0)];
+/// Where the status line shows, from `widgets::status_pill`: from the
+/// stage margin, 10 px over the window's bottom edge; the span covers
+/// the start of its text.
+const STATUS_LEFT: usize = 24;
+const STATUS_BOTTOM: usize = 10;
+const STATUS_H: usize = 22;
+const STATUS_W: usize = 160;
+/// Past the editor's 160 ms outro.
+const OUTRO_PAST: std::time::Duration = std::time::Duration::from_millis(600);
+/// How long the discard prompt shows: `widgets::STATUS_FOR`.
+const PROMPT_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 /// The More menu's geometry, from `theme` and `widgets::menu`: the
 /// menu drops 4 px under the 28 px button centered in the 52 px toolbar,
 /// is snapped 8 px inside the window's right edge, and is 168 px wide
@@ -308,6 +330,27 @@ impl Session {
     fn on_its_side(&self) -> Option<bool> {
         let (left, top, right, bottom) = extent(&self.canvas(), IMAGE)?;
         Some(bottom - top > right - left)
+    }
+
+    /// The pixels where the status line shows.
+    fn status_line(&self) -> Vec<[u8; 3]> {
+        let (w, h, px) = self.canvas();
+        let px = &px;
+        (h - STATUS_BOTTOM - STATUS_H..h - STATUS_BOTTOM)
+            .flat_map(|y| (STATUS_LEFT..STATUS_LEFT + STATUS_W).map(move |x| px[y * w + x]))
+            .collect()
+    }
+
+    /// Press Escape and assert that the editor is still open past its
+    /// outro.
+    fn escape_keeps_open(&self, what: &str) {
+        tap(&self.conn, self.root, ESCAPE);
+        std::thread::sleep(OUTRO_PAST);
+        let open = windows_of(&self.conn, self.root, EDITOR);
+        assert!(
+            !open.is_empty(),
+            "{what} closed the editor over an unsaved mark"
+        );
     }
 
     /// Save with Return and return the saved file.
@@ -681,4 +724,45 @@ fn copy_image_copies_the_marks_drawn_before_it() {
         session.written,
         "Copy Image saved the file"
     );
+}
+
+#[test]
+fn escape_over_unsaved_changes_asks_before_it_discards() {
+    let Some(session) = Session::open("escape_over_unsaved_changes_asks_before_it_discards") else {
+        return;
+    };
+    let before = std::fs::read(&session.file).unwrap();
+    let blank = session.status_line();
+    session.draw(R, RECT);
+    let asked = std::time::Instant::now();
+    session.escape_keeps_open("the first Escape");
+    session.daemon.until("the discard prompt to show", || {
+        (session.status_line() != blank).then_some(())
+    });
+    // A new mark is work the prompt did not warn about: it removes the
+    // prompt, well before the prompt would leave on its own.
+    session.draw(R, SECOND);
+    assert_eq!(
+        session.status_line(),
+        blank,
+        "the discard prompt outlived the new mark"
+    );
+    session.escape_keeps_open("the first Escape after a new mark");
+    assert!(
+        asked.elapsed() < PROMPT_FOR,
+        "the steps after the first Escape took {:?}, past the prompt's {PROMPT_FOR:?}",
+        asked.elapsed()
+    );
+    // The prompt leaves on its own, and the next press asks again.
+    session
+        .daemon
+        .until("the discard prompt to show again", || {
+            (session.status_line() != blank).then_some(())
+        });
+    session.daemon.until("the discard prompt to leave", || {
+        (session.status_line() == blank).then_some(())
+    });
+    session.escape_keeps_open("the first Escape after the prompt left");
+    tap(&session.conn, session.root, ESCAPE);
+    assert_untouched(session, &before, "the second Escape");
 }

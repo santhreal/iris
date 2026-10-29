@@ -102,9 +102,11 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
   6. Initiates a 160 ms fade outro and closes the editor window.
 - With no step left to undo, as before any edit or after undoing every edit, **Save and close** closes the editor without writing the file, updating the library, or copying the image.
 - Before the image finishes decoding, the close control and the window manager's close close the editor without saving, and the other save keys and **Done** report that the image is still decoding.
-- **Discard changes** (`Escape`, or **Discard** in the More menu):
+- **Discard changes** (`Escape` twice, or **Discard** in the More menu):
   - Pressing `Escape` when the shortcut sheet, the Copy or More menu, an active crop rectangle, or a selected action is open dismisses that overlay or selection.
-  - Pressing `Escape` with no active overlay or selection, or clicking **Discard**, fades out the window over 160 ms and closes it without writing changes to disk and without prompting for confirmation.
+  - Pressing `Escape` with no active overlay or selection and no step left to undo fades out the window over 160 ms and closes it.
+  - Pressing `Escape` with no active overlay or selection and a step left to undo shows **Press Esc again to discard changes** on the status line for 4 seconds. A second `Escape` while it shows fades out the window over 160 ms and closes it without writing changes to disk. A new edit removes the line.
+  - **Discard** in the More menu closes the window without writing changes to disk and without the second press.
 
 ## Copy Controls
 

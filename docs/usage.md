@@ -51,7 +51,7 @@ A thumbnail card, the toast, slides in at a corner of the screen ([Toast Notific
 - Point at it to show its actions: keep it open, copy the image or the file, show the file in its folder, open the editor, or move the capture to the trash.
 - Right-click it to copy the text in the image (OCR, with Tesseract installed) or to pin the capture in a window of its own.
 
-The editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops. **Done** (`Ctrl+S`, `Cmd+S` on macOS) writes the image back to its file and copies it to the clipboard. `Escape` discards the changes ([Annotation Editor](editor.md)).
+The editor draws lines, arrows, rectangles, ellipses, pen and highlighter strokes, text, blur, and numbered badges, and crops. **Done** (`Ctrl+S`, `Cmd+S` on macOS) writes the image back to its file and copies it to the clipboard. `Escape` pressed twice discards the changes ([Annotation Editor](editor.md)).
 
 ## Record the Screen
 

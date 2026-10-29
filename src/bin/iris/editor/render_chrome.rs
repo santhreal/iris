@@ -103,7 +103,7 @@ pub(super) fn help_rows() -> Vec<(&'static str, SharedString)> {
         ("Zoom fit / in / out", "0 / + / -".into()),
         ("Pan", "Space + drag".into()),
         ("Save and close", save_close.into()),
-        ("Discard", "Esc".into()),
+        ("Discard changes", "Esc twice".into()),
         ("Undo / Redo", undo_redo.into()),
         ("Delete selected action", "Delete".into()),
         ("Apply crop", "Enter".into()),
