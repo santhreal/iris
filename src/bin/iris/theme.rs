@@ -396,11 +396,40 @@ mod tests {
         );
     }
 
-    /// The source before its test module, which ships nothing.
+    /// The source before its test module, which ships nothing, with
+    /// either line ending: a Windows checkout has CRLF.
     fn shipped(source: &str) -> &str {
         source
-            .find("#[cfg(test)]\nmod tests {")
-            .map_or(source, |end| &source[..end])
+            .match_indices("#[cfg(test)]")
+            .find(|&(i, m)| {
+                source[i + m.len()..]
+                    .trim_start()
+                    .starts_with("mod tests {")
+            })
+            .map_or(source, |(i, _)| &source[..i])
+    }
+
+    // WHY: the face check above read a Windows checkout's test modules
+    // as shipped source, since CRLF hid the module's start, and failed
+    // there alone on a test's string. Both line endings end the shipped
+    // source at the module, and a `#[cfg(test)]` on anything else does
+    // not.
+    #[test]
+    fn the_shipped_source_ends_at_the_test_module_with_either_line_ending() {
+        for eol in ["\n", "\r\n"] {
+            let source = [
+                "fn a() {}",
+                "#[cfg(test)]",
+                "fn b() {}",
+                "#[cfg(test)]",
+                "mod tests {",
+                "}",
+            ]
+            .join(eol);
+            let end = source.rfind("#[cfg(test)]").unwrap();
+            assert_eq!(shipped(&source), &source[..end], "{eol:?}");
+        }
+        assert_eq!(shipped("fn a() {}\n"), "fn a() {}\n");
     }
 
     /// The characters inside the string literals of Rust `source`, raw
