@@ -1,6 +1,6 @@
 //! Text fields and the folder field.
 
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -11,14 +11,19 @@ use crate::icons::{self, Icon};
 use crate::theme;
 
 /// What a text field shows besides its text.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum FieldState {
     /// At rest: fill and inner border only.
     Rest,
     /// Being edited: an accent border and ring and a caret at byte
-    /// offset `caret` of the text; `invalid` turns the border and ring
+    /// offset `caret` of the text, with the text moved left by `scroll`
+    /// px ([`field_scroll`]); `invalid` turns the border and ring
     /// destructive red.
-    Editing { invalid: bool, caret: usize },
+    Editing {
+        invalid: bool,
+        caret: usize,
+        scroll: f32,
+    },
     /// Capturing a key combination: the accent border and ring, no
     /// caret, the text in secondary color (a prompt such as "Type
     /// shortcut").
@@ -78,31 +83,59 @@ pub fn ring_step(from: Option<usize>, n: usize, forward: bool) -> Option<usize> 
     })
 }
 
-/// Where a text field's text starts on screen and the style it is
-/// shaped in, recorded each frame the field is drawn, for placing the
-/// caret at a click ([`TextOrigin::place`]).
-#[derive(Clone, Default)]
-pub struct TextOrigin(Rc<RefCell<Option<DrawnText>>>);
+/// A text field's padding inside its 1 px border, and the caret bar's
+/// width, logical px.
+const FIELD_PAD: f32 = 7.0;
+const CARET_W: f32 = 2.0;
 
-/// The left edge of a field's text in the window and its text style.
-#[derive(Clone)]
-struct DrawnText {
-    left: Pixels,
-    style: TextStyle,
+/// `text` shaped as a text field draws it.
+fn shape_field_text(text: &str, window: &Window) -> ShapedLine {
+    let mut style = window.text_style();
+    style.font_family = theme::FONT.into();
+    let text = SharedString::from(text.to_string());
+    let run = style.to_run(text.len());
+    window
+        .text_system()
+        .shape_line(text, px(theme::TEXT_BODY), &[run], None)
 }
 
+/// How far left an open text field `width` px wide moves the text of
+/// `line` to keep its caret in view, from `was`, the distance of the
+/// frame before.
+pub fn field_scroll(line: &Line, width: f32, was: f32, window: &Window) -> f32 {
+    let shaped = shape_field_text(line.text(), window);
+    keep_in_view(
+        was,
+        f32::from(shaped.x_for_index(line.caret())),
+        f32::from(shaped.width()),
+        width - 2.0 * (1.0 + FIELD_PAD) - CARET_W,
+    )
+}
+
+/// The scroll, from `was`, that shows a caret `caret_x` px into a text
+/// `width` px wide in a view `view` px wide: it moves only as far as
+/// the caret is out of view, and never past the start of the text or
+/// so far that the view ends past the text's end.
+fn keep_in_view(was: f32, caret_x: f32, width: f32, view: f32) -> f32 {
+    was.min(caret_x)
+        .max(caret_x - view)
+        .min(width - view)
+        .max(0.0)
+}
+
+/// Where a text field's text starts in the window, recorded each frame
+/// the field is drawn, for placing the caret at a click
+/// ([`TextOrigin::place`]).
+#[derive(Clone, Default)]
+pub struct TextOrigin(Rc<Cell<Option<Pixels>>>);
+
 impl TextOrigin {
-    /// A zero-width element that records the origin where it is laid
+    /// A zero-width element that records the left edge where it is laid
     /// out, ahead of the field's text.
     fn probe(&self) -> impl IntoElement {
-        let drawn = self.0.clone();
+        let left = self.0.clone();
         canvas(
-            move |bounds, window, _| {
-                *drawn.borrow_mut() = Some(DrawnText {
-                    left: bounds.left(),
-                    style: window.text_style(),
-                });
-            },
+            move |bounds, _, _| left.set(Some(bounds.left())),
             |_, _, _, _| {},
         )
         .w(px(0.))
@@ -110,26 +143,21 @@ impl TextOrigin {
         .flex_shrink_0()
     }
 
-    /// Move the caret of `line`, the field's text, to the character
-    /// boundary nearest where `click` pressed. A keyboard click, or a
-    /// field not yet drawn, leaves the caret.
-    pub fn place(&self, line: &mut Line, click: &ClickEvent, window: &Window) {
+    /// Move the caret of `line`, the field's text moved left by
+    /// `scroll` px, to the character boundary nearest where `click`
+    /// pressed. A keyboard click, or a field not yet drawn, leaves the
+    /// caret.
+    pub fn place(&self, line: &mut Line, click: &ClickEvent, scroll: f32, window: &Window) {
         let at = match click {
             ClickEvent::Mouse(e) => e.down.position,
             ClickEvent::Touch(e) => e.position,
             ClickEvent::Keyboard(_) => return,
         };
-        let Some(DrawnText { left, style }) = self.0.borrow().clone() else {
+        let Some(left) = self.0.get() else {
             return;
         };
-        let text = SharedString::from(line.text().to_string());
-        let shaped = window.text_system().shape_line(
-            text.clone(),
-            style.font_size.to_pixels(window.rem_size()),
-            &[style.to_run(text.len())],
-            None,
-        );
-        line.place(f32::from(at.x - left), |s| {
+        let shaped = shape_field_text(line.text(), window);
+        line.place(f32::from(at.x - left) + scroll, |s| {
             f32::from(shaped.x_for_index(s.len()))
         });
     }
@@ -154,7 +182,7 @@ pub fn text_field(
     let el = div()
         .id(id)
         .h(px(theme::CONTROL_H))
-        .px(px(7.))
+        .px(px(FIELD_PAD))
         .flex()
         .items_center()
         .overflow_hidden()
@@ -172,27 +200,43 @@ pub fn text_field(
         .cursor_text()
         .children(origin.map(TextOrigin::probe));
     let text = text.into();
-    let FieldState::Editing { caret, .. } = state else {
+    let FieldState::Editing { caret, scroll, .. } = state else {
         return el.child(text);
     };
     // The caret sits at the boundary between the text before it and
     // the text after it, in a zero-width slot: moving it never shifts
-    // the text.
+    // the text unless the caret leaves the view.
     let (before, after) = text.split_at(caret.min(text.len()));
     let bar = div().relative().w(px(0.)).h(px(15.)).flex_shrink_0().child(
         div()
             .absolute()
             .top_0()
             .left(px(0.5))
-            .w(px(1.5))
+            .w(px(CARET_W - 0.5))
             .h(px(15.))
             .bg(theme::ACCENT),
     );
-    let mut el = el.child(SharedString::from(before.to_string())).child(bar);
+    let mut line = div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .ml(px(-scroll))
+        .child(SharedString::from(before.to_string()))
+        .child(bar);
     if !after.is_empty() {
-        el = el.child(SharedString::from(after.to_string()));
+        line = line.child(SharedString::from(after.to_string()));
     }
-    el
+    // The text clips at the padding, not under the border.
+    el.child(
+        div()
+            .flex()
+            .items_center()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_hidden()
+            .child(line),
+    )
 }
 
 /// A folder row control: a folder glyph and the path, middle-truncated
@@ -468,7 +512,7 @@ fn one_line(text: &str) -> String {
 mod tests {
     use gpui::{Keystroke, Modifiers};
 
-    use super::{edit_line, ring_step, Line, LineKey};
+    use super::{edit_line, keep_in_view, ring_step, Line, LineKey};
 
     // WHY: closes "Tab stalls at an end or skips a stop" for every ring
     // the keyboard moves, Home's tiles and the Settings controls: every
@@ -898,5 +942,47 @@ mod tests {
             placed.place(x, advance);
             assert_eq!(marked(&placed), end, "{start:?} at {x}");
         }
+    }
+
+    // WHY: closes "the caret of a long field value is drawn outside the
+    // field" and its siblings: a view that jumps while the caret stays
+    // in it, that runs past the text's end, or that scrolls a text that
+    // fits. Over a grid of texts, carets, earlier scrolls, and views, the
+    // caret is always in view, the scroll stays between the text's
+    // start and the point where the view ends at the text's end, a
+    // caret already in view leaves the scroll, and a caret out of view
+    // moves it only as far as needed. It does not cover the shaped
+    // widths the field measures with; settings_paste.rs reads the
+    // caret on screen.
+    #[test]
+    fn a_long_text_scrolls_only_as_far_as_the_caret_leaves_the_view() {
+        let steps = |n: u16, step: f32| (0..=n).map(move |i| f32::from(i) * step);
+        for view in [10.0, 46.0, 182.0] {
+            for width in steps(30, 10.0) {
+                let most = (width - view).max(0.0);
+                for caret in steps(30, 10.0).filter(|&c| c <= width) {
+                    for was in steps(30, 10.0).map(|w| w.min(most)) {
+                        let s = keep_in_view(was, caret, width, view);
+                        let at = format!("caret {caret} of {width} in {view} from {was}");
+                        assert!((0.0..=most).contains(&s), "{at}: scroll {s}");
+                        assert!(s <= caret && caret <= s + view, "{at}: scroll {s}");
+                        let expected = if caret < was {
+                            caret
+                        } else if caret > was + view {
+                            caret - view
+                        } else {
+                            was
+                        };
+                        assert_eq!(s, expected, "{at}");
+                    }
+                }
+            }
+        }
+        // A field opened on a text it fits never scrolls; one opened
+        // with the caret after a longer text shows the text's end.
+        assert_eq!(keep_in_view(0.0, 120.0, 120.0, 182.0), 0.0);
+        assert_eq!(keep_in_view(0.0, 300.0, 300.0, 182.0), 118.0);
+        // A text that shrinks under the scroll pulls it back.
+        assert_eq!(keep_in_view(118.0, 150.0, 200.0, 182.0), 18.0);
     }
 }

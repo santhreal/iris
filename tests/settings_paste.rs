@@ -2,24 +2,28 @@
 //! from the config it writes.
 //!
 //! WHY: the classes closed here are "a text entry takes keys but not
-//! the clipboard", "a text entry edits only at its end", and "a click
-//! does not place the caret", on the Settings side; `paste.rs` and
+//! the clipboard", "a text entry edits only at its end", "a click does
+//! not place the caret", and "the caret leaves a long value's field",
+//! on the Settings side; `paste.rs` and
 //! `history.rs` read the editor's side. Both entries edit their text
 //! through one function and place the caret through another, whose unit
 //! tests check each key and position exactly. A Settings field
 //! appended typed characters and dropped Ctrl+V, so a folder path or a
 //! template could only be typed; it ignored Left, Home, End, and
 //! Delete, so a fix at the start of a value meant deleting it all; a
-//! click left the caret at the end of the text wherever it landed; and
-//! a click in the open field committed the edit and reopened it. The
-//! case puts two lines on the clipboard, opens the file name field,
-//! moves the caret back a word and two characters, pastes, reads the
-//! caret bar at the field's start after Home, types at the start and
-//! the end, deletes a character, and commits with Return. It then
-//! clicks the text's first character to open the field, types, clicks
-//! there again with the field open, types, and commits, reading the
-//! caret bar after each click and the template from config.toml after
-//! the second click and each commit.
+//! click left the caret at the end of the text wherever it landed; a
+//! click in the open field committed the edit and reopened it; and a
+//! value longer than the field drew its caret outside it. The case puts
+//! two lines on the clipboard, opens the file name field, moves the
+//! caret back a word and two characters, pastes, reads the caret bar at
+//! the field's start after Home, types at the start and the end,
+//! deletes a character, and commits with Return. It then clicks the
+//! text's first character to open the field, types, clicks there again
+//! with the field open, types, and commits, reading the caret bar after
+//! each click and the template from config.toml after the second click
+//! and each commit. Last, it types past the field's right edge, reads
+//! the caret bar near that edge, clicks the first character in view,
+//! types, and commits.
 //!
 //! Not covered: Cmd+V and the Cmd and Alt caret keys on macOS, which
 //! reach the same key handler. The case runs only with
@@ -213,5 +217,47 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
         template(dir.path()).as_deref(),
         Some(CLICKED),
         "the field committed without the edits at the clicked caret"
+    );
+    // Twelve z typed at the end run the text past the field's right
+    // edge, and the field moves the text left to keep the caret in
+    // view near that edge. A click on the first character in view then
+    // puts the caret there, past the start of the text, where an x goes
+    // in.
+    click(
+        &conn,
+        root,
+        (at.dst_x + ((left + right) / 2) as i16, at.dst_y + y as i16),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    tap(&conn, root, END);
+    for _ in 0..12 {
+        tap(&conn, root, Z);
+    }
+    let near_end = right - (12.0 * scale) as usize;
+    daemon.until("the caret to stay in view after a long text", || {
+        let (w, _, px) = client(&conn, root, settings);
+        (left + 3..right - 2)
+            .rev()
+            .find(|&x| accent(px[y * w + x]))
+            .filter(|&x| x > near_end)
+    });
+    click(&conn, root, first);
+    let near_start = left + (16.0 * scale) as usize;
+    daemon.until("a click on the moved text to put the caret in view", || {
+        let (w, _, px) = client(&conn, root, settings);
+        (left + 3..right - 2)
+            .find(|&x| accent(px[y * w + x]))
+            .filter(|&x| x < near_start)
+    });
+    for keysym in [X, RETURN] {
+        tap(&conn, root, keysym);
+    }
+    daemon.settle();
+    let long = template(dir.path()).unwrap_or_default();
+    assert!(
+        long.replacen('x', "", 1) == format!("{CLICKED}{}", "z".repeat(12))
+            && long.find('x') > Some(0),
+        "a click on the moved text put the x of {long:?} at the start or \
+         the z typed at the end were lost"
     );
 }

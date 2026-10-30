@@ -232,6 +232,7 @@ impl Settings {
             return;
         }
         self.open_pick = None;
+        self.field_scroll.set(0.0);
         self.editing = Some(Edit {
             field,
             line: widgets::Line::new(self.field_text(field)),
@@ -634,17 +635,30 @@ impl Settings {
     }
 
     /// A text field for `field`, `width` wide, open for typing while it
-    /// is the edit in progress.
-    fn typed_field(&self, field: Field, width: f32, cx: &mut Context<Self>) -> Div {
+    /// is the edit in progress, its text moved left as far as the caret
+    /// needs to stay in view.
+    fn typed_field(
+        &self,
+        field: Field,
+        width: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let reason = self.reason(field);
         let (text, state) = match self.editing.as_ref().filter(|e| e.field == field) {
-            Some(edit) => (
-                edit.line.text().to_string(),
-                widgets::FieldState::Editing {
-                    invalid: reason.is_some(),
-                    caret: edit.line.caret(),
-                },
-            ),
+            Some(edit) => {
+                let scroll =
+                    widgets::field_scroll(&edit.line, width, self.field_scroll.get(), window);
+                self.field_scroll.set(scroll);
+                (
+                    edit.line.text().to_string(),
+                    widgets::FieldState::Editing {
+                        invalid: reason.is_some(),
+                        caret: edit.line.caret(),
+                        scroll,
+                    },
+                )
+            }
             None => (self.field_text(field), widgets::FieldState::Rest),
         };
         // The template field shows the file name a capture taken now
@@ -670,8 +684,9 @@ impl Settings {
             .flex_shrink_0()
             .on_click(cx.listener(move |this, click, window, cx| {
                 this.begin_edit(field);
+                let scroll = this.field_scroll.get();
                 if let Some(edit) = this.editing.as_mut().filter(|e| e.field == field) {
-                    origin.place(&mut edit.line, click, window);
+                    origin.place(&mut edit.line, click, scroll, window);
                 }
                 cx.notify();
             }));
@@ -682,18 +697,18 @@ impl Settings {
         with_note(note, input)
     }
 
-    pub(super) fn text_row(&self, field: Field, cx: &mut Context<Self>) -> Div {
+    pub(super) fn text_row(&self, field: Field, window: &Window, cx: &mut Context<Self>) -> Div {
         let width = if field == Field::Fps {
             NUMBER_W
         } else {
             TEXT_W
         };
-        row_shell(field.label(), self.typed_field(field, width, cx))
+        row_shell(field.label(), self.typed_field(field, width, window, cx))
     }
 
-    pub(super) fn folder_row(&self, field: Field, cx: &mut Context<Self>) -> Div {
+    pub(super) fn folder_row(&self, field: Field, window: &Window, cx: &mut Context<Self>) -> Div {
         if self.editing.as_ref().is_some_and(|e| e.field == field) {
-            return row_shell(field.label(), self.typed_field(field, PATH_W, cx));
+            return row_shell(field.label(), self.typed_field(field, PATH_W, window, cx));
         }
         row_shell(
             field.label(),

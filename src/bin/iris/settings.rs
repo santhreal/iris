@@ -90,6 +90,9 @@ pub struct Settings {
     pub(super) cfg: Config,
     pub(super) pane: Pane,
     pub(super) editing: Option<Edit>,
+    /// How far left the open text field moves its text to keep the
+    /// caret in view, as of the last frame ([`widgets::field_scroll`]).
+    pub(super) field_scroll: std::cell::Cell<f32>,
     /// The shortcut field waiting for a key combination.
     pub(super) recording: Option<Field>,
     /// Why the value last entered into this field was rejected, shown
@@ -129,6 +132,7 @@ impl Settings {
             cfg,
             pane: Pane::General,
             editing: None,
+            field_scroll: std::cell::Cell::new(0.0),
             recording: None,
             rejected: None,
             open_pick: None,
@@ -284,8 +288,8 @@ impl Settings {
         match row {
             Row::Switch(s) => self.switch_row(s, cx).into_any_element(),
             Row::Pick(p) => self.pick_row(p, cx).into_any_element(),
-            Row::Text(f) => self.text_row(f, cx).into_any_element(),
-            Row::Folder(f) => self.folder_row(f, cx).into_any_element(),
+            Row::Text(f) => self.text_row(f, window, cx).into_any_element(),
+            Row::Folder(f) => self.folder_row(f, window, cx).into_any_element(),
             Row::Hotkey(f) => self.hotkey_row(f, cx).into_any_element(),
             Row::Restore => self.restore_row(cx).into_any_element(),
             Row::Version => self.version_row(window, cx).into_any_element(),
