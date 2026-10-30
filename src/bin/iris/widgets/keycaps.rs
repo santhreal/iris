@@ -208,6 +208,34 @@ pub fn key_hint(hint: &str, ink: Rgba) -> Div {
         }))
 }
 
+/// `text` around its first whole word `key`, the sides trimmed; None
+/// when `key` shows only inside a longer word or not at all.
+fn split_at_key<'a>(text: &'a str, key: &str) -> Option<(&'a str, &'a str)> {
+    let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    text.match_indices(key).find_map(|(at, _)| {
+        let (before, after) = (&text[..at], &text[at + key.len()..]);
+        (!word(before.chars().next_back()) && !word(after.chars().next()))
+            .then(|| (before.trim_end(), after.trim_start()))
+    })
+}
+
+/// `text` in `ink` with its word `key` drawn as a cap: a status line
+/// that names the key to press. Without the word, plain text.
+pub fn text_with_key(text: &str, key: &str, ink: Rgba) -> Div {
+    let Some((before, after)) = split_at_key(text, key) else {
+        return div().text_color(ink).child(text.to_string());
+    };
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(4.))
+        .text_color(ink)
+        .children((!before.is_empty()).then(|| before.to_string()))
+        .child(cap(key_label(key), ink))
+        .children((!after.is_empty()).then(|| after.to_string()))
+}
+
 /// The words a shortcut hint may show beside its keys. A sheet row with
 /// any other word fails `assert_hints_read_as_keys`: a key the grammar
 /// misreads as a word ("Page Up/Down") would show as text.
@@ -339,6 +367,28 @@ mod tests {
             let want: Vec<(bool, String)> =
                 want.into_iter().map(|(k, s)| (k, s.to_string())).collect();
             assert_eq!(got, want, "{hint:?}");
+        }
+    }
+
+    #[test]
+    fn a_key_splits_its_sentence_only_as_a_whole_word() {
+        for (text, key, want) in [
+            (
+                "Press Esc again to discard changes",
+                "Esc",
+                Some(("Press", "again to discard changes")),
+            ),
+            ("Esc to close", "Esc", Some(("", "to close"))),
+            ("then press Esc.", "Esc", Some(("then press", "."))),
+            (
+                "Escape twice, then Esc",
+                "Esc",
+                Some(("Escape twice, then", "")),
+            ),
+            ("Escape twice", "Esc", None),
+            ("Press Tab", "Esc", None),
+        ] {
+            assert_eq!(split_at_key(text, key), want, "{text:?}");
         }
     }
 }

@@ -537,6 +537,8 @@ impl Editor {
                     })
                     .detach();
                 }
+                // The discard prompt draws the key it names as a cap.
+                let text = widgets::text_with_key(text, "Esc", theme::FG);
                 root = root.child(widgets::status_pill(text, STAGE_MARGIN));
             }
         }

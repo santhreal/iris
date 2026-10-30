@@ -45,7 +45,7 @@ pub use self::field::{
 pub use self::image::*;
 #[cfg(test)]
 pub(crate) use self::keycaps::assert_hints_read_as_keys;
-pub use self::keycaps::{chord_label, key_hint, keycaps, keycaps_in};
+pub use self::keycaps::{chord_label, key_hint, keycaps, keycaps_in, text_with_key};
 pub use self::menu::{
     hover_row, menu, menu_at, menu_key, menu_separator, popup_button, popup_menu, MenuItem,
     MenuKey, MENU_PAD, MENU_RADIUS, MENU_ROW_H, MENU_W,
@@ -207,7 +207,7 @@ pub const STATUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 /// bottom edge, as the overlay's readouts are, and at least `inset` px
 /// from either side so a long message wraps inside the window. A line
 /// of text keeps capsule ends; wrapped lines keep the same corners.
-pub fn status_pill(text: &str, inset: f32) -> Div {
+pub fn status_pill(content: impl IntoElement, inset: f32) -> Div {
     div()
         .absolute()
         .bottom(px(10.))
@@ -228,7 +228,7 @@ pub fn status_pill(text: &str, inset: f32) -> Div {
                 .text_size(px(theme::TEXT_SMALL))
                 .text_color(theme::FG)
                 .text_center()
-                .child(text.to_string()),
+                .child(content),
         )
 }
 

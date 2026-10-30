@@ -341,7 +341,7 @@ impl Render for PinStage {
             .children(
                 self.status
                     .as_ref()
-                    .map(|text| crate::widgets::status_pill(text, 10.0)),
+                    .map(|text| crate::widgets::status_pill(text.clone(), 10.0)),
             )
     }
 }

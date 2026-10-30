@@ -392,7 +392,7 @@ impl Render for Library {
             self.help_scroll.set_offset(Point::default());
         }
         if let Some(status) = &self.status {
-            root = root.child(widgets::status_pill(status, 10.0));
+            root = root.child(widgets::status_pill(status.clone(), 10.0));
         }
         root.children(widgets::resize_edges(window, MIN_SIZE))
     }
