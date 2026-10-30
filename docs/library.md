@@ -42,7 +42,7 @@ A capture saved from the editor keeps its place and the time it was taken, and i
 
 Each card is 216 pixels wide:
 
-- The thumbnail, 132 pixels high, with 8-pixel corners and a hairline border. A selected card has a 2-pixel accent ring 2 pixels outside the thumbnail.
+- The thumbnail, in an area 132 pixels high: the whole capture at its own aspect, scaled down to fit the area and never up, centered across the card and resting on the caption line. It has 8-pixel corners and a hairline border. A capture that fits smaller than 104×48 pixels sits centered on a matte of that size. A selected card has a 2-pixel accent ring 2 pixels outside the thumbnail.
 - Under it, the local time the capture was taken (`14:02`) and its pixel dimensions (`1920 × 1080`). A pointer resting on this line shows the file name.
 
 ## Selection
@@ -116,4 +116,4 @@ When the `IRIS_HOME` environment variable is defined and non-empty, paths resolv
 - Metadata: `$IRIS_HOME/data/library.json`
 - Thumbnail cache: `$IRIS_HOME/cache/thumbs/`
 
-Each thumbnail file is stored in PNG format named after an FNV-1a hash of the source image path (`<hash>.png`). A thumbnail is the capture box-filtered to cover 432×264 pixels, the card's image area at 2x, and cropped to that aspect around its center; a capture smaller than that box is cropped, not enlarged. A thumbnail of another size, such as one written by an earlier release, is rebuilt from the capture when the library shows it. The library lists every capture whose file exists.
+Each thumbnail file is stored in PNG format named after an FNV-1a hash of the source image path (`<hash>.png`). A thumbnail is the whole capture box-filtered to fit inside 432×264 pixels, the card's image area at 2x, with its aspect kept; a capture smaller than that box keeps its own size. A thumbnail of another size, such as one written by an earlier release, is rebuilt from the capture when the library shows it. The library lists every capture whose file exists.

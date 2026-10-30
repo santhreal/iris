@@ -5,7 +5,7 @@ use iris_lib::library::{self, CaptureEntry};
 
 use crate::{editor, pipeline};
 
-use super::{layout, Library, CARD_W, REFRESH, THUMB_H};
+use super::{layout, Library, REFRESH};
 
 /// The status line after a trash of `asked` captures that left `errors`
 /// behind: None when every capture moved, else the count that stayed
@@ -243,14 +243,16 @@ impl Library {
         }
     }
 
-    /// Entry `index`'s thumbnail rect in screen coordinates, the rect the
-    /// editor morphs out of; None before the grid is laid out.
+    /// Entry `index`'s thumbnail frame in screen coordinates, the rect
+    /// the editor morphs out of; None before the grid is laid out.
     pub(super) fn card_screen_rect(
         &self,
         index: usize,
         window: &Window,
     ) -> Option<(f32, f32, f32, f32)> {
         let (x, y, ..) = self.layout.card_rect(index)?;
+        let entry = self.listing.entries().get(index)?;
+        let (dx, dy, w, h) = super::card::thumb_frame(entry.width, entry.height);
         let view = self.scroll.bounds();
         if f32::from(view.size.height) <= 0.0 {
             return None;
@@ -261,10 +263,10 @@ impl Library {
         };
         let scroll_top = -f32::from(self.scroll.offset().y);
         Some((
-            wx + f32::from(view.origin.x) + x,
-            wy + f32::from(view.origin.y) + y - scroll_top,
-            CARD_W,
-            THUMB_H,
+            wx + f32::from(view.origin.x) + x + dx,
+            wy + f32::from(view.origin.y) + y + dy - scroll_top,
+            w,
+            h,
         ))
     }
 

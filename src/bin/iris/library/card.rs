@@ -17,6 +17,26 @@ use super::{Library, CAPTION_GAP, CAPTION_H, CARD_W, THUMB_H};
 
 /// Thumbnail corner radius.
 pub(super) const THUMB_RADIUS: f32 = 8.0;
+/// The smallest thumbnail frame: room for the three hover actions. A
+/// capture that fits smaller sits centered on a matte inside it.
+pub(super) const MIN_FRAME: (f32, f32) = (104.0, 48.0);
+
+/// Where a `w`x`h` capture's thumbnail frame sits in the card's
+/// CARD_W x THUMB_H image area, as (left, top, width, height): its
+/// thumbnail at half its pixel size, the 2x device scale the box is
+/// sized for, centered across the area and resting on the caption.
+pub(super) fn thumb_frame(w: u32, h: u32) -> (f32, f32, f32, f32) {
+    let (iw, ih) = thumb_image(w, h);
+    let (fw, fh) = (iw.max(MIN_FRAME.0), ih.max(MIN_FRAME.1));
+    ((CARD_W - fw) / 2.0, THUMB_H - fh, fw, fh)
+}
+
+/// The drawn size of a `w`x`h` capture's thumbnail, logical px.
+fn thumb_image(w: u32, h: u32) -> (f32, f32) {
+    let (tw, th) = iris_lib::library::thumb_size(w, h);
+    (tw as f32 / 2.0, th as f32 / 2.0)
+}
+
 /// The selection ring: RING wide, RING_GAP outside the thumbnail.
 pub(super) const RING: f32 = 2.0;
 pub(super) const RING_GAP: f32 = 2.0;
@@ -48,9 +68,14 @@ impl Library {
         // One Rc bump feeds every closure below; the alternative is a
         // PathBuf clone per closure per render.
         let entry = entry.clone();
+        let (iw, ih) = thumb_image(entry.width, entry.height);
+        let (_, _, fw, fh) = thumb_frame(entry.width, entry.height);
 
         let mut thumb = div()
             .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
             .rounded(px(THUMB_RADIUS))
             .overflow_hidden()
             .bg(theme::SURFACE)
@@ -61,8 +86,10 @@ impl Library {
                         .cloned()
                         .unwrap_or_else(blank),
                 ))
-                .size_full()
-                .object_fit(ObjectFit::Cover),
+                .w(px(iw))
+                .h(px(ih))
+                .flex_shrink_0()
+                .object_fit(ObjectFit::Fill),
             )
             // The hairline sits over the image: a border on the clipping
             // box paints under its children.
@@ -134,8 +161,9 @@ impl Library {
         };
         let frame = div()
             .relative()
-            .w(px(CARD_W))
-            .h(px(THUMB_H))
+            .w(px(fw))
+            .h(px(fh))
+            .flex_shrink_0()
             .rounded(px(THUMB_RADIUS))
             .shadow(vec![lift])
             .child(thumb)
@@ -145,12 +173,21 @@ impl Library {
                     .absolute()
                     .top(px(-out))
                     .left(px(-out))
-                    .w(px(CARD_W + 2.0 * out))
-                    .h(px(THUMB_H + 2.0 * out))
+                    .w(px(fw + 2.0 * out))
+                    .h(px(fh + 2.0 * out))
                     .rounded(px(THUMB_RADIUS + out))
                     .border(px(RING))
                     .border_color(theme::ACCENT)
             }));
+        // The image area: the frame centered across it, resting on the
+        // caption, as Finder's gallery seats a thumbnail.
+        let area = div()
+            .w(px(CARD_W))
+            .h(px(THUMB_H))
+            .flex()
+            .items_end()
+            .justify_center()
+            .child(frame);
 
         let caption_row = div()
             .id(("caption", index))
@@ -257,7 +294,7 @@ impl Library {
                     this.set_status(e, cx);
                 }
             }))
-            .child(frame)
+            .child(area)
             .child(caption_row)
     }
 }

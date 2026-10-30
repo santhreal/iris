@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Thumbnails cover this pixel box: the library card's 216x132 logical
-/// image area at 2x device scale, so a HiDPI display draws the card
-/// from at least as many pixels as it shows.
-const THUMB_BOX: (u32, u32) = (432, 264);
+/// Thumbnails fit inside this pixel box: the library card's 216x132
+/// logical image area at 2x device scale, so a HiDPI display draws the
+/// card from at least as many pixels as it shows.
+pub const THUMB_BOX: (u32, u32) = (432, 264);
 
 /// One capture in the library: the image plus its cached thumbnail.
 #[derive(Serialize, Deserialize, Clone)]
@@ -185,40 +185,28 @@ fn write_store(entries: Vec<CaptureEntry>) -> Result<(), String> {
     Ok(())
 }
 
-/// A `w`x`h` capture's thumbnail plan: the size it scales to, covering
-/// THUMB_BOX and never enlarged, then the size of the crop to the box's
-/// aspect around its center. The card shows that center crop.
-fn thumb_plan(w: u32, h: u32) -> ((u32, u32), (u32, u32)) {
+/// The size of a `w`x`h` capture's thumbnail: the whole capture scaled
+/// to fit inside THUMB_BOX, its aspect kept, never enlarged. The card
+/// shows all of it.
+pub fn thumb_size(w: u32, h: u32) -> (u32, u32) {
     let (bw, bh) = (f64::from(THUMB_BOX.0), f64::from(THUMB_BOX.1));
     let (w, h) = (f64::from(w.max(1)), f64::from(h.max(1)));
-    let scale = (bw / w).max(bh / h).min(1.0);
-    let (sw, sh) = ((w * scale).round().max(1.0), (h * scale).round().max(1.0));
-    let aspect = bw / bh;
-    let (cw, ch) = (
-        sw.min((sh * aspect).round()).max(1.0),
-        sh.min((sw / aspect).round()).max(1.0),
-    );
-    ((sw as u32, sh as u32), (cw as u32, ch as u32))
+    let scale = (bw / w).min(bh / h).min(1.0);
+    (
+        (w * scale).round().max(1.0) as u32,
+        (h * scale).round().max(1.0) as u32,
+    )
 }
 
-/// The size of a `w`x`h` capture's thumbnail.
-fn thumb_size(w: u32, h: u32) -> (u32, u32) {
-    thumb_plan(w, h).1
-}
-
-/// Box-filter `img` down to its thumbnail plan and crop the center.
+/// Box-filter `img` down to its thumbnail size.
 fn make_thumb(img: &image::RgbaImage) -> image::RgbaImage {
-    let ((sw, sh), (cw, ch)) = thumb_plan(img.width(), img.height());
-    let scaled;
-    let base = if (sw, sh) == img.dimensions() {
-        img
-    } else {
-        // The banded replica of image's box-average thumbnail: a 4K
-        // capture is a 33MB scan, split across cores.
-        scaled = crate::thumb::thumbnail_rgba(img, sw, sh);
-        &scaled
-    };
-    image::imageops::crop_imm(base, (sw - cw) / 2, (sh - ch) / 2, cw, ch).to_image()
+    let (tw, th) = thumb_size(img.width(), img.height());
+    if (tw, th) == img.dimensions() {
+        return img.clone();
+    }
+    // The banded replica of image's box-average thumbnail: a 4K
+    // capture is a 33MB scan, split across cores.
+    crate::thumb::thumbnail_rgba(img, tw, th)
 }
 
 /// Register a fresh capture: build its thumbnail and list it first. The

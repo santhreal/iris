@@ -230,33 +230,44 @@ fn solid(path: &Path, w: u32, h: u32, color: [u8; 4]) -> image::RgbaImage {
 const GREEN: [u8; 4] = [0, 200, 0, 255];
 const RED: [u8; 4] = [200, 0, 0, 255];
 
+// WHY: closes "the library card shows part of a capture": a
+// thumbnail holds the whole capture, scaled to fit the card box with
+// its aspect kept, and never enlarged. It does not cover how the card
+// draws the thumbnail; card.rs's tests do.
 #[test]
-fn thumb_plan_covers_the_card_box_and_crops_its_aspect() {
-    // capture -> (scaled, cropped)
+fn thumb_size_fits_the_whole_capture_in_the_box() {
     let cases = [
-        ((1920, 1080), (469, 264), (432, 264)),
-        ((3840, 2160), (469, 264), (432, 264)),
-        ((1080, 1920), (432, 768), (432, 264)),
-        ((432, 264), (432, 264), (432, 264)),
-        // Smaller than the box on one side: never enlarged, only cropped.
-        ((300, 1000), (300, 1000), (300, 183)),
-        ((1000, 200), (1000, 200), (327, 200)),
-        ((8, 6), (8, 6), (8, 5)),
+        ((1920, 1080), (432, 243)),
+        ((3840, 2160), (432, 243)),
+        ((1080, 1920), (149, 264)),
+        ((432, 264), (432, 264)),
+        ((864, 528), (432, 264)),
+        // Smaller than the box on one side: scaled to fit the other.
+        ((300, 1000), (79, 264)),
+        ((1000, 200), (432, 86)),
+        // Smaller than the box: never enlarged.
+        ((8, 6), (8, 6)),
+        ((400, 100), (400, 100)),
+        // Extreme strips keep at least one pixel.
+        ((100_000, 10), (432, 1)),
+        ((0, 0), (1, 1)),
     ];
-    for ((w, h), scaled, cropped) in cases {
-        assert_eq!(thumb_plan(w, h), (scaled, cropped), "{w}x{h}");
-        if w >= THUMB_BOX.0 && h >= THUMB_BOX.1 {
-            assert_eq!(cropped, THUMB_BOX, "{w}x{h} covers the box");
-        }
+    for ((w, h), fitted) in cases {
+        let (tw, th) = thumb_size(w, h);
+        assert_eq!((tw, th), fitted, "{w}x{h}");
+        assert!(
+            tw <= THUMB_BOX.0 && th <= THUMB_BOX.1,
+            "{w}x{h} fits the box"
+        );
     }
 }
 
 #[test]
 #[serial_test::serial]
-fn add_writes_the_center_of_the_capture_at_the_box_size() {
+fn add_writes_the_whole_capture_at_the_fitted_size() {
     let d = isolated_home();
-    // Red bands at both edges, narrower than what the crop cuts: a
-    // center crop shows none of them.
+    // Red bands at both edges: a thumbnail of the whole capture shows
+    // them, where a center crop cut them off.
     let mut img = image::RgbaImage::from_pixel(880, 495, image::Rgba(GREEN));
     for y in 0..495 {
         for x in (0..20).chain(860..880) {
@@ -267,10 +278,11 @@ fn add_writes_the_center_of_the_capture_at_the_box_size() {
     img.save(&shot).unwrap();
     let entry = add(&shot, &img).unwrap();
     let thumb = image::open(&entry.thumb).unwrap().into_rgba8();
-    assert_eq!(thumb.dimensions(), THUMB_BOX);
-    for y in [0, 131, 263] {
-        assert_eq!(thumb.get_pixel(0, y).0, GREEN, "left edge, row {y}");
-        assert_eq!(thumb.get_pixel(431, y).0, GREEN, "right edge, row {y}");
+    assert_eq!(thumb.dimensions(), (432, 243));
+    for y in [0, 121, 242] {
+        assert_eq!(thumb.get_pixel(0, y).0, RED, "left edge, row {y}");
+        assert_eq!(thumb.get_pixel(431, y).0, RED, "right edge, row {y}");
+        assert_eq!(thumb.get_pixel(216, y).0, GREEN, "center, row {y}");
     }
     assert_eq!(thumbnail(&entry).unwrap(), thumb);
 }
@@ -284,7 +296,7 @@ fn thumbnail_reads_a_current_file_without_rebuilding() {
     let entry = add(&shot, &img).unwrap();
     // The right size in another color: served from the file, so the
     // capture is not decoded again.
-    solid(&entry.thumb, 432, 264, RED);
+    solid(&entry.thumb, 432, 243, RED);
     assert_eq!(thumbnail(&entry).unwrap().get_pixel(0, 0).0, RED);
 }
 
@@ -295,15 +307,16 @@ fn thumbnail_rebuilds_a_stale_or_missing_file() {
     let shot = d.path().join("s.png");
     let img = solid(&shot, 880, 495, GREEN);
     let entry = add(&shot, &img).unwrap();
-    // An older build's 320px-wide thumbnail, then no file at all.
-    for what in ["stale", "missing"] {
-        if what == "stale" {
-            solid(&entry.thumb, 320, 180, RED);
-        } else {
-            std::fs::remove_file(&entry.thumb).unwrap();
+    // An older build's 320px-wide thumbnail, an older build's center
+    // crop to the box's aspect, then no file at all.
+    for what in ["stale", "cropped", "missing"] {
+        match what {
+            "stale" => drop(solid(&entry.thumb, 320, 180, RED)),
+            "cropped" => drop(solid(&entry.thumb, 432, 264, RED)),
+            _ => std::fs::remove_file(&entry.thumb).unwrap(),
         }
         let rebuilt = thumbnail(&entry).unwrap();
-        assert_eq!(rebuilt.dimensions(), THUMB_BOX, "{what}");
+        assert_eq!(rebuilt.dimensions(), (432, 243), "{what}");
         assert_eq!(rebuilt.get_pixel(0, 0).0, GREEN, "{what}");
         let on_disk = image::open(&entry.thumb).unwrap().into_rgba8();
         assert_eq!(on_disk, rebuilt, "{what}: written back");
@@ -341,7 +354,7 @@ fn rebuild_leaves_the_file_of_an_entry_that_changed() {
         created_ms: entry.created_ms - 1,
         ..entry.clone()
     };
-    assert_eq!(thumbnail(&older).unwrap().dimensions(), THUMB_BOX);
+    assert_eq!(thumbnail(&older).unwrap().dimensions(), (432, 243));
     let on_disk = image::open(&entry.thumb).unwrap().into_rgba8();
     assert_eq!(on_disk.dimensions(), (320, 180), "the newer entry's file");
 }
@@ -355,11 +368,11 @@ fn rebuild_adopts_a_capture_resized_outside_iris() {
     let entry = add(&shot, &img).unwrap();
     solid(&shot, 300, 300, GREEN);
     std::fs::remove_file(&entry.thumb).unwrap();
-    assert_eq!(thumbnail(&entry).unwrap().dimensions(), (300, 183));
+    assert_eq!(thumbnail(&entry).unwrap().dimensions(), (264, 264));
     let stored = list().into_iter().find(|e| e.path == shot).unwrap();
     assert_eq!((stored.width, stored.height), (300, 300));
     // The entry's size now matches its thumbnail: no rebuild next time.
-    solid(&entry.thumb, 300, 183, RED);
+    solid(&entry.thumb, 264, 264, RED);
     assert_eq!(thumbnail(&stored).unwrap().get_pixel(0, 0).0, RED);
 }
 

@@ -5,7 +5,7 @@ use gpui::*;
 
 use crate::widgets::{self, menu, menu_separator, MenuItem, MenuKey, MENU_PAD, MENU_ROW_H, MENU_W};
 
-use super::{Library, CARD_W, THUMB_H};
+use super::Library;
 use crate::sys::reveal::LABEL as REVEAL_LABEL;
 
 /// An open context menu: the card it opened on, the window point it
@@ -144,12 +144,16 @@ impl Library {
         let Some((x, y, ..)) = self.layout.card_rect(index) else {
             return;
         };
+        let Some(entry) = self.listing.entries().get(index) else {
+            return;
+        };
+        let (dx, dy, w, h) = super::card::thumb_frame(entry.width, entry.height);
         // Document space starts at the scroll viewport's origin and moves
         // up by the scroll amount (the offset is <= 0).
         let view = self.scroll.bounds().origin;
         let at = point(
-            view.x + px(x + CARD_W / 2.0),
-            view.y + self.scroll.offset().y + px(y + THUMB_H / 2.0),
+            view.x + px(x + dx + w / 2.0),
+            view.y + self.scroll.offset().y + px(y + dy + h / 2.0),
         );
         self.open_menu(index, at, cx);
     }

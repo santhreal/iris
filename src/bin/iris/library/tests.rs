@@ -4,6 +4,7 @@ use std::prelude::v1::test;
 use iris_lib::library::CaptureEntry;
 use iris_lib::time::days_from_civil;
 
+use super::card::{thumb_frame, MIN_FRAME};
 use super::context_menu::{place, MENU_H};
 use super::entries::trash_status;
 use super::keys::{arrow, arrow_step};
@@ -14,7 +15,7 @@ use super::layout::{
 use super::listing::{ListPass, Listing};
 use super::preview::fit;
 use super::render::{empty_hint, help_rows};
-use super::{CARD_H, CARD_W, GAP, MIN_SIZE};
+use super::{CARD_H, CARD_W, GAP, MIN_SIZE, THUMB_H};
 use crate::sys::hotkeys::Binding;
 use crate::widgets::MENU_W;
 
@@ -829,4 +830,61 @@ fn the_empty_hint_names_the_shortcut_only_while_it_works() {
             "{keys:?} {binding:?}"
         );
     }
+}
+
+// WHY: closes "a card crops its capture or draws it off its frame": the
+// frame holds the whole thumbnail at half its pixel size, keeps the
+// capture's aspect, is never smaller than room for the hover actions,
+// sits centered across the card's image area, and rests on its bottom
+// edge above the caption. The pixel box is the image area at 2x. It
+// does not cover the drawn pixels; the docshots review does.
+#[test]
+fn a_thumbnail_frame_fits_the_whole_capture_in_the_card() {
+    let (bw, bh) = iris_lib::library::THUMB_BOX;
+    assert_eq!((bw as f32, bh as f32), (2.0 * CARD_W, 2.0 * THUMB_H));
+    for (w, h) in [
+        (1920, 1080),
+        (3840, 2160),
+        (1080, 1920),
+        (432, 264),
+        (1000, 200),
+        (300, 1000),
+        (8, 6),
+        (100_000, 10),
+        (10, 100_000),
+        (0, 0),
+    ] {
+        let (x, y, fw, fh) = thumb_frame(w, h);
+        let (tw, th) = iris_lib::library::thumb_size(w, h);
+        let (iw, ih) = (tw as f32 / 2.0, th as f32 / 2.0);
+        assert!(
+            x >= 0.0 && x + fw <= CARD_W + 0.001,
+            "{w}x{h}: x {x} w {fw}"
+        );
+        assert_eq!(
+            (x * 2.0 + fw, y + fh),
+            (CARD_W, THUMB_H),
+            "{w}x{h}: centered, on the caption"
+        );
+        assert!(fw >= MIN_FRAME.0 && fh >= MIN_FRAME.1, "{w}x{h}: {fw}x{fh}");
+        assert!(fw >= iw && fh >= ih, "{w}x{h}: the frame holds the image");
+        if iw >= MIN_FRAME.0 && ih >= MIN_FRAME.1 {
+            assert_eq!(
+                (fw, fh),
+                (iw, ih),
+                "{w}x{h}: no matte around a large capture"
+            );
+        }
+    }
+    // A 16:9 capture fills the width and keeps its aspect.
+    assert_eq!(
+        thumb_frame(1920, 1080),
+        (0.0, THUMB_H - 121.5, CARD_W, 121.5)
+    );
+    // A portrait capture fills the height, on a matte as wide as the
+    // hover actions need.
+    assert_eq!(
+        thumb_frame(1080, 1920),
+        ((CARD_W - MIN_FRAME.0) / 2.0, 0.0, MIN_FRAME.0, THUMB_H)
+    );
 }
