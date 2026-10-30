@@ -128,7 +128,7 @@ fn keep_in_view(was: f32, caret_x: f32, width: f32, view: f32) -> f32 {
 
 /// Where a text field's text starts in the window, recorded each frame
 /// the field is drawn, for placing the caret at a click
-/// ([`TextOrigin::place`]).
+/// ([`TextOrigin::press`]).
 #[derive(Clone, Default)]
 pub struct TextOrigin(Rc<Cell<Option<Pixels>>>);
 
@@ -146,30 +146,26 @@ impl TextOrigin {
         .flex_shrink_0()
     }
 
-    /// Move the caret of `line`, the field's text moved left by
-    /// `scroll` px, to the character boundary nearest where `click`
-    /// pressed, selecting from the anchor with `extend`. A keyboard
-    /// click, or a field not yet drawn, leaves the caret.
-    pub fn place(
+    /// Apply a press at `at` in the window, the `clicks`th of a run, to
+    /// `line`, the field's text moved left by `scroll` px ([`Line::press`]).
+    /// Returns whether a drag from the press extends the selection; a
+    /// field not yet drawn takes no press.
+    pub fn press(
         &self,
         line: &mut Line,
-        click: &ClickEvent,
-        scroll: f32,
+        at: Point<Pixels>,
+        clicks: usize,
         extend: bool,
+        scroll: f32,
         window: &Window,
-    ) {
-        let at = match click {
-            ClickEvent::Mouse(e) => e.down.position,
-            ClickEvent::Touch(e) => e.position,
-            ClickEvent::Keyboard(_) => return,
-        };
+    ) -> bool {
         let Some(left) = self.0.get() else {
-            return;
+            return false;
         };
         let shaped = shape_field_text(line.text(), window);
-        line.place(f32::from(at.x - left) + scroll, extend, |s| {
+        line.press(f32::from(at.x - left) + scroll, clicks, extend, |s| {
             f32::from(shaped.x_for_index(s.len()))
-        });
+        })
     }
 }
 
@@ -410,6 +406,66 @@ impl Line {
         self.move_to(best.0, extend);
     }
 
+    /// A press `x` from the start of the text, the `clicks`th of a run
+    /// of clicks, where `advance` gives the width of each text that
+    /// starts the line: one click places the caret at `x` ([`place`],
+    /// selecting from the anchor with `extend`), two select the word,
+    /// space run, or punctuation run under `x`, and three or more
+    /// select the whole text. Returns whether a drag from the press
+    /// extends the selection, which only a single click starts.
+    ///
+    /// [`place`]: Line::place
+    pub fn press(
+        &mut self,
+        x: f32,
+        clicks: usize,
+        extend: bool,
+        advance: impl Fn(&str) -> f32,
+    ) -> bool {
+        match clicks {
+            0 | 1 => self.place(x, extend, advance),
+            2 => {
+                let at = self.char_at(x, advance);
+                self.select_run(at);
+            }
+            _ => self.select_all(),
+        }
+        clicks < 2
+    }
+
+    /// Select the whole text, the caret at its end.
+    fn select_all(&mut self) {
+        self.anchor = 0;
+        self.caret = self.text.len();
+    }
+
+    /// The offset of the character under `x`, a distance from the start
+    /// of the text: the first character before the text, the last one
+    /// past it, and the text's end when it is empty.
+    fn char_at(&self, x: f32, advance: impl Fn(&str) -> f32) -> usize {
+        let mut last = 0;
+        for (i, c) in self.text.char_indices() {
+            last = i;
+            if x < advance(&self.text[..i + c.len_utf8()]) {
+                break;
+            }
+        }
+        last
+    }
+
+    /// Select the run of letters and digits, of spaces, or of other
+    /// characters that holds the character at `at`, the caret at its
+    /// end. An empty text selects nothing.
+    fn select_run(&mut self, at: usize) {
+        let Some(c) = self.text[at..].chars().next() else {
+            return;
+        };
+        let class = |c: char| (c.is_alphanumeric(), c.is_whitespace());
+        let same = |d: char| class(d) == class(c);
+        self.anchor = self.text[..at].trim_end_matches(same).len();
+        self.caret = self.text.len() - self.text[at..].trim_start_matches(same).len();
+    }
+
     /// Move the caret to `to`, keeping the anchor with `extend` and
     /// dropping the selection without it.
     fn move_to(&mut self, to: usize, extend: bool) {
@@ -558,8 +614,7 @@ pub fn edit_line(
         (None, "delete") if word => line.delete_to(line.word_end()),
         (None, "delete") => line.delete_to(line.next_char()),
         (None, "a") if meta => {
-            line.anchor = 0;
-            line.caret = line.text.len();
+            line.select_all();
             false
         }
         (None, "c" | "x") if meta && !sel.is_empty() => {
@@ -1249,6 +1304,47 @@ mod tests {
             let mut placed = line(start);
             placed.place(x, extend, |s| 10.0 * s.chars().count() as f32);
             assert_eq!(marked(&placed), end, "{start:?} at {x}");
+        }
+    }
+
+    // WHY: closes "a double-click selects the wrong run or splits a
+    // character" and "a drag starts from a double- or triple-click":
+    // one click places the caret and starts a drag, two select the run
+    // of letters and digits, spaces, or other characters under the
+    // press, measured by the character's span rather than the nearest
+    // boundary, and three select the whole text. It does not cover
+    // where a press lands on screen; the X11 tests in history.rs and
+    // settings_paste.rs do.
+    #[test]
+    fn a_double_click_selects_the_run_under_it_and_a_triple_click_all() {
+        let advance = |s: &str| 10.0 * s.chars().count() as f32;
+        for (start, x, clicks, end, drags) in [
+            ("|ab cd", 6.0, 1, "a|b cd", true),
+            ("|ab cd", 6.0, 0, "a|b cd", true),
+            ("|hello world", 12.0, 2, "^hello| world", false),
+            ("|hello world", 18.0, 2, "^hello| world", false),
+            ("|hello world", 50.0, 2, "hello^ |world", false),
+            ("|hello world", 60.0, 2, "hello ^world|", false),
+            ("hello wor|ld", 0.0, 2, "^hello| world", false),
+            ("|a--b", 25.0, 2, "a^--|b", false),
+            ("|a-- b", 25.0, 2, "a^--| b", false),
+            ("|a --b", 15.0, 2, "a^ |--b", false),
+            ("|ab cd", -5.0, 2, "^ab| cd", false),
+            ("|ab cd", 400.0, 2, "ab ^cd|", false),
+            ("|naïve café", 25.0, 2, "^naïve| café", false),
+            ("|é✓𝄞x", 15.0, 2, "é^✓𝄞|x", false),
+            ("|", 5.0, 2, "|", false),
+            ("a|b", 0.0, 3, "^ab|", false),
+            ("a|b", 0.0, 4, "^ab|", false),
+            ("|", 0.0, 3, "|", false),
+        ] {
+            let mut pressed = line(start);
+            let drag = pressed.press(x, clicks, false, advance);
+            assert_eq!(
+                (marked(&pressed), drag),
+                (end.to_string(), drags),
+                "{start:?} at {x} x{clicks}"
+            );
         }
     }
 

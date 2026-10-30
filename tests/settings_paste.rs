@@ -13,9 +13,10 @@
 //! Delete, so a fix at the start of a value meant deleting it all; a
 //! click left the caret at the end of the text wherever it landed; a
 //! click in the open field committed the edit and reopened it; a value
-//! longer than the field drew its caret outside it; and Shift, Ctrl+A,
+//! longer than the field drew its caret outside it; Shift, Ctrl+A,
 //! Ctrl+C, and Ctrl+X did nothing, so a value could be replaced only a
-//! character at a time and never copied. The case puts two lines on the
+//! character at a time and never copied; and a drag, a double-click, or
+//! a triple-click only placed the caret. The case puts two lines on the
 //! clipboard, opens the file name field, moves the caret back a word
 //! and two characters, pastes, reads the caret bar at the field's start
 //! after Home, types at the start and the end, deletes a character, and
@@ -27,7 +28,9 @@
 //! edge, clicks the first character in view, types, and commits. Last,
 //! it copies the value with Ctrl+A and Ctrl+C, replaces a word selected
 //! with Ctrl+Shift+Left, cuts the value with Ctrl+X and pastes it back
-//! after a typed character, and replaces a Shift-click selection.
+//! after a typed character, and replaces a Shift-click selection. It
+//! then copies the text a drag, a double-click, and a triple-click
+//! select.
 //!
 //! Not covered: Cmd+V and the Cmd and Alt caret keys on macOS, which
 //! reach the same key handler. The case runs only with
@@ -51,7 +54,10 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{chord, click, client, clipboard_text, field_left_of, hold, let_go, tap, windows_of};
+use x11::{
+    chord, click, client, clipboard_text, field_left_of, hold, let_go, press_and_move, release,
+    tap, windows_of,
+};
 
 const SCREEN: &str = "1280x1024x24";
 const SETTINGS: &str = "Settings - iris";
@@ -68,6 +74,7 @@ const HOME: u32 = 0xff50;
 const END: u32 = 0xff57;
 const DELETE: u32 = 0xffff;
 const RETURN: u32 = 0xff0d;
+const ESCAPE: u32 = 0xff1b;
 const CONTROL: u32 = 0xffe3;
 const SHIFT: u32 = 0xffe1;
 /// The Settings window's width, logical px.
@@ -206,7 +213,9 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
     click(&conn, root, first);
     caret_at_start("a click to open the field with the caret at its start");
     tap(&conn, root, A);
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // Past the 400 ms double-click interval: the second click is one
+    // click, not a double-click that selects a word.
+    std::thread::sleep(std::time::Duration::from_millis(500));
     click(&conn, root, first);
     caret_at_start("a click in the open field to move the caret to its start");
     daemon.settle();
@@ -327,5 +336,49 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
             && shifted.len() + 2 < pasted.len()
             && pasted.ends_with(&shifted[1..]),
         "a b typed after a Shift-click left {shifted:?} of {pasted:?}"
+    );
+    // A drag from the first character to mid-field, a double-click on
+    // the first character, and a triple-click each select text for
+    // Ctrl+C: the start of the value, its first run of letters and
+    // digits, and all of it. Escape closes the field after each, and
+    // the next press waits out the 400 ms double-click interval so it
+    // starts a run of its own.
+    let copied = |what: &str| {
+        iris_lib::clipboard::set_text("-").unwrap();
+        chord(&conn, root, &[CONTROL, C]);
+        let text = daemon.until(what, || {
+            clipboard_text(&conn, root).filter(|text| text != "-")
+        });
+        tap(&conn, root, ESCAPE);
+        daemon.settle();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        text
+    };
+    press_and_move(&conn, root, first, mid, 4);
+    release(&conn, root);
+    pause();
+    let dragged = copied("Ctrl+C to copy the dragged text");
+    for _ in 0..2 {
+        click(&conn, root, first);
+    }
+    pause();
+    let word = copied("Ctrl+C to copy the double-clicked word");
+    for _ in 0..3 {
+        click(&conn, root, first);
+    }
+    pause();
+    let all = copied("Ctrl+C to copy the triple-clicked value");
+    let first_word: String = shifted
+        .chars()
+        .take_while(|c| c.is_alphanumeric())
+        .collect();
+    assert!(
+        !dragged.is_empty() && dragged.len() < shifted.len() && shifted.starts_with(&dragged),
+        "a drag from the start of {shifted:?} selected {dragged:?}"
+    );
+    assert_eq!(
+        (word.as_str(), all.as_str()),
+        (first_word.as_str(), shifted.as_str()),
+        "a double-click selects the first word and a triple-click the value"
     );
 }

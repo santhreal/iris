@@ -239,6 +239,22 @@ impl Settings {
         });
     }
 
+    /// Extend the open field's selection to the character boundary
+    /// nearest `at`, a drag from a press on the field with the first
+    /// button held. Returns whether a press on the field started the
+    /// drag.
+    pub(super) fn drag_field(&mut self, at: Point<Pixels>, window: &Window) -> bool {
+        let scroll = self.field_scroll.get();
+        match self.editing.as_mut().filter(|_| self.field_drag) {
+            Some(edit) => {
+                self.edit_origin
+                    .press(&mut edit.line, at, 1, true, scroll, window);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Wait for the key combination for shortcut `field`.
     pub(super) fn begin_recording(&mut self, field: Field) {
         if !self.blur() {
@@ -679,27 +695,41 @@ impl Settings {
             .ring()
             .or(self.keyboard_ring(Row::Text(field)))
             .or(self.keyboard_ring(Row::Folder(field)));
-        // A click opens the field with the caret where it pressed, and
-        // a Shift-click on the open field selects to there. A press on
-        // the open field keeps it open: it does not reach the window,
-        // where a press ends the edit.
+        // A press opens the field with the caret where it pressed, a
+        // Shift-press on the open field selects to there, a drag selects
+        // ([`Settings::drag_field`]), a double-click selects a word, and
+        // a triple-click the whole value. A press on a field does not
+        // reach the window, where a press ends the edit.
         let open = matches!(state, widgets::FieldState::Editing { .. });
-        let origin = widgets::TextOrigin::default();
-        let mut input = widgets::text_field(field.id(), text, state, Some(&origin))
+        let origin = if open {
+            self.edit_origin.clone()
+        } else {
+            widgets::TextOrigin::default()
+        };
+        let input = widgets::text_field(field.id(), text, state, Some(&origin))
             .w(px(width))
             .flex_shrink_0()
-            .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
-                this.begin_edit(field);
-                let scroll = this.field_scroll.get();
-                if let Some(edit) = this.editing.as_mut().filter(|e| e.field == field) {
-                    let extend = open && click.modifiers().shift;
-                    origin.place(&mut edit.line, click, scroll, extend, window);
-                }
-                cx.notify();
-            }));
-        if open {
-            input = input.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        }
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.begin_edit(field);
+                    let scroll = this.field_scroll.get();
+                    if let Some(edit) = this.editing.as_mut().filter(|e| e.field == field) {
+                        let extend = open && ev.modifiers.shift;
+                        this.field_drag = origin.press(
+                            &mut edit.line,
+                            ev.position,
+                            ev.click_count,
+                            extend,
+                            scroll,
+                            window,
+                        );
+                        this.edit_origin = origin.clone();
+                    }
+                    cx.notify();
+                }),
+            );
         let input = widgets::ringed(input, Some(theme::RADIUS_CONTROL), ring);
         with_note(note, input)
     }

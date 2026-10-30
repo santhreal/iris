@@ -99,6 +99,9 @@ pub struct Editor {
     /// 8Hz while an entry lives instead of request_animation_frame
     /// repainting the whole window at vsync for a 1Hz blink.
     pub(crate) caret_timer: bool,
+    /// A press on the open entry's text that a drag extends into a
+    /// selection, until the first button is released.
+    pub(crate) entry_drag: bool,
     /// Select tool: the action under the cursor, and a live move drag
     /// as (action index, last pointer in image px, action as it was
     /// when the drag started, for the undo entry).
@@ -334,6 +337,7 @@ pub fn open(
                 text_entry: None,
                 caret_started: Instant::now(),
                 caret_timer: false,
+                entry_drag: false,
                 selected: None,
                 move_drag: None,
                 crop_rect: None,

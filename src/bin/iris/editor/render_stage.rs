@@ -321,10 +321,12 @@ impl Editor {
                     // the Text tool opens below.
                     cx.stop_propagation();
                     let p = this.to_image(ev.position, window);
+                    this.entry_drag = false;
                     // A press on the open entry's text moves its caret
-                    // there, with Shift selecting to there, and keeps
-                    // the entry open.
-                    if this.press_entry(p, ev.modifiers.shift) {
+                    // there, with Shift selecting to there, a drag from
+                    // it selects, a double-click selects a word and a
+                    // triple-click everything, and the entry stays open.
+                    if this.press_entry(p, ev.click_count, ev.modifiers.shift) {
                         cx.notify();
                         return;
                     }
@@ -333,7 +335,7 @@ impl Editor {
                         // A double-click on a label reopens it.
                         if ev.click_count >= 2 {
                             if let Some(i) = this.hit_text(p) {
-                                this.edit_text(i, p);
+                                this.edit_text(i, p, ev.click_count);
                                 cx.notify();
                                 return;
                             }
@@ -351,7 +353,7 @@ impl Editor {
                         // A press on a label reopens it; anywhere else
                         // starts a new one.
                         match this.hit_text(p) {
-                            Some(i) => this.edit_text(i, p),
+                            Some(i) => this.edit_text(i, p, ev.click_count),
                             None => {
                                 this.text_entry = Some(super::action::TextEntry {
                                     point: p,
@@ -396,6 +398,13 @@ impl Editor {
                     return;
                 }
                 let p = this.to_image(ev.position, window);
+                if this.entry_drag {
+                    if ev.pressed_button == Some(MouseButton::Left) && this.drag_entry(p) {
+                        cx.notify();
+                        return;
+                    }
+                    this.entry_drag = false;
+                }
                 if let Some((i, last, _, start_bbox)) = this.move_drag {
                     let d = (p.0 - last.0, p.1 - last.1);
                     let (dx, dy) = this.move_action(i, d, start_bbox);
@@ -460,6 +469,7 @@ impl Editor {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _ev: &MouseUpEvent, _, cx| {
+                    this.entry_drag = false;
                     if this.pan_drag.is_some() {
                         this.pan_drag = None;
                         cx.notify();

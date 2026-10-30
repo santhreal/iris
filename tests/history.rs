@@ -110,7 +110,7 @@ use x11rb::rust_connection::RustConnection;
 use daemon::{enabled, entries, store, stored, xvfb_sized, Daemon, Server};
 use x11::{
     chord, click, client, clipboard, clipboard_owner, clipboard_text, drag, extent, hold, let_go,
-    move_to, tap, windows_of, wm_close,
+    move_to, press_and_move, release, tap, windows_of, wm_close,
 };
 
 const SCREEN: &str = "1280x1024x24";
@@ -1327,6 +1327,59 @@ fn a_selection_in_a_label_is_replaced_copied_and_cut() {
         ("abe", None, Some("abe"), typed),
         "a Shift-click and Ctrl+C copy the label's text, Ctrl+A and Ctrl+X \
          cut it so Return removes the label, and one Undo brings it back"
+    );
+}
+
+// WHY: a double-click on a label's word selects the word, and a drag
+// across a label selects what it passes over, as in any text field. An
+// entry that only places the caret types this case's e between the c
+// and the d, so the label ends wider than ab e, and leaves nothing
+// selected for Ctrl+X to cut after the drag.
+#[test]
+fn a_double_click_or_a_drag_selects_label_text() {
+    let Some(session) = Session::open("a_double_click_or_a_drag_selects_label_text") else {
+        return;
+    };
+    let (conn, root) = (&session.conn, session.root);
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
+    session.label(&[A, B, SPACE, E]);
+    let typed = session.label_end();
+    session.keys(&[CONTROL, Z]);
+    session.label(&[A, B, SPACE, C, D]);
+    let y = session.label_start().1;
+    let at = |x: Option<usize>| session.at.0 + x.expect("the label was drawn") as i16;
+    // A double-click on the d reopens the label with cd selected, and
+    // an e replaces it.
+    let on_d = (at(session.label_end()) - 3, y);
+    click(conn, root, on_d);
+    click(conn, root, on_d);
+    pause();
+    tap(conn, root, E);
+    pause();
+    session.keys(&[RETURN]);
+    let replaced = session.label_end();
+    // A drag from the label's end to its start, past the 400 ms
+    // double-click interval so its press is one click, reopens the
+    // label with all of it selected, and Ctrl+X cuts it.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    press_and_move(conn, root, (at(replaced) - 1, y), session.label_start(), 4);
+    release(conn, root);
+    pause();
+    chord(conn, root, &[CONTROL, X]);
+    let cut = session.daemon.until("Ctrl+X to cut the dragged text", || {
+        clipboard_text(conn, root).filter(|text| !text.is_empty())
+    });
+    session.keys(&[RETURN]);
+    let gone = session.label_end();
+    assert!(typed.is_some(), "the label ab e was drawn");
+    assert_eq!(
+        replaced, typed,
+        "ab cd with cd double-clicked and e typed ends where ab e typed whole does"
+    );
+    assert_eq!(
+        (cut.as_str(), gone),
+        ("ab e", None),
+        "a drag across the label selects all of it for Ctrl+X to cut"
     );
 }
 

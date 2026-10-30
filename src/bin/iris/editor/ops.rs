@@ -673,10 +673,11 @@ impl Editor {
     }
 
     /// Reopen text mark `i` for typing: its text in an entry at its
-    /// point, in its color, with the caret at the character boundary
-    /// nearest `at`, the press that reopened it. The mark is hidden
-    /// while the entry is open, and committing the entry replaces it.
-    pub(crate) fn edit_text(&mut self, i: usize, at: (f32, f32)) {
+    /// point, in its color, with the press that reopened it, at `at`
+    /// and the `clicks`th of a run, applied to it ([`Self::press_caret`]).
+    /// The mark is hidden while the entry is open, and committing the
+    /// entry replaces it.
+    pub(crate) fn edit_text(&mut self, i: usize, at: (f32, f32), clicks: usize) {
         let entry = {
             let actions = self.actions.borrow();
             let Some(a) = actions.get(i).filter(|a| a.tool == Tool::Text) else {
@@ -696,35 +697,54 @@ impl Editor {
         self.selected = None;
         self.move_drag = None;
         self.text_entry = Some(entry);
-        self.place_caret(at, false);
+        self.press_caret(at, clicks, false);
     }
 
-    /// Move the open entry's caret to the character boundary nearest
-    /// `at`, selecting from the anchor with `extend`, and restart its
-    /// blink.
-    fn place_caret(&mut self, at: (f32, f32), extend: bool) {
+    /// Apply a press at `at`, the `clicks`th of a run, to the open
+    /// entry ([`crate::widgets::Line::press`]): one click moves the
+    /// caret, selecting from the anchor with `extend`, and starts a
+    /// drag that selects; two select a word; three select the whole
+    /// text. Restarts the caret's blink.
+    fn press_caret(&mut self, at: (f32, f32), clicks: usize, extend: bool) {
         let size = text_size(self.img_w());
         if let Some(entry) = self.text_entry.as_mut() {
-            entry
-                .line
-                .place(at.0 - entry.point.0, extend, |s| text_advance(s, size));
+            self.entry_drag = entry.line.press(at.0 - entry.point.0, clicks, extend, |s| {
+                text_advance(s, size)
+            });
         }
         self.caret_started = Instant::now();
     }
 
-    /// A press at `p` on the open entry's text moves its caret there,
-    /// selecting from the anchor with `extend`, and keeps the entry
+    /// A press at `p` on the open entry's text, the `clicks`th of a
+    /// run, applied to it ([`Self::press_caret`]), keeping the entry
     /// open. Returns whether `p` was on it. An empty entry has no text
     /// to press on.
-    pub(crate) fn press_entry(&mut self, p: (f32, f32), extend: bool) -> bool {
+    pub(crate) fn press_entry(&mut self, p: (f32, f32), clicks: usize, extend: bool) -> bool {
         let size = text_size(self.img_w());
         let on = self.text_entry.as_ref().is_some_and(|e| {
             !e.line.text().is_empty() && in_box(p, text_box(e.point, e.line.text(), size))
         });
         if on {
-            self.place_caret(p, extend);
+            self.press_caret(p, clicks, extend);
         }
         on
+    }
+
+    /// Extend the selection of a press on the open entry to the
+    /// character boundary nearest `p`, a drag with the first button
+    /// held. Returns whether a press on the entry started the drag.
+    pub(crate) fn drag_entry(&mut self, p: (f32, f32)) -> bool {
+        let size = text_size(self.img_w());
+        match self.text_entry.as_mut().filter(|_| self.entry_drag) {
+            Some(entry) => {
+                entry
+                    .line
+                    .place(p.0 - entry.point.0, true, |s| text_advance(s, size));
+                self.caret_started = Instant::now();
+                true
+            }
+            None => false,
+        }
     }
 
     /// Settle reopened text mark `i` with `value`: an empty value

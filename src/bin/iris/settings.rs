@@ -93,6 +93,12 @@ pub struct Settings {
     /// How far left the open text field moves its text to keep the
     /// caret in view, as of the last frame ([`widgets::field_scroll`]).
     pub(super) field_scroll: std::cell::Cell<f32>,
+    /// Where the open text field's text starts, recorded as it is
+    /// drawn, for a drag that selects in it.
+    pub(super) edit_origin: widgets::TextOrigin,
+    /// A press on the open text field that a drag extends into a
+    /// selection, until the first button is released.
+    pub(super) field_drag: bool,
     /// The shortcut field waiting for a key combination.
     pub(super) recording: Option<Field>,
     /// Why the value last entered into this field was rejected, shown
@@ -133,6 +139,8 @@ impl Settings {
             pane: Pane::General,
             editing: None,
             field_scroll: std::cell::Cell::new(0.0),
+            edit_origin: widgets::TextOrigin::default(),
+            field_drag: false,
             recording: None,
             rejected: None,
             open_pick: None,
@@ -352,6 +360,24 @@ impl Render for Settings {
                     cx.notify();
                 }
             }))
+            // A drag from a press on the open text field selects, here
+            // so that it follows the pointer outside the field.
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                if !this.field_drag {
+                    return;
+                }
+                if ev.pressed_button == Some(MouseButton::Left)
+                    && this.drag_field(ev.position, window)
+                {
+                    cx.notify();
+                } else {
+                    this.field_drag = false;
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.field_drag = false),
+            )
             .child(widgets::toolbar_frame(
                 window,
                 widgets::Toolbar {
