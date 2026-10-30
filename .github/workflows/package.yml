@@ -278,18 +278,41 @@ jobs:
           core=$(iris_core_version "$version")
           { echo "VERSION=$version"; echo "CORE_VERSION=$core"; } >> "$GITHUB_ENV"
       # Later steps start with the job's PATH, not the machine PATH an
-      # installer edits: GITHUB_PATH adds the NSIS directory to it. choco
-      # exits 0 having installed nothing when the community feed answers
-      # 503, so the step checks for makensis.exe itself and retries.
+      # installer edits: GITHUB_PATH adds the NSIS directory to it. The
+      # step unpacks the NSIS release zip, pinned by its SHA-256, and
+      # falls back to choco when SourceForge fails. choco exits 0 having
+      # installed nothing when the community feed answers 503, so the
+      # step checks for makensis.exe itself after every attempt.
       - name: Install NSIS
+        env:
+          NSIS_VERSION: "3.13"
+          NSIS_SHA256: ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8
         run: |
-          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-          foreach ($try in 1..5) {
-            choco install nsis -y --no-progress
-            if (Test-Path $makensis) { break }
-            if ($try -lt 5) { Start-Sleep -Seconds (20 * $try) }
+          $zip = Join-Path $env:RUNNER_TEMP "nsis-$env:NSIS_VERSION.zip"
+          $url = "https://downloads.sourceforge.net/project/nsis/NSIS%203/$env:NSIS_VERSION/nsis-$env:NSIS_VERSION.zip"
+          $makensis = Join-Path $env:RUNNER_TEMP "nsis-$env:NSIS_VERSION\makensis.exe"
+          foreach ($try in 1..3) {
+            try {
+              Invoke-WebRequest $url -OutFile $zip -UserAgent "curl/8" -MaximumRedirection 10
+              $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+              if ($sha -ne $env:NSIS_SHA256) { throw "nsis-$env:NSIS_VERSION.zip has SHA-256 $sha, not $env:NSIS_SHA256" }
+              Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP -Force
+              break
+            } catch {
+              Write-Warning "NSIS download $try of 3 failed: $_"
+              if ($try -lt 3) { Start-Sleep -Seconds (15 * $try) }
+            }
           }
-          if (-not (Test-Path $makensis)) { throw "5 choco installs left no $makensis" }
+          if (-not (Test-Path $makensis)) {
+            $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+            foreach ($try in 1..3) {
+              choco install nsis -y --no-progress
+              if (Test-Path $makensis) { break }
+              if ($try -lt 3) { Start-Sleep -Seconds (20 * $try) }
+            }
+          }
+          if (-not (Test-Path $makensis)) { throw "neither the NSIS zip nor choco left a makensis.exe" }
+          & $makensis /VERSION
           Add-Content $env:GITHUB_PATH (Split-Path $makensis)
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
