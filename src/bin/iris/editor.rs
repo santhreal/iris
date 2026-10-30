@@ -133,11 +133,11 @@ pub struct Editor {
     /// window mapping latency would otherwise eat the animation.
     pub(crate) morph: Option<(f32, f32, f32, f32)>,
     pub(crate) morph_started: Option<Instant>,
-    /// Toast handoff: signaled once a frame has provably been
-    /// presented (the second render: the compositor only asks for a
-    /// next frame after consuming the previous one), so the toast
-    /// holding the same pixels can leave. None when not opened from
-    /// a toast.
+    /// Toast handoff: signaled once a frame with the capture has
+    /// provably been presented (the second render after the decode
+    /// lands: the compositor only asks for a next frame after consuming
+    /// the previous one), so the toast holding the same pixels can
+    /// leave. None when not opened from a toast.
     pub(crate) morph_sync: Option<Arc<AtomicBool>>,
     pub(crate) morph_frames: u32,
     /// Outro: the whole surface fades for OUTRO, then the window
@@ -226,13 +226,28 @@ fn resolve_window_placement(
     (origin, win)
 }
 
+/// How long an open waits for the capture's decode before it opens the
+/// window without it: a large capture never holds the window back.
+const FIRST_FRAME_WAIT: Duration = Duration::from_millis(100);
+
+/// A capture's decoded pixels and the image drawn from them.
+type Decoded = Result<(Arc<image::RgbaImage>, Arc<RenderImage>), String>;
+
+thread_local! {
+    /// Captures whose editor waits on its decode: a second open of one
+    /// meanwhile has its window coming.
+    static OPENING: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Open an editor window for the given image file, or raise the one
-/// already open on it. The window opens instantly on dimensions parsed
-/// from the PNG header; the full decode runs behind it in the
-/// background and swaps in. `from` is an optional starting rect for an
-/// expand-morph animation (from a library card or toast), in screen
-/// coordinates; `morph_sync` is an atomic signaled after the first
-/// frame presents so a source toast can leave without visual pop.
+/// already open on it. The PNG header is read here, so a missing file
+/// or a non-PNG fails the call. The window opens once the capture is
+/// decoded, or after FIRST_FRAME_WAIT with the decode landing behind
+/// it, so its first frame draws the capture instead of an empty canvas.
+/// `from` is an optional starting rect for an expand-morph animation
+/// (from a library card or toast), in screen coordinates; `morph_sync`
+/// is an atomic signaled once a frame with the capture presents, so a
+/// source toast can leave without visual pop.
 pub fn open(
     cx: &mut App,
     path: &std::path::Path,
@@ -241,7 +256,9 @@ pub fn open(
 ) -> Result<(), String> {
     // Two editors on one file would each save their own markup over the
     // other's. An editor fading out after Done or Discard is leaving.
-    if crate::widgets::raise_open::<Editor>(cx, |e| e.path == path && e.closing.is_none()) {
+    if crate::widgets::raise_open::<Editor>(cx, |e| e.path == path && e.closing.is_none())
+        || OPENING.with_borrow(|o| o.iter().any(|p| p == path))
+    {
         // A toast handing off has no morph to wait for.
         if let Some(ready) = morph_sync {
             ready.store(true, Ordering::Release);
@@ -256,20 +273,7 @@ pub fn open(
         f.read_exact(&mut header)
             .map_err(|e| format!("read {} header: {e}", path.display()))?;
     }
-    let (bw, bh) =
-        png_dimensions(&header).ok_or_else(|| format!("not a PNG: {}", path.display()))?;
-    // 1x1 placeholder, not a bw*bh buffer: the decode replaces it, and
-    // a 33MB zeroed alloc on the UI thread is a stall for pixels that
-    // are never read (base_ready gates every read; base_dims carries
-    // the real dimensions for layout).
-    let base = image::RgbaImage::new(1, 1);
-    let base_img = crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0]);
-    let focus = cx.focus_handle();
-    let (origin, win) = resolve_window_placement(cx, from);
-    // The decode starts before the window opens: opening it and drawing
-    // its first frames holds this thread about as long as a decode takes,
-    // and a decode queued behind them put the capture on screen one
-    // display frame later.
+    let dims = png_dimensions(&header).ok_or_else(|| format!("not a PNG: {}", path.display()))?;
     let decode_path = path.to_path_buf();
     let decoded = cx.background_executor().spawn(async move {
         let base = match crate::pipeline::take_decoded(&decode_path) {
@@ -286,15 +290,57 @@ pub fn open(
         };
         let render =
             crate::widgets::render_image_from_rgba(base.width(), base.height(), base.as_raw());
-        Ok::<(Arc<image::RgbaImage>, Arc<gpui::RenderImage>), String>((base, render))
+        Ok::<_, String>((base, render))
     });
+    let wait = cx.background_executor().timer(FIRST_FRAME_WAIT);
+    let path = path.to_path_buf();
+    OPENING.with_borrow_mut(|o| o.push(path.clone()));
+    cx.spawn(async move |cx| {
+        let decode = match futures::future::select(decoded, wait).await {
+            futures::future::Either::Left((done, _)) => Ok(done),
+            futures::future::Either::Right(((), pending)) => Err(pending),
+        };
+        cx.update(|cx| {
+            OPENING.with_borrow_mut(|o| o.retain(|p| *p != path));
+            let toast = morph_sync.clone();
+            if let Err(e) = open_window(cx, path.clone(), dims, from, morph_sync, decode) {
+                let cmd = crate::daemon::Command::Annotate(path);
+                iris_lib::ilog!("iris: {cmd:?}: {e}");
+                // The toast handing off leaves: no editor takes its place.
+                if let Some(ready) = toast {
+                    ready.store(true, Ordering::Release);
+                }
+                crate::notice::failed(cx, cmd.failure_title(), &e);
+            }
+        });
+    })
+    .detach();
+    Ok(())
+}
 
+/// Open the editor window on `path`, whose PNG header gave `(bw, bh)`,
+/// with the capture when `decode` finished in time, or with an empty
+/// canvas the pending decode fills.
+fn open_window(
+    cx: &mut App,
+    path: PathBuf,
+    (bw, bh): (u32, u32),
+    from: Option<(f32, f32, f32, f32)>,
+    morph_sync: Option<Arc<AtomicBool>>,
+    decode: Result<Decoded, Task<Decoded>>,
+) -> Result<(), String> {
+    let focus = cx.focus_handle();
+    let (origin, win) = resolve_window_placement(cx, from);
     let filename = path
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_else(|| "capture.png".to_string());
     let morph = from.map(|(x, y, w, h)| (x - origin.0, y - origin.1, w, h));
     let title = format!("{filename} - iris");
+    let (decoded, pending) = match decode {
+        Ok(decoded) => (Some(decoded), None),
+        Err(pending) => (None, Some(pending)),
+    };
     let handle = crate::widgets::open_window(
         cx,
         &title,
@@ -318,92 +364,118 @@ pub fn open(
             ..Default::default()
         },
         |window, cx| {
-            cx.new(|cx| Editor {
-                on_close: crate::widgets::close_route(window, cx, Editor::close),
-                dims: SharedString::from(format!("{bw} × {bh}")),
-                filename: SharedString::from(filename),
-                path: path.to_path_buf(),
-                base: Arc::new(base),
-                base_dims: (bw, bh),
-                base_img,
-                composite: Arc::new(image::RgbaImage::new(1, 1)),
-                actions: Rc::new(std::cell::RefCell::new(Vec::new())),
-                undos: Vec::new(),
-                redos: Vec::new(),
-                current: None,
-                tool: Tool::Pen,
-                stroke: 1,
-                color: COLORS[5].0,
-                text_entry: None,
-                caret_started: Instant::now(),
-                caret_timer: false,
-                entry_drag: false,
-                selected: None,
-                move_drag: None,
-                crop_rect: None,
-                crop_anchor: None,
-                crop_move: None,
-                copy_menu: false,
-                more_menu: false,
-                menu_lit: None,
-                help: false,
-                help_scroll: ScrollHandle::new(),
-                status: None,
-                status_since: None,
-                focus,
-                morph,
-                morph_started: None,
-                morph_sync,
-                morph_frames: 0,
-                closing: None,
-                base_ready: false,
-                zoom: 1.0,
-                pan: (0.0, 0.0),
-                pan_drag: None,
-                space_pan: false,
-                fill: false,
+            cx.new(|cx| {
+                let mut this = Editor {
+                    on_close: crate::widgets::close_route(window, cx, Editor::close),
+                    dims: SharedString::from(format!("{bw} × {bh}")),
+                    filename: SharedString::from(filename),
+                    path,
+                    // 1x1 placeholders, not bw*bh buffers: the decode
+                    // replaces them, and a 33MB zeroed alloc on the UI
+                    // thread is a stall for pixels that are never read
+                    // (base_ready gates every read; base_dims carries
+                    // the real dimensions for layout).
+                    base: Arc::new(image::RgbaImage::new(1, 1)),
+                    base_dims: (bw, bh),
+                    base_img: crate::widgets::render_image_from_rgba(1, 1, &[0, 0, 0, 0]),
+                    composite: Arc::new(image::RgbaImage::new(1, 1)),
+                    actions: Rc::new(std::cell::RefCell::new(Vec::new())),
+                    undos: Vec::new(),
+                    redos: Vec::new(),
+                    current: None,
+                    tool: Tool::Pen,
+                    stroke: 1,
+                    color: COLORS[5].0,
+                    text_entry: None,
+                    caret_started: Instant::now(),
+                    caret_timer: false,
+                    entry_drag: false,
+                    selected: None,
+                    move_drag: None,
+                    crop_rect: None,
+                    crop_anchor: None,
+                    crop_move: None,
+                    copy_menu: false,
+                    more_menu: false,
+                    menu_lit: None,
+                    help: false,
+                    help_scroll: ScrollHandle::new(),
+                    status: None,
+                    status_since: None,
+                    focus,
+                    morph,
+                    morph_started: None,
+                    morph_sync,
+                    morph_frames: 0,
+                    closing: None,
+                    base_ready: false,
+                    zoom: 1.0,
+                    pan: (0.0, 0.0),
+                    pan_drag: None,
+                    space_pan: false,
+                    fill: false,
+                };
+                if let Some(decoded) = decoded {
+                    this.land_base(decoded, cx);
+                }
+                this
             })
         },
     )
     .map_err(|e| format!("open editor window: {e}"))?;
-    handle
-        .update(cx, |_, _, cx| {
-            cx.spawn(async move |this, cx| {
-                let decoded = decoded.await;
-                let _ = this.update(cx, |this, cx| {
-                    match decoded {
-                        Ok((base, render)) => {
-                            let old = std::mem::replace(&mut this.base_img, render);
-                            crate::widgets::release_render(&old, cx);
-                            this.base = base;
-                            this.base_dims = (this.base.width(), this.base.height());
-                            this.dims = SharedString::from(format!(
-                                "{} × {}",
-                                this.base_dims.0, this.base_dims.1
-                            ));
-                            this.composite = this.base.clone();
-                            this.base_ready = true;
-                            if !this.actions.borrow().is_empty() {
-                                this.rebuild_all();
-                            }
-                        }
-                        Err(e) => {
-                            this.status = Some(format!("decode: {e}"));
-                        }
-                    }
-                    cx.notify();
-                });
+    if let Some(pending) = pending {
+        handle
+            .update(cx, |_, _, cx| {
+                cx.spawn(async move |this, cx| {
+                    let decoded = pending.await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.land_base(decoded, cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
             })
-            .detach();
-        })
-        .map_err(|e| format!("editor decode: {e}"))?;
+            .map_err(|e| format!("editor decode: {e}"))?;
+    }
     Ok(())
+}
+
+impl Editor {
+    /// Take the decoded capture in place of the placeholder base, or show
+    /// why it did not decode. A capture that does not decode opens at
+    /// rest: there is no image to morph or to hand a toast's card to.
+    fn land_base(&mut self, decoded: Decoded, cx: &mut App) {
+        match decoded {
+            Ok((base, render)) => {
+                let old = std::mem::replace(&mut self.base_img, render);
+                crate::widgets::release_render(&old, cx);
+                self.base = base;
+                self.base_dims = (self.base.width(), self.base.height());
+                self.dims =
+                    SharedString::from(format!("{} × {}", self.base_dims.0, self.base_dims.1));
+                self.composite = self.base.clone();
+                self.base_ready = true;
+                if !self.actions.borrow().is_empty() {
+                    self.rebuild_all();
+                }
+            }
+            Err(e) => {
+                self.status = Some(format!("decode: {e}"));
+                self.morph = None;
+                if let Some(ready) = &self.morph_sync {
+                    ready.store(true, Ordering::Release);
+                }
+            }
+        }
+    }
 }
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.focus.focus(window, cx);
-        if let Some(ready) = &self.morph_sync {
+        // Frames before the decode lands draw no capture: the toast
+        // keeps its card up until one that does presents.
+        if let (Some(ready), true) = (&self.morph_sync, self.base_ready) {
             self.morph_frames += 1;
             if self.morph_frames >= 2 {
                 ready.store(true, Ordering::Release);
@@ -412,8 +484,8 @@ impl Render for Editor {
             }
         }
         let (ox, oy, scale) = self.view(window);
-        let vw = self.base.width() as f32 * scale;
-        let vh = self.base.height() as f32 * scale;
+        let vw = self.base_dims.0 as f32 * scale;
+        let vh = self.base_dims.1 as f32 * scale;
 
         // A screen that does not blend the window shows its transparent
         // pixels dark: there the editor opens at rest and closes at once.
@@ -427,8 +499,15 @@ impl Render for Editor {
         let mut options = 1.0f32;
         let mut morph_radius = 6.0f32;
         if let Some(from) = self.morph {
-            let started = *self.morph_started.get_or_insert_with(Instant::now);
-            let t = (started.elapsed().as_secs_f32() / motion::tempo(MORPH).as_secs_f32()).min(1.0);
+            // The morph holds at its start, the window clear around the
+            // source rect, until there is a capture to grow out of it.
+            let t = match self.base_ready {
+                true => {
+                    let started = *self.morph_started.get_or_insert_with(Instant::now);
+                    (started.elapsed().as_secs_f32() / motion::tempo(MORPH).as_secs_f32()).min(1.0)
+                }
+                false => 0.0,
+            };
             let e = motion::spring(t);
             stage_rect = (
                 from.0 + (ox - from.0) * e,
@@ -443,7 +522,8 @@ impl Render for Editor {
             if t >= 1.0 {
                 self.morph = None;
                 self.morph_started = None;
-            } else {
+            } else if self.base_ready {
+                // A held morph waits on the decode's notify, not vsync.
                 window.request_animation_frame();
             }
         }

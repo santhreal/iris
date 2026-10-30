@@ -12,6 +12,8 @@ Open the editor via:
 
 One editor is open per file. Opening a file that an editor already shows raises and focuses that editor, unless the editor is closing after **Done** or **Discard**.
 
+The editor decodes the image on a background thread and opens its window once the image is decoded, so the first frame shows the image. When the decode takes longer than 100 ms, the window opens without the image and shows it when the decode finishes; an editor opened from a toast or a Library card stays clear until then and the toast stays on screen.
+
 Opened from a toast or a Library card, the editor grows out of the card's image over 380 ms while its background and controls fade in. On X11 with no compositing manager, the editor opens at rest and closes without its fade ([Pop-up Windows](platforms.md#linux-x11)).
 
 ## Layout
