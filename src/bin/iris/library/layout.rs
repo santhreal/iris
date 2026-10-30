@@ -32,6 +32,12 @@ pub(super) fn day_and_time(created_ms: i64) -> (Day, SharedString) {
     )
 }
 
+/// The local day of a capture made at `created_ms`.
+pub(super) fn day_of(created_ms: i64) -> Day {
+    let (y, mo, d, ..) = iris_lib::time::local_fields(created_ms.div_euclid(1000));
+    days_from_civil(y, mo, d)
+}
+
 /// Today, local time.
 pub(super) fn today() -> Day {
     let (y, mo, d, ..) = iris_lib::time::local_now();

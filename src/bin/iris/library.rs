@@ -85,6 +85,9 @@ pub struct Library {
     layout: layout::Layout,
     /// The listing generation and width `layout` was built for.
     layout_key: (u64, f32),
+    /// The grid's height at the last render: a new listing lays out
+    /// the rows it draws before the next frame.
+    viewport_h: f32,
     pub(super) selected: Vec<PathBuf>,
     /// Membership set for `selected`, rebuilt on the render after a
     /// mutation instead of hashed fresh every frame.
@@ -116,8 +119,8 @@ pub struct Library {
     /// decodes, so a new range is parked in prefetch_want instead of
     /// stacking tasks.
     pub(super) prefetch_in_flight: bool,
-    /// The newest keep range a prefetch has not covered yet.
-    pub(super) prefetch_want: Option<(usize, usize)>,
+    /// The newest request a prefetch has not covered yet.
+    prefetch_want: Option<entries::ThumbWant>,
     /// Set when a new listing is shown: the next render rebuilds the
     /// live-path set and prunes `thumb_cache`, instead of rebuilding
     /// the set every frame.
@@ -159,13 +162,83 @@ pub struct Library {
 /// The library window's minimum logical size, where its resize stops.
 pub(super) const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
 
-/// Open the library window, or raise the one already open.
+/// The library window's logical size when it opens.
+const OPEN_SIZE: (f32, f32) = (960.0, 640.0);
+/// How long an open waits for the listing and the first screen's
+/// thumbnails before it opens the window without them: a slow capture
+/// folder never holds the window back.
+const FIRST_SCREEN_WAIT: Duration = Duration::from_millis(100);
+
+thread_local! {
+    /// An open waiting on its first screen: a second open meanwhile
+    /// has its window coming.
+    static OPENING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The listing a window opens with and the decoded thumbnails of the
+/// cards it draws first.
+type FirstScreen = (
+    Vec<iris_lib::library::CaptureEntry>,
+    Vec<(PathBuf, std::sync::Arc<RenderImage>)>,
+);
+
+/// Open the library window, or raise the one already open. The window
+/// opens once the listing and the first screen's thumbnails are read,
+/// or after FIRST_SCREEN_WAIT, so its first frame draws the cards with
+/// their captures instead of blank ones.
 pub fn open(cx: &mut App) -> Result<(), String> {
+    if crate::widgets::raise_open::<Library>(cx, |l| !l.leaving) || OPENING.get() {
+        return Ok(());
+    }
+    OPENING.set(true);
+    let ex = cx.background_executor().clone();
+    let wait = ex.timer(FIRST_SCREEN_WAIT);
+    let first = first_screen(ex);
+    cx.spawn(async move |cx| {
+        let ready = match futures::future::select(std::pin::pin!(first), wait).await {
+            futures::future::Either::Left((ready, _)) => Some(ready),
+            futures::future::Either::Right(_) => None,
+        };
+        cx.update(|cx| {
+            OPENING.set(false);
+            if let Err(e) = open_window(cx, ready) {
+                let cmd = crate::daemon::Command::Library;
+                iris_lib::ilog!("iris: {cmd:?}: {e}");
+                crate::notice::failed(cx, cmd.failure_title(), &e);
+            }
+        });
+    })
+    .detach();
+    Ok(())
+}
+
+/// Read the store and decode the thumbnails a window opening on it
+/// draws first, off the main thread.
+async fn first_screen(ex: BackgroundExecutor) -> FirstScreen {
+    let (fresh, drawn) = ex
+        .spawn(async move {
+            let mut fresh = iris_lib::library::list();
+            let drawn = listing::first_screen(
+                &mut fresh,
+                layout::today(),
+                OPEN_SIZE.0,
+                OPEN_SIZE.1 - crate::theme::TOOLBAR_H,
+            );
+            (fresh, drawn)
+        })
+        .await;
+    let thumbs = entries::decode_thumbs(ex, fresh[drawn.0..drawn.1].to_vec()).await;
+    (fresh, thumbs)
+}
+
+/// Open the window, with the listing and thumbnails of `ready` when the
+/// first screen was read in time.
+fn open_window(cx: &mut App, ready: Option<FirstScreen>) -> Result<(), String> {
     if crate::widgets::raise_open::<Library>(cx, |l| !l.leaving) {
         return Ok(());
     }
     let focus = cx.focus_handle();
-    let win = (960.0f32, 640.0f32);
+    let win = OPEN_SIZE;
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (140.0, 90.0));
     let handle = crate::widgets::open_window(
         cx,
@@ -193,14 +266,15 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             // The keys work from the first frame, before any click.
             focus.focus(window, cx);
             cx.new(|cx| {
-                // Listing the shots dir here would stall the open on a
-                // slow or network dir: open empty and populate from the
-                // background, the same path every later read takes.
+                // The store was read off the main thread before the
+                // window opened; an open that outwaited it starts
+                // empty and fills from the same background read.
                 let cfg = iris_lib::config::Config::load();
                 let mut this = Library {
                     listing: listing::Listing::default(),
                     layout: layout::Layout::default(),
-                    layout_key: (u64::MAX, 0.0),
+                    layout_key: (u64::MAX, win.0),
+                    viewport_h: win.1 - crate::theme::TOOLBAR_H,
                     sel_label: SharedString::from(""),
                     selected: Vec::new(),
                     list_pass: listing::ListPass::default(),
@@ -231,6 +305,12 @@ pub fn open(cx: &mut App) -> Result<(), String> {
                     menu: None,
                     leaving: false,
                 };
+                if let Some((fresh, thumbs)) = ready {
+                    this.thumb_cache.extend(thumbs);
+                    this.show(fresh, cx);
+                }
+                // A store write while the first screen was read reached
+                // no window: read the store again.
                 this.refresh(false, cx);
                 this.arm_midnight(cx);
                 this

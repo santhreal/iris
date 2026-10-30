@@ -19,6 +19,34 @@ pub(super) struct Caption {
     pub name: SharedString,
 }
 
+/// Order `entries` newest first by `created_ms`, the order a listing
+/// shows; captures with equal times keep their order.
+fn newest_first(entries: &mut [CaptureEntry]) {
+    if !entries.is_sorted_by(|a, b| a.created_ms >= b.created_ms) {
+        entries.sort_by_key(|e| std::cmp::Reverse(e.created_ms));
+    }
+}
+
+/// Order `entries` as a listing shows them, and return the entries a
+/// grid of them draws at the top of a viewport `width` wide and
+/// `height` high, as a half-open range: the cards a window opening on
+/// them shows first.
+pub(super) fn first_screen(
+    entries: &mut [CaptureEntry],
+    today: Day,
+    width: f32,
+    height: f32,
+) -> (usize, usize) {
+    newest_first(entries);
+    let days: Vec<Day> = entries
+        .iter()
+        .map(|e| layout::day_of(e.created_ms))
+        .collect();
+    let grid = layout::Layout::new(&layout::sections(&days, today), width);
+    grid.rows_in(0.0, height)
+        .map_or((0, 0), |(first, last)| grid.entries_of(first, last))
+}
+
 /// The shown captures, newest first, with each card's caption, the day
 /// sections, and the toolbar count. The fields are private: a listing is
 /// shown only through [`Listing::set`], so no caption, section, count, or
@@ -97,9 +125,7 @@ impl Listing {
         selected: &mut Vec<PathBuf>,
         today: Day,
     ) -> Option<Vec<PathBuf>> {
-        if !fresh.is_sorted_by(|a, b| a.created_ms >= b.created_ms) {
-            fresh.sort_by_key(|e| std::cmp::Reverse(e.created_ms));
-        }
+        newest_first(&mut fresh);
         // The shown listing, unchanged, behind `added` new captures: the
         // common change, a capture landing. Only the new captions are
         // built; a library of thousands pays for the few that landed.

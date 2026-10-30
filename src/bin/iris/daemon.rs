@@ -103,7 +103,7 @@ pub enum Command {
 impl Command {
     /// The notice title when this command fails. The match is
     /// exhaustive so a new command fails to compile until it has one.
-    fn failure_title(&self) -> &'static str {
+    pub(crate) fn failure_title(&self) -> &'static str {
         match self {
             Command::Capture
             | Command::CaptureFullscreen

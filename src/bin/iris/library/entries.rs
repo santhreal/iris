@@ -5,7 +5,55 @@ use iris_lib::library::{self, CaptureEntry};
 
 use crate::{editor, pipeline};
 
-use super::{layout, Library, REFRESH};
+use super::{evict_thumbs, layout, Library, REFRESH, THUMB_KEEP_ROWS};
+
+/// A thumbnail decode request: the keep window, and the entries the
+/// grid draws now, which decode and land first.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct ThumbWant {
+    pub(super) keep: (usize, usize),
+    pub(super) drawn: (usize, usize),
+}
+
+impl ThumbWant {
+    /// The entry indexes to decode, in delivery order: the drawn
+    /// entries inside the keep window, then the rest of the window.
+    pub(super) fn passes(self) -> [Vec<usize>; 2] {
+        let (lo, hi) = self.keep;
+        let drawn = self.drawn.0.max(lo)..self.drawn.1.min(hi);
+        [
+            drawn.clone().collect(),
+            (lo..hi).filter(|i| !drawn.contains(i)).collect(),
+        ]
+    }
+}
+
+/// Decode the thumbnails of `entries`, one background task each: the
+/// executor is a pool, so the PNG decodes (and any rebuild of a stale
+/// thumbnail) run across cores instead of serially on one task. A
+/// thumbnail that cannot be read is left out.
+pub(super) async fn decode_thumbs(
+    ex: BackgroundExecutor,
+    entries: Vec<CaptureEntry>,
+) -> Vec<(PathBuf, std::sync::Arc<RenderImage>)> {
+    let tasks: Vec<_> = entries
+        .into_iter()
+        .map(|e| {
+            ex.spawn(async move {
+                library::thumbnail(&e)
+                    .ok()
+                    .map(|img| (e.path, crate::widgets::render_image_from_rgba_owned(img)))
+            })
+        })
+        .collect();
+    let mut loaded = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        if let Some(pair) = task.await {
+            loaded.push(pair);
+        }
+    }
+    loaded
+}
 
 /// The status line after a trash of `asked` captures that left `errors`
 /// behind: None when every capture moved, else the count that stayed
@@ -19,66 +67,96 @@ pub(super) fn trash_status(asked: usize, errors: &[String]) -> Option<String> {
 }
 
 impl Library {
-    /// Read thumbnails off the main thread and fill the cache in one
-    /// delivery: a first paint that blocks on N disk reads stutters.
-    /// `range` is the entry-index window to decode (the keep window
-    /// render computed); a pass already in flight parks the newest
-    /// range in prefetch_want and the running task picks it up, so a
-    /// fast scroll never stacks decode waves.
-    pub(super) fn prefetch_thumbs(&mut self, range: (usize, usize), cx: &mut Context<Self>) {
+    /// Lay out the grid at `width` when the listing or the width
+    /// changed since the last layout.
+    pub(super) fn relayout(&mut self, width: f32) {
+        let key = (self.listing.generation(), width);
+        if key != self.layout_key {
+            self.layout = layout::Layout::new(self.listing.sections(), width);
+            self.layout_key = key;
+        }
+    }
+
+    /// The entries of grid rows `first..=last` and of THUMB_KEEP_ROWS
+    /// rows either side: the thumbnails the cache keeps.
+    pub(super) fn keep_of(&self, (first, last): (usize, usize)) -> (usize, usize) {
+        self.layout.entries_of(
+            first.saturating_sub(THUMB_KEEP_ROWS),
+            last + THUMB_KEEP_ROWS,
+        )
+    }
+
+    /// Keep the thumbnails around grid rows `rows`, the rows drawn:
+    /// release the tiles outside the keep window, and decode the
+    /// missing ones, the drawn rows' first.
+    pub(super) fn keep_thumbs(&mut self, rows: (usize, usize), cx: &mut Context<Self>) {
+        let keep = self.keep_of(rows);
+        self.thumb_keep = keep;
+        if self.thumb_cache.len() > keep.1 - keep.0 {
+            let keep_paths: std::collections::HashSet<&std::path::Path> = self.listing.entries()
+                [keep.0..keep.1]
+                .iter()
+                .map(|e| e.path.as_path())
+                .collect();
+            evict_thumbs(&mut self.thumb_cache, |p| keep_paths.contains(p), cx);
+        }
+        let drawn = self.layout.entries_of(rows.0, rows.1);
+        self.prefetch_thumbs(ThumbWant { keep, drawn }, cx);
+    }
+
+    /// Read thumbnails off the main thread. The drawn entries land in
+    /// one delivery, then the rest of the keep window in a second: a
+    /// first paint that blocks on N disk reads stutters, and the drawn
+    /// cards wait on no slack row. A pass already in flight parks the
+    /// newest request in prefetch_want and the running task picks it
+    /// up, after the drawn entries of the request it runs, so a fast
+    /// scroll never stacks decode waves.
+    fn prefetch_thumbs(&mut self, want: ThumbWant, cx: &mut Context<Self>) {
+        self.prefetch_want = Some(want);
         if self.prefetch_in_flight {
-            self.prefetch_want = Some(range);
             return;
         }
         self.prefetch_in_flight = true;
-        self.prefetch_want = Some(range);
         cx.spawn(async move |this, cx| {
-            while let Some(range) = this
+            'want: while let Some(want) = this
                 .update(cx, |this, _| this.prefetch_want.take())
                 .unwrap_or(None)
             {
-                let missing: Vec<CaptureEntry> = match this.update(cx, |this, _| {
-                    let shown = this.listing.entries();
-                    let (lo, hi) = (range.0.min(shown.len()), range.1.min(shown.len()));
-                    shown[lo..hi]
-                        .iter()
-                        .filter(|e| !this.thumb_cache.contains_key(&e.path))
-                        // Owned copies: the Rc is not Send, and each
-                        // entry moves into a background task.
-                        .map(|e| CaptureEntry::clone(e))
-                        .collect()
-                }) {
-                    Ok(m) => m,
-                    Err(_) => break,
-                };
-                // One background task per thumb: the executor is a
-                // pool, so the window's PNG decodes (and any rebuild of
-                // a stale thumbnail) run across cores instead of
-                // serially on one task.
-                let tasks: Vec<_> = missing
-                    .into_iter()
-                    .map(|e| {
-                        cx.background_executor().spawn(async move {
-                            library::thumbnail(&e).ok().map(|img| {
-                                (e.path, crate::widgets::render_image_from_rgba_owned(img))
-                            })
-                        })
-                    })
-                    .collect();
-                let mut loaded = Vec::with_capacity(tasks.len());
-                for task in tasks {
-                    if let Some(pair) = task.await {
-                        loaded.push(pair);
+                for (pass, indexes) in want.passes().into_iter().enumerate() {
+                    if pass > 0
+                        && this
+                            .update(cx, |this, _| this.prefetch_want.is_some())
+                            .unwrap_or(true)
+                    {
+                        continue 'want;
                     }
-                }
-                if this
-                    .update(cx, |this, cx| {
-                        this.thumb_cache.extend(loaded);
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
+                    let missing: Vec<CaptureEntry> = match this.update(cx, |this, _| {
+                        let shown = this.listing.entries();
+                        indexes
+                            .iter()
+                            .filter_map(|&i| shown.get(i))
+                            .filter(|e| !this.thumb_cache.contains_key(&e.path))
+                            // Owned copies: the Rc is not Send, and each
+                            // entry moves into a background task.
+                            .map(|e| CaptureEntry::clone(e))
+                            .collect()
+                    }) {
+                        Ok(m) => m,
+                        Err(_) => break 'want,
+                    };
+                    if missing.is_empty() {
+                        continue;
+                    }
+                    let loaded = decode_thumbs(cx.background_executor().clone(), missing).await;
+                    if this
+                        .update(cx, |this, cx| {
+                            this.thumb_cache.extend(loaded);
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break 'want;
+                    }
                 }
             }
             let _ = this.update(cx, |this, _| {
@@ -153,12 +231,15 @@ impl Library {
         {
             self.close_preview(cx);
         }
-        // Decode the window the grid keeps: a capture re-saved on
-        // screen needs its new thumbnail now, and the keep window only
-        // prefetches when it moves. Before the first render with cards
-        // there is no window yet; decode the top of the list.
-        let keep = self.thumb_keep;
-        self.prefetch_thumbs(if keep.0 < keep.1 { keep } else { (0, 48) }, cx);
+        // Decode the thumbnails the new listing draws now, before the
+        // next frame: an opening window's first frame shows the ones
+        // that land by then, and a capture re-saved on screen needs its
+        // new one. The layout is the last render's width and height.
+        self.relayout(self.layout_key.1);
+        let top = -f32::from(self.scroll.offset().y);
+        if let Some(rows) = self.layout.rows_in(top, top + self.viewport_h) {
+            self.keep_thumbs(rows, cx);
+        }
         self.follow_folders(cx);
         cx.notify();
     }

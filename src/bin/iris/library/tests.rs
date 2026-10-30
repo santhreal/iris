@@ -6,13 +6,13 @@ use iris_lib::time::days_from_civil;
 
 use super::card::{caption_span, thumb_frame, CAPTION_MIN, MIN_FRAME};
 use super::context_menu::{place, MENU_H};
-use super::entries::trash_status;
+use super::entries::{trash_status, ThumbWant};
 use super::keys::{arrow, arrow_step};
 use super::layout::{
     day_and_time, day_title, sections, Day, Layout, Row, Section, Step, BOTTOM_PAD, HEADER_H,
     PAD_X, ROW_GAP,
 };
-use super::listing::{ListPass, Listing};
+use super::listing::{first_screen, ListPass, Listing};
 use super::preview::fit;
 use super::render::{empty_hint, help_rows};
 use super::{CARD_H, CARD_W, GAP, MIN_SIZE, THUMB_H};
@@ -942,4 +942,77 @@ fn a_caption_lines_up_with_its_thumbnail() {
     let (fx, _, fw, _) = thumb_frame(1200, 820);
     assert!(fw < CARD_W && fw > CAPTION_MIN, "{fw}");
     assert_eq!(caption_span(fw), (fx, fw));
+}
+
+// WHY: closes "the drawn cards wait on the slack rows": a prefetch
+// decodes and delivers the drawn entries inside the keep window before
+// the rest of the window, and every entry of the window once, none
+// outside it. Not covered: the task's two deliveries and the frame they
+// land in, which the exec -> library frame dump shows.
+#[test]
+fn a_prefetch_decodes_the_drawn_entries_first_and_each_once() {
+    for (keep, drawn) in [
+        ((0, 48), (0, 16)),
+        ((10, 60), (30, 42)),
+        ((0, 8), (4, 20)),
+        ((5, 9), (0, 3)),
+        ((3, 20), (3, 20)),
+        ((0, 0), (0, 0)),
+    ] {
+        let [first, rest] = ThumbWant { keep, drawn }.passes();
+        let window = keep.0..keep.1;
+        let inside: Vec<usize> = (drawn.0..drawn.1).filter(|i| window.contains(i)).collect();
+        assert_eq!(first, inside, "first pass of {keep:?} drawing {drawn:?}");
+        assert!(
+            rest.iter().all(|i| !inside.contains(i)),
+            "{keep:?} drawing {drawn:?} decodes a drawn entry twice: {rest:?}"
+        );
+        let mut all = [first, rest].concat();
+        all.sort_unstable();
+        assert_eq!(
+            all,
+            window.collect::<Vec<_>>(),
+            "{keep:?} drawing {drawn:?}"
+        );
+    }
+}
+
+// WHY: closes "an opening window decodes other cards than its first
+// frame draws": the open reads the store and decodes the first screen
+// before the window and its Listing exist, so the range it picks must
+// name the cards the window's listing draws at the top, for a store in
+// any order, captures over several days, and any window size. Not
+// covered: the deadline race and the first frame itself, which the
+// exec -> library frame dump shows.
+#[test]
+fn an_open_decodes_the_cards_its_first_frame_draws() {
+    for (n, width, height) in [
+        (0, 960.0, 584.0),
+        (3, 960.0, 584.0),
+        (200, 960.0, 584.0),
+        (60, 640.0, 424.0),
+        (60, 1800.0, 1100.0),
+    ] {
+        // Out of time order, spread over the days before today.
+        let store: Vec<CaptureEntry> = (0..n)
+            .map(|i: i64| entry(&format!("{i}.png"), at(TODAY - i * 7 % 23 / 4, i % 100)))
+            .collect();
+        let mut opened = store.clone();
+        let (lo, hi) = first_screen(&mut opened, TODAY, width, height);
+
+        let mut listing = Listing::default();
+        listing.set(store, &mut Vec::new(), TODAY);
+        // The rows render draws at scroll 0, and their cards.
+        let grid = Layout::new(listing.sections(), width);
+        let drawn = grid
+            .rows_in(0.0, height)
+            .map_or((0, 0), |(first, last)| grid.entries_of(first, last));
+        let shown: Vec<&PathBuf> = listing.entries()[drawn.0..drawn.1]
+            .iter()
+            .map(|e| &e.path)
+            .collect();
+        let decoded: Vec<&PathBuf> = opened[lo..hi].iter().map(|e| &e.path).collect();
+        assert_eq!(decoded, shown, "{n} captures in {width}x{height}");
+        assert_eq!(hi > lo, n > 0, "{n} captures draw no card");
+    }
 }

@@ -13,7 +13,7 @@ use crate::theme;
 use crate::widgets::{self, tip, ButtonStyle, Toolbar};
 
 use super::layout::{Layout, Row, HEADER_H};
-use super::{evict_thumbs, Library, Tool, MIN_SIZE, THUMB_KEEP_ROWS};
+use super::{evict_thumbs, Library, Tool, MIN_SIZE};
 
 /// Space between a day title's baseline row and the cards under it.
 const HEADER_PAD_B: f32 = 10.0;
@@ -227,11 +227,8 @@ impl Render for Library {
         let win = window.bounds().size;
         let width = f32::from(win.width);
         let viewport_h = f32::from(win.height) - theme::TOOLBAR_H;
-        let key = (self.listing.generation(), width);
-        if key != self.layout_key {
-            self.layout = Layout::new(self.listing.sections(), width);
-            self.layout_key = key;
-        }
+        self.viewport_h = viewport_h;
+        self.relayout(width);
 
         // Virtualize: build only the rows that intersect the viewport.
         // ScrollHandle::offset is <= 0 (negative when scrolled down);
@@ -281,21 +278,8 @@ impl Render for Library {
             // and re-decoded on scroll-back. The range moves only when the
             // viewport crosses a row, so eviction and prefetch do not run
             // per frame.
-            let keep = self.layout.entries_of(
-                first.saturating_sub(THUMB_KEEP_ROWS),
-                last + THUMB_KEEP_ROWS,
-            );
-            if keep != self.thumb_keep {
-                self.thumb_keep = keep;
-                if self.thumb_cache.len() > keep.1 - keep.0 {
-                    let keep_paths: std::collections::HashSet<&std::path::Path> =
-                        self.listing.entries()[keep.0..keep.1]
-                            .iter()
-                            .map(|e| e.path.as_path())
-                            .collect();
-                    evict_thumbs(&mut self.thumb_cache, |p| keep_paths.contains(p), cx);
-                }
-                self.prefetch_thumbs(keep, cx);
+            if self.keep_of((first, last)) != self.thumb_keep {
+                self.keep_thumbs((first, last), cx);
             }
         }
 
