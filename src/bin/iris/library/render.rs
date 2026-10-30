@@ -381,7 +381,7 @@ impl Render for Library {
         }
         if self.help {
             root = root.child(
-                widgets::shortcuts_sheet(help_rows(&self.cfg), &self.help_scroll).on_click(
+                widgets::shortcuts_sheet(None, help_rows(&self.cfg), &self.help_scroll).on_click(
                     cx.listener(|this, _, _, cx| {
                         this.help = false;
                         cx.notify();

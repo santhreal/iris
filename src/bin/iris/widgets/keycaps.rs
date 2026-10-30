@@ -69,8 +69,10 @@ fn key_label(key: &str) -> SharedString {
     named.into()
 }
 
-/// `chord` as a row of key caps in secondary text. Tabular figures keep
-/// a function key's number from shifting the row.
+/// `chord` as a row of key caps in secondary text: a faint fill and no
+/// outline, so a shortcut reads as a hint beside its label rather than
+/// as a row of buttons. Tabular figures keep a function key's number
+/// from shifting the row.
 pub fn keycaps(chord: &str) -> Div {
     div()
         .flex()
@@ -85,9 +87,7 @@ pub fn keycaps(chord: &str) -> Div {
                 .items_center()
                 .justify_center()
                 .rounded(px(CAP_RADIUS))
-                .bg(theme::alpha(theme::FG, 0.07))
-                .border_1()
-                .border_color(theme::HAIRLINE)
+                .bg(theme::alpha(theme::FG, 0.08))
                 .text_size(px(theme::TEXT_SMALL))
                 .line_height(px(14.))
                 .font_weight(FontWeight::MEDIUM)

@@ -258,9 +258,9 @@ fn slot_w(has_mic: bool) -> f32 {
     CHIP_W - PAD_LEAD - PAD_TRAIL - DOT - controls as f32 * BUTTON - (1 + controls) as f32 * GAP
 }
 
-/// One chip control: the shared ghost icon button with a hover wash.
+/// One chip control: the HUD icon button with a hover wash.
 fn control(id: &'static str, glyph: Icon) -> Stateful<Div> {
-    crate::widgets::icon_button(id, glyph, false, BUTTON)
+    crate::widgets::hud_icon_button(id, glyph, false, BUTTON)
 }
 
 /// A chip control, named in the timer slot while the pointer rests on

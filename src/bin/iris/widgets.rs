@@ -108,6 +108,28 @@ pub fn icon_button(
     active: bool,
     size: f32,
 ) -> Stateful<Div> {
+    icon_button_inked(id, glyph, active, size, theme::FG_DIM)
+}
+
+/// [`icon_button`] for a HUD that floats over any screen content, the
+/// toast's capsule and the recording chip: the glyph is primary text,
+/// not secondary, so it reads over a busy image as a HUD control does.
+pub fn hud_icon_button(
+    id: impl Into<ElementId>,
+    glyph: Icon,
+    active: bool,
+    size: f32,
+) -> Stateful<Div> {
+    icon_button_inked(id, glyph, active, size, theme::FG)
+}
+
+fn icon_button_inked(
+    id: impl Into<ElementId>,
+    glyph: Icon,
+    active: bool,
+    size: f32,
+    ink: Rgba,
+) -> Stateful<Div> {
     let el = div()
         .id(id)
         .w(px(size))
@@ -126,11 +148,7 @@ pub fn icon_button(
     };
     el.child(icons::icon(
         glyph,
-        if active {
-            theme::ACCENT_INK
-        } else {
-            theme::FG_DIM
-        },
+        if active { theme::ACCENT_INK } else { ink },
         glyph_for(size),
     ))
 }
@@ -219,13 +237,15 @@ pub fn raise_open<V: Render>(cx: &mut App, is: impl Fn(&V) -> bool) -> bool {
 /// The least space between the shortcuts sheet and the window edge.
 const SHEET_MARGIN: f32 = 16.0;
 
-/// A keyboard-shortcuts sheet: centered card over a dim layer, rows
-/// of action / key combination. The surface owns the open state and
-/// closes on Esc or a press on the dim layer. The dim layer takes the
-/// pointer from the surface under it, and the card stays inside the
-/// window: rows that do not fit scroll under the title on `scroll`,
-/// which the surface keeps across renders.
+/// A keyboard-shortcuts sheet: centered card over a dim layer, `lead`
+/// under the title where a surface has one, then rows of action / key
+/// combination. The surface owns the open state and closes on Esc or a
+/// press on the dim layer. The dim layer takes the pointer from the
+/// surface under it, and the card stays inside the window: rows that do
+/// not fit scroll under the title on `scroll`, which the surface keeps
+/// across renders.
 pub fn shortcuts_sheet(
+    lead: Option<AnyElement>,
     rows: Vec<(&'static str, SharedString)>,
     scroll: &ScrollHandle,
 ) -> Stateful<Div> {
@@ -234,7 +254,8 @@ pub fn shortcuts_sheet(
         .flex_col()
         .min_h_0()
         .gap(px(2.))
-        .mt(px(10.));
+        .mt(px(10.))
+        .children(lead);
     for (action, keys) in rows {
         list = list.child(
             div()

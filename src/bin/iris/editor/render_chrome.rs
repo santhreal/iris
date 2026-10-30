@@ -95,11 +95,53 @@ fn chord_labels(macos: bool) -> (&'static str, &'static str) {
     }
 }
 
-/// The editor help sheet's action and key rows.
+/// The editor help sheet's tool section: each tool's glyph over the
+/// key that selects it, read from TOOLS in toolbar order.
+fn tool_strip() -> AnyElement {
+    div()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .pb(px(10.))
+        .mb(px(4.))
+        .border_b_1()
+        .border_color(theme::HAIRLINE)
+        .child(
+            div()
+                .text_size(px(theme::TEXT_BODY))
+                .text_color(theme::FG)
+                .child("Tools"),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .gap(px(2.))
+                .children(TOOLS.iter().map(|&(_, glyph, _, key)| {
+                    div()
+                        .w(px(28.))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(crate::icons::icon(glyph, theme::FG_DIM, 16.0))
+                        .child(
+                            div()
+                                .text_size(px(theme::TEXT_SMALL))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme::FG)
+                                .child(key),
+                        )
+                })),
+        )
+        .into_any_element()
+}
+
+/// The editor help sheet's action and key rows, under the tool strip.
 pub(super) fn help_rows() -> Vec<(&'static str, SharedString)> {
     let (save_close, undo_redo) = chord_labels(cfg!(target_os = "macos"));
     vec![
-        ("Tools", "V P L A E R T H B C N".into()),
         ("Fill shapes", "F".into()),
         ("Stroke width", "1 / 2 / 3".into()),
         ("Color", "[ / ]".into()),
@@ -501,7 +543,7 @@ impl Editor {
 
         if self.help {
             root = root.child(
-                widgets::shortcuts_sheet(help_rows(), &self.help_scroll)
+                widgets::shortcuts_sheet(Some(tool_strip()), help_rows(), &self.help_scroll)
                     .opacity(topbar)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.help = false;
@@ -532,7 +574,8 @@ mod shortcut_tests {
         );
         let rows = super::help_rows();
         let (save_close, undo_redo) = super::chord_labels(cfg!(target_os = "macos"));
-        assert_eq!(rows[6], ("Save and close", save_close.into()));
-        assert_eq!(rows[8], ("Undo / Redo", undo_redo.into()));
+        let keys = |action| rows.iter().find(|(a, _)| *a == action).map(|(_, k)| k);
+        assert_eq!(keys("Save and close"), Some(&save_close.into()));
+        assert_eq!(keys("Undo / Redo"), Some(&undo_redo.into()));
     }
 }

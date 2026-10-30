@@ -350,7 +350,7 @@ impl ToastStage {
                 let (glyph, label) = action.face(self.pinned);
                 let active = action == ToastAction::KeepOpen && self.pinned;
                 capsule = capsule.child(
-                    crate::widgets::icon_button(action.id(), glyph, active, ACTION_BUTTON)
+                    crate::widgets::hud_icon_button(action.id(), glyph, active, ACTION_BUTTON)
                         .tooltip(tip(label, None))
                         .on_click(cx.listener(move |stage, _, window, cx| {
                             cx.stop_propagation();
