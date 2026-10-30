@@ -57,13 +57,39 @@ impl Row {
         }
     }
 
-    /// The switch that must be on for the row's setting to apply: the
-    /// floating thumbnail's options set nothing while it is off.
-    pub(super) fn requires(self) -> Option<Switch> {
+    /// What must hold for the row's setting to apply: the floating
+    /// thumbnail's options set nothing while it is off, and the MP4
+    /// encoder nothing for a GIF or WebM recording.
+    pub(super) fn requires(self) -> Option<Requires> {
         match self {
             Row::Pick(Pick::ToastClick | Pick::ToastDuration | Pick::ToastPosition)
-            | Row::Switch(Switch::ToastDrag | Switch::ToastActions) => Some(Switch::Thumbnail),
+            | Row::Switch(Switch::ToastDrag | Switch::ToastActions) => {
+                Some(Requires::On(Switch::Thumbnail))
+            }
+            Row::Pick(Pick::RecordingEncoder) => {
+                Some(Requires::Picked(Pick::RecordingFormat, FORMAT_MP4))
+            }
             _ => None,
+        }
+    }
+}
+
+/// A condition on another row's setting.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Requires {
+    /// The switch is on.
+    On(Switch),
+    /// The pop-up button has the option at this index selected.
+    Picked(Pick, usize),
+}
+
+#[cfg(test)]
+impl Requires {
+    /// The row whose setting the condition reads.
+    pub(super) fn row(self) -> Row {
+        match self {
+            Requires::On(s) => Row::Switch(s),
+            Requires::Picked(p, _) => Row::Pick(p),
         }
     }
 }
@@ -321,6 +347,9 @@ const FORMATS: [RecordingFormat; 3] = [
     RecordingFormat::Gif,
     RecordingFormat::Webm,
 ];
+/// The index of MP4 in `FORMATS`.
+const FORMAT_MP4: usize = 0;
+const _: () = assert!(matches!(FORMATS[FORMAT_MP4], RecordingFormat::Mp4));
 const ENCODERS: [RecordingEncoder; 3] = [
     RecordingEncoder::Auto,
     RecordingEncoder::Libx264,

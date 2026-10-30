@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use gpui::*;
 use iris_lib::config::Config;
 
-use super::panes::{Pane, Pick, Row, Switch};
+use super::panes::{Pane, Pick, Requires, Row, Switch};
 use super::{Edit, Field, Settings};
 use crate::sys::hotkeys::{self, Binding, Chord};
 use crate::theme;
@@ -438,10 +438,14 @@ impl Settings {
         self.enabled(row) && (row != Row::Version || self.offers_action())
     }
 
-    /// Whether `row`'s control takes input: off while the switch it
-    /// requires is off.
+    /// Whether `row`'s control takes input: off while the condition it
+    /// requires does not hold.
     pub(super) fn enabled(&self, row: Row) -> bool {
-        row.requires().is_none_or(|s| self.switch_on(s))
+        match row.requires() {
+            None => true,
+            Some(Requires::On(s)) => self.switch_on(s),
+            Some(Requires::Picked(p, ix)) => p.selected(&self.cfg) == Some(ix),
+        }
     }
 
     /// The color of the keyboard focus ring around the control of `row`:

@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use iris_lib::config::Config;
 
-use super::panes::{Pick, Switch};
+use super::panes::{Pick, Requires, Switch};
 use super::*;
 
 fn settings(release: Release) -> Settings {
@@ -461,45 +461,63 @@ fn tab_passes_over_the_version_row_while_it_shows_no_button() {
 }
 
 // WHY: closes "a control that sets nothing takes input": a row whose
-// required switch is off (the floating thumbnail's options with the
-// thumbnail off) is disabled, Tab passes over it, and it comes back
-// with the switch. The dependent rows are read from `Row::requires`
-// over every pane, so a new one is covered, and its switch must be
-// drawn above it on the same pane. Not covered: the dimmed drawing and
-// the pointer layer over it, which the settings pane shots show.
+// condition does not hold (the floating thumbnail's options with the
+// thumbnail off, the MP4 encoder for a GIF or WebM recording) is
+// disabled, Tab passes over it, and it comes back with the condition.
+// The dependent rows are read from `Row::requires` over every pane, and
+// every state of each condition's row is tried, so a new dependent is
+// covered; the row it reads must be drawn above it on the same pane.
+// Not covered: the dimmed drawing and the pointer layer over it, which
+// the settings pane shots show.
 #[test]
-fn a_row_whose_switch_is_off_leaves_the_tab_ring() {
+fn a_row_whose_condition_fails_leaves_the_tab_ring() {
     let mut dependents = 0;
     for pane in Pane::ALL {
         let rows: Vec<Row> = pane.rows().collect();
         for (at, row) in rows.iter().enumerate() {
-            let Some(switch) = row.requires() else {
+            let Some(need) = row.requires() else {
                 continue;
             };
             dependents += 1;
             assert!(
-                rows[..at].contains(&Row::Switch(switch)),
-                "{row:?} requires {switch:?}, which {pane:?} does not draw above it"
+                rows[..at].contains(&need.row()),
+                "{row:?} requires {need:?}, which {pane:?} does not draw above it"
             );
-            for on in [true, false] {
+            let states = match need {
+                Requires::On(_) => 2,
+                Requires::Picked(pick, _) => pick.options().len(),
+            };
+            let mut held = [false; 2];
+            for n in 0..states {
                 let mut s = settings(Release::None);
                 s.pane = pane;
-                *switch.slot(&mut s.cfg).unwrap() = on;
-                assert_eq!(s.enabled(*row), on, "{row:?} with {switch:?} {on}");
+                let holds = match need {
+                    Requires::On(switch) => {
+                        *switch.slot(&mut s.cfg).unwrap() = n == 0;
+                        n == 0
+                    }
+                    Requires::Picked(pick, want) => {
+                        pick.select(&mut s.cfg, n);
+                        n == want
+                    }
+                };
+                held[usize::from(holds)] = true;
+                assert_eq!(s.enabled(*row), holds, "{row:?} in state {n} of {need:?}");
                 let walk = tab_walk(&mut s, true, rows.len() + 1);
                 assert_eq!(
                     walk.contains(&Some(*row)),
-                    on,
-                    "{row:?} in the Tab ring with {switch:?} {on}"
+                    holds,
+                    "{row:?} in the Tab ring in state {n} of {need:?}"
                 );
                 assert!(
-                    walk.contains(&Some(Row::Switch(switch))),
-                    "{switch:?} stays in the ring to turn back on"
+                    walk.contains(&Some(need.row())),
+                    "{need:?} stays in the ring to change back"
                 );
             }
+            assert_eq!(held, [true; 2], "{need:?} never or always holds");
         }
     }
-    assert!(dependents > 0, "no row requires a switch");
+    assert!(dependents > 0, "no row has a condition");
 }
 
 /// The storage fields show the home directory as `~`, the form

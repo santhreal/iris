@@ -181,7 +181,7 @@ The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`C
 | **Shortcuts** | Global hotkeys for a new screenshot and recording; the selection overlay's cancel and confirm keys |
 | **Updates** | Automatic update checks, update channel, the running version, the time of the last check, **Check Now**, and **Install** once a check finds a newer release (see [Updates](updates.md#settings)) |
 
-With **Show floating thumbnail** off, the floating thumbnail's other settings show dimmed: a click and the focus ring pass over them, and they keep their values until the switch is on again.
+With **Show floating thumbnail** off, the floating thumbnail's other settings show dimmed: a click and the focus ring pass over them, and they keep their values until the switch is on again. **MP4 encoder** shows dimmed the same way while **Format** is GIF or WebM.
 
 Press `Ctrl+W` (`Cmd+W` on macOS) or `Escape`, or click the close control, to close the window. Drag the toolbar to move it.
 
