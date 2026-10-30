@@ -258,7 +258,8 @@ pub fn update(path: &Path, img: &image::RgbaImage) -> Result<CaptureEntry, Strin
 fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<CaptureEntry, String> {
     let (width, height) = img.dimensions();
     let thumb = thumbs_dir()?.join(format!("{}.png", path_key(path)));
-    make_thumb(img)
+    let pixels = make_thumb(img);
+    pixels
         .save(&thumb)
         .map_err(|e| format!("save thumbnail: {e}"))?;
 
@@ -287,8 +288,48 @@ fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<Capture
         entries.insert(0, entry.clone());
         entry
     };
+    // Before the write: its hook sends the open window to the store.
+    stash_fresh(&entry, pixels);
     write_store(entries)?;
     Ok(entry)
+}
+
+/// Thumbnails this process made and no window took yet, newest first,
+/// with the revision of the capture each shows. An open library window
+/// takes a new card's pixels from here, so the card shows its capture
+/// on its first frame, not a blank card and then a decode of the file
+/// just written. Bounded: a burst of captures with no window open
+/// holds at most FRESH_MAX.
+static FRESH: parking_lot::Mutex<Vec<FreshThumb>> = parking_lot::Mutex::new(Vec::new());
+/// A capture's path, its revision, and its thumbnail pixels.
+type FreshThumb = (PathBuf, (i64, i64), image::RgbaImage);
+const FRESH_MAX: usize = 4;
+
+fn stash_fresh(entry: &CaptureEntry, pixels: image::RgbaImage) {
+    let mut fresh = FRESH.lock();
+    fresh.retain(|(p, _, _)| *p != entry.path);
+    fresh.insert(0, (entry.path.clone(), entry.revision(), pixels));
+    fresh.truncate(FRESH_MAX);
+}
+
+/// Take each thumbnail this process made that `wanted` accepts, given
+/// the capture's path and revision. The rest stay for a later take
+/// until newer ones push them out.
+pub fn take_fresh_thumbs(
+    mut wanted: impl FnMut(&Path, (i64, i64)) -> bool,
+) -> Vec<(PathBuf, image::RgbaImage)> {
+    let mut fresh = FRESH.lock();
+    let mut taken = Vec::new();
+    let mut i = 0;
+    while i < fresh.len() {
+        if wanted(&fresh[i].0, fresh[i].1) {
+            let (path, _, pixels) = fresh.remove(i);
+            taken.push((path, pixels));
+        } else {
+            i += 1;
+        }
+    }
+    taken
 }
 
 /// The entry's thumbnail pixels. A cached file that is missing,

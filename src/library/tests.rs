@@ -287,6 +287,70 @@ fn add_writes_the_whole_capture_at_the_fitted_size() {
     assert_eq!(thumbnail(&entry).unwrap(), thumb);
 }
 
+// WHY: closes "a new card shows blank, then its capture" and "a card
+// shows another revision's pixels": a save hands the open library
+// window its thumbnail for that capture's revision only, once, and a
+// burst with no window open holds a bounded number. Not covered: the
+// window inserting the pixels before its first frame, checked by the
+// capture -> library card perf scenario.
+#[test]
+#[serial_test::serial]
+fn a_save_hands_its_thumbnail_to_one_take_of_that_revision() {
+    let d = isolated_home();
+    take_fresh_thumbs(|_, _| true);
+    let shot = d.path().join("s.png");
+    let img = solid(&shot, 880, 495, GREEN);
+    let added = add(&shot, &img).unwrap();
+    let on_disk = image::open(&added.thumb).unwrap().into_rgba8();
+    // A take that does not want it leaves it.
+    assert!(take_fresh_thumbs(|_, _| false).is_empty());
+    let other = (added.created_ms, added.edited_ms + 1);
+    assert!(take_fresh_thumbs(|p, rev| p == shot && rev == other).is_empty());
+    let taken = take_fresh_thumbs(|p, rev| p == shot && rev == added.revision());
+    assert_eq!(taken.len(), 1);
+    assert_eq!((&taken[0].0, &taken[0].1), (&shot, &on_disk));
+    assert!(take_fresh_thumbs(|_, _| true).is_empty(), "taken once");
+
+    // An editor save: the new revision brings the new pixels and the
+    // old revision is gone.
+    let red = image::RgbaImage::from_pixel(880, 495, image::Rgba(RED));
+    let updated = update(&shot, &red).unwrap();
+    assert_ne!(updated.revision(), added.revision());
+    assert!(take_fresh_thumbs(|_, rev| rev == added.revision()).is_empty());
+    let taken = take_fresh_thumbs(|_, rev| rev == updated.revision());
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].1.get_pixel(0, 0).0, RED);
+
+    // An editor save before any take: the older revision's pixels give
+    // up their slot, so a capture holds one.
+    let second = d.path().join("t.png");
+    let img = solid(&second, 80, 60, GREEN);
+    let first_rev = add(&second, &img).unwrap().revision();
+    let saved_rev = update(&second, &img).unwrap().revision();
+    assert_ne!(first_rev, saved_rev);
+    let held: Vec<PathBuf> = take_fresh_thumbs(|p, _| p == second)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+    assert_eq!(held, [second], "one slot per capture");
+
+    // A burst with no window: the newest FRESH_MAX stay.
+    let burst: Vec<PathBuf> = (0..FRESH_MAX + 2)
+        .map(|i| {
+            let p = d.path().join(format!("b{i}.png"));
+            let img = solid(&p, 40, 30, GREEN);
+            add(&p, &img).unwrap();
+            p
+        })
+        .collect();
+    let kept: Vec<PathBuf> = take_fresh_thumbs(|_, _| true)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+    let newest: Vec<PathBuf> = burst.iter().rev().take(FRESH_MAX).cloned().collect();
+    assert_eq!(kept, newest);
+}
+
 #[test]
 #[serial_test::serial]
 fn thumbnail_reads_a_current_file_without_rebuilding() {

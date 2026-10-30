@@ -122,6 +122,21 @@ impl Library {
         // A capture changed under its path: drop its thumbnail so the
         // prefetch decodes the new one.
         super::evict_thumbs(&mut self.thumb_cache, |p| !stale.iter().any(|s| s == p), cx);
+        // A capture this process just saved brings its thumbnail: its
+        // card shows the capture on its first frame, with no blank
+        // frame and no decode of the file just written.
+        let shown = self.listing.entries();
+        let cache = &self.thumb_cache;
+        let fresh = library::take_fresh_thumbs(|path, revision| {
+            !cache.contains_key(path)
+                && shown
+                    .iter()
+                    .any(|e| e.path == path && e.revision() == revision)
+        });
+        for (path, img) in fresh {
+            self.thumb_cache
+                .insert(path, crate::widgets::render_image_from_rgba_owned(img));
+        }
         self.entries_dirty = true;
         self.sel_dirty = true;
         // Indexes into the old listing: the cursor stays where it was,
