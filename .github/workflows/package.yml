@@ -435,6 +435,14 @@ jobs:
               Start-Sleep -Milliseconds 200
             }
           }
+          # Holds $path open for reading, as a virus scanner does, while
+          # $start runs and for 5 s after, then returns what $start returned.
+          # The handle is this shell's: a spawned holder shell can start too
+          # late on a loaded runner, and its failure to open is invisible.
+          function Invoke-Held([string]$path, [scriptblock]$start) {
+            $f = [IO.File]::Open($path, 'Open', 'Read', 'Read')
+            try { $started = & $start; Start-Sleep 5; $started } finally { $f.Close() }
+          }
           # The daemon's pipe holds the account's SID (docs/cli.md).
           $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
           $pipe = { [IO.Directory]::GetFiles('\\.\pipe\') -contains "\\.\pipe\iris-$sid" }
@@ -442,17 +450,15 @@ jobs:
           $daemon = Start-Process -PassThru -FilePath "$dir\iris.exe"
           $null = $daemon.Handle
           Wait-Until $pipe 'the daemon pipe'
-          $held = Join-Path $env:RUNNER_TEMP 'iris-held'
-          $hold = "`$f = [IO.File]::Open('$dir\iris.exe', 'Open', 'Read', 'Read'); New-Item '$held' | Out-Null; Start-Sleep 5; `$f.Close()"
-          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
-          Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
-          Wait-Until { Test-Path $held } 'the process holding iris.exe'
           # Start at login turned off (Settings deletes the Run value):
           # the upgrade writes none.
           Remove-ItemProperty $run -Name iris
           $clock = [Diagnostics.Stopwatch]::StartNew()
-          $upgrade = Start-Process -PassThru -FilePath $setup -ArgumentList '/S', '/RUN'
-          $null = $upgrade.Handle
+          $upgrade = Invoke-Held "$dir\iris.exe" {
+            $p = Start-Process -PassThru -FilePath $setup -ArgumentList '/S', '/RUN'
+            $null = $p.Handle
+            $p
+          }
           if (-not $upgrade.WaitForExit(120000)) { throw 'the upgrade ran over 120 s' }
           $took = $clock.ElapsedMilliseconds
           if ($upgrade.ExitCode -ne 0) { throw "upgrade exit code $($upgrade.ExitCode) after $took ms" }
@@ -468,14 +474,12 @@ jobs:
           # An upgrade rewrites a Run value that exists, and waits for
           # a held ffmpeg.exe even after the daemon has quit.
           Set-ItemProperty $run -Name iris -Value 'stale'
-          $held = Join-Path $env:RUNNER_TEMP 'ffmpeg-held'
-          $hold = "`$f = [IO.File]::Open('$dir\ffmpeg.exe', 'Open', 'Read', 'Read'); New-Item '$held' | Out-Null; Start-Sleep 5; `$f.Close()"
-          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
-          Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
-          Wait-Until { Test-Path $held } 'the process holding ffmpeg.exe'
           $clock = [Diagnostics.Stopwatch]::StartNew()
-          $upgrade = Start-Process -PassThru -FilePath $setup -ArgumentList '/S'
-          $null = $upgrade.Handle
+          $upgrade = Invoke-Held "$dir\ffmpeg.exe" {
+            $p = Start-Process -PassThru -FilePath $setup -ArgumentList '/S'
+            $null = $p.Handle
+            $p
+          }
           if (-not $upgrade.WaitForExit(120000)) { throw 'the ffmpeg.exe upgrade ran over 120 s' }
           $took = $clock.ElapsedMilliseconds
           if ($upgrade.ExitCode -ne 0) { throw "ffmpeg.exe upgrade exit code $($upgrade.ExitCode) after $took ms" }
@@ -488,13 +492,8 @@ jobs:
           $again.Save()
           # A process holding an installed file (a virus scanner) as the
           # uninstaller deletes it: the uninstaller retries until it closes.
-          $held = Join-Path $env:RUNNER_TEMP 'ico-held'
-          $hold = "`$f = [IO.File]::Open('$dir\iris.ico', 'Open', 'Read', 'Read'); New-Item '$held' | Out-Null; Start-Sleep 5; `$f.Close()"
-          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
-          Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
-          Wait-Until { Test-Path $held } 'the process holding iris.ico'
           # The uninstaller runs from a copy in %TEMP% and returns at once.
-          Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S'
+          Invoke-Held "$dir\iris.ico" { Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S' }
           $deadline = (Get-Date).AddSeconds(60)
           while ((Test-Path $dir) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
           if (Test-Path $dir) { throw "$dir remains after uninstall" }
