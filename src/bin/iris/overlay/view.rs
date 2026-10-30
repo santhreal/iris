@@ -4,14 +4,15 @@ use super::{loupe::LOUPE_PX, shell::reveal, Overlay, HANDLE_PX, HOVER_FADE};
 use crate::theme;
 
 /// One overlay readout: coordinates, the selection's size, the loupe's
-/// pixel, or the confirm hint. Every pill shares the padding, corner,
-/// fill, and hairline, and digits are tabular so a number that changes
-/// under the pointer keeps its width.
+/// pixel, or the confirm hint. Every pill shares the padding, capsule
+/// ends, fill, and hairline, as a HUD label reads over any screen, and
+/// digits are tabular so a number that changes under the pointer keeps
+/// its width.
 fn readout(text: SharedString, color: Rgba) -> Div {
     div()
-        .px(px(8.))
+        .px(px(9.))
         .py(px(3.))
-        .rounded(px(theme::RADIUS_CONTROL))
+        .rounded_full()
         .bg(theme::alpha(theme::BG_ELEV, 0.9))
         .border_1()
         .border_color(theme::HAIRLINE)
@@ -240,9 +241,11 @@ impl Overlay {
                         .absolute()
                         .left(px(lx))
                         .top(px(ly))
+                        .w(px(LOUPE_PX as f32))
                         .flex()
                         .flex_col()
-                        .gap(px(4.))
+                        .items_center()
+                        .gap(px(6.))
                         .child(
                             div()
                                 .w(px(LOUPE_PX as f32))
@@ -257,7 +260,7 @@ impl Overlay {
                                 .shadow(theme::shadow_float())
                                 .child(img(ImageSource::Render(loupe.clone())).size_full()),
                         )
-                        .child(readout(info.clone(), theme::FG_DIM)),
+                        .child(readout(info.clone(), theme::FG)),
                 );
             }
         }
