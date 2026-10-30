@@ -74,6 +74,12 @@ fn key_label(key: &str) -> SharedString {
 /// as a row of buttons. Tabular figures keep a function key's number
 /// from shifting the row.
 pub fn keycaps(chord: &str) -> Div {
+    keycaps_in(chord, theme::FG_DIM)
+}
+
+/// `chord` as [`keycaps`] with its labels in `ink`: primary text where
+/// the chord is a control's value, as in a shortcut field.
+pub fn keycaps_in(chord: &str, ink: Rgba) -> Div {
     div()
         .flex()
         .items_center()
@@ -92,7 +98,7 @@ pub fn keycaps(chord: &str) -> Div {
                 .line_height(px(14.))
                 .font_weight(FontWeight::MEDIUM)
                 .font_features(theme::tabular())
-                .text_color(theme::FG_DIM)
+                .text_color(ink)
                 .whitespace_nowrap()
                 .child(key)
         }))

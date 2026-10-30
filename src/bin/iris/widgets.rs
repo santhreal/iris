@@ -43,7 +43,7 @@ pub use self::field::{
     FieldState, Line, LineKey, TextOrigin,
 };
 pub use self::image::*;
-pub use self::keycaps::{chord_label, keycaps};
+pub use self::keycaps::{chord_label, keycaps, keycaps_in};
 pub use self::menu::{
     hover_row, menu, menu_at, menu_key, menu_separator, popup_button, popup_menu, MenuItem,
     MenuKey, MENU_PAD, MENU_RADIUS, MENU_ROW_H, MENU_W,

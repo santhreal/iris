@@ -760,13 +760,22 @@ impl Settings {
     }
 
     pub(super) fn hotkey_row(&self, field: Field, cx: &mut Context<Self>) -> Div {
-        let (text, state) = if self.recording == Some(field) {
-            ("Type shortcut".to_string(), widgets::FieldState::Recording)
+        // At rest the chord shows as key caps, as Home and the shortcut
+        // sheets show it; recording shows the prompt.
+        let recording = self.recording == Some(field);
+        let state = if recording {
+            widgets::FieldState::Recording
         } else {
-            (self.field_text(field), widgets::FieldState::Rest)
+            widgets::FieldState::Rest
         };
         let ring = state.ring().or(self.keyboard_ring(Row::Hotkey(field)));
-        let input = widgets::text_field(field.id(), text, state, None)
+        let input = if recording {
+            widgets::text_field(field.id(), "Type shortcut", state, None)
+        } else {
+            widgets::text_field(field.id(), "", state, None)
+                .child(widgets::keycaps_in(&self.field_text(field), theme::FG))
+        };
+        let input = input
             .w(px(SHORTCUT_W))
             .flex_shrink_0()
             .justify_center()
