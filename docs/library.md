@@ -43,7 +43,7 @@ A capture saved from the editor keeps its place and the time it was taken, and i
 Each card is 216 pixels wide:
 
 - The thumbnail, in an area 132 pixels high: the whole capture at its own aspect, scaled down to fit the area and never up, centered across the card and resting on the caption line. It has 8-pixel corners and a hairline border. A capture that fits smaller than 104×48 pixels sits centered on a matte of that size. A selected card has a 2-pixel accent ring 2 pixels outside the thumbnail.
-- Under it, the local time the capture was taken (`14:02`) and its pixel dimensions (`1920 × 1080`). A pointer resting on this line shows the file name.
+- Under it, the local time the capture was taken (`14:02`) at the thumbnail's left edge and its pixel dimensions (`1920 × 1080`) at its right edge. Under a thumbnail narrower than 140 pixels, the line is 140 pixels wide and centered. A pointer resting on this line shows the file name.
 
 ## Selection
 

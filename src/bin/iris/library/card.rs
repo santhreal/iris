@@ -37,6 +37,18 @@ fn thumb_image(w: u32, h: u32) -> (f32, f32) {
     (tw as f32 / 2.0, th as f32 / 2.0)
 }
 
+/// The narrowest caption: a time beside a five-digit pixel size.
+pub(super) const CAPTION_MIN: f32 = 140.0;
+
+/// The caption line's span under a thumbnail frame `fw` wide, as
+/// (left, width) in the card: the frame's own edges, so the time and
+/// the size end where the thumbnail does, and at least CAPTION_MIN
+/// wide, centered under a narrower frame.
+pub(super) fn caption_span(fw: f32) -> (f32, f32) {
+    let w = fw.clamp(CAPTION_MIN, CARD_W);
+    ((CARD_W - w) / 2.0, w)
+}
+
 /// The selection ring: RING wide, RING_GAP outside the thumbnail.
 pub(super) const RING: f32 = 2.0;
 pub(super) const RING_GAP: f32 = 2.0;
@@ -189,9 +201,12 @@ impl Library {
             .justify_center()
             .child(frame);
 
+        let (caption_x, caption_w) = caption_span(fw);
         let caption_row = div()
             .id(("caption", index))
             .mt(px(CAPTION_GAP))
+            .ml(px(caption_x))
+            .w(px(caption_w))
             .h(px(CAPTION_H))
             .px(px(2.))
             .flex()

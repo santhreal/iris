@@ -4,7 +4,7 @@ use std::prelude::v1::test;
 use iris_lib::library::CaptureEntry;
 use iris_lib::time::days_from_civil;
 
-use super::card::{thumb_frame, MIN_FRAME};
+use super::card::{caption_span, thumb_frame, CAPTION_MIN, MIN_FRAME};
 use super::context_menu::{place, MENU_H};
 use super::entries::trash_status;
 use super::keys::{arrow, arrow_step};
@@ -887,4 +887,43 @@ fn a_thumbnail_frame_fits_the_whole_capture_in_the_card() {
         thumb_frame(1080, 1920),
         ((CARD_W - MIN_FRAME.0) / 2.0, 0.0, MIN_FRAME.0, THUMB_H)
     );
+}
+
+// WHY: closes "a card's caption overhangs or falls short of its
+// thumbnail": the caption line ends at the thumbnail frame's edges, and
+// under a frame narrower than CAPTION_MIN it is CAPTION_MIN wide,
+// centered, inside the card. It does not measure the caption text
+// against CAPTION_MIN; the docshots review does.
+#[test]
+fn a_caption_lines_up_with_its_thumbnail() {
+    for (w, h) in [
+        (1920, 1080),
+        (1200, 820),
+        (1080, 1920),
+        (300, 1000),
+        (8, 6),
+        (100_000, 10),
+        (10, 100_000),
+    ] {
+        let (fx, _, fw, _) = thumb_frame(w, h);
+        let (cx, cw) = caption_span(fw);
+        assert!(
+            cx >= 0.0 && cx + cw <= CARD_W + 0.001,
+            "{w}x{h}: caption {cx} + {cw} inside the card"
+        );
+        if fw >= CAPTION_MIN {
+            assert_eq!((cx, cw), (fx, fw), "{w}x{h}: on the frame's edges");
+        } else {
+            assert_eq!(
+                (cx, cw),
+                ((CARD_W - CAPTION_MIN) / 2.0, CAPTION_MIN),
+                "{w}x{h}: CAPTION_MIN, centered"
+            );
+        }
+    }
+    // A 1200x820 capture's frame is narrower than the card, and so is
+    // its caption.
+    let (fx, _, fw, _) = thumb_frame(1200, 820);
+    assert!(fw < CARD_W && fw > CAPTION_MIN, "{fw}");
+    assert_eq!(caption_span(fw), (fx, fw));
 }
