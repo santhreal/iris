@@ -259,9 +259,6 @@ fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<Capture
     let (width, height) = img.dimensions();
     let thumb = thumbs_dir()?.join(format!("{}.png", path_key(path)));
     let pixels = make_thumb(img);
-    pixels
-        .save(&thumb)
-        .map_err(|e| format!("save thumbnail: {e}"))?;
 
     let now = crate::time::now_millis();
     let mut entries = read_store();
@@ -288,10 +285,27 @@ fn record(path: &Path, img: &image::RgbaImage, in_place: bool) -> Result<Capture
         entries.insert(0, entry.clone());
         entry
     };
-    // Before the write: its hook sends the open window to the store.
-    stash_fresh(&entry, pixels);
+    // Before the write: its hook sends the open window to the store,
+    // and the window takes these pixels instead of reading the file.
+    stash_fresh(&entry, pixels.clone());
+    // A thumbnail left at this path shows an earlier capture: a window
+    // that reads the file before the new one lands rebuilds it from the
+    // capture instead.
+    let _ = std::fs::remove_file(&entry.thumb);
     write_store(entries)?;
+    // After the write: no window waits on the encode.
+    save_thumb(&entry.thumb, &pixels)?;
     Ok(entry)
+}
+
+/// A rename, so a window that rebuilds the same thumbnail meanwhile
+/// never reads a file cut short.
+fn save_thumb(path: &Path, pixels: &image::RgbaImage) -> Result<(), String> {
+    let mut png = std::io::Cursor::new(Vec::new());
+    pixels
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| format!("encode thumbnail: {e}"))?;
+    crate::output::replace(path, png.get_ref()).map_err(|e| format!("save thumbnail: {e}"))
 }
 
 /// Thumbnails this process made and no window took yet, newest first,
@@ -368,7 +382,7 @@ fn rebuild_thumb(entry: &CaptureEntry) -> Result<image::RgbaImage, String> {
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .map_err(|e| e.to_string())
-        .and_then(|()| thumb.save(&entry.thumb).map_err(|e| e.to_string()));
+        .and_then(|()| save_thumb(&entry.thumb, &thumb));
     if let Err(e) = saved {
         crate::ilog!("iris: save thumbnail {}: {e}", entry.thumb.display());
     }

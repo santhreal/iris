@@ -447,9 +447,19 @@ static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::
 /// the store file held.
 type Seen = Vec<(Option<Vec<PathBuf>>, Vec<PathBuf>)>;
 static PROBE: parking_lot::Mutex<Option<Seen>> = parking_lot::Mutex::new(None);
+/// When a test sets a thumbnail path: per hook run, the first pixel of
+/// the file there (None when it is missing or does not decode).
+type ThumbSeen = (PathBuf, Vec<Option<[u8; 4]>>);
+static THUMB_PROBE: parking_lot::Mutex<Option<ThumbSeen>> = parking_lot::Mutex::new(None);
 
 fn count_write() {
     WRITES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Some((thumb, seen)) = THUMB_PROBE.lock().as_mut() {
+        let first = image::open(&*thumb)
+            .ok()
+            .map(|img| img.into_rgba8().get_pixel(0, 0).0);
+        seen.push(first);
+    }
     let mut probe = PROBE.lock();
     let Some(seen) = probe.as_mut() else {
         return;
@@ -476,6 +486,27 @@ fn hooked<T>(op: impl FnOnce() -> T) -> usize {
     let before = WRITES.load(std::sync::atomic::Ordering::SeqCst);
     op();
     WRITES.load(std::sync::atomic::Ordering::SeqCst) - before
+}
+
+// WHY: the thumbnail encodes after the store write, so an open window
+// lists a capture without waiting on it. Closed here: a window that
+// reads the thumbnail file in that gap and finds the thumbnail of what
+// the path held before (it shows the old capture on the new card), and
+// a write that leaves no thumbnail once it returns. Not covered: the
+// window's take of the fresh pixels, which entries.rs's show tests.
+#[test]
+#[serial_test::serial]
+fn a_store_write_never_shows_the_previous_thumbnail() {
+    let d = isolated_home();
+    let shot = d.path().join("shot.png");
+    let entry = add(&shot, &solid(&shot, 8, 6, RED)).unwrap();
+    *THUMB_PROBE.lock() = Some((entry.thumb.clone(), Vec::new()));
+    let runs = hooked(|| update(&shot, &solid(&shot, 8, 6, GREEN)).unwrap());
+    let (_, seen) = THUMB_PROBE.lock().take().unwrap();
+    assert_eq!(runs, 1);
+    assert_ne!(seen, [Some(RED)], "the hook found the old thumbnail");
+    let first = |path: &Path| image::open(path).unwrap().into_rgba8().get_pixel(0, 0).0;
+    assert_eq!(first(&entry.thumb), GREEN, "the update wrote its thumbnail");
 }
 
 // WHY: an open library window lists a capture the moment this process

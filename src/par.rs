@@ -6,6 +6,20 @@
 //! sites with subtly different thresholds; this is the single owner
 //! of the policy: band count, the size gate, and the scoped spawn.
 
+/// Below this many bytes of work a split runs inline: thread spawn
+/// latency costs more than the parallelism saves on small images.
+const PARALLEL_MIN: usize = 1 << 20;
+
+/// Threads for `units` splittable units: one per core, at most 8, and
+/// never more than there are units.
+fn band_threads(units: usize) -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4)
+        .min(units)
+        .max(1)
+}
+
 /// Run `f` over disjoint bands of `data`, one scoped thread per band.
 ///
 /// `band_elems` is the number of elements per band (a row's worth, or
@@ -35,17 +49,12 @@ pub fn par_bands_mut_work<T: Send>(
     f: impl Fn(&mut [T], usize) + Sync + Send,
 ) {
     let band_elems = band_elems.max(1);
-    const PARALLEL_MIN: usize = 1 << 20;
     if work_bytes < PARALLEL_MIN || data.len() <= band_elems {
         let start = 0;
         f(data, start);
         return;
     }
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
-        .unwrap_or(4)
-        .min(data.len().div_ceil(band_elems))
-        .max(1);
+    let threads = band_threads(data.len().div_ceil(band_elems));
     let band = data.len().div_ceil(threads * band_elems) * band_elems;
     std::thread::scope(|scope| {
         let f = &f;
@@ -67,17 +76,11 @@ pub fn par_bands_mut_work<T: Send>(
 /// (e.g. a strided source feeding a packed destination).
 pub fn par_bands<T: Sync>(data: &[T], band_elems: usize, f: impl Fn(&[T], usize) + Sync + Send) {
     let band_elems = band_elems.max(1);
-    let total_bytes = std::mem::size_of_val(data);
-    const PARALLEL_MIN: usize = 1 << 20;
-    if total_bytes < PARALLEL_MIN || data.len() <= band_elems {
+    if std::mem::size_of_val(data) < PARALLEL_MIN || data.len() <= band_elems {
         f(data, 0);
         return;
     }
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
-        .unwrap_or(4)
-        .min(data.len().div_ceil(band_elems))
-        .max(1);
+    let threads = band_threads(data.len().div_ceil(band_elems));
     let band = data.len().div_ceil(threads * band_elems) * band_elems;
     std::thread::scope(|scope| {
         let f = &f;
