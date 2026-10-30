@@ -22,7 +22,10 @@
 //! - a pop-up whose shadow and the room around its card take a click
 //!   meant for the window beneath, or whose card does not take one;
 //! - a flash that darkens every monitor with no compositing manager, or
-//!   one that no longer opens under one.
+//!   one that no longer opens under one;
+//! - a flash window built again for each capture instead of shown again
+//!   from where the last blink stowed it, or one that stays mapped over
+//!   the screen after its blink.
 //!
 //! Each case runs on a private Xvfb with no window manager, whose root
 //! shows a solid colour; the case's connection stands in for the
@@ -121,26 +124,89 @@ fn a_popup_shows_only_its_card_where_no_compositor_blends_it() {
         leaves(&conn, root, &daemon, NOTICE, window, rest, &mut wrong);
 
         // A capture flashes, then its toast lands, and leaves after its
-        // default five seconds.
-        daemon.send(&["--capture-fullscreen"]);
-        let (window, rest) = card(&conn, root, &daemon, TOAST, compositor, &mut wrong);
-        input(&conn, root, window, TOAST, compositor, true, &mut wrong);
-        let mut flashes = 0;
-        while let Some(event) = conn.poll_for_event().unwrap() {
-            if let Event::CreateNotify(created) = event {
-                flashes += usize::from(
-                    created.override_redirect && (created.width, created.height) == SIZE,
-                );
+        // default five seconds. The second capture's flash is the window
+        // the first one stowed: building a flash window costs a renderer
+        // init between the grab and the toast.
+        let mut flashes = Flashes::default();
+        for capture in [1, 2] {
+            daemon.send(&["--capture-fullscreen"]);
+            let (window, rest) = card(&conn, root, &daemon, TOAST, compositor, &mut wrong);
+            input(&conn, root, window, TOAST, compositor, true, &mut wrong);
+            let (created, shown) = flashes.drain(&conn);
+            if shown != usize::from(compositor) {
+                wrong.push(format!(
+                    "compositor {compositor}: capture {capture} showed {shown} flashes"
+                ));
+            }
+            if capture == 2 && created != 0 {
+                wrong.push(format!(
+                    "compositor {compositor}: capture 2 built {created} flash windows"
+                ));
+            }
+            leaves(&conn, root, &daemon, TOAST, window, rest, &mut wrong);
+            flashes.drain(&conn);
+            if flashes.on_screen() != 0 {
+                wrong.push(format!(
+                    "compositor {compositor}: capture {capture}'s flash stayed mapped"
+                ));
             }
         }
-        if flashes != usize::from(compositor) {
-            wrong.push(format!(
-                "compositor {compositor}: a capture opened {flashes} flash windows"
-            ));
-        }
-        leaves(&conn, root, &daemon, TOAST, window, rest, &mut wrong);
     }
     assert!(wrong.is_empty(), "pop-ups:\n{}", wrong.join("\n"));
+}
+
+/// The daemon's override-redirect windows as the root's
+/// SubstructureNotify events report them: each one's size in pixels and
+/// whether it is mapped.
+#[derive(Default)]
+struct Flashes {
+    windows: std::collections::HashMap<u32, ((u16, u16), bool)>,
+}
+
+impl Flashes {
+    /// Read the queued events. Returns how many screen-sized
+    /// override-redirect windows were created, and how many maps showed
+    /// one, since the last call.
+    fn drain(&mut self, conn: &RustConnection) -> (usize, usize) {
+        let (mut created, mut shown) = (0, 0);
+        while let Some(event) = conn.poll_for_event().unwrap() {
+            match event {
+                Event::CreateNotify(e) if e.override_redirect => {
+                    created += usize::from((e.width, e.height) == SIZE);
+                    self.windows.insert(e.window, ((e.width, e.height), false));
+                }
+                Event::ConfigureNotify(e) => {
+                    if let Some(w) = self.windows.get_mut(&e.window) {
+                        w.0 = (e.width, e.height);
+                    }
+                }
+                Event::MapNotify(e) => {
+                    if let Some(w) = self.windows.get_mut(&e.window) {
+                        w.1 = true;
+                        shown += usize::from(w.0 == SIZE);
+                    }
+                }
+                Event::UnmapNotify(e) => {
+                    if let Some(w) = self.windows.get_mut(&e.window) {
+                        w.1 = false;
+                    }
+                }
+                Event::DestroyNotify(e) => {
+                    self.windows.remove(&e.window);
+                }
+                _ => {}
+            }
+        }
+        (created, shown)
+    }
+
+    /// How many screen-sized override-redirect windows are mapped.
+    fn on_screen(&self) -> usize {
+        self.windows
+            .values()
+            .filter(|&&(size, mapped)| mapped && size == SIZE)
+            .count()
+    }
 }
 
 /// The work area panels leave on the screen in the second case: a 30

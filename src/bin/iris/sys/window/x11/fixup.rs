@@ -110,6 +110,31 @@ pub fn unpark_span(xid: u32, x: i32, y: i32, w: u32, h: u32) {
     let _ = conn.flush();
 }
 
+/// Take the override-redirect window `xid` off the screen: shrunk to
+/// one pixel, so its renderer holds one-pixel buffers while it waits,
+/// and unmapped. No window manager acts on such a window, so the
+/// requests go out at once. `show_span` brings it back.
+pub fn stow(xid: u32) {
+    let Ok((conn, _)) = iris_lib::sys::capture::x11::shared_conn() else {
+        return;
+    };
+    let _ = conn.configure_window(xid, &ConfigureWindowAux::new().width(1).height(1));
+    let _ = conn.unmap_window(xid);
+    let _ = conn.flush();
+}
+
+/// Map the override-redirect window `xid` over the union rect (root
+/// pixels), above every other window, leaving the input focus and the
+/// window's input shape as they are.
+pub fn show_span(xid: u32, x: i32, y: i32, w: u32, h: u32) {
+    let Ok((conn, _)) = iris_lib::sys::capture::x11::shared_conn() else {
+        return;
+    };
+    let _ = conn.configure_window(xid, &span(x, y, w, h));
+    let _ = conn.map_window(xid);
+    let _ = conn.flush();
+}
+
 /// Queue a fixup and wake the dispatcher.
 fn enqueue(xid: u32, fixup: Fixup) {
     dispatcher();

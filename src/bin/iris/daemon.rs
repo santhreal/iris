@@ -428,6 +428,7 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
             if !RECORDING.active() {
                 overlay::warmup(cx);
             }
+            crate::flash::warmup(cx);
             crate::sys::install::tidy();
             cx.background_executor()
                 .spawn(async { crate::sys::install::integrate() })

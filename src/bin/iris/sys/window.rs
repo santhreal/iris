@@ -220,6 +220,29 @@ pub fn unpark_span(window: &gpui::Window, x: i32, y: i32, w: u32, h: u32) {
     let _ = (window, x, y, w, h);
 }
 
+/// Take the X11 pop-up `window` off the screen and keep it for
+/// `show_span`, at one pixel so its buffers are one pixel too.
+/// Elsewhere a no-op: only X11 keeps a pop-up for reuse.
+pub fn stow(window: &gpui::Window) {
+    #[cfg(target_os = "linux")]
+    if let Some(xid) = x11::xid(window) {
+        x11::stow(xid);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = window;
+}
+
+/// Bring the stowed (`stow`) X11 pop-up `window` back over the union
+/// rect (root pixels), above other windows, without taking the focus.
+pub fn show_span(window: &gpui::Window, x: i32, y: i32, w: u32, h: u32) {
+    #[cfg(target_os = "linux")]
+    if let Some(xid) = x11::xid(window) {
+        x11::show_span(xid, x, y, w, h);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (window, x, y, w, h);
+}
+
 /// Hand a left-button drag to the window manager so it moves `window`.
 /// `grab` is the press's window-local position. Call while the button
 /// is held: on the press, or on a motion after it.
