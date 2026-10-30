@@ -62,6 +62,8 @@ pub const FOCUS_RING: Rgba = alpha(ACCENT, 0.45);
 pub const TEXT_SELECTION: Rgba = alpha(ACCENT, 0.40);
 /// Destructive text and confirmation fills, #FF453A.
 pub const DANGER: Rgba = rgb(1.0, 0.271, 0.227);
+/// systemGreen (dark), #30D158: a finished save.
+pub const SUCCESS: Rgba = rgb(0.188, 0.820, 0.345);
 /// systemIndigo (dark), #5E5CE6: the Library's badge.
 pub const INDIGO: Rgba = rgb(0.369, 0.361, 0.902);
 

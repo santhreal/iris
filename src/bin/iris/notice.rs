@@ -47,7 +47,11 @@ const STACK_GAP: f32 = BLEED;
 const PAD: f32 = 12.0;
 /// The card's hairline, inside its width and height.
 const BORDER: f32 = 1.0;
-const GLYPH: f32 = 18.0;
+/// The kind's glyph, centered in a disc of its tint the title line's
+/// height across.
+const GLYPH: f32 = 14.0;
+const BADGE: f32 = TITLE_LINE;
+const BADGE_FILL: f32 = 0.18;
 /// A form control's edge: 24, with a 14px glyph.
 const BUTTON: f32 = 24.0;
 const BUTTON_GAP: f32 = 4.0;
@@ -292,7 +296,7 @@ fn text_width(buttons: usize) -> f32 {
         0 => 0.0,
         n => n as f32 * BUTTON + (n - 1) as f32 * BUTTON_GAP + GAP,
     };
-    W - 2.0 * (BORDER + PAD) - GLYPH - GAP - row
+    W - 2.0 * (BORDER + PAD) - BADGE - GAP - row
 }
 
 /// The buttons on a card of `kind`: reveal with a file, install on an
@@ -543,7 +547,7 @@ impl Render for Notice {
             Kind::Failure => (Icon::Alert, theme::DANGER),
             Kind::Update => (Icon::Download, theme::ACCENT),
             Kind::Guide => (Icon::Record, theme::DANGER),
-            Kind::Saved => (Icon::Check, theme::FG),
+            Kind::Saved => (Icon::Check, theme::SUCCESS),
             Kind::Countdown(_) => (Icon::Timer, theme::FG),
         };
         let title = match self.kind {
@@ -632,7 +636,12 @@ impl Render for Notice {
             .child(
                 div()
                     .flex_none()
-                    .pt(px((TITLE_LINE - GLYPH) / 2.0))
+                    .size(px(BADGE))
+                    .rounded_full()
+                    .bg(theme::alpha(tint, BADGE_FILL))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .child(icon(glyph, tint, GLYPH)),
             )
             .child(text)

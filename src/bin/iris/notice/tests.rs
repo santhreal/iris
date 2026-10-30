@@ -136,7 +136,7 @@ fn a_guide_card_has_no_buttons_and_its_detail_takes_the_row() {
     ] {
         assert_eq!(buttons(kind, file), want, "{kind:?} with file {file}");
     }
-    assert_eq!(text_width(0), W - 2.0 * (BORDER + PAD) - GLYPH - GAP);
+    assert_eq!(text_width(0), W - 2.0 * (BORDER + PAD) - BADGE - GAP);
     assert_eq!(text_width(1), text_width(0) - BUTTON - GAP);
 }
 
