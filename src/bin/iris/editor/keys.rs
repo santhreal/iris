@@ -40,8 +40,18 @@ impl Editor {
             return;
         }
         // Undo, Redo, Copy, Save, and Close run with a label open, as
-        // their toolbar buttons do: each settles the label first.
-        let command = meta && matches!(key, "z" | "y" | "c" | "s" | "w");
+        // their toolbar buttons do: each settles the label first. Copy
+        // with label text selected copies the text instead.
+        let selecting = self
+            .text_entry
+            .as_ref()
+            .is_some_and(|e| !e.line.selection().is_empty());
+        let command = meta
+            && match key {
+                "c" => !selecting,
+                "z" | "y" | "s" | "w" => true,
+                _ => false,
+            };
         if self.text_entry.is_some() && !command {
             match key {
                 "enter" => {
@@ -53,7 +63,10 @@ impl Editor {
                 _ => {
                     if let Some(entry) = &mut self.text_entry {
                         let paste = || cx.read_from_clipboard().and_then(|item| item.text());
-                        let key = widgets::edit_line(&mut entry.line, &ev.keystroke, paste);
+                        let copy = |text: &str| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text.into()))
+                        };
+                        let key = widgets::edit_line(&mut entry.line, &ev.keystroke, paste, copy);
                         if key == widgets::LineKey::Edited {
                             entry.buffer_str = SharedString::from(entry.line.text().to_string());
                         }

@@ -696,31 +696,33 @@ impl Editor {
         self.selected = None;
         self.move_drag = None;
         self.text_entry = Some(entry);
-        self.place_caret(at);
+        self.place_caret(at, false);
     }
 
     /// Move the open entry's caret to the character boundary nearest
-    /// `at` and restart its blink.
-    fn place_caret(&mut self, at: (f32, f32)) {
+    /// `at`, selecting from the anchor with `extend`, and restart its
+    /// blink.
+    fn place_caret(&mut self, at: (f32, f32), extend: bool) {
         let size = text_size(self.img_w());
         if let Some(entry) = self.text_entry.as_mut() {
             entry
                 .line
-                .place(at.0 - entry.point.0, |s| text_advance(s, size));
+                .place(at.0 - entry.point.0, extend, |s| text_advance(s, size));
         }
         self.caret_started = Instant::now();
     }
 
-    /// A press at `p` on the open entry's text moves its caret there
-    /// and keeps the entry open. Returns whether `p` was on it. An
-    /// empty entry has no text to press on.
-    pub(crate) fn press_entry(&mut self, p: (f32, f32)) -> bool {
+    /// A press at `p` on the open entry's text moves its caret there,
+    /// selecting from the anchor with `extend`, and keeps the entry
+    /// open. Returns whether `p` was on it. An empty entry has no text
+    /// to press on.
+    pub(crate) fn press_entry(&mut self, p: (f32, f32), extend: bool) -> bool {
         let size = text_size(self.img_w());
         let on = self.text_entry.as_ref().is_some_and(|e| {
             !e.line.text().is_empty() && in_box(p, text_box(e.point, e.line.text(), size))
         });
         if on {
-            self.place_caret(p);
+            self.place_caret(p, extend);
         }
         on
     }

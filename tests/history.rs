@@ -109,8 +109,8 @@ use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, entries, store, stored, xvfb_sized, Daemon, Server};
 use x11::{
-    chord, click, client, clipboard, clipboard_owner, clipboard_text, drag, extent, move_to, tap,
-    windows_of, wm_close,
+    chord, click, client, clipboard, clipboard_owner, clipboard_text, drag, extent, hold, let_go,
+    move_to, tap, windows_of, wm_close,
 };
 
 const SCREEN: &str = "1280x1024x24";
@@ -137,6 +137,7 @@ const RIGHT: u32 = 0xff53;
 const LEFT: u32 = 0xff51;
 const F10: u32 = 0xffc7;
 const END: u32 = 0xff57;
+const HOME: u32 = 0xff50;
 const MENU: u32 = 0xff67;
 const SLASH: u32 = 0x2f;
 const DELETE: u32 = 0xffff;
@@ -151,6 +152,7 @@ const D: u32 = 0x64;
 const E: u32 = 0x65;
 const S: u32 = 0x73;
 const Y: u32 = 0x79;
+const X: u32 = 0x78;
 /// The rectangle's corners and the crop's, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
 const CROP: [(f32, f32); 2] = [(50.0, 50.0), (300.0, 250.0)];
@@ -1258,6 +1260,73 @@ fn caret_keys_edit_a_label_where_the_caret_is() {
         edited, typed,
         "a label typed as abcd, edited at its start and end, ends where \
          bcde typed whole does"
+    );
+}
+
+// WHY: Shift with an arrow selects label text, a typed key replaces the
+// selection, a Shift-click selects to the click, Ctrl+A selects all of
+// it, Ctrl+C copies it as text instead of copying the image, and
+// Ctrl+X cuts it. An entry with no selection types this case's e
+// between the b and the c, so the label ends wider than abe; one that
+// moves the caret on a Shift-click or runs Copy Image for Ctrl+C
+// leaves no text on the clipboard; one that ignores Ctrl+A or Ctrl+X
+// leaves the label after Return.
+#[test]
+fn a_selection_in_a_label_is_replaced_copied_and_cut() {
+    let Some(session) = Session::open("a_selection_in_a_label_is_replaced_copied_and_cut") else {
+        return;
+    };
+    let (conn, root) = (&session.conn, session.root);
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
+    session.label(&[A, B, E]);
+    let typed = session.label_end();
+    session.keys(&[CONTROL, Z]);
+    // abcd with cd selected, then e typed over it.
+    session.type_label(&[A, B, C, D]);
+    chord(conn, root, &[SHIFT, LEFT]);
+    chord(conn, root, &[SHIFT, LEFT]);
+    tap(conn, root, E);
+    pause();
+    session.keys(&[RETURN]);
+    let replaced = session.label_end();
+    // Reopened with the caret at its start, all of it selected with a
+    // Shift-click on its end, and copied.
+    let typed_end = typed.expect("the label abe was drawn") as i16;
+    click(conn, root, session.label_start());
+    pause();
+    hold(conn, root, SHIFT);
+    click(
+        conn,
+        root,
+        (session.at.0 + typed_end - 1, session.label_start().1),
+    );
+    let_go(conn, root, SHIFT);
+    pause();
+    chord(conn, root, &[CONTROL, C]);
+    let copied = session.daemon.until("Ctrl+C to copy the label's text", || {
+        clipboard_text(conn, root).filter(|text| !text.is_empty())
+    });
+    // Home drops the selection; Ctrl+A selects all of it again, and the
+    // cut empties the label, which Return removes.
+    tap(conn, root, HOME);
+    chord(conn, root, &[CONTROL, A]);
+    // Cut, the emptied label is removed on Return.
+    chord(conn, root, &[CONTROL, X]);
+    pause();
+    session.keys(&[RETURN]);
+    let cut = session.label_end();
+    let held = clipboard_text(conn, root);
+    session.keys(&[CONTROL, Z]);
+    let undone = session.label_end();
+    assert_eq!(
+        replaced, typed,
+        "abcd with cd selected and e typed ends where abe typed whole does"
+    );
+    assert_eq!(
+        (copied.as_str(), cut, held.as_deref(), undone),
+        ("abe", None, Some("abe"), typed),
+        "a Shift-click and Ctrl+C copy the label's text, Ctrl+A and Ctrl+X \
+         cut it so Return removes the label, and one Undo brings it back"
     );
 }
 

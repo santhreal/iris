@@ -58,6 +58,8 @@ pub const ACCENT: Rgba = rgb(0.039, 0.518, 1.0);
 pub const ACCENT_INK: Rgba = WHITE;
 /// Keyboard focus ring: 3px of accent at 45%.
 pub const FOCUS_RING: Rgba = alpha(ACCENT, 0.45);
+/// The fill behind selected text in an entry: accent at 40%.
+pub const TEXT_SELECTION: Rgba = alpha(ACCENT, 0.40);
 /// Destructive text and confirmation fills, #FF453A.
 pub const DANGER: Rgba = rgb(1.0, 0.271, 0.227);
 /// systemIndigo (dark), #5E5CE6: the Library's badge.

@@ -538,7 +538,11 @@ impl Settings {
                 }
                 _ => {
                     let paste = || cx.read_from_clipboard().and_then(|item| item.text());
-                    if widgets::edit_line(&mut edit.line, ks, paste) == widgets::LineKey::Edited {
+                    let copy =
+                        |text: &str| cx.write_to_clipboard(ClipboardItem::new_string(text.into()));
+                    if widgets::edit_line(&mut edit.line, ks, paste, copy)
+                        == widgets::LineKey::Edited
+                    {
                         self.rejected = None;
                     }
                 }
@@ -655,6 +659,7 @@ impl Settings {
                     widgets::FieldState::Editing {
                         invalid: reason.is_some(),
                         caret: edit.line.caret(),
+                        anchor: edit.line.anchor(),
                         scroll,
                     },
                 )
@@ -674,19 +679,21 @@ impl Settings {
             .ring()
             .or(self.keyboard_ring(Row::Text(field)))
             .or(self.keyboard_ring(Row::Folder(field)));
-        // A click opens the field with the caret where it pressed. A
-        // press on the open field keeps it open: it does not reach the
-        // window, where a press ends the edit.
+        // A click opens the field with the caret where it pressed, and
+        // a Shift-click on the open field selects to there. A press on
+        // the open field keeps it open: it does not reach the window,
+        // where a press ends the edit.
         let open = matches!(state, widgets::FieldState::Editing { .. });
         let origin = widgets::TextOrigin::default();
         let mut input = widgets::text_field(field.id(), text, state, Some(&origin))
             .w(px(width))
             .flex_shrink_0()
-            .on_click(cx.listener(move |this, click, window, cx| {
+            .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
                 this.begin_edit(field);
                 let scroll = this.field_scroll.get();
                 if let Some(edit) = this.editing.as_mut().filter(|e| e.field == field) {
-                    origin.place(&mut edit.line, click, scroll, window);
+                    let extend = open && click.modifiers().shift;
+                    origin.place(&mut edit.line, click, scroll, extend, window);
                 }
                 cx.notify();
             }));

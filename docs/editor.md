@@ -61,16 +61,17 @@ Selecting an annotation with the Select tool shows its color, stroke width, and 
 
 Clicking the canvas while the Text tool is active sets an insertion point and displays a blinking bar caret. The caret blinks at approximately 1 Hz via an internal timer.
 
-- Type characters to insert them at the caret.
-- `Left` and `Right` move the caret one character, `Ctrl+Left` and `Ctrl+Right` (`Option` on macOS) one word, and `Home` and `End` (`Cmd+Left` and `Cmd+Right` on macOS) to the start or end of the label. `Shift` with these keys moves the caret the same way; a label has no selection.
-- `Ctrl+V` or `Cmd+V` inserts the clipboard's text at the caret. A label is one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed.
-- `Backspace` deletes the character before the caret and `Delete` the character after it. `Ctrl+Backspace` and `Ctrl+Delete` (`Option` on macOS) delete the word before or after the caret, a run of letters and digits, with the spaces and punctuation between it and the caret, and `Cmd+Backspace` on macOS deletes everything before the caret.
+- Type characters to insert them at the caret, replacing the selected text.
+- `Left` and `Right` move the caret one character, `Ctrl+Left` and `Ctrl+Right` (`Option` on macOS) one word, and `Home` and `End` (`Cmd+Left` and `Cmd+Right` on macOS) to the start or end of the label. `Shift` with these keys selects the text the caret passes over. Without `Shift`, a move clears the selection, and `Left` or `Right` alone moves the caret to the start or end of the selected text. `Ctrl+A` or `Cmd+A` selects the whole label.
+- `Ctrl+V` or `Cmd+V` inserts the clipboard's text at the caret, replacing the selected text. A label is one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed.
+- `Ctrl+C` or `Cmd+C` with text selected copies the text instead of the image, and `Ctrl+X` or `Cmd+X` cuts it.
+- `Backspace` deletes the character before the caret and `Delete` the character after it. `Ctrl+Backspace` and `Ctrl+Delete` (`Option` on macOS) delete the word before or after the caret, a run of letters and digits, with the spaces and punctuation between it and the caret, and `Cmd+Backspace` on macOS deletes everything before the caret. With text selected, each deletes the selected text.
 - `Enter` commits the text to the canvas.
 - `Escape` cancels text entry and discards uncommitted buffer text.
 - Clicking the backdrop outside the canvas commits non-empty text.
-- Clicking the label's text moves the caret to the character boundary nearest the click and keeps the label open.
+- Clicking the label's text moves the caret to the character boundary nearest the click and keeps the label open. `Shift`-clicking selects the text from the caret to the click.
 - Clicking elsewhere on the canvas or switching tools commits non-empty text before beginning the new action.
-- Undo, Redo, Copy Image, Save, and Close run from their shortcuts or buttons with a label open, as does Clear Markup, and each commits the label first.
+- Undo, Redo, Copy Image, Save, and Close run from their shortcuts or buttons with a label open, as does Clear Markup, and each commits the label first. `Ctrl+C` copies the image only when no label text is selected.
 - Empty text buffers produce no committed action.
 
 Clicking a committed label with the Text tool, or double-clicking it with the Select tool, reopens it for typing in its color with the caret at the character boundary nearest the click. `Enter` or a click elsewhere replaces the label as one undo step, an emptied label is removed, and `Escape` leaves the label as it was.

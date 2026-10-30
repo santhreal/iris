@@ -1,29 +1,33 @@
-//! A paste, the caret keys, and clicks in a Settings text field, read
-//! from the config it writes.
+//! A paste, the caret keys, clicks, and a selection in a Settings text
+//! field, read from the config it writes.
 //!
 //! WHY: the classes closed here are "a text entry takes keys but not
 //! the clipboard", "a text entry edits only at its end", "a click does
-//! not place the caret", and "the caret leaves a long value's field",
-//! on the Settings side; `paste.rs` and
-//! `history.rs` read the editor's side. Both entries edit their text
-//! through one function and place the caret through another, whose unit
-//! tests check each key and position exactly. A Settings field
+//! not place the caret", "the caret leaves a long value's field", and
+//! "a text entry has no selection", on the Settings side; `paste.rs`
+//! and `history.rs` read the editor's side. Both entries edit their
+//! text through one function and place the caret through another, whose
+//! unit tests check each key and position exactly. A Settings field
 //! appended typed characters and dropped Ctrl+V, so a folder path or a
 //! template could only be typed; it ignored Left, Home, End, and
 //! Delete, so a fix at the start of a value meant deleting it all; a
 //! click left the caret at the end of the text wherever it landed; a
-//! click in the open field committed the edit and reopened it; and a
-//! value longer than the field drew its caret outside it. The case puts
-//! two lines on the clipboard, opens the file name field, moves the
-//! caret back a word and two characters, pastes, reads the caret bar at
-//! the field's start after Home, types at the start and the end,
-//! deletes a character, and commits with Return. It then clicks the
-//! text's first character to open the field, types, clicks there again
-//! with the field open, types, and commits, reading the caret bar after
-//! each click and the template from config.toml after the second click
-//! and each commit. Last, it types past the field's right edge, reads
-//! the caret bar near that edge, clicks the first character in view,
-//! types, and commits.
+//! click in the open field committed the edit and reopened it; a value
+//! longer than the field drew its caret outside it; and Shift, Ctrl+A,
+//! Ctrl+C, and Ctrl+X did nothing, so a value could be replaced only a
+//! character at a time and never copied. The case puts two lines on the
+//! clipboard, opens the file name field, moves the caret back a word
+//! and two characters, pastes, reads the caret bar at the field's start
+//! after Home, types at the start and the end, deletes a character, and
+//! commits with Return. It then clicks the text's first character to
+//! open the field, types, clicks there again with the field open,
+//! types, and commits, reading the caret bar after each click and the
+//! template from config.toml after the second click and each commit.
+//! It types past the field's right edge, reads the caret bar near that
+//! edge, clicks the first character in view, types, and commits. Last,
+//! it copies the value with Ctrl+A and Ctrl+C, replaces a word selected
+//! with Ctrl+Shift+Left, cuts the value with Ctrl+X and pastes it back
+//! after a typed character, and replaces a Shift-click selection.
 //!
 //! Not covered: Cmd+V and the Cmd and Alt caret keys on macOS, which
 //! reach the same key handler. The case runs only with
@@ -47,13 +51,14 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{chord, click, client, field_left_of, tap, windows_of};
+use x11::{chord, click, client, clipboard_text, field_left_of, hold, let_go, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 const SETTINGS: &str = "Settings - iris";
 /// Keysyms.
 const A: u32 = 0x61;
 const B: u32 = 0x62;
+const C: u32 = 0x63;
 const V: u32 = 0x76;
 const S: u32 = 0x73;
 const X: u32 = 0x78;
@@ -64,6 +69,7 @@ const END: u32 = 0xff57;
 const DELETE: u32 = 0xffff;
 const RETURN: u32 = 0xff0d;
 const CONTROL: u32 = 0xffe3;
+const SHIFT: u32 = 0xffe1;
 /// The Settings window's width, logical px.
 const WIDTH: f32 = 600.0;
 /// The center of the File name row on the General pane, logical px:
@@ -259,5 +265,67 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
             && long.find('x') > Some(0),
         "a click on the moved text put the x of {long:?} at the start or \
          the z typed at the end were lost"
+    );
+    // Ctrl+A and Ctrl+C put the whole value on the clipboard.
+    let mid = (at.dst_x + ((left + right) / 2) as i16, at.dst_y + y as i16);
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
+    click(&conn, root, mid);
+    pause();
+    chord(&conn, root, &[CONTROL, A]);
+    chord(&conn, root, &[CONTROL, C]);
+    daemon.until("Ctrl+C to copy the field's text", || {
+        clipboard_text(&conn, root).filter(|text| *text == long)
+    });
+    // Ctrl+Shift+Left from the end selects the last word, the z run
+    // with the x when it landed there, and an a replaces it.
+    for keys in [&[END][..], &[CONTROL, SHIFT, LEFT], &[A], &[RETURN]] {
+        chord(&conn, root, keys);
+    }
+    daemon.settle();
+    let replaced = format!("{}a", long.trim_end_matches(char::is_alphanumeric));
+    assert_eq!(
+        template(dir.path()),
+        Some(replaced.clone()),
+        "an a typed over the selected last word did not replace it"
+    );
+    // Ctrl+A and Ctrl+X cut the value, so End, an a, and a paste give
+    // the value after an a.
+    click(&conn, root, mid);
+    pause();
+    for keys in [
+        &[CONTROL, A][..],
+        &[CONTROL, X],
+        &[END],
+        &[A],
+        &[CONTROL, V],
+        &[RETURN],
+    ] {
+        chord(&conn, root, keys);
+    }
+    daemon.settle();
+    let pasted = format!("a{replaced}");
+    assert_eq!(
+        template(dir.path()),
+        Some(pasted.clone()),
+        "Ctrl+X did not cut the selected value to the clipboard"
+    );
+    // A click on the first character and a Shift-click mid-field select
+    // the text between, and a b replaces it.
+    click(&conn, root, first);
+    pause();
+    hold(&conn, root, SHIFT);
+    click(&conn, root, mid);
+    let_go(&conn, root, SHIFT);
+    pause();
+    for keysym in [B, RETURN] {
+        tap(&conn, root, keysym);
+    }
+    daemon.settle();
+    let shifted = template(dir.path()).unwrap_or_default();
+    assert!(
+        shifted.starts_with('b')
+            && shifted.len() + 2 < pasted.len()
+            && pasted.ends_with(&shifted[1..]),
+        "a b typed after a Shift-click left {shifted:?} of {pasted:?}"
     );
 }

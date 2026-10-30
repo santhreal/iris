@@ -164,6 +164,24 @@ impl Editor {
             let p = entry.point;
             let size = text_size(base_w);
             let top = p.1 - size;
+            // Selected text sits on the selection fill, drawn under the
+            // text across the glyph span.
+            let sel = entry.line.selection();
+            if !sel.is_empty() {
+                let text = entry.line.text();
+                let (offset, height) = glyph_span(size);
+                let from = text_advance(&text[..sel.start], size);
+                let to = text_advance(&text[..sel.end], size);
+                stage = stage.child(
+                    div()
+                        .absolute()
+                        .left(px((p.0 + from) * scale))
+                        .top(px((top + offset) * scale))
+                        .w(px((to - from) * scale))
+                        .h(px(height * scale))
+                        .bg(theme::TEXT_SELECTION),
+                );
+            }
             stage = stage.child(
                 div()
                     .absolute()
@@ -304,8 +322,9 @@ impl Editor {
                     cx.stop_propagation();
                     let p = this.to_image(ev.position, window);
                     // A press on the open entry's text moves its caret
-                    // there and keeps the entry open.
-                    if this.press_entry(p) {
+                    // there, with Shift selecting to there, and keeps
+                    // the entry open.
+                    if this.press_entry(p, ev.modifiers.shift) {
                         cx.notify();
                         return;
                     }

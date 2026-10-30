@@ -1,6 +1,7 @@
 //! Text fields and the folder field.
 
 use std::cell::Cell;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -15,13 +16,15 @@ use crate::theme;
 pub enum FieldState {
     /// At rest: fill and inner border only.
     Rest,
-    /// Being edited: an accent border and ring and a caret at byte
-    /// offset `caret` of the text, with the text moved left by `scroll`
-    /// px ([`field_scroll`]); `invalid` turns the border and ring
+    /// Being edited: an accent border and ring, a caret at byte offset
+    /// `caret` of the text, and the text between `caret` and `anchor`
+    /// on the selection fill, with the text moved left by `scroll` px
+    /// ([`field_scroll`]); `invalid` turns the border and ring
     /// destructive red.
     Editing {
         invalid: bool,
         caret: usize,
+        anchor: usize,
         scroll: f32,
     },
     /// Capturing a key combination: the accent border and ring, no
@@ -145,9 +148,16 @@ impl TextOrigin {
 
     /// Move the caret of `line`, the field's text moved left by
     /// `scroll` px, to the character boundary nearest where `click`
-    /// pressed. A keyboard click, or a field not yet drawn, leaves the
-    /// caret.
-    pub fn place(&self, line: &mut Line, click: &ClickEvent, scroll: f32, window: &Window) {
+    /// pressed, selecting from the anchor with `extend`. A keyboard
+    /// click, or a field not yet drawn, leaves the caret.
+    pub fn place(
+        &self,
+        line: &mut Line,
+        click: &ClickEvent,
+        scroll: f32,
+        extend: bool,
+        window: &Window,
+    ) {
         let at = match click {
             ClickEvent::Mouse(e) => e.down.position,
             ClickEvent::Touch(e) => e.position,
@@ -157,7 +167,7 @@ impl TextOrigin {
             return;
         };
         let shaped = shape_field_text(line.text(), window);
-        line.place(f32::from(at.x - left) + scroll, |s| {
+        line.place(f32::from(at.x - left) + scroll, extend, |s| {
             f32::from(shaped.x_for_index(s.len()))
         });
     }
@@ -200,13 +210,22 @@ pub fn text_field(
         .cursor_text()
         .children(origin.map(TextOrigin::probe));
     let text = text.into();
-    let FieldState::Editing { caret, scroll, .. } = state else {
+    let FieldState::Editing {
+        caret,
+        anchor,
+        scroll,
+        ..
+    } = state
+    else {
         return el.child(text);
     };
     // The caret sits at the boundary between the text before it and
     // the text after it, in a zero-width slot: moving it never shifts
-    // the text unless the caret leaves the view.
-    let (before, after) = text.split_at(caret.min(text.len()));
+    // the text unless the caret leaves the view. Selected text sits on
+    // the selection fill, the caret at its start or end.
+    let (caret, anchor) = (caret.min(text.len()), anchor.min(text.len()));
+    let (start, end) = (caret.min(anchor), caret.max(anchor));
+    let piece = |range: Range<usize>| SharedString::from(text[range].to_string());
     let bar = div().relative().w(px(0.)).h(px(15.)).flex_shrink_0().child(
         div()
             .absolute()
@@ -216,16 +235,21 @@ pub fn text_field(
             .h(px(15.))
             .bg(theme::ACCENT),
     );
-    let mut line = div()
+    let (lead, trail) = if caret == start {
+        (Some(bar), None)
+    } else {
+        (None, Some(bar))
+    };
+    let line = div()
         .flex()
         .items_center()
         .flex_shrink_0()
         .ml(px(-scroll))
-        .child(SharedString::from(before.to_string()))
-        .child(bar);
-    if !after.is_empty() {
-        line = line.child(SharedString::from(after.to_string()));
-    }
+        .child(piece(0..start))
+        .children(lead)
+        .children((start < end).then(|| div().bg(theme::TEXT_SELECTION).child(piece(start..end))))
+        .children(trail)
+        .children((end < text.len()).then(|| piece(end..text.len())));
     // The text clips at the padding, not under the border.
     el.child(
         div()
@@ -317,20 +341,25 @@ pub fn choose_folder(
         .detach();
 }
 
-/// The text of a one-line entry and its caret, a byte offset on a
-/// character boundary of the text.
+/// The text of a one-line entry, its caret, and its selection anchor,
+/// byte offsets on character boundaries of the text. The selection
+/// runs between the anchor and the caret; an anchor at the caret
+/// selects nothing.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Line {
     text: String,
     caret: usize,
+    anchor: usize,
 }
 
 impl Line {
-    /// `text` with the caret after its last character.
+    /// `text` with the caret after its last character and nothing
+    /// selected.
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         Line {
             caret: text.len(),
+            anchor: text.len(),
             text,
         }
     }
@@ -339,9 +368,21 @@ impl Line {
         &self.text
     }
 
+    /// The selection anchor's byte offset in the text, at the caret
+    /// when nothing is selected.
+    pub fn anchor(&self) -> usize {
+        self.anchor
+    }
+
     /// The caret's byte offset in the text.
     pub fn caret(&self) -> usize {
         self.caret
+    }
+
+    /// The selected byte range of the text, empty when nothing is
+    /// selected.
+    pub fn selection(&self) -> Range<usize> {
+        self.caret.min(self.anchor)..self.caret.max(self.anchor)
     }
 
     /// The text before and after the caret.
@@ -352,8 +393,9 @@ impl Line {
     /// Move the caret to the character boundary nearest `x`, a distance
     /// from the start of the text, where `advance` gives the width of
     /// each text that starts the line. A tie goes to the earlier
-    /// boundary.
-    pub fn place(&mut self, x: f32, advance: impl Fn(&str) -> f32) {
+    /// boundary. With `extend`, the selection runs from the anchor to
+    /// the new caret; without it, nothing is selected.
+    pub fn place(&mut self, x: f32, extend: bool, advance: impl Fn(&str) -> f32) {
         let mut best = (0, x.abs());
         for (i, c) in self.text.char_indices() {
             let end = i + c.len_utf8();
@@ -365,31 +407,45 @@ impl Line {
                 break;
             }
         }
-        self.caret = best.0;
+        self.move_to(best.0, extend);
     }
 
-    /// Move the caret to `to`. Returns whether it moved.
-    fn move_to(&mut self, to: usize) -> bool {
-        let moved = to != self.caret;
+    /// Move the caret to `to`, keeping the anchor with `extend` and
+    /// dropping the selection without it.
+    fn move_to(&mut self, to: usize, extend: bool) {
         self.caret = to;
-        moved
+        if !extend {
+            self.anchor = to;
+        }
     }
 
-    /// Remove the text between the caret and `to`, on either side of
-    /// it. Returns whether anything was removed.
+    /// Remove the selection, or with nothing selected the text between
+    /// the caret and `to`, on either side of it. Returns whether
+    /// anything was removed.
     fn delete_to(&mut self, to: usize) -> bool {
-        let (from, to) = (self.caret.min(to), self.caret.max(to));
-        self.text.replace_range(from..to, "");
-        self.caret = from;
-        from < to
+        let range = match self.selection() {
+            sel if sel.is_empty() => self.caret.min(to)..self.caret.max(to),
+            sel => sel,
+        };
+        self.replace(range, "")
     }
 
-    /// Insert `text` at the caret and move the caret past it. Returns
-    /// whether anything was inserted.
+    /// Replace the selection, or insert at the caret with nothing
+    /// selected, with `text`, and move the caret past it. Returns
+    /// whether anything changed; inserting nothing changes nothing.
     fn insert(&mut self, text: &str) -> bool {
-        self.text.insert_str(self.caret, text);
-        self.caret += text.len();
-        !text.is_empty()
+        !text.is_empty() && self.replace(self.selection(), text)
+    }
+
+    /// Replace `range` with `text`, the caret after it and nothing
+    /// selected. Returns whether the text changed.
+    fn replace(&mut self, range: Range<usize>, text: &str) -> bool {
+        let changed = self.text[range.clone()] != *text;
+        let at = range.start + text.len();
+        self.text.replace_range(range, text);
+        self.caret = at;
+        self.anchor = at;
+        changed
     }
 
     /// The offset of the character boundary before the caret.
@@ -432,61 +488,99 @@ impl Line {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LineKey {
     /// The key is not one the entry takes, or took nothing: no text to
-    /// remove, no room to move, an empty paste.
+    /// remove, no room to move, an empty paste, a copy with nothing
+    /// selected.
     Ignored,
-    /// The caret moved; the text is unchanged.
+    /// The caret or the selection moved; the text is unchanged.
     Moved,
     /// The text changed.
     Edited,
+    /// The selection went to the clipboard; nothing changed.
+    Copied,
 }
 
 /// Apply a key press to a one-line text entry at its caret.
 ///
 /// Left and Right move the caret a character, with Ctrl or Alt a word,
 /// and with Cmd to the start or end; Home and End move it to the start
-/// or end. Backspace removes the character before the caret, with Ctrl
-/// or Alt the word before it, and with Cmd everything before it; Delete
+/// or end. With Shift each of them moves the caret and keeps the
+/// anchor, selecting the text between; without Shift it drops the
+/// selection, and a plain Left or Right with text selected moves the
+/// caret to the start or end of the selection. Ctrl+A or Cmd+A selects
+/// all of the text.
+///
+/// Backspace removes the character before the caret, with Ctrl or Alt
+/// the word before it, and with Cmd everything before it; Delete
 /// removes the character after the caret, with Ctrl or Alt the word
-/// after it. Ctrl+V or Cmd+V inserts the text `clipboard` returns as
-/// one line, and a key that types a character without Ctrl or Cmd
-/// inserts it. Shift moves the caret as the key alone does: the entry
-/// has no selection. The caller restarts its caret on a move or edit,
-/// and clears a rejection on an edit.
+/// after it. With text selected, either removes the selection. Ctrl+V
+/// or Cmd+V inserts the text `paste` returns as one line, and a key
+/// that types a character without Ctrl or Cmd inserts it; either
+/// replaces the selection. Ctrl+C or Cmd+C passes the selection to
+/// `copy`, and Ctrl+X or Cmd+X passes it and removes it.
+///
+/// The caller restarts its caret on a move or edit, and clears a
+/// rejection on an edit.
 pub fn edit_line(
     line: &mut Line,
     keystroke: &Keystroke,
-    clipboard: impl FnOnce() -> Option<String>,
+    paste: impl FnOnce() -> Option<String>,
+    copy: impl FnOnce(&str),
 ) -> LineKey {
     let mods = &keystroke.modifiers;
     let meta = mods.control || mods.platform;
     let word = mods.control || mods.alt;
-    let (moved, edited) = match keystroke.key.as_str() {
-        "left" if mods.platform => (line.move_to(0), false),
-        "left" if word => (line.move_to(line.word_start()), false),
-        "left" => (line.move_to(line.prev_char()), false),
-        "right" if mods.platform => (line.move_to(line.text.len()), false),
-        "right" if word => (line.move_to(line.word_end()), false),
-        "right" => (line.move_to(line.next_char()), false),
-        "home" => (line.move_to(0), false),
-        "end" => (line.move_to(line.text.len()), false),
-        "backspace" if mods.platform => (false, line.delete_to(0)),
-        "backspace" if word => (false, line.delete_to(line.word_start())),
-        "backspace" => (false, line.delete_to(line.prev_char())),
-        "delete" if word => (false, line.delete_to(line.word_end())),
-        "delete" => (false, line.delete_to(line.next_char())),
-        "v" if meta => (
-            false,
-            clipboard().is_some_and(|text| line.insert(&one_line(&text))),
-        ),
+    let key = keystroke.key.as_str();
+    let sel = line.selection();
+    let collapse = !sel.is_empty() && !mods.shift && !word && !mods.platform;
+    let to = match key {
+        "left" if collapse => Some(sel.start),
+        "right" if collapse => Some(sel.end),
+        "left" if mods.platform => Some(0),
+        "left" if word => Some(line.word_start()),
+        "left" => Some(line.prev_char()),
+        "right" if mods.platform => Some(line.text.len()),
+        "right" if word => Some(line.word_end()),
+        "right" => Some(line.next_char()),
+        "home" => Some(0),
+        "end" => Some(line.text.len()),
+        _ => None,
+    };
+    let was = (line.caret, line.anchor);
+    let mut copied = false;
+    let edited = match (to, key) {
+        (Some(to), _) => {
+            line.move_to(to, mods.shift);
+            false
+        }
+        (None, "backspace") if mods.platform => line.delete_to(0),
+        (None, "backspace") if word => line.delete_to(line.word_start()),
+        (None, "backspace") => line.delete_to(line.prev_char()),
+        (None, "delete") if word => line.delete_to(line.word_end()),
+        (None, "delete") => line.delete_to(line.next_char()),
+        (None, "a") if meta => {
+            line.anchor = 0;
+            line.caret = line.text.len();
+            false
+        }
+        (None, "c" | "x") if meta && !sel.is_empty() => {
+            copy(&line.text[sel.clone()]);
+            copied = true;
+            key == "x" && line.replace(sel, "")
+        }
+        (None, "v") if meta => paste().is_some_and(|text| line.insert(&one_line(&text))),
         _ => match (&keystroke.key_char, meta) {
-            (Some(ch), false) => (false, line.insert(ch)),
-            _ => (false, false),
+            (Some(ch), false) => line.insert(ch),
+            _ => false,
         },
     };
-    match (moved, edited) {
-        (_, true) => LineKey::Edited,
-        (true, false) => LineKey::Moved,
-        (false, false) => LineKey::Ignored,
+    if edited {
+        LineKey::Edited
+    } else if (line.caret, line.anchor) != was {
+        LineKey::Moved
+    } else if copied {
+        LineKey::Copied
+    } else {
+        LineKey::Ignored
     }
 }
 
@@ -555,26 +649,57 @@ mod tests {
         }
     }
 
-    /// The line `marked` writes, its caret at the `|`.
+    /// The line `marked` writes, its caret at the `|` and its anchor at
+    /// the `^`, or at the caret without one.
     fn line(marked: &str) -> Line {
-        let caret = marked.find('|').expect("the marked line has a caret");
-        let mut line = Line::new(marked.replacen('|', "", 1));
+        let at = |mark: char| {
+            let i = marked.find(mark)?;
+            Some(i - marked[..i].matches(['|', '^']).count())
+        };
+        let caret = at('|').expect("the marked line has a caret");
+        let mut line = Line::new(marked.replace(['|', '^'], ""));
         line.caret = caret;
+        line.anchor = at('^').unwrap_or(caret);
         line
     }
 
-    /// `line` written with a `|` at its caret.
+    /// `line` written with a `|` at its caret and a `^` at its anchor
+    /// when text is selected.
     fn marked(line: &Line) -> String {
-        let (before, after) = line.split();
-        format!("{before}|{after}")
+        let mut text = line.text().to_string();
+        let mut marks = [(line.caret(), '|'), (line.anchor(), '^')];
+        marks.sort_by_key(|&(at, _)| std::cmp::Reverse(at));
+        for (at, mark) in marks {
+            if mark == '|' || at != line.caret() {
+                text.insert(at, mark);
+            }
+        }
+        text
+    }
+
+    /// The marked line after `start` takes `keystroke` with `clipboard`
+    /// on the clipboard, what the key did, and what it copied.
+    fn after_copy(
+        start: &str,
+        keystroke: &Keystroke,
+        clipboard: Option<&str>,
+    ) -> (String, LineKey, Option<String>) {
+        let mut line = line(start);
+        let mut copied = None;
+        let key = edit_line(
+            &mut line,
+            keystroke,
+            || clipboard.map(Into::into),
+            |s| copied = Some(s.to_string()),
+        );
+        (marked(&line), key, copied)
     }
 
     /// The marked line after `start` takes `keystroke` with `clipboard`
     /// on the clipboard, and what the key did.
     fn after(start: &str, keystroke: &Keystroke, clipboard: Option<&str>) -> (String, LineKey) {
-        let mut line = line(start);
-        let key = edit_line(&mut line, keystroke, || clipboard.map(Into::into));
-        (marked(&line), key)
+        let (end, key, _) = after_copy(start, keystroke, clipboard);
+        (end, key)
     }
 
     /// Check each `(start, keystroke, end, outcome)` case.
@@ -688,8 +813,8 @@ mod tests {
                 "ab|",
                 key("a", Some("a"), "cmd"),
                 None,
-                "ab|",
-                LineKey::Ignored,
+                "^ab|",
+                LineKey::Moved,
             ),
             (
                 "ab|",
@@ -802,8 +927,9 @@ mod tests {
 
     /// Left and Right move the caret a character, with Ctrl or Alt a
     /// word, and with Cmd to an end; Home and End move it to an end.
-    /// Shift moves it as the key alone does. None of them changes the
-    /// text, and a move with no room is ignored.
+    /// Shift moves it as the key alone does and selects what it passes.
+    /// None of them changes the text, and a move with no room is
+    /// ignored.
     #[test]
     fn arrows_home_and_end_move_the_caret_without_editing() {
         let (left, right) = (
@@ -812,7 +938,7 @@ mod tests {
         );
         check(&[
             ("ab|c", left(""), "a|bc", LineKey::Moved),
-            ("ab|c", left("shift"), "a|bc", LineKey::Moved),
+            ("ab|c", left("shift"), "a|b^c", LineKey::Moved),
             ("café|", left(""), "caf|é", LineKey::Moved),
             ("|abc", left(""), "|abc", LineKey::Ignored),
             ("a|bc", right(""), "ab|c", LineKey::Moved),
@@ -842,21 +968,24 @@ mod tests {
             ("|ab cd", right("cmd"), "ab cd|", LineKey::Moved),
             ("|abc", left("cmd"), "|abc", LineKey::Ignored),
             ("ab|c", key("home", None, ""), "|abc", LineKey::Moved),
-            ("ab|c", key("end", None, "shift"), "abc|", LineKey::Moved),
+            ("ab|c", key("end", None, "shift"), "ab^c|", LineKey::Moved),
             ("|abc", key("home", None, ""), "|abc", LineKey::Ignored),
             ("abc|", key("end", None, ""), "abc|", LineKey::Ignored),
         ]);
     }
 
-    // WHY: closes "a caret key lands between the bytes of a character
-    // or reports the wrong outcome" for every key the entry takes, with
-    // every modifier, from every caret position of text with one-, two-,
-    // three-, and four-byte characters. The caret stays on a character
-    // boundary of the text, a move leaves the text, an edit changes it,
-    // and an ignored key changes nothing, so the caller's caret restart
-    // and rejection reset follow what happened.
+    // WHY: closes "a key lands the caret or the anchor between the
+    // bytes of a character or reports the wrong outcome" for every key
+    // the entry takes, with every modifier, from every caret and anchor
+    // position of text with one-, two-, three-, and four-byte
+    // characters. Both stay on character boundaries of the text, a move
+    // leaves the text and changes the caret or the selection, an edit
+    // changes the text, a copy changes nothing, an ignored key changes
+    // nothing, and only a copy or a cut reaches the clipboard, with the
+    // selected text, so the caller's caret restart, rejection reset,
+    // and Copy fallback follow what happened.
     #[test]
-    fn every_key_leaves_the_caret_on_a_character_boundary() {
+    fn every_key_leaves_the_caret_and_anchor_on_character_boundaries() {
         let keys = [
             "left",
             "right",
@@ -864,39 +993,206 @@ mod tests {
             "end",
             "backspace",
             "delete",
+            "a",
+            "c",
             "v",
             "x",
         ];
         let mods = ["", "shift", "ctrl", "alt", "cmd", "ctrl shift", "alt shift"];
         for text in ["", "a", "ab cd", "naïve—café ✓ 𝄞x", "--_{date}"] {
-            let carets = text.char_indices().map(|(i, _)| i).chain([text.len()]);
-            for caret in carets {
+            let bounds = || text.char_indices().map(|(i, _)| i).chain([text.len()]);
+            for (caret, anchor) in bounds().flat_map(|c| bounds().map(move |a| (c, a))) {
                 for name in keys {
                     for mods in mods {
                         let mut line = Line::new(text);
-                        line.caret = caret;
-                        let typed = (name == "x").then_some("é");
+                        (line.caret, line.anchor) = (caret, anchor);
+                        let selected = &text[caret.min(anchor)..caret.max(anchor)];
+                        let typed = match name {
+                            "x" => Some("é"),
+                            "a" | "c" | "v" => Some(name),
+                            _ => None,
+                        };
                         let keystroke = key(name, typed, mods);
-                        let outcome = edit_line(&mut line, &keystroke, || Some("ü\n".into()));
-                        let at = format!("{text:?} at {caret} + {mods} {name}");
-                        assert!(
-                            line.text().is_char_boundary(line.caret()),
-                            "{at}: caret {} is inside a character",
-                            line.caret()
+                        let mut copied = None;
+                        let outcome = edit_line(
+                            &mut line,
+                            &keystroke,
+                            || Some("ü\n".into()),
+                            |s| copied = Some(s.to_string()),
                         );
+                        let at = format!("{text:?} at {caret}^{anchor} + {mods} {name}");
+                        for offset in [line.caret(), line.anchor()] {
+                            assert!(
+                                line.text().is_char_boundary(offset),
+                                "{at}: {offset} is inside a character"
+                            );
+                        }
+                        let now = (line.text(), line.caret(), line.anchor());
+                        let cut = (name == "x" && outcome == LineKey::Edited).then_some(selected);
                         match outcome {
-                            LineKey::Ignored => {
-                                assert_eq!((line.text(), line.caret()), (text, caret), "{at}")
+                            LineKey::Ignored | LineKey::Copied => {
+                                assert_eq!(now, (text, caret, anchor), "{at}")
                             }
                             LineKey::Moved => {
                                 assert_eq!(line.text(), text, "{at}");
-                                assert_ne!(line.caret(), caret, "{at}");
+                                assert_ne!((now.1, now.2), (caret, anchor), "{at}");
                             }
                             LineKey::Edited => assert_ne!(line.text(), text, "{at}"),
+                        }
+                        let expected = match outcome {
+                            LineKey::Copied => Some(selected),
+                            _ if !mods.contains("ctrl") && !mods.contains("cmd") => None,
+                            _ => cut,
+                        };
+                        assert_eq!(copied.as_deref(), expected, "{at}: clipboard");
+                        if copied.is_some() {
+                            assert!(!selected.is_empty(), "{at}: copied nothing");
                         }
                     }
                 }
             }
+        }
+    }
+
+    // WHY: closes "a selection is ignored, survives a key that ends it,
+    // or is removed by a key that should replace it": Shift with each
+    // move extends it from the anchor, a plain Left or Right collapses
+    // it to its start or end, every other move drops it, Backspace and
+    // Delete with any modifier remove it, typing and a paste replace
+    // it, Ctrl+A and Cmd+A select everything, and Ctrl+C, Cmd+C,
+    // Ctrl+X, and Cmd+X copy it, the cut also removing it. It does not
+    // cover drawing the selection; the X11 tests read it on screen.
+    #[test]
+    fn a_selection_extends_collapses_and_is_replaced_removed_and_copied() {
+        let (left, right) = (
+            |mods| key("left", None, mods),
+            |mods| key("right", None, mods),
+        );
+        let typed = |c| key(c, Some(c), "");
+        check(&[
+            ("ab|cd", left("shift"), "a|b^cd", LineKey::Moved),
+            ("a|b^cd", left("shift"), "|ab^cd", LineKey::Moved),
+            ("a|b^cd", right("shift"), "ab|cd", LineKey::Moved),
+            ("|ab^cd", left("shift"), "|ab^cd", LineKey::Ignored),
+            ("|ab cd", right("ctrl shift"), "^ab| cd", LineKey::Moved),
+            ("ab |cd", right("cmd shift"), "ab ^cd|", LineKey::Moved),
+            (
+                "ab| cd",
+                key("home", None, "shift"),
+                "|ab^ cd",
+                LineKey::Moved,
+            ),
+            (
+                "ab |cd",
+                key("end", None, "shift"),
+                "ab ^cd|",
+                LineKey::Moved,
+            ),
+            ("a^bc|d", left(""), "a|bcd", LineKey::Moved),
+            ("a|bc^d", right(""), "abc|d", LineKey::Moved),
+            ("a^bc|d", left("ctrl"), "|abcd", LineKey::Moved),
+            ("a^bc|d", right("cmd"), "abcd|", LineKey::Moved),
+            ("a^bc|d", key("home", None, ""), "|abcd", LineKey::Moved),
+            ("a|bc^d", key("end", None, ""), "abcd|", LineKey::Moved),
+            ("a^bc|d", key("backspace", None, ""), "a|d", LineKey::Edited),
+            (
+                "a^bc|d",
+                key("backspace", None, "cmd"),
+                "a|d",
+                LineKey::Edited,
+            ),
+            ("a|bc^d", key("delete", None, ""), "a|d", LineKey::Edited),
+            (
+                "ab ^cd|",
+                key("backspace", None, "ctrl"),
+                "ab |",
+                LineKey::Edited,
+            ),
+            ("a|bc^d", key("delete", None, "alt"), "a|d", LineKey::Edited),
+            ("a^bc|d", typed("x"), "ax|d", LineKey::Edited),
+            ("a^b|", typed("b"), "ab|", LineKey::Moved),
+            ("a^bc|d", key("up", None, ""), "a^bc|d", LineKey::Ignored),
+            ("ab|", key("a", Some("a"), "ctrl"), "^ab|", LineKey::Moved),
+            ("a|b", key("a", Some("a"), "cmd"), "^ab|", LineKey::Moved),
+            (
+                "^ab|",
+                key("a", Some("a"), "ctrl"),
+                "^ab|",
+                LineKey::Ignored,
+            ),
+            ("|", key("a", Some("a"), "cmd"), "|", LineKey::Ignored),
+        ]);
+        for (start, keystroke, clipboard, end, outcome, copied) in [
+            (
+                "a^bc|d",
+                key("c", Some("c"), "ctrl"),
+                None,
+                "a^bc|d",
+                LineKey::Copied,
+                Some("bc"),
+            ),
+            (
+                "a|bc^d",
+                key("c", Some("c"), "cmd"),
+                None,
+                "a|bc^d",
+                LineKey::Copied,
+                Some("bc"),
+            ),
+            (
+                "a|bc^d",
+                key("x", Some("x"), "cmd"),
+                None,
+                "a|d",
+                LineKey::Edited,
+                Some("bc"),
+            ),
+            (
+                "^café|",
+                key("x", Some("x"), "ctrl"),
+                None,
+                "|",
+                LineKey::Edited,
+                Some("café"),
+            ),
+            (
+                "ab|",
+                key("c", Some("c"), "ctrl"),
+                None,
+                "ab|",
+                LineKey::Ignored,
+                None,
+            ),
+            (
+                "ab|",
+                key("x", Some("x"), "ctrl"),
+                None,
+                "ab|",
+                LineKey::Ignored,
+                None,
+            ),
+            (
+                "a^bc|d",
+                key("v", Some("v"), "ctrl"),
+                Some("Z\n"),
+                "aZ|d",
+                LineKey::Edited,
+                None,
+            ),
+            (
+                "a^bc|d",
+                key("v", Some("v"), "ctrl"),
+                Some(""),
+                "a^bc|d",
+                LineKey::Ignored,
+                None,
+            ),
+        ] {
+            assert_eq!(
+                after_copy(start, &keystroke, clipboard),
+                (end.to_string(), outcome, copied.map(Into::into)),
+                "{start:?} + {keystroke:?} with {clipboard:?}"
+            );
         }
     }
 
@@ -939,7 +1235,19 @@ mod tests {
             ("|é✓𝄞", 26.0, "é✓𝄞|"),
         ] {
             let mut placed = line(start);
-            placed.place(x, advance);
+            placed.place(x, false, advance);
+            assert_eq!(marked(&placed), end, "{start:?} at {x}");
+        }
+        // A Shift-click keeps the anchor and selects to the click; a
+        // plain click drops the selection.
+        for (start, x, extend, end) in [
+            ("a|bcd", 30.0, true, "a^bc|d"),
+            ("a^bc|d", 0.0, true, "|a^bcd"),
+            ("a^bc|d", 10.0, true, "a|bcd"),
+            ("a^bc|d", 40.0, false, "abcd|"),
+        ] {
+            let mut placed = line(start);
+            placed.place(x, extend, |s| 10.0 * s.chars().count() as f32);
             assert_eq!(marked(&placed), end, "{start:?} at {x}");
         }
     }
