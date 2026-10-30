@@ -460,6 +460,48 @@ fn tab_passes_over_the_version_row_while_it_shows_no_button() {
     }
 }
 
+// WHY: closes "a control that sets nothing takes input": a row whose
+// required switch is off (the floating thumbnail's options with the
+// thumbnail off) is disabled, Tab passes over it, and it comes back
+// with the switch. The dependent rows are read from `Row::requires`
+// over every pane, so a new one is covered, and its switch must be
+// drawn above it on the same pane. Not covered: the dimmed drawing and
+// the pointer layer over it, which the settings pane shots show.
+#[test]
+fn a_row_whose_switch_is_off_leaves_the_tab_ring() {
+    let mut dependents = 0;
+    for pane in Pane::ALL {
+        let rows: Vec<Row> = pane.rows().collect();
+        for (at, row) in rows.iter().enumerate() {
+            let Some(switch) = row.requires() else {
+                continue;
+            };
+            dependents += 1;
+            assert!(
+                rows[..at].contains(&Row::Switch(switch)),
+                "{row:?} requires {switch:?}, which {pane:?} does not draw above it"
+            );
+            for on in [true, false] {
+                let mut s = settings(Release::None);
+                s.pane = pane;
+                *switch.slot(&mut s.cfg).unwrap() = on;
+                assert_eq!(s.enabled(*row), on, "{row:?} with {switch:?} {on}");
+                let walk = tab_walk(&mut s, true, rows.len() + 1);
+                assert_eq!(
+                    walk.contains(&Some(*row)),
+                    on,
+                    "{row:?} in the Tab ring with {switch:?} {on}"
+                );
+                assert!(
+                    walk.contains(&Some(Row::Switch(switch))),
+                    "{switch:?} stays in the ring to turn back on"
+                );
+            }
+        }
+    }
+    assert!(dependents > 0, "no row requires a switch");
+}
+
 /// The storage fields show the home directory as `~`, the form
 /// config.toml stores; a directory elsewhere shows in full.
 #[test]

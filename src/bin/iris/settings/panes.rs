@@ -56,6 +56,16 @@ impl Row {
             _ => theme::ROW_H,
         }
     }
+
+    /// The switch that must be on for the row's setting to apply: the
+    /// floating thumbnail's options set nothing while it is off.
+    pub(super) fn requires(self) -> Option<Switch> {
+        match self {
+            Row::Pick(Pick::ToastClick | Pick::ToastDuration | Pick::ToastPosition)
+            | Row::Switch(Switch::ToastDrag | Switch::ToastActions) => Some(Switch::Thumbnail),
+            _ => None,
+        }
+    }
 }
 
 impl Pane {

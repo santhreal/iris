@@ -432,10 +432,16 @@ impl Settings {
         })
     }
 
-    /// Whether Tab stops at `row`: every control, and the version row
-    /// while it shows a button.
+    /// Whether Tab stops at `row`: every enabled control, and the
+    /// version row while it shows a button.
     fn reaches(&self, row: Row) -> bool {
-        row != Row::Version || self.offers_action()
+        self.enabled(row) && (row != Row::Version || self.offers_action())
+    }
+
+    /// Whether `row`'s control takes input: off while the switch it
+    /// requires is off.
+    pub(super) fn enabled(&self, row: Row) -> bool {
+        row.requires().is_none_or(|s| self.switch_on(s))
     }
 
     /// The color of the keyboard focus ring around the control of `row`:
@@ -482,6 +488,9 @@ impl Settings {
     /// Run the control of `row` as a click on it does: Space or Return
     /// on the control the ring is on.
     fn activate(&mut self, row: Row, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.enabled(row) {
+            return;
+        }
         match row {
             Row::Switch(s) => self.flip(s),
             Row::Pick(p) => self.open_menu(p),

@@ -50,6 +50,8 @@ pub const FG: Rgba = alpha(WHITE, 0.90);
 pub const FG_DIM: Rgba = alpha(WHITE, 0.55);
 pub const FG_FAINT: Rgba = alpha(WHITE, 0.30);
 pub const FG_DISABLED: Rgba = alpha(WHITE, 0.25);
+/// A disabled row, label and control alike, over its card.
+pub const DISABLED_OPACITY: f32 = 0.4;
 
 /// systemBlue (dark), #0A84FF: toggle on-track, the primary button,
 /// focus rings, selection, links.

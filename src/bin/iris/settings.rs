@@ -293,7 +293,7 @@ impl Settings {
     }
 
     fn row(&self, row: Row, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        match row {
+        let el = match row {
             Row::Switch(s) => self.switch_row(s, cx).into_any_element(),
             Row::Pick(p) => self.pick_row(p, cx).into_any_element(),
             Row::Text(f) => self.text_row(f, window, cx).into_any_element(),
@@ -301,7 +301,18 @@ impl Settings {
             Row::Hotkey(f) => self.hotkey_row(f, cx).into_any_element(),
             Row::Restore => self.restore_row(cx).into_any_element(),
             Row::Version => self.version_row(window, cx).into_any_element(),
+        };
+        if self.enabled(row) {
+            return el;
         }
+        // A disabled row draws dimmed, and a layer over it takes the
+        // pointer so its control neither hovers nor presses.
+        div()
+            .relative()
+            .opacity(theme::DISABLED_OPACITY)
+            .child(el)
+            .child(div().absolute().inset_0().occlude())
+            .into_any_element()
     }
 }
 
