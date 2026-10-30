@@ -493,7 +493,14 @@ jobs:
           # A process holding an installed file (a virus scanner) as the
           # uninstaller deletes it: the uninstaller retries until it closes.
           # The uninstaller runs from a copy in %TEMP% and returns at once.
-          Invoke-Held "$dir\iris.ico" { Start-Process -Wait -FilePath "$dir\uninstall.exe" -ArgumentList '/S' }
+          # It starts unwaited: Start-Process -Wait waits for that copy too,
+          # which retries for 10 s and gives up before the hold closes.
+          $un = Invoke-Held "$dir\iris.ico" {
+            $p = Start-Process -PassThru -FilePath "$dir\uninstall.exe" -ArgumentList '/S'
+            $null = $p.Handle
+            $p
+          }
+          if (-not $un.WaitForExit(120000)) { throw 'the uninstaller ran over 120 s' }
           $deadline = (Get-Date).AddSeconds(60)
           while ((Test-Path $dir) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
           if (Test-Path $dir) { throw "$dir remains after uninstall" }
