@@ -126,7 +126,7 @@ Triggered via the toast context menu (**Pin to Screen**) or the library's card c
   - **Linux Wayland**: Calls `window.start_window_move()` (`xdg_toplevel.move`).
   - **Linux X11**: Tracks pointer coordinates and moves the window.
   - **Windows and macOS**: Invokes platform window drag routines.
-- Copy: `Ctrl+C` (`Cmd+C` on macOS) copies the image to the clipboard. A status pill in the bottom-left corner reads **Copied**, or the error, for 4 seconds.
+- Copy: `Ctrl+C` (`Cmd+C` on macOS) copies the image to the clipboard. A status pill centered at the bottom of the pin reads **Copied**, or the error, for 4 seconds.
 - Zoom: the scroll wheel, a touchpad pinch, `+`, and `-` resize the window and its image from the top-left corner, and `0` returns it to native scale. The zoom ranges from a shorter edge of 48 logical pixels, or native scale for a smaller image, up to 4 times native scale or the size of the monitor, whichever is smaller. The status pill states the zoom in percent of native scale for 4 seconds.
 - Closing gestures:
   - Double-click anywhere on the image.

@@ -126,7 +126,7 @@ Clicking a committed label with the Text tool, or double-clicking it with the Se
   - **Copy File**: Copies the file to the system clipboard in platform file-list format for pasting into file managers. The file holds markup once **Done** saves it.
   - **Copy Path**: Copies the canonical absolute path string of the image file to the system clipboard.
 
-A copy reports **Copied** or the error on the status line over the stage's lower left corner. A message on the status line leaves 4 seconds after it shows, and a newer message replaces it. A message shown before the image finishes decoding stays until 4 seconds after the image decodes; the message of an image that fails to decode stays.
+A copy reports **Copied** or the error on the status line, a capsule centered over the bottom of the stage. A message on the status line leaves 4 seconds after it shows, and a newer message replaces it. A message shown before the image finishes decoding stays until 4 seconds after the image decodes; the message of an image that fails to decode stays.
 
 ## Window
 

@@ -280,7 +280,7 @@ fn ctrl_c_copies_a_pin_and_ctrl_w_closes_it() {
         "the clipboard holds pixels the pin does not show"
     );
     daemon.until("the pin to state the copy", || {
-        (pill_corner(&client(&conn, root, pin)) != pill_corner(&shown)).then_some(())
+        (pill_strip(&client(&conn, root, pin)) != pill_strip(&shown)).then_some(())
     });
     x11::chord(&conn, root, &[CONTROL, W]);
     daemon.until("Ctrl+W to close the pin", || {
@@ -424,12 +424,10 @@ fn cursor(conn: &RustConnection) -> (u16, u16, u16, u16, Vec<u32>) {
     )
 }
 
-/// The pixels of a pin's bottom-left corner, where its status pill
-/// shows: 100 px across and 40 px up from the bottom edge.
-fn pill_corner((w, h, px): &(usize, usize, Vec<[u8; 3]>)) -> Vec<[u8; 3]> {
-    (h.saturating_sub(40)..*h)
-        .flat_map(|y| px[y * w..y * w + 100.min(*w)].to_vec())
-        .collect()
+/// The pixels of a pin's bottom edge, where its status pill shows,
+/// centered: the full width, 40 px up from the bottom edge.
+fn pill_strip((w, h, px): &(usize, usize, Vec<[u8; 3]>)) -> Vec<[u8; 3]> {
+    px[h.saturating_sub(40) * w..h * w].to_vec()
 }
 
 /// Drag FROM to TO on a capture overlay and commit it, wait for the

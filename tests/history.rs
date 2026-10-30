@@ -162,10 +162,12 @@ const LABEL: (f32, f32) = (380.0, 280.0);
 const SECOND: [(f32, f32); 2] = [(300.0, 220.0), (400.0, 300.0)];
 /// A third rectangle's corners, in image pixels.
 const THIRD: [(f32, f32); 2] = [(420.0, 60.0), (520.0, 140.0)];
-/// Where the status line shows, from `widgets::status_pill`: from the
-/// stage margin, 10 px over the window's bottom edge; the span covers
-/// the start of its text.
-const STATUS_LEFT: usize = 24;
+/// Where the status line shows, from `widgets::status_pill`: centered,
+/// 10 px over the window's bottom edge; the span covers the middle of
+/// its text.
+fn status_left(w: usize) -> usize {
+    (w - STATUS_W) / 2
+}
 const STATUS_BOTTOM: usize = 10;
 const STATUS_H: usize = 22;
 const STATUS_W: usize = 160;
@@ -513,8 +515,9 @@ impl Session {
     fn status_line(&self) -> Vec<[u8; 3]> {
         let (w, h, px) = self.canvas();
         let px = &px;
+        let left = status_left(w);
         (h - STATUS_BOTTOM - STATUS_H..h - STATUS_BOTTOM)
-            .flat_map(|y| (STATUS_LEFT..STATUS_LEFT + STATUS_W).map(move |x| px[y * w + x]))
+            .flat_map(|y| (left..left + STATUS_W).map(move |x| px[y * w + x]))
             .collect()
     }
 
@@ -1874,8 +1877,9 @@ fn a_decode_failure_stays_on_the_status_line() {
     let shown = || {
         let (w, h, px) = client(&conn, root, editor);
         let px = &px;
+        let left = status_left(w);
         let mut line = (h - STATUS_BOTTOM - STATUS_H..h - STATUS_BOTTOM)
-            .flat_map(|y| (STATUS_LEFT..STATUS_LEFT + STATUS_W).map(move |x| px[y * w + x]));
+            .flat_map(|y| (left..left + STATUS_W).map(move |x| px[y * w + x]));
         let first = line.next()?;
         line.any(|p| p != first).then_some(())
     };

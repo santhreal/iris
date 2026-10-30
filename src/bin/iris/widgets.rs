@@ -201,21 +201,33 @@ pub fn overlay_icon_button_active(
 /// How long a transient status message stays up.
 pub const STATUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 
-/// Transient status line, `left` px from the window's left edge,
-/// bottom-aligned, frosted.
-pub fn status_pill(text: &str, left: f32) -> Div {
+/// Transient status line: a HUD capsule centered over the window's
+/// bottom edge, as the overlay's readouts are, and at least `inset` px
+/// from either side so a long message wraps inside the window. A line
+/// of text keeps capsule ends; wrapped lines keep the same corners.
+pub fn status_pill(text: &str, inset: f32) -> Div {
     div()
         .absolute()
         .bottom(px(10.))
-        .left(px(left))
-        .px(px(10.))
-        .py(px(5.))
-        .rounded(px(theme::RADIUS_SM))
-        .bg(theme::alpha(theme::BG_ELEV, 0.95))
-        .shadow(theme::shadow_float())
-        .text_size(px(theme::TEXT_SMALL))
-        .text_color(theme::FG_DIM)
-        .child(text.to_string())
+        .left_0()
+        .right_0()
+        .px(px(inset))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .px(px(12.))
+                .py(px(5.))
+                .rounded(px(12.))
+                .bg(theme::alpha(theme::BG_ELEV, 0.95))
+                .border_1()
+                .border_color(theme::HAIRLINE)
+                .shadow(theme::shadow_float())
+                .text_size(px(theme::TEXT_SMALL))
+                .text_color(theme::FG)
+                .text_center()
+                .child(text.to_string()),
+        )
 }
 
 /// Raise and focus the open window whose root view is a `V` that
