@@ -578,4 +578,12 @@ mod shortcut_tests {
         assert_eq!(keys("Save and close"), Some(&save_close.into()));
         assert_eq!(keys("Undo / Redo"), Some(&undo_redo.into()));
     }
+
+    // WHY: the class closed here is "a sheet row shows a key as text":
+    // each row's keys draw as caps through `widgets::key_hint`, and a
+    // row the hint grammar misreads fails here. Not covered: the paint.
+    #[test]
+    fn every_help_row_reads_as_key_caps() {
+        crate::widgets::assert_hints_read_as_keys(&super::help_rows());
+    }
 }

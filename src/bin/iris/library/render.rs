@@ -431,7 +431,10 @@ pub(super) fn help_rows(cfg: &iris_lib::config::Config) -> Vec<(&'static str, Sh
         ("Open", "Return or click".into()),
         ("Quick Look", "Space".into()),
         ("Actions menu", "Shift+F10 or right-click".into()),
-        ("Move selection", "Arrows, Home, End, Page Up/Down".into()),
+        (
+            "Move selection",
+            "Arrows, Home, End, Page Up, Page Down".into(),
+        ),
         ("Extend selection", "Shift+Arrow or Shift+click".into()),
         (
             "Add to selection",

@@ -43,7 +43,9 @@ pub use self::field::{
     FieldState, Line, LineKey, TextOrigin,
 };
 pub use self::image::*;
-pub use self::keycaps::{chord_label, keycaps, keycaps_in};
+#[cfg(test)]
+pub(crate) use self::keycaps::assert_hints_read_as_keys;
+pub use self::keycaps::{chord_label, key_hint, keycaps, keycaps_in};
 pub use self::menu::{
     hover_row, menu, menu_at, menu_key, menu_separator, popup_button, popup_menu, MenuItem,
     MenuKey, MENU_PAD, MENU_RADIUS, MENU_ROW_H, MENU_W,
@@ -250,12 +252,12 @@ pub fn raise_open<V: Render>(cx: &mut App, is: impl Fn(&V) -> bool) -> bool {
 const SHEET_MARGIN: f32 = 16.0;
 
 /// A keyboard-shortcuts sheet: centered card over a dim layer, `lead`
-/// under the title where a surface has one, then rows of action / key
-/// combination. The surface owns the open state and closes on Esc or a
-/// press on the dim layer. The dim layer takes the pointer from the
-/// surface under it, and the card stays inside the window: rows that do
-/// not fit scroll under the title on `scroll`, which the surface keeps
-/// across renders.
+/// under the title where a surface has one, then rows of an action and
+/// its keys, drawn as caps by [`key_hint`]. The surface owns the open
+/// state and closes on Esc or a press on the dim layer. The dim layer
+/// takes the pointer from the surface under it, and the card stays
+/// inside the window: rows that do not fit scroll under the title on
+/// `scroll`, which the surface keeps across renders.
 pub fn shortcuts_sheet(
     lead: Option<AnyElement>,
     rows: Vec<(&'static str, SharedString)>,
@@ -283,16 +285,7 @@ pub fn shortcuts_sheet(
                         .text_color(theme::FG)
                         .child(action),
                 )
-                .child(
-                    div()
-                        .px(px(8.))
-                        .py(px(3.))
-                        .rounded(px(6.))
-                        .bg(theme::CONTROL_BG)
-                        .text_size(px(theme::TEXT_SMALL))
-                        .text_color(theme::FG_DIM)
-                        .child(keys),
-                ),
+                .child(key_hint(&keys, theme::FG_DIM)),
         );
     }
     div()

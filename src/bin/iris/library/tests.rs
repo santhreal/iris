@@ -798,6 +798,22 @@ fn the_shortcuts_sheet_shows_the_configured_global_hotkeys() {
     );
 }
 
+// WHY: the class closed here is "a sheet row shows a key as text": each
+// row's keys draw as caps through `widgets::key_hint`, and a row the
+// hint grammar misreads ("Page Up/Down") fails here, for the default
+// hotkeys and for none. Not covered: the paint.
+#[test]
+fn every_shortcuts_sheet_row_reads_as_key_caps() {
+    let unset = iris_lib::config::Config {
+        capture_hotkey: String::new(),
+        record_hotkey: String::new(),
+        ..Default::default()
+    };
+    for cfg in [iris_lib::config::Config::default(), unset] {
+        crate::widgets::assert_hints_read_as_keys(&help_rows(&cfg));
+    }
+}
+
 // WHY: the class closed here is "the empty library points at a shortcut
 // that does nothing". The hint named the configured key whether or not
 // the daemon bound it, so a key another app holds, or none at all, read

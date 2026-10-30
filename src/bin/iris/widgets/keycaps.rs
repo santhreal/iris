@@ -29,8 +29,16 @@ pub fn chord_label(chord: &str) -> String {
 }
 
 fn key_label(key: &str) -> SharedString {
-    let lower = key.to_lowercase();
-    let named = match lower.as_str() {
+    match named(key) {
+        Some(label) => label.into(),
+        None => capitalized(key).into(),
+    }
+}
+
+/// The keyboard label of a modifier or named key, in any case and with
+/// or without spaces ("Page Up", "pgup"); None for any other key.
+fn named(key: &str) -> Option<&'static str> {
+    Some(match key.to_lowercase().replace(' ', "").as_str() {
         "ctrl" | "control" => "Ctrl",
         "shift" => "Shift",
         "alt" => "Alt",
@@ -54,19 +62,10 @@ fn key_label(key: &str) -> SharedString {
         "down" | "arrowdown" => "Down",
         "left" | "arrowleft" => "Left",
         "right" | "arrowright" => "Right",
-        _ => {
-            let mut chars = key.chars();
-            return match chars.next() {
-                Some(first) => {
-                    let mut out: String = first.to_uppercase().collect();
-                    out.push_str(chars.as_str());
-                    out.into()
-                }
-                None => SharedString::default(),
-            };
-        }
-    };
-    named.into()
+        "arrow" => "Arrow",
+        "arrows" => "Arrows",
+        _ => return None,
+    })
 }
 
 /// `chord` as a row of key caps in secondary text: a faint fill and no
@@ -84,31 +83,161 @@ pub fn keycaps_in(chord: &str, ink: Rgba) -> Div {
         .flex()
         .items_center()
         .gap(px(3.))
-        .children(chord_keys(chord).into_iter().map(|key| {
-            div()
-                .h(px(CAP_H))
-                .min_w(px(CAP_H))
-                .px(px(5.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(CAP_RADIUS))
-                .bg(theme::alpha(theme::FG, 0.08))
-                .text_size(px(theme::TEXT_SMALL))
-                .line_height(px(14.))
-                .font_weight(FontWeight::MEDIUM)
-                .font_features(theme::tabular())
-                .text_color(ink)
-                .whitespace_nowrap()
-                .child(key)
+        .children(chord_keys(chord).into_iter().map(|key| cap(key, ink)))
+}
+
+fn cap(key: SharedString, ink: Rgba) -> Div {
+    div()
+        .h(px(CAP_H))
+        .min_w(px(CAP_H))
+        .px(px(5.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(CAP_RADIUS))
+        .bg(theme::alpha(theme::FG, 0.08))
+        .text_size(px(theme::TEXT_SMALL))
+        .line_height(px(14.))
+        .font_weight(FontWeight::MEDIUM)
+        .font_features(theme::tabular())
+        .text_color(ink)
+        .whitespace_nowrap()
+        .child(key)
+}
+
+/// One piece of a shortcut hint: a key, drawn as a cap, or a word of
+/// the instruction around the keys, drawn as text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Piece {
+    Cap(SharedString),
+    Word(SharedString),
+}
+
+/// The separators of a hint's alternatives and steps, longest first so
+/// `, then ` wins over `, `, each with the word it shows as.
+const JOINERS: [(&str, &str); 5] = [
+    (", then ", "then"),
+    (" / ", "/"),
+    (" or ", "or"),
+    (" + ", "+"),
+    (", ", ","),
+];
+
+/// Whether `word` names a key: a modifier or named key in any spelling
+/// `chord_keys` reads, a function key, or a single character.
+fn is_key(word: &str) -> bool {
+    let mut chars = word.chars();
+    let single = chars.next().is_some() && chars.next().is_none();
+    let function = word
+        .strip_prefix(['f', 'F'])
+        .is_some_and(|n| matches!(n.parse::<u8>(), Ok(1..=24)));
+    single || function || named(word).is_some()
+}
+
+/// `word` with its first character upper case: how a key without a
+/// name reads.
+fn capitalized(word: &str) -> String {
+    let mut chars = word.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// The pieces of a shortcut hint, in reading order: "Shift+F10, then
+/// Left / Right" reads as Shift, F10, then, Left, /, Right. A chord's
+/// keys are caps and its other parts words ("Shift+click"); a phrase
+/// splits into words ("Esc twice"), except a key name of two words
+/// ("Page Up").
+pub(crate) fn hint_pieces(hint: &str) -> Vec<Piece> {
+    let mut out = Vec::new();
+    let mut rest = hint;
+    loop {
+        let next = (0..rest.len())
+            .filter(|&i| rest.is_char_boundary(i))
+            .find_map(|i| {
+                JOINERS
+                    .iter()
+                    .find(|(sep, _)| rest[i..].starts_with(sep))
+                    .map(|&(sep, word)| (i, sep, word))
+            });
+        let Some((at, sep, word)) = next else {
+            segment(rest, &mut out);
+            return out;
+        };
+        segment(&rest[..at], &mut out);
+        out.push(Piece::Word(word.into()));
+        rest = &rest[at + sep.len()..];
+    }
+}
+
+fn segment(seg: &str, out: &mut Vec<Piece>) {
+    let seg = seg.trim();
+    if is_key(seg) {
+        out.push(Piece::Cap(key_label(seg)));
+    } else if seg.contains(' ') {
+        for word in seg.split_whitespace() {
+            segment(word, out);
+        }
+    } else if seg.contains('+') {
+        for part in seg.split('+').filter(|p| !p.is_empty()) {
+            segment(part, out);
+        }
+    } else if !seg.is_empty() {
+        out.push(Piece::Word(seg.to_string().into()));
+    }
+}
+
+/// A shortcut hint as a row of key caps and the words between them, in
+/// `ink`: the keys of a shortcuts sheet row.
+pub fn key_hint(hint: &str, ink: Rgba) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(3.))
+        .children(hint_pieces(hint).into_iter().map(|piece| {
+            match piece {
+                Piece::Cap(key) => cap(key, ink),
+                Piece::Word(word) => div()
+                    .px(px(2.))
+                    .text_size(px(theme::TEXT_SMALL))
+                    .text_color(ink)
+                    .whitespace_nowrap()
+                    .child(word),
+            }
         }))
 }
 
+/// The words a shortcut hint may show beside its keys. A sheet row with
+/// any other word fails `assert_hints_read_as_keys`: a key the grammar
+/// misreads as a word ("Page Up/Down") would show as text.
+#[cfg(test)]
+const INSTRUCTION_WORDS: [&str; 5] = ["click", "right-click", "Double-click", "drag", "twice"];
+
+/// Assert that each sheet row's keys read as caps, with only joiners
+/// and instruction words as text.
+#[cfg(test)]
+pub(crate) fn assert_hints_read_as_keys(rows: &[(&'static str, SharedString)]) {
+    for (action, hint) in rows {
+        for piece in hint_pieces(hint) {
+            if let Piece::Word(word) = piece {
+                assert!(
+                    JOINERS.iter().any(|(_, j)| *j == word.as_ref())
+                        || INSTRUCTION_WORDS.contains(&word.as_ref()),
+                    "{action}: {hint:?} shows {word:?} as text, not a key cap"
+                );
+            }
+        }
+    }
+}
+
 // WHY: the class closed here is "a cap shows a key other than the one
-// the chord binds, or a blank cap". The config grammar accepts any case
-// and several spellings per key; the caps read one label per key and
-// drop the empty segments of a stray `+`. Not covered: the rendered
-// caps, checked on docshots.
+// the chord binds, or a blank cap", and for a sheet hint, "a key shows
+// as text or a word as a cap". The config grammar accepts any case and
+// several spellings per key; the caps read one label per key and drop
+// the empty segments of a stray `+`. A hint splits at each joiner, a
+// chord at `+`, and a phrase at spaces, except a two-word key name.
+// Not covered: the rendered caps, checked on docshots.
 #[cfg(test)]
 mod tests {
     use std::prelude::v1::test;
@@ -139,5 +268,77 @@ mod tests {
         assert_eq!(chord_label(" ctrl + shift+r"), "Ctrl+Shift+R");
         assert_eq!(chord_label("prtsc"), "Print");
         assert_eq!(chord_label(""), "");
+    }
+
+    #[test]
+    fn a_hint_reads_its_keys_as_caps_and_the_rest_as_words() {
+        // `K` a cap, `W` a word.
+        const K: bool = true;
+        const W: bool = false;
+        for (hint, want) in [
+            (
+                "Shift+F10, then Left / Right",
+                vec![
+                    (K, "Shift"),
+                    (K, "F10"),
+                    (W, "then"),
+                    (K, "Left"),
+                    (W, "/"),
+                    (K, "Right"),
+                ],
+            ),
+            (
+                "Ctrl+S / Cmd+W / return",
+                vec![
+                    (K, "Ctrl"),
+                    (K, "S"),
+                    (W, "/"),
+                    (K, "Cmd"),
+                    (K, "W"),
+                    (W, "/"),
+                    (K, "Enter"),
+                ],
+            ),
+            (
+                "0 / + / -",
+                vec![(K, "0"), (W, "/"), (K, "+"), (W, "/"), (K, "-")],
+            ),
+            ("Space + drag", vec![(K, "Space"), (W, "+"), (W, "drag")]),
+            ("Esc twice", vec![(K, "Esc"), (W, "twice")]),
+            (
+                "Shift+F10 or right-click",
+                vec![(K, "Shift"), (K, "F10"), (W, "or"), (W, "right-click")],
+            ),
+            ("Ctrl+click", vec![(K, "Ctrl"), (W, "click")]),
+            (
+                "Arrows, Home, Page Up",
+                vec![
+                    (K, "Arrows"),
+                    (W, ","),
+                    (K, "Home"),
+                    (W, ","),
+                    (K, "Page Up"),
+                ],
+            ),
+            (
+                "Tab, then Space",
+                vec![(K, "Tab"), (W, "then"), (K, "Space")],
+            ),
+            ("Cmd+,", vec![(K, "Cmd"), (K, ",")]),
+            ("?", vec![(K, "?")]),
+            ("Double-click", vec![(W, "Double-click")]),
+            ("", vec![]),
+        ] {
+            let got: Vec<(bool, String)> = hint_pieces(hint)
+                .into_iter()
+                .map(|p| match p {
+                    Piece::Cap(k) => (K, k.to_string()),
+                    Piece::Word(w) => (W, w.to_string()),
+                })
+                .collect();
+            let want: Vec<(bool, String)> =
+                want.into_iter().map(|(k, s)| (k, s.to_string())).collect();
+            assert_eq!(got, want, "{hint:?}");
+        }
     }
 }
