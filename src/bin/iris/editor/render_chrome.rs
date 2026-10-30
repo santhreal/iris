@@ -111,6 +111,7 @@ pub(super) fn help_rows() -> Vec<(&'static str, SharedString)> {
         ("Copy image", crate::widgets::meta_shortcut!("C").into()),
         ("More and Copy menus", "Shift+F10, then Left / Right".into()),
         ("Nudge / delete selection", "Arrows / Delete".into()),
+        ("Edit a label", "Double-click".into()),
         ("Apply crop", "Enter".into()),
         ("This sheet", "?".into()),
     ]
