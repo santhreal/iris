@@ -10,6 +10,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `iris --capture` and the other command-line options forward to the running iris over a local socket or named pipe, so a window manager or compositor keybinding runs them.
 - A region capture freezes the screen and opens a selection overlay with window snapping, an 8x loupe, and a pixel color sampler.
 - Holding `Space` while dragging a region selection moves the selection at its size.
+- The capture overlay has a capture bar that cancels, captures or records the entire screen or a selection, and runs the chosen capture.
 - `--capture-fullscreen`, `--capture-window`, and `--delay <secs>` capture the whole display, the focused window, or the display after a delay.
 - A delayed capture counts down on a corner card whose close button cancels it, and the card leaves the screen before the capture.
 - A capture is saved as a PNG, copied to the clipboard, and shown in a thumbnail toast.

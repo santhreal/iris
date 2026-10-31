@@ -1,10 +1,13 @@
 //! Capture overlay: the fullscreen region picker over a frozen frame.
 //!
-//! The screen is grabbed once before this window opens; everything the
-//! user sees and selects comes out of that frozen frame. Hover snaps to
-//! top-level windows (X11, Windows, macOS), dragging commits a region, the loupe
-//! tracks the drag edge for pixel-precise crops. Right-click and Esc
-//! cancel; Enter, double-click or a plain click on a window finishes.
+//! The screen is grabbed once before this window opens; everything shown
+//! and selected comes out of that frozen frame. Hover snaps to top-level
+//! windows (X11, Windows, macOS), a drag commits a region, and the loupe
+//! tracks the drag edge for pixel-precise crops. The capture bar
+//! (`bar`) chooses between the entire screen and a selection, as a
+//! screenshot or a recording, and runs the choice. Right-click, Esc, and
+//! the bar's cancel button cancel; Enter, a double-click, the bar's run
+//! button, or a plain click on a window finishes.
 
 use std::{
     path::PathBuf,
@@ -16,8 +19,10 @@ use gpui::*;
 use iris_lib::capture::WinRect;
 
 use crate::{pipeline::Region, theme};
+use bar::Scope;
 use flight::Flight;
 
+mod bar;
 mod flight;
 mod input;
 mod loupe;
@@ -33,8 +38,8 @@ pub(super) const MIN_SIZE: f32 = 3.0;
 pub(super) const DIM: f32 = 0.32;
 /// Window-snap reveal fades both ways, like macOS's highlight.
 pub(super) const HOVER_FADE: Duration = Duration::from_millis(90);
-/// Edge of a selection resize handle, in logical px.
-pub(super) const HANDLE_PX: f32 = 10.0;
+/// Edge of a selection resize handle's hit square, in logical px.
+pub(super) const HANDLE_PX: f32 = 16.0;
 
 /// What a committed selection does. Capture crops and saves; RecordPick
 /// reports the rect to the daemon and starts a region recording.
@@ -45,33 +50,34 @@ pub enum OverlayMode {
 }
 
 impl OverlayMode {
-    /// What the confirm key does in this mode, as the hint prints it.
+    /// What the confirm key does in this mode, as the capture bar's run
+    /// button prints it.
     fn verb(self) -> &'static str {
         match self {
-            OverlayMode::Capture => "capture",
-            OverlayMode::RecordPick => "record",
+            OverlayMode::Capture => "Capture",
+            OverlayMode::RecordPick => "Record",
         }
     }
-}
-
-/// The committed-selection hint: the confirm key and what it does in
-/// `mode`, then the cancel key.
-fn hint(cfg: &iris_lib::config::Config, mode: OverlayMode) -> SharedString {
-    SharedString::from(format!(
-        "{} {}   {} cancel",
-        cfg.confirm_keybind,
-        mode.verb(),
-        cfg.cancel_keybind
-    ))
 }
 
 pub struct Overlay {
     /// Parked (`sys::window::park`): the window stays alive with its
     /// renderer, and the next capture reuses it.
     pub hidden: bool,
-    /// What finish() does with the committed selection. Set through
-    /// set_mode(), which rebuilds `hint` to match.
+    /// What finish() does with the committed selection.
     mode: OverlayMode,
+    /// What a press on the frame selects, chosen on the capture bar.
+    scope: Scope,
+    /// The pointer in root pixels when the session opened: the capture
+    /// bar sits on the monitor under it.
+    bar_at: Option<(i32, i32)>,
+    /// The pointer is over the capture bar: the coordinate readout and
+    /// the hover-snap stand down.
+    over_bar: bool,
+    /// The press that started the drag cleared a committed selection:
+    /// released without a move, it selects nothing, not the window
+    /// under it, which a committed selection does not highlight.
+    cleared: bool,
     /// None until the background grab lands: the window maps at once,
     /// transparent over the live desktop with crosshair and snap
     /// already live, and the frozen frame and dim appear behind it.
@@ -144,9 +150,6 @@ pub struct Overlay {
     /// The config snapshot for this session: render and the key handler
     /// read it every frame, and Config::load() hits the disk each call.
     cfg: iris_lib::config::Config,
-    /// The committed-selection hint line, built by set_mode() from cfg
-    /// and the mode: formatting it per frame allocates a String a frame.
-    hint: SharedString,
     /// Idle coordinate chip: the frame pixel it was built for, and the
     /// label. A mousemove inside the same pixel reuses it.
     coord_at: Option<(i64, i64)>,
@@ -248,6 +251,13 @@ impl Render for Overlay {
                         return;
                     }
                     let p = (ev.position.x.into(), ev.position.y.into());
+                    // With the entire screen chosen, a press captures
+                    // the monitor under it.
+                    if this.scope == Scope::Screen {
+                        this.current = Some(this.monitor_at(p, window));
+                        this.finish(window, cx);
+                        return;
+                    }
                     // A press on a committed selection's handle reshapes
                     // it instead of starting a fresh drag.
                     if let Some(h) = this.handle_at(p) {
@@ -265,6 +275,7 @@ impl Render for Overlay {
                         }
                     }
                     this.dragging = true;
+                    this.cleared = this.current.is_some();
                     this.anchor = p;
                     this.slide = (0.0, 0.0);
                     this.cursor = p;
@@ -393,7 +404,12 @@ impl Render for Overlay {
                         crate::widgets::release_render(&img, cx);
                     }
                     this.loupe_at = None;
-                    let new_hover = this.window_at(mx, my, sf, sx, sy);
+                    // The entire screen has no window to snap to.
+                    let new_hover = if this.scope == Scope::Screen {
+                        None
+                    } else {
+                        this.window_at(mx, my, sf, sx, sy)
+                    };
                     let changed = match (this.hovered, new_hover) {
                         (None, None) => false,
                         (Some(a), Some(b)) => {
@@ -449,6 +465,7 @@ impl Render for Overlay {
         root = self.render_hover_snap(root, window, sx, sy);
         root = self.render_selection(root, window, sx, sy);
         root = self.render_loupe_widget(root, window);
+        root = self.render_bar(root, window, cx);
 
         root.into_any_element()
     }

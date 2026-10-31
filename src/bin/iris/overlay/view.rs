@@ -1,26 +1,47 @@
 use gpui::*;
 
-use super::{loupe::LOUPE_PX, shell::reveal, Overlay, HANDLE_PX, HOVER_FADE};
+use super::{loupe::LOUPE_PX, shell::reveal, Overlay, Scope, HANDLE_PX, HOVER_FADE};
 use crate::theme;
 
-/// One overlay readout: coordinates, the selection's size, the loupe's
-/// pixel, or the confirm hint. Every pill shares the padding, capsule
-/// ends, fill, and hairline, as a HUD label reads over any screen, and
-/// digits are tabular so a number that changes under the pointer keeps
-/// its width.
+/// The drawn diameter of a resize handle; its hit square is HANDLE_PX.
+const HANDLE_DOT: f32 = 9.0;
+
+/// One overlay readout: coordinates, the selection's size, or the
+/// loupe's pixel. A small dark tag with no border, as the size readouts
+/// of the macOS document apps are, reads over a white page and a dark
+/// desktop alike. Digits are tabular so a number that changes under the
+/// pointer keeps its width.
 fn readout(text: SharedString, color: Rgba) -> Div {
     div()
-        .px(px(9.))
-        .py(px(3.))
-        .rounded_full()
-        .bg(theme::alpha(theme::BG_ELEV, 0.9))
-        .border_1()
-        .border_color(theme::HAIRLINE)
+        .px(px(6.))
+        .py(px(2.))
+        .rounded(px(5.))
+        .bg(theme::READOUT_FILL)
         .text_size(px(theme::TEXT_SMALL))
+        .font_weight(FontWeight::MEDIUM)
         .font_features(theme::tabular())
         .whitespace_nowrap()
         .text_color(color)
         .child(text)
+}
+
+/// The selection's edge around a logical rect: a 1 px white line on the
+/// rect's border and a 1 px dark rim just outside it.
+fn selection_edge(x: f32, y: f32, w: f32, h: f32) -> Div {
+    div()
+        .absolute()
+        .left(px(x - 1.0))
+        .top(px(y - 1.0))
+        .w(px(w + 2.0))
+        .h(px(h + 2.0))
+        .border_1()
+        .border_color(theme::SELECTION_RIM)
+        .child(
+            div()
+                .size_full()
+                .border_1()
+                .border_color(theme::SELECTION_EDGE),
+        )
 }
 
 impl Overlay {
@@ -58,7 +79,12 @@ impl Overlay {
         sx: f32,
         sy: f32,
     ) -> Stateful<Div> {
-        if self.cursor_known && !self.dragging && self.current.is_none() && self.hovered.is_none() {
+        if self.cursor_known
+            && !self.over_bar
+            && !self.dragging
+            && self.current.is_none()
+            && self.hovered.is_none()
+        {
             let sf = window.scale_factor();
             let win = window.bounds().size;
             // The readout states root coordinates: the frame pixel
@@ -91,8 +117,9 @@ impl Overlay {
     }
 
     // Hover-snap highlight: un-dimmed reveal of the window's
-    // rect, fading in; the window just left fades out behind it.
-    // Before the frame lands there is nothing to reveal.
+    // rect under the pick tint, fading in; the window just left fades
+    // out behind it. Before the frame lands there is nothing to
+    // reveal, and a committed selection shows no window.
     pub(super) fn render_hover_snap(
         &mut self,
         mut root: Stateful<Div>,
@@ -100,7 +127,7 @@ impl Overlay {
         sx: f32,
         sy: f32,
     ) -> Stateful<Div> {
-        if !self.dragging && self.frame_img.is_some() {
+        if !self.dragging && self.current.is_none() && self.frame_img.is_some() {
             if let Some((old, since)) = self.hover_out {
                 let t = (since.elapsed().as_secs_f32()
                     / crate::motion::tempo(HOVER_FADE).as_secs_f32())
@@ -119,6 +146,7 @@ impl Overlay {
                             rh,
                             window,
                         )
+                        .child(div().absolute().inset_0().bg(theme::WINDOW_PICK))
                         .opacity(1.0 - t),
                     );
                     window.request_animation_frame();
@@ -146,6 +174,7 @@ impl Overlay {
                         rh,
                         window,
                     )
+                    .child(div().absolute().inset_0().bg(theme::WINDOW_PICK))
                     .opacity(alpha),
                 );
             }
@@ -168,29 +197,22 @@ impl Overlay {
                 self.size_at = Some(phys);
                 self.size_label = SharedString::from(format!("{} × {}", phys.0, phys.1));
             }
-            let size_label = self.size_label.clone();
             if let Some(fi) = self.frame_img.clone() {
                 root = root.child(reveal(fi, x, y, w, h, window));
             }
+            // The entire screen is the monitor, un-dimmed: no edge, no
+            // size, and no handles to reshape it.
+            if self.scope == Scope::Screen {
+                return root;
+            }
+            root = root.child(selection_edge(x, y, w, h));
+            let size_label = self.size_label.clone();
             root = root.child(
                 readout(size_label, theme::FG)
                     .absolute()
                     .left(px(x))
-                    .top(px(if y < 44.0 { y + 4.0 } else { y - 28.0 })),
+                    .top(px(if y < 28.0 { y + 6.0 } else { y - 24.0 })),
             );
-            // A committed selection (drag released, not yet captured)
-            // shows what confirms and what cancels. While still
-            // dragging the loupe is the feedback; the hint would
-            // flicker under it.
-            if !self.dragging {
-                let hint = self.hint.clone();
-                root = root.child(
-                    readout(hint, theme::FG_DIM)
-                        .absolute()
-                        .left(px(x))
-                        .top(px(y + h + 6.0)),
-                );
-            }
             // Resize handles on a committed selection: 8 grab points
             // the cursor can pull to reshape the rect before capture.
             if !self.dragging {
@@ -198,15 +220,14 @@ impl Overlay {
                     root = root.child(
                         div()
                             .absolute()
-                            .left(px(hx - HANDLE_PX / 2.0))
-                            .top(px(hy - HANDLE_PX / 2.0))
-                            .w(px(HANDLE_PX))
-                            .h(px(HANDLE_PX))
-                            .rounded(px(2.))
-                            .bg(theme::FG)
+                            .left(px(hx - HANDLE_DOT / 2.0))
+                            .top(px(hy - HANDLE_DOT / 2.0))
+                            .size(px(HANDLE_DOT))
+                            .rounded_full()
+                            .bg(theme::SELECTION_EDGE)
                             .border_1()
-                            .border_color(theme::alpha(theme::BG, 0.6))
-                            .shadow(theme::shadow_float()),
+                            .border_color(theme::SELECTION_RIM)
+                            .shadow(theme::shadow_knob()),
                     );
                 }
             }
@@ -250,10 +271,10 @@ impl Overlay {
                             div()
                                 .w(px(LOUPE_PX as f32))
                                 .h(px(LOUPE_PX as f32))
-                                .rounded(px(theme::RADIUS_SM))
+                                .rounded(px(theme::RADIUS_GROUP))
                                 .overflow_hidden()
                                 .border_1()
-                                .border_color(theme::HAIRLINE)
+                                .border_color(theme::SELECTION_EDGE)
                                 // Lift the loupe off the dimmed desktop so
                                 // it reads as floating chrome, like the
                                 // toast and chip.

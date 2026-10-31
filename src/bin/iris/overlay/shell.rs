@@ -4,7 +4,6 @@ use gpui::*;
 use iris_lib::capture::WinRect;
 
 use super::{Overlay, POOL};
-use crate::theme;
 
 /// The monitor layout and window list for an interactive overlay
 /// session, queried before the grab so the shell can map at once.
@@ -132,10 +131,13 @@ fn open_shell_opts(
             crate::sys::window::span_after_map(window, ux, uy, uw, uh);
             cx.new(|_| {
                 let cfg = iris_lib::config::Config::load();
-                let hint = super::hint(&cfg, super::OverlayMode::Capture);
                 Overlay {
                     hidden: false,
                     mode: super::OverlayMode::Capture,
+                    scope: super::Scope::Selection,
+                    bar_at: seed,
+                    over_bar: false,
+                    cleared: false,
                     frame_size: None,
                     origin: (ux, uy),
                     view: (uw, uh),
@@ -165,7 +167,6 @@ fn open_shell_opts(
                     finalize_failed: false,
                     landed: None,
                     cfg,
-                    hint,
                     coord_at: None,
                     coord_label: SharedString::default(),
                     size_at: None,
@@ -236,7 +237,7 @@ pub(super) fn close_other_overlays(cx: &mut App, keep: Option<AnyWindowHandle>) 
 }
 
 /// The un-dimmed frame reveal inside a rect: the same full-window image
-/// drawn again inside a clipped, bordered rect, offset to align.
+/// drawn again inside a clipped rect, offset to align.
 pub(super) fn reveal(
     frame: Arc<RenderImage>,
     x: f32,
@@ -253,8 +254,6 @@ pub(super) fn reveal(
         .w(px(w))
         .h(px(h))
         .overflow_hidden()
-        .border_1()
-        .border_color(theme::ACCENT)
         .child(
             div()
                 .absolute()

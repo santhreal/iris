@@ -70,6 +70,10 @@ pub enum Icon {
     CaptionMaximize,
     CaptionRestore,
     CaptionClose,
+    Screen,
+    Selection,
+    RecordScreen,
+    RecordSelection,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`. It neither

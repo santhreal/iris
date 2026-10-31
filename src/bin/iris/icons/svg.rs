@@ -85,6 +85,10 @@ documents! {
     CaptionMaximize => r##"<rect x="4.5" y="4.5" width="9" height="9" rx="1" stroke-width="1"/>"##,
     CaptionRestore => r##"<rect x="4.5" y="6.5" width="7" height="7" rx="1" stroke-width="1"/><path d="M6.5 4.5L12.5 4.5A1 1 0 0 1 13.5 5.5L13.5 11.5" stroke-width="1"/>"##,
     CaptionClose => r##"<path d="M4.5 4.5L13.5 13.5" stroke-width="1"/><path d="M13.5 4.5L4.5 13.5" stroke-width="1"/>"##,
+    Screen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><rect x="5" y="6" width="8" height="6" rx="0.6" fill="#fff" stroke="none"/>"##,
+    Selection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/>"##,
+    RecordScreen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
+    RecordSelection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
 }
 
 // WHY: the class closed here is "an icon draws outside its box or not

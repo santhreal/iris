@@ -34,7 +34,7 @@ To start iris at login, turn on **Start iris at login** in the settings window (
 ## Take a Screenshot
 
 1. Press `Ctrl+Print` (`Ctrl+F13` on macOS), click **New Screenshot** in the library or the tray menu, or run `iris --capture`. The screen freezes and dims.
-2. Click a window to capture it (X11, Windows, and macOS), or drag a rectangle and press `Enter`. `Escape` or a right click cancels.
+2. Click a window to capture it (X11, Windows, and macOS), or drag a rectangle and press `Enter` or click **Capture** on the bar at the bottom of the screen. The bar also captures the entire screen or records the screen or a selection. `Escape`, **Cancel**, or a right click cancels.
 3. The capture is saved as a PNG in `~/Pictures/iris` and copied to the clipboard.
 
 While the rectangle is drawn, the loupe shows the pixels under the pointer and `c` copies the color at its center. Holding `Space` moves the rectangle instead of resizing it. The arrow keys move the selection by one pixel, ten with `Shift` ([Region Capture](capture.md#region-capture)).

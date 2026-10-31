@@ -13,8 +13,11 @@
 //! the overlay opened with no hover-snap and no readout until the first
 //! motion, so a capture from a hotkey with the pointer resting on a
 //! window showed that window dimmed. The second case rests the pointer
-//! on a window, opens the overlay, and reads the window revealed at
-//! full colour.
+//! on a window, opens the overlay, and reads the window revealed
+//! undimmed under the pick tint. It then commits a selection beside the
+//! window and moves the pointer back over it: a press there clears the
+//! selection and does not capture the window, so the window shows
+//! dimmed, not picked, and a click captures nothing.
 //!
 //! Not covered: Wayland, where the pointer is unknown until it moves;
 //! a window manager's frame or close animation; Windows and macOS; the
@@ -60,6 +63,20 @@ const INSET: i16 = 48;
 /// The pointer's window: x, y, width, height, and its colour.
 const TARGET: (i16, i16, u16, u16) = (200, 200, 320, 240);
 const TARGET_RGB: u32 = 0x0033_66cc;
+/// The window a click would capture, revealed undimmed under the
+/// overlay's pick tint: systemBlue, #0A84FF, at 18% over `TARGET_RGB`.
+const PICKED_RGB: u32 = 0x002c_6bd5;
+/// `TARGET_RGB` under the overlay's dim: #1E1E1E at 32%.
+const DIMMED_RGB: u32 = 0x002c_4f94;
+
+/// The largest difference between two 0xRRGGBB colours in one channel.
+fn channel_gap(a: u32, b: u32) -> u32 {
+    [16, 8, 0]
+        .into_iter()
+        .map(|s| ((a >> s) & 0xff).abs_diff((b >> s) & 0xff))
+        .max()
+        .unwrap_or(0)
+}
 
 /// Wait until the overlay holds the focus and its frozen frame landed.
 fn overlay_up(conn: &RustConnection, root: u32, daemon: &Daemon) {
@@ -169,8 +186,8 @@ fn the_empty_librarys_new_screenshot_leaves_it_out_of_the_frozen_frame() {
 }
 
 #[test]
-fn the_overlay_opens_snapped_to_the_window_under_a_resting_pointer() {
-    let case = "the_overlay_opens_snapped_to_the_window_under_a_resting_pointer";
+fn the_overlay_snaps_to_the_window_under_the_pointer_until_a_selection_is_committed() {
+    let case = "the_overlay_snaps_to_the_window_under_the_pointer_until_a_selection_is_committed";
     if !enabled() {
         return;
     }
@@ -222,8 +239,35 @@ fn the_overlay_opens_snapped_to_the_window_under_a_resting_pointer() {
     // column. The root beside the window stays dimmed.
     let inside = (left + width as i16 / 4, top + height as i16 / 4);
     let outside = (left / 2, top + height as i16 / 4);
-    daemon.until("the window under the pointer to show undimmed", || {
+    daemon.until("the window under the pointer to show picked", || {
         let (i, o) = (pixel(&conn, root, inside), pixel(&conn, root, outside));
-        (i == TARGET_RGB && o != WHITE).then_some(())
+        (channel_gap(i, PICKED_RGB) <= 6 && o != WHITE).then_some(())
+    });
+
+    // A selection committed beside the window, then the pointer back on
+    // the window: the window stays dimmed.
+    x11::drag(&conn, root, (700, 600), (900, 800), 20);
+    daemon.settle();
+    x11::move_to(&conn, root, centre);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let i = pixel(&conn, root, inside);
+    assert!(
+        channel_gap(i, DIMMED_RGB) <= 6,
+        "the window under the pointer shows {i:06x} over a committed selection, not dimmed \
+         {DIMMED_RGB:06x}"
+    );
+
+    // A click there clears the selection and captures nothing; the next
+    // motion picks the window again.
+    x11::click(&conn, root, centre);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let saved = daemon::entries(dir.path()).unwrap_or_default().len();
+    assert_eq!(
+        saved, 0,
+        "a click that cleared the selection captured the window"
+    );
+    x11::move_to(&conn, root, (centre.0 + 2, centre.1 + 2));
+    daemon.until("the window to show picked again", || {
+        (channel_gap(pixel(&conn, root, inside), PICKED_RGB) <= 6).then_some(())
     });
 }

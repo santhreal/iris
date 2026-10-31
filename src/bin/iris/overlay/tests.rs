@@ -1,9 +1,9 @@
 use super::{
+    bar::{bar_origin, bar_width, BAR_H, BAR_LIFT},
     drag_region,
     flight::{flight_at_rest, flight_rect},
-    hint,
     input::frame_rect,
-    slide_rect, Overlay, OverlayMode,
+    slide_rect, Overlay,
 };
 use crate::pipeline::Region;
 use iris_lib::capture::WinRect;
@@ -175,26 +175,40 @@ fn shift_drag_stays_square_inside_the_window_with_the_anchor_a_corner() {
     }
 }
 
-// WHY: the class closed here is "the hint names an action the confirm
-// key does not take": a record-region pick printed `Enter capture`,
-// because the hint was built for Capture once per session and the
-// daemon flipped the mode after it. The mode is now private to the
-// overlay and set_mode() rebuilds the hint with it; the exhaustive
-// match in `OverlayMode::verb` fails the build on a new mode until it
-// has a verb. Not covered: set_mode() itself, which needs a live
-// overlay window, and the hint's position and paint.
+// WHY: the class closed here is "the capture bar leaves its monitor":
+// the bar sits on the monitor the session opened on, centered and
+// BAR_LIFT above its bottom edge, and stays inside a monitor too short
+// or too narrow for that. A bar placed from the virtual screen's origin
+// instead of the monitor's lands on the wrong monitor or off the
+// screen. Not covered: which monitor `bar_monitor` picks, which needs a
+// live overlay window (`tests/capture_bar.rs` clicks the bar).
 #[test]
-fn the_hint_names_the_configured_keys_and_what_confirm_does() {
-    let cfg = iris_lib::config::Config {
-        confirm_keybind: "Ctrl+Enter".into(),
-        cancel_keybind: "Ctrl+C".into(),
-        ..Default::default()
-    };
-    for (mode, want) in [
-        (OverlayMode::Capture, "Ctrl+Enter capture   Ctrl+C cancel"),
-        (OverlayMode::RecordPick, "Ctrl+Enter record   Ctrl+C cancel"),
-    ] {
-        assert_eq!(hint(&cfg, mode).as_ref(), want, "{mode:?}");
+fn the_capture_bar_centers_on_its_monitor_and_stays_inside_it() {
+    let w = bar_width();
+    let cases = [
+        // A 1280x1024 monitor at the origin.
+        (
+            (0.0, 0.0, 1280.0, 1024.0),
+            ((640.0 - w / 2.0).round(), 1024.0 - BAR_LIFT - BAR_H),
+        ),
+        // A monitor left of and above the primary.
+        (
+            (-1920.0, -200.0, 1920.0, 1080.0),
+            (
+                (-1920.0 + 960.0 - w / 2.0).round(),
+                -200.0 + 1080.0 - BAR_LIFT - BAR_H,
+            ),
+        ),
+        // Narrower than the bar: its left edge at the monitor's.
+        (
+            (100.0, 0.0, w - 40.0, 800.0),
+            (100.0, 800.0 - BAR_LIFT - BAR_H),
+        ),
+        // Shorter than the bar and its lift: its top at the monitor's.
+        ((0.0, 50.0, 1280.0, 60.0), ((640.0 - w / 2.0).round(), 50.0)),
+    ];
+    for (monitor, want) in cases {
+        assert_eq!(bar_origin(monitor, w), want, "{monitor:?}");
     }
 }
 

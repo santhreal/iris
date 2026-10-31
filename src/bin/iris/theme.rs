@@ -39,6 +39,18 @@ pub const FIELD_BG: Rgba = alpha(BLACK, 0.20);
 pub const FIELD_BORDER: Rgba = alpha(WHITE, 0.10);
 /// Pop-up button and secondary push button fill.
 pub const CONTROL_BG: Rgba = alpha(WHITE, 0.10);
+/// The fill of the chosen item of a HUD's group of choices: the capture
+/// bar's capture.
+pub const CHOSEN: Rgba = alpha(WHITE, 0.16);
+
+/// The capture overlay's selection: a white line with a dark rim
+/// outside it, so the edge reads over a white page and a dark desktop
+/// alike, and the tint over the window a click would capture.
+pub const SELECTION_EDGE: Rgba = alpha(WHITE, 0.92);
+pub const SELECTION_RIM: Rgba = alpha(BLACK, 0.35);
+pub const WINDOW_PICK: Rgba = alpha(ACCENT, 0.18);
+/// The fill of an overlay readout's tag.
+pub const READOUT_FILL: Rgba = alpha(BLACK, 0.62);
 
 /// Label tiers: primary text, secondary (metadata, captions, resting
 /// glyphs), tertiary (placeholders, shortcut columns), disabled.

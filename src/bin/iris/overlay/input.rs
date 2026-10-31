@@ -70,6 +70,10 @@ impl Overlay {
         self.finalize_failed = false;
         self.cfg = iris_lib::config::Config::load();
         self.set_mode(OverlayMode::Capture);
+        self.scope = super::Scope::Selection;
+        self.bar_at = layout.pointer;
+        self.over_bar = false;
+        self.cleared = false;
         self.loupe = None;
         self.loupe_at = None;
         self.finishing = false;
@@ -106,10 +110,9 @@ impl Overlay {
         self.hover_in = self.hovered.map(|_| Instant::now());
     }
 
-    /// Set what a committed selection does, and the hint that shows it.
+    /// Set what a committed selection does.
     pub fn set_mode(&mut self, mode: OverlayMode) {
         self.mode = mode;
-        self.hint = super::hint(&self.cfg, mode);
     }
 
     /// Root-pixel hit test for hover-snap. The window list is in root
@@ -498,10 +501,16 @@ impl Overlay {
         let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
         let moved = ((mx - self.anchor.0).powi(2) + (my - self.anchor.1).powi(2)).sqrt();
         if moved < 4.0 {
-            // A click (no drag) on a window captures that window.
+            // A click (no drag) on a window captures that window, unless
+            // it cleared a committed selection.
             let sf = window.scale_factor();
             let (sx, sy) = Self::scale(window, self.view);
-            if let Some(w) = self.window_at(mx, my, sf, sx, sy) {
+            let picked = if self.cleared {
+                None
+            } else {
+                self.window_at(mx, my, sf, sx, sy)
+            };
+            if let Some(w) = picked {
                 self.current = Some(Self::to_logical(self.origin, &w, sf, sx, sy));
                 self.hovered = None;
                 self.finish(window, cx);

@@ -42,7 +42,7 @@ Platform behavior for window recording:
 iris --record-region
 ```
 
-Opens the selection overlay in region-pick mode (`RecordPick`). Drag a bounding box or select a detected window rectangle. Press `Enter` or double-click to commit the selection. Press `Escape` or click the right mouse button to cancel. An instruction line below the selection displays the bindings (`Enter record   Escape cancel` by default).
+Opens the selection overlay in region-pick mode (`RecordPick`), with **Record Selection** chosen on the capture bar ([Region Capture](capture.md#region-capture)). Drag a bounding box or select a detected window rectangle. Press `Enter`, double-click, or click **Record** to commit the selection. Press `Escape`, click **Cancel**, or click the right mouse button to cancel. **Record Entire Screen** records the monitor clicked next.
 
 If the selection width or height is zero or negative, iris rejects the command with `empty region {w}x{h}`.
 
