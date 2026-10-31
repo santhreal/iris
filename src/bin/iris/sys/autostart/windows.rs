@@ -31,7 +31,7 @@ const ACCOUNT: Keys<'static> = Keys {
 /// The value's name (packaging/windows/iris.nsi).
 const VALUE: &str = "iris";
 
-/// `"<this iris.exe>" --daemon`, the command line the installer writes.
+/// `"<this iris.exe>" --background`, the command line the installer writes.
 fn command() -> Result<OsString, String> {
     let exe =
         crate::sys::exe::this().map_err(|e| format!("start at login: find this iris: {e}"))?;
@@ -41,7 +41,7 @@ fn command() -> Result<OsString, String> {
 fn command_for(exe: &Path) -> OsString {
     let mut command = OsString::from("\"");
     command.push(exe);
-    command.push("\" --daemon");
+    command.push("\" --background");
     command
 }
 

@@ -80,7 +80,7 @@ fn this() -> OsString {
 
 #[test]
 fn the_command_is_the_one_the_installer_writes() {
-    assert_eq!(this(), OsString::from(format!("\"{EXE}\" --daemon")));
+    assert_eq!(this(), OsString::from(format!("\"{EXE}\" --background")));
 }
 
 #[test]

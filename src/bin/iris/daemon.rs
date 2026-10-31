@@ -372,7 +372,7 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
     // waits for the socket can press one at once. A press during the
     // overlay warmup waits on the channel and runs once `start` returns.
     crate::sys::hotkeys::spawn(tx.clone());
-    iris_lib::ilog!("iris: daemon start");
+    iris_lib::ilog!("iris: starting");
     // The socket binds before the overlay warmup's renderer init: every
     // client that finds this daemon starting waits for the bind. A
     // command that lands during the warmup runs once `start` returns.

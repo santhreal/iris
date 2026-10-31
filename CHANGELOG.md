@@ -6,8 +6,8 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 
 ### Added
 
-- iris runs on Linux (X11 and Wayland), Windows, and macOS as a background daemon that holds the global hotkeys and a tray menu.
-- `iris --capture` and the other command-line options forward to the running daemon over a local socket or named pipe, so a window manager or compositor keybinding runs them.
+- iris runs on Linux (X11 and Wayland), Windows, and macOS as one installed app that keeps its global hotkeys and tray menu while its windows are closed.
+- `iris --capture` and the other command-line options forward to the running iris over a local socket or named pipe, so a window manager or compositor keybinding runs them.
 - A region capture freezes the screen and opens a selection overlay with window snapping, an 8x loupe, and a pixel color sampler.
 - Holding `Space` while dragging a region selection moves the selection at its size.
 - `--capture-fullscreen`, `--capture-window`, and `--delay <secs>` capture the whole display, the focused window, or the display after a delay.
@@ -49,10 +49,10 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - Every release package bundles FFmpeg with its license notices and source locations, so recording needs no separate FFmpeg installation.
 - Every release asset has a `.sha256` checksum sidecar and a minisign `.minisig` signature made with the key in `packaging/minisign.pub`.
 - `iris --update` installs the latest release in place for the Windows installer, the portable zip, the macOS app, the AppImage, the deb, and the rpm after it checks the download's SHA-256 and minisign signature.
-- The daemon checks for a newer release about a minute after it starts and then once a day, and offers it in the tray menu, a notice, and the settings window's Updates pane.
+- iris checks for a newer release about a minute after it starts and then once a day, and offers it in the tray menu, a notice, and the settings window's Updates pane.
 - `check_for_updates = false` in `config.toml` turns off the background update check.
 - `update_channel = "beta"` in `config.toml` offers prereleases as well as stable releases.
-- On Wayland the daemon binds the capture and record hotkeys through the GlobalShortcuts portal where the desktop provides it.
+- On Wayland iris binds the capture and record hotkeys through the GlobalShortcuts portal where the desktop provides it.
 - The home window and the settings window's Shortcuts pane show a global hotkey that another program holds as unavailable, with the reason.
 - An X11 window pick shows a card that states the click and the `Escape` key until the pick ends.
 - The AppImage adds its application menu entry and icon on each start, and turns on Start at login on its first start.
@@ -62,10 +62,10 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 ### Changed
 
 - Reduced capture-overlay, capture-toast, Library-opening, and wheel-scrolling latency.
-- A bare `iris` opens the home window; `iris --daemon` starts the daemon with no window.
+- A bare `iris` and every launcher entry open the home window, and `iris --background` starts iris with no window.
 - The default capture hotkey is `Ctrl+Print` and the default record hotkey is `Ctrl+Shift+Print`.
 - The home window shows each shortcut as key caps, in a larger layout with a hairline window edge.
-- The daemon runs the command it started for, such as opening the home window, before it prepares the capture renderer, and skips that preparation while a recording runs.
+- iris runs the command it started for, such as opening the home window, before it prepares the capture renderer, and skips that preparation while a recording runs.
 - An empty library shows no `0 captures` count, and its hint names the capture shortcut only while that shortcut is bound.
 
 ### Fixed

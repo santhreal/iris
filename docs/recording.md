@@ -8,7 +8,7 @@ iris records selected windows, screen regions, or displays using platform captur
 
 Starting a recording or a region pick closes a resting toast and notice first, so the recording does not contain them ([Auto-Dismiss Countdown](toast.md#auto-dismiss-countdown)).
 
-While a capture overlay, a region-pick overlay, or an X11 window pick is open, the daemon ignores a capture, a region pick, or a recording start ([Capture Modes](capture.md#capture-modes)).
+While a capture overlay, a region-pick overlay, or an X11 window pick is open, iris ignores a capture, a region pick, or a recording start ([Capture Modes](capture.md#capture-modes)).
 
 ### Window Recording
 
@@ -28,7 +28,7 @@ Stop an active recording through any of the following triggers:
 
 A recording also ends automatically when its target window closes, its target window minimizes, or its compositor session ends.
 
-The daemon saves every recording before it exits: the recording in progress, and a stopped recording whose segments are still being joined. This applies to `iris --quit` and, on Linux, to the exit that follows the loss of the X server or Wayland compositor. When the X server exits during an X11 recording, the recording ends and its file is saved before the daemon exits.
+iris saves every recording before it exits: the recording in progress, and a stopped recording whose segments are still being joined. This applies to `iris --quit` and, on Linux, to the exit that follows the loss of the X server or Wayland compositor. When the X server exits during an X11 recording, the recording ends and its file is saved before iris exits.
 
 Platform behavior for window recording:
 - **Linux (X11)**: Activates a window picker. The pointer cursor changes to a crosshair. Click any window to select it as the recording target. Press `Escape` during selection to cancel without saving a file. No indicator chip shows during selection; the chip opens over the target once it is picked, and its timer starts then. Four red border strips (`#f7768e`, 3 pixels wide) outline the target window. The border strips set an empty input region via the XFixes shape extension so cursor events pass through to underlying windows. The target window is redirected via the XComposite extension (`composite_redirect_window`). Frame capture reads the window pixmap via X11 shared memory (MIT-SHM). Occluding windows and the desktop background do not enter the recording. A tracking thread monitors `ConfigureNotify` events and updates border strip geometry and indicator chip placement to follow window movement. When the target window minimizes (reporting zero width or height) or closes, recording ends and saves accumulated frames.
@@ -66,7 +66,7 @@ Session controls execute while a recording runs:
 - **Pause and Resume**: Run `iris --record-pause` or click the pause button on the floating indicator chip.
 - **Microphone Toggle**: Run `iris --record-mic` or click the microphone button on the floating indicator chip.
 
-If no recording is active, `iris --record-pause` and `iris --record-mic` return the error `no recording is active`. Both commands require a running daemon; executing them with no daemon running prints `iris: no iris daemon is running` to stderr and exits with status 1.
+If no recording is active, `iris --record-pause` and `iris --record-mic` return the error `no recording is active`. Both commands require a running iris; executing them while iris is not running prints `iris: iris is not running` to stderr and exits with status 1.
 
 ### Pause and Resume
 
@@ -90,9 +90,9 @@ Geometry and layout:
 Components:
 - **Status dot**: 9×9 logical pixel circular indicator, solid red (`theme::DANGER`) while recording and faint gray (`theme::FG_FAINT`) at 0.35 opacity while paused.
 - **Elapsed timer**: Renders elapsed duration as `MM:SS` in 13 pixel medium-weight text with tabular digits, so the timer holds its width as it counts. Time spent paused is not counted. The chip draws a frame when the timer reaches the next second and when the pause or microphone state changes; a paused chip draws no frames until its state changes. While the pointer is over a button, the timer's slot shows what a click does instead: **Pause** or **Resume**, **Stop**, **Mute** or **Unmute**. Beside **Stop** it also shows the `record_hotkey`, which stops the recording too, when the hotkey fits in the slot. The slot has a fixed width, so the buttons do not move; the timer returns when the pointer leaves the button.
-- **Pause button**: 24×24 logical pixel icon button with a hover wash. Displays the Pause icon while recording and the Play icon while paused. Clicking sends `Command::RecordPause` to the daemon.
-- **Stop button**: 24×24 logical pixel icon button with a hover wash. Displays the Stop icon, a filled square. Clicking sends `Command::RecordStop` to the daemon, which stops and saves the recording and closes the chip. With no recording active, it starts none.
-- **Microphone button**: 24×24 logical pixel icon button with a hover wash. Displays the Mic icon when microphone capture is active and the MicOff icon when muted. Clicking sends `Command::RecordMic` to the daemon. Rendered only when `recording_format` supports audio (`mp4` or `webm`). For `gif` recordings, the button is omitted.
+- **Pause button**: 24×24 logical pixel icon button with a hover wash. Displays the Pause icon while recording and the Play icon while paused. Clicking sends `Command::RecordPause` to iris.
+- **Stop button**: 24×24 logical pixel icon button with a hover wash. Displays the Stop icon, a filled square. Clicking sends `Command::RecordStop` to iris, which stops and saves the recording and closes the chip. With no recording active, it starts none.
+- **Microphone button**: 24×24 logical pixel icon button with a hover wash. Displays the Mic icon when microphone capture is active and the MicOff icon when muted. Clicking sends `Command::RecordMic` to iris. Rendered only when `recording_format` supports audio (`mp4` or `webm`). For `gif` recordings, the button is omitted.
 
 Window management and capture exclusion:
 - **Linux (X11)**: Border strips and the indicator chip window sit outside the recorded window pixmap. The border thread repositions the chip window via `configure_window` by XID. Window decorations are removed via `_MOTIF_WM_HINTS`. A region recording reads the screen, so a chip placed inside the area (when the monitor has no room above or below it) appears in the recording.

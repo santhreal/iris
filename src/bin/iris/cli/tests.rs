@@ -33,7 +33,7 @@ fn alone(opt: &Opt) -> Vec<String> {
     match opt.takes {
         Takes::Secs(_) => args.push("3".into()),
         Takes::File(_) => args.push(manifest().to_str().unwrap().into()),
-        Takes::Local(_) | Takes::Daemon | Takes::Nothing(_) => {}
+        Takes::Local(_) | Takes::Background | Takes::Nothing(_) => {}
     }
     args
 }
@@ -71,8 +71,8 @@ fn every_option_sends_its_command() {
             assert!(p.cmds.is_empty() && p.forward.is_empty(), "{args:?}");
             continue;
         }
-        if let Takes::Daemon = opt.takes {
-            assert!(p.daemon, "{args:?}");
+        if let Takes::Background = opt.takes {
+            assert!(p.background, "{args:?}");
             assert!(
                 p.cmds.is_empty() && p.forward.is_empty() && p.local.is_empty(),
                 "{args:?}"
@@ -119,14 +119,14 @@ fn one_client_option_runs_by_precedence() {
     assert_eq!(parse(&argv(&["--capture"])).first_local(), None);
 }
 
-/// `--daemon` makes the process the daemon and runs nothing else: with
+/// `--background` starts iris with no window and runs nothing else: with
 /// any other option the line is an error, and main runs none of it.
 #[test]
-fn the_daemon_option_takes_no_other_option() {
-    assert!(!parse(&argv(&["--capture"])).daemon);
-    let alone = parse(&argv(&["--daemon"]));
+fn the_background_option_takes_no_other_option() {
+    assert!(!parse(&argv(&["--capture"])).background);
+    let alone = parse(&argv(&["--background"]));
     assert!(
-        alone.daemon && alone.errors.is_empty(),
+        alone.background && alone.errors.is_empty(),
         "{:?}",
         alone.errors
     );
@@ -137,22 +137,22 @@ fn the_daemon_option_takes_no_other_option() {
         &["-h"],
     ] {
         for line in [
-            [&["--daemon"][..], other].concat(),
-            [other, &["--daemon"]].concat(),
+            [&["--background"][..], other].concat(),
+            [other, &["--background"]].concat(),
         ] {
             let p = parse(&argv(&line));
-            assert_eq!(p.errors, ["--daemon takes no other option"], "{line:?}");
+            assert_eq!(p.errors, ["--background takes no other option"], "{line:?}");
         }
     }
 }
 
-/// WHY: a bare `iris` that found no daemon became one and opened
+/// WHY: a bare `iris` that found none running started iris and opened
 /// nothing, so a first launch of iris.app or of `iris` in a terminal
 /// showed no window. A bare line opens home whether it forwards or
-/// starts the daemon; `--daemon`, the login item's line, opens nothing;
+/// starts iris; `--background`, the login item's line, opens nothing;
 /// a flagged line runs its own commands and no home.
 #[test]
-fn a_daemon_start_runs_home_only_for_a_bare_line() {
+fn a_start_runs_home_only_for_a_bare_line() {
     let names = |line: &[&str]| -> Vec<String> {
         parse(&argv(line))
             .startup()
@@ -162,7 +162,7 @@ fn a_daemon_start_runs_home_only_for_a_bare_line() {
     };
     assert_eq!(names(&[]), ["Home"]);
     assert_eq!(names(&["-psn_0_12345"]), ["Home"]);
-    assert!(names(&["--daemon"]).is_empty());
+    assert!(names(&["--background"]).is_empty());
     assert_eq!(names(&["--capture"]), ["Capture"]);
     assert_eq!(names(&["--library", "--settings"]), ["Library", "Settings"]);
     assert_eq!(names(&["--home"]), ["Home"]);
@@ -170,18 +170,18 @@ fn a_daemon_start_runs_home_only_for_a_bare_line() {
 
 /// WHY: an update restarted the daemon as a bare `iris`, and a bare
 /// line opens home, so every update opened the home window. Each line
-/// that starts iris in the background is parsed here: `DAEMON_LINE`,
+/// that starts iris in the background is parsed here: `BACKGROUND_LINE`,
 /// which a client and an update spawn, the Windows installer's `/RUN`
 /// start and Run value, and the Linux and macOS login entries, read
 /// from the packaging files. None prints or opens a window. Not
 /// covered: a spawn that passes arguments of its own instead of
-/// `DAEMON_LINE`.
+/// `BACKGROUND_LINE`.
 #[test]
 fn every_background_start_opens_no_window() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let read = |p: &str| std::fs::read_to_string(root.join(p)).expect(p);
     let words = |s: &str| s.split_whitespace().map(str::to_string).collect::<Vec<_>>();
-    let mut lines = vec![("DAEMON_LINE".to_string(), argv(DAEMON_LINE))];
+    let mut lines = vec![("BACKGROUND_LINE".to_string(), argv(BACKGROUND_LINE))];
     for l in read("packaging/windows/iris.nsi").lines().map(str::trim) {
         let background =
             l.starts_with("Exec '") || l.starts_with("WriteRegStr HKCU \"${RUN_KEY}\" \"iris\"");
@@ -221,39 +221,87 @@ fn every_background_start_opens_no_window() {
     }
 }
 
-/// A daemon prints nothing: on Windows one attached to the console of
-/// the terminal that started it would print there and end when that
-/// terminal closes. A bare line and a lone `--daemon` run a daemon;
-/// every option alone, an unknown option, and a `--daemon` line in
+/// WHY: the launcher entries ran `iris --home`, a flagged line: with no
+/// iris running it started a detached second process to forward the
+/// line to, and on Windows it attached a console. A launch is the app
+/// itself: each launcher entry, read from the packaging files (the Linux
+/// application entry, the Windows Start menu and desktop shortcuts, and
+/// the installer's Finish page launch), is a bare line that prints
+/// nothing, does not start iris windowless, and opens home. iris.app
+/// passes no arguments. Not covered: the Desktop Actions, which run one
+/// command each.
+#[test]
+fn every_launcher_entry_starts_the_app_itself() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let read = |p: &str| std::fs::read_to_string(root.join(p)).expect(p);
+    let words = |s: &str| s.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+    let desktop = read("packaging/linux/dev.iris.app.desktop");
+    let main_group = desktop.split("\n[").next().expect("[Desktop Entry]");
+    let exec = main_group
+        .lines()
+        .find_map(|l| l.strip_prefix("Exec="))
+        .expect("Exec");
+    let mut lines = vec![(
+        exec.to_string(),
+        words(exec.strip_prefix("iris").expect(exec)),
+    )];
+    let nsi = read("packaging/windows/iris.nsi");
+    for l in nsi.lines().map(str::trim) {
+        if l.starts_with("CreateShortcut ") {
+            let params = l.split('"').nth(5).expect(l);
+            lines.push((l.to_string(), words(params)));
+        }
+        if let Some(params) = l.strip_prefix("!define MUI_FINISHPAGE_RUN_PARAMETERS ") {
+            lines.push((l.to_string(), words(params.trim_matches('"'))));
+        }
+    }
+    assert_eq!(
+        lines.len(),
+        3,
+        "the application entry and the two shortcuts: {lines:?}"
+    );
+    for (source, args) in lines {
+        let p = parse(&args);
+        assert!(!p.prints(), "{source}: {args:?} prints");
+        assert!(!p.background, "{source}: {args:?} opens no window");
+        let opens: Vec<String> = p.startup().iter().map(|c| format!("{c:?}")).collect();
+        assert_eq!(opens, ["Home"], "{source}: {args:?}");
+    }
+}
+
+/// A running iris prints nothing: on Windows one attached to the console
+/// of the terminal that started it would print there and end when that
+/// terminal closes. A bare line and a lone `--background` start iris;
+/// every option alone, an unknown option, and a `--background` line in
 /// error print.
 #[test]
-fn only_a_daemon_line_prints_nothing() {
+fn only_a_start_line_prints_nothing() {
     for line in [&[][..], &["-psn_0_1"]] {
         assert!(!parse(&argv(line)).prints(), "{line:?}");
     }
     for opt in OPTS {
         let line = alone(opt);
-        let daemon = matches!(opt.takes, Takes::Daemon);
-        assert_eq!(parse(&line).prints(), !daemon, "{line:?}");
+        let background = matches!(opt.takes, Takes::Background);
+        assert_eq!(parse(&line).prints(), !background, "{line:?}");
     }
     for line in [
         &["--bogus"][..],
-        &["--daemon", "--bogus"],
-        &["--daemon", "--capture"],
-        &["--daemon", "-h"],
+        &["--background", "--bogus"],
+        &["--background", "--capture"],
+        &["--background", "-h"],
     ] {
         assert!(parse(&argv(line)).prints(), "{line:?}");
     }
 }
 
 /// The daemon runs what the client forwards, so the forwarded argv must
-/// parse to the commands the client parsed, in order. `--daemon` takes
+/// parse to the commands the client parsed, in order. `--background` takes
 /// no other option and is never forwarded.
 #[test]
 fn forwarded_argv_parses_to_the_same_commands() {
     let mut args: Vec<String> = OPTS
         .iter()
-        .filter(|opt| !matches!(opt.takes, Takes::Daemon))
+        .filter(|opt| !matches!(opt.takes, Takes::Background))
         .flat_map(alone)
         .collect();
     args.insert(0, "--version".into());

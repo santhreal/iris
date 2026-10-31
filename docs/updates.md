@@ -1,6 +1,6 @@
 # Updates
 
-iris updates itself from the releases of [santhreal/iris](https://github.com/santhreal/iris/releases) on GitHub. The daemon checks for a newer release in the background and offers it in the tray menu, in a notice, and in the Updates pane of the settings window. `iris --update` installs it from a terminal.
+iris updates itself from the releases of [santhreal/iris](https://github.com/santhreal/iris/releases) on GitHub. iris checks for a newer release in the background and offers it in the tray menu, in a notice, and in the Updates pane of the settings window. `iris --update` installs it from a terminal.
 
 ```sh
 iris --check-update     # print whether a newer release exists
@@ -37,9 +37,9 @@ The asset for this install is the one whose name ends in the install's kind and 
 
 ## Background Check
 
-While `check_for_updates` is `true` (the default), the daemon checks about 60 seconds after it starts and then every 24 hours. Each check that gets an answer from GitHub is recorded in the [state file](#state-file), whether the daemon, **Check Now**, `iris --check-update`, or `iris --update` ran it. A daemon that starts within 24 hours of the last recorded check on the same channel waits until those 24 hours have passed.
+While `check_for_updates` is `true` (the default), iris checks about 60 seconds after it starts and then every 24 hours. Each check that gets an answer from GitHub is recorded in the [state file](#state-file), whether iris, **Check Now**, `iris --check-update`, or `iris --update` ran it. An iris that starts within 24 hours of the last recorded check on the same channel waits until those 24 hours have passed.
 
-The daemon reads `check_for_updates` and `update_channel` at least every 5 minutes, so a change in the settings window takes effect within that time. A change of `update_channel` makes a check due at once.
+iris reads `check_for_updates` and `update_channel` at least every 5 minutes, so a change in the settings window takes effect within that time. A change of `update_channel` makes a check due at once.
 
 A check that fails, such as one made without a network connection, is tried again every hour. The first failure of a run writes one line to `iris.log`:
 
@@ -55,32 +55,32 @@ Set `check_for_updates = false` to stop the background check:
 check_for_updates = false
 ```
 
-With it off, the daemon checks nothing and hides the tray menu's install row. **Check Now**, `iris --check-update`, and `iris --update` still check when you run them.
+With it off, iris checks nothing and hides the tray menu's install row. **Check Now**, `iris --check-update`, and `iris --update` still check when you run them.
 
 ## Offers
 
 When a check finds a newer release:
 
 - The tray menu shows **Install iris** *version* between **Settings** and **Quit** ([Usage](usage.md)). The row is hidden while no newer release is known.
-- The daemon shows a notice titled `iris <version> is available` with an **Install** button. Each version shows this notice once, across daemon restarts.
+- iris shows a notice titled `iris <version> is available` with an **Install** button. Each version shows this notice once, across restarts of iris.
 - The Updates pane of the settings window shows **Install** *version* ([Settings](#settings)).
 
 The offer is the update the last recorded check found, when its version is newer than the running iris and the channel offers it: after a switch from `beta` to `stable`, a prerelease found on `beta` is no longer offered.
 
 ## Install
 
-**Install** in the tray menu or the notice downloads and verifies the asset on a thread of the daemon, then starts `iris --update` as a detached process, which installs the verified download without fetching it again. An **Install** while a download runs does nothing. A failure shows in a notice titled `Update failed`.
+**Install** in the tray menu or the notice downloads and verifies the asset on a thread of iris, then starts `iris --update` as a detached process, which installs the verified download without fetching it again. An **Install** while a download runs does nothing. A failure shows in a notice titled `Update failed`.
 
 `iris --update` installs in this order:
 
 1. It checks that this install can replace itself. An install that cannot fails here, before anything is downloaded ([Platform Update Mechanisms](#platform-update-mechanisms)).
 2. It downloads the asset and verifies it ([Verification](#verification)).
-3. It sends `--quit` to the running daemon and waits up to 60 seconds for it to exit. A quitting daemon saves its recording before it exits.
-4. It replaces the installed iris with the download and starts the new iris as the daemon, `iris --daemon`, which opens no window.
+3. It sends `--quit` to the running iris and waits up to 60 seconds for it to exit. A quitting iris saves its recording before it exits.
+4. It replaces the installed iris with the download and starts the new iris as iris, `iris --background`, which opens no window.
 
-When the daemon still runs 60 seconds after `--quit`, `iris --update` installs nothing, prints `update: the running iris still answers 60 s after --quit; nothing was installed, run iris --update again once it exits`, and exits with status 1.
+When iris still runs 60 seconds after `--quit`, `iris --update` installs nothing, prints `update: the running iris still answers 60 s after --quit; nothing was installed, run iris --update again once it exits`, and exits with status 1.
 
-When the replacement fails after `iris --update` stopped the daemon, it starts the installed iris again as the daemon and appends `; the iris already installed runs again` to the error. When that start fails, it appends `; the iris already installed did not start again, see <log file>`. A daemon that was not running before the update is not started.
+When the replacement fails after `iris --update` stopped iris, it starts the installed iris again as iris and appends `; the iris already installed runs again` to the error. When that start fails, it appends `; the iris already installed did not start again, see <log file>`. An iris that was not running before the update is not started.
 
 `iris --update` writes each error to standard error and to `iris.log` ([paths](configuration.md#iris_home-directory-override)), and exits with status 1.
 
@@ -112,18 +112,18 @@ Each of these fails the update:
 | A trusted comment for another asset or another version | `update: <asset>.minisig signs "<comment>", not "file:<asset> version:<version>"` |
 | A signature of other bytes, or a trusted comment changed after signing | `update: <asset> does not match its signature <asset>.minisig: The signature verification failed` |
 
-A failed check deletes the download, installs nothing, and leaves the running daemon running. A sidecar or signature that cannot be fetched fails the update before anything is downloaded.
+A failed check deletes the download, installs nothing, and leaves the running iris running. A sidecar or signature that cannot be fetched fails the update before anything is downloaded.
 
 Downloads are kept in the `update` directory under the iris cache directory ([paths](configuration.md#iris_home-directory-override)). The directory is private to the user. When a file of the asset's name is already there and its SHA-256 matches the sidecar, the update verifies its signature and installs it without downloading it again. A file there that fails either check is deleted, and one whose SHA-256 differs is replaced by the download.
 
 ## Platform Update Mechanisms
 
 - Windows (installed): An `iris.exe` with `uninstall.exe` beside it downloads `windows-<arch>-setup.exe`, starts it with `/S /RUN` as a detached process that receives no handle of the `iris --update` process, and exits. The installer waits until no process runs the installed `iris.exe` or `ffmpeg.exe`, replaces the application files, and starts iris. When the installation fails, it starts the `iris.exe` already in place.
-- Windows (portable): Any other `iris.exe` downloads `windows-<arch>-portable.zip` and unpacks it with the `tar.exe` Windows ships into `.iris-update` beside `iris.exe`. It validates the runtime, replaces every packaged file with rollback on failure, then renames the running `iris.exe` to `iris.exe.old` and moves the new one into its place. It deletes `.iris-update` and starts the new `iris.exe`. The daemon deletes `iris.exe.old` and any remaining staging files when it starts only if no recovery files remain. A failed unpack, validation, or move restores the previous files and deletes `.iris-update` only when every restore succeeds. If a restore fails, iris reports the recovery paths and leaves `.iris-update\old` and `iris.exe.old` untouched. Restore the remaining files to the targets named in the error before running another update. When iris cannot create `.iris-update`, `iris --update` prints `update: cannot write <folder>\.iris-update: <error>; move the portable iris to a folder this account can write, or install it with the setup` and exits with status 1 before downloading anything.
+- Windows (portable): Any other `iris.exe` downloads `windows-<arch>-portable.zip` and unpacks it with the `tar.exe` Windows ships into `.iris-update` beside `iris.exe`. It validates the runtime, replaces every packaged file with rollback on failure, then renames the running `iris.exe` to `iris.exe.old` and moves the new one into its place. It deletes `.iris-update` and starts the new `iris.exe`. iris deletes `iris.exe.old` and any remaining staging files when it starts only if no recovery files remain. A failed unpack, validation, or move restores the previous files and deletes `.iris-update` only when every restore succeeds. If a restore fails, iris reports the recovery paths and leaves `.iris-update\old` and `iris.exe.old` untouched. Restore the remaining files to the targets named in the error before running another update. When iris cannot create `.iris-update`, `iris --update` prints `update: cannot write <folder>\.iris-update: <error>; move the portable iris to a folder this account can write, or install it with the setup` and exits with status 1 before downloading anything.
 - macOS: Downloads `macos-universal.dmg` and attaches it at a mount point of its own with `hdiutil attach -nobrowse -readonly`. An attach that fails with `Resource temporarily unavailable`, which `hdiutil` reports while another disk image operation runs, is tried up to 30 times, a second apart. It copies the disk image's `iris.app` with `ditto` to `.iris.app.update` beside the bundle iris runs from, detaches the disk image, and swaps the two bundles in one `renamex_np(RENAME_SWAP)` rename, then deletes the old bundle and relaunches the new one. A failure before the swap leaves the installed bundle as it was. An iris outside an `.app` bundle prints `update: <path> is not inside an iris.app bundle; install the release DMG by hand` and exits with status 1 before downloading anything.
 - Linux (AppImage): iris runs from an AppImage when the running binary is inside `$APPDIR`, the mount the AppImage runtime sets it to; `$APPIMAGE` then names the AppImage. A program started from another AppImage, such as a terminal, passes that AppImage's `$APPIMAGE` and `$APPDIR` on to the iris it starts, and that iris does not update the other AppImage. The update copies the download beside the AppImage, to its name with the extension `.new` (`iris.AppImage` stages `iris.new`), renames the copy over the AppImage, and launches the new file. A failed copy or rename deletes the copy and leaves the AppImage as it was. When the AppImage's directory takes no new file, `iris --update` prints `update: cannot write <dir>/<stem>.new: <error>; move the AppImage to a folder this account can write, or install the deb or rpm` and exits with status 1 before downloading anything.
-- Linux (deb/rpm): An `/usr/bin/iris` that dpkg lists in the `iris` deb downloads `linux-<arch>.deb` and runs `apt-get install -y <file>`. One the `iris` rpm owns downloads `linux-<arch>.rpm` and runs `dnf install -y <file>`. Run as root, `iris --update` runs the command itself. Run as another user, it runs the command through `pkexec`, which prompts for an administrator's password through the session's polkit agent, or on the terminal when no agent runs. The deb and the rpm recommend `pkexec`. When `apt-get` or `dnf` is missing, or `pkexec` is missing for a user other than root, `iris --update` prints the missing program and exits with status 1 before downloading anything. An install that fails prints the command, the reason, and the command that installs the download by hand, for example `update: /usr/bin/pkexec /usr/bin/apt-get install -y <file> was not authorized: the password dialog was dismissed; install it with: sudo apt install <file>`, and the stopped daemon starts again. A successful install starts `/usr/bin/iris` as the daemon. A daemon running while `apt` or `dnf` upgrades the package by hand runs the previous version until it restarts. A **Start iris at login** entry its settings window writes runs the upgraded `/usr/bin/iris`.
-- Linux (other): An `iris` that is neither an AppImage nor the `/usr/bin/iris` of the deb or the rpm, such as one built from source, prints `update: <path> is not from an AppImage, deb or rpm; install the release by hand` and exits with status 1 before downloading anything. The running daemon keeps running.
+- Linux (deb/rpm): An `/usr/bin/iris` that dpkg lists in the `iris` deb downloads `linux-<arch>.deb` and runs `apt-get install -y <file>`. One the `iris` rpm owns downloads `linux-<arch>.rpm` and runs `dnf install -y <file>`. Run as root, `iris --update` runs the command itself. Run as another user, it runs the command through `pkexec`, which prompts for an administrator's password through the session's polkit agent, or on the terminal when no agent runs. The deb and the rpm recommend `pkexec`. When `apt-get` or `dnf` is missing, or `pkexec` is missing for a user other than root, `iris --update` prints the missing program and exits with status 1 before downloading anything. An install that fails prints the command, the reason, and the command that installs the download by hand, for example `update: /usr/bin/pkexec /usr/bin/apt-get install -y <file> was not authorized: the password dialog was dismissed; install it with: sudo apt install <file>`, and the stopped iris starts again. A successful install starts `/usr/bin/iris` as iris. An iris running while `apt` or `dnf` upgrades the package by hand runs the previous version until it restarts. A **Start iris at login** entry its settings window writes runs the upgraded `/usr/bin/iris`.
+- Linux (other): An `iris` that is neither an AppImage nor the `/usr/bin/iris` of the deb or the rpm, such as one built from source, prints `update: <path> is not from an AppImage, deb or rpm; install the release by hand` and exits with status 1 before downloading anything. The running iris keeps running.
 
 ## Settings
 
@@ -140,7 +140,7 @@ The update check keeps its state in `update.json` beside `iris.log` ([paths](con
 | macOS | `~/Library/Application Support/iris/update.json` |
 | `IRIS_HOME` set | `$IRIS_HOME/state/update.json` |
 
-The file holds the time and channel of the last check that got an answer, the release it found, and the newest version a notice announced. A missing, unreadable, or malformed file, or one written in another format, reads as no state: the daemon checks about 60 seconds after it starts and replaces the file. Deleting the file makes the next daemon check 60 seconds after it starts and show the notice for the release it finds again.
+The file holds the time and channel of the last check that got an answer, the release it found, and the newest version a notice announced. A missing, unreadable, or malformed file, or one written in another format, reads as no state: iris checks about 60 seconds after it starts and replaces the file. Deleting the file makes the next iris check 60 seconds after it starts and show the notice for the release it finds again.
 
 ## Verifying a Download by Hand
 

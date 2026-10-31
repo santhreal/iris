@@ -1,16 +1,17 @@
 //! iris on GPUI: native UI shell.
 //!
 //! This binary drives the backend modules in `iris_lib` and renders
-//! every surface natively. One process is the daemon (tray, hotkeys,
-//! single-instance socket); other invocations forward their flags to it
-//! and exit. A flagged invocation with no daemon running starts a
-//! detached `iris --daemon` first, except `--quit`, `--record-pause` and
-//! `--record-mic`, which only reach a daemon that is already up.
+//! every surface natively. iris is one app: the first process takes the
+//! single-instance claim and runs the tray, hotkeys, and windows
+//! (`daemon`); a later invocation forwards its flags to it and exits. A
+//! flagged invocation with none running starts a detached
+//! `iris --background` first, except `--quit`, `--record-pause` and
+//! `--record-mic`, which only reach an iris that already runs.
 //!
 //! `cli::OPTS` defines every option; `iris --help` prints them.
 
 // Windows starts a GUI program with no console window: none opens for
-// the daemon at login or for a Start Menu or hotkey launch. A command
+// iris at login or for a Start Menu or hotkey launch. A command
 // line in a terminal prints through sys::console. Other targets ignore
 // the attribute.
 #![windows_subsystem = "windows"]
@@ -42,7 +43,7 @@ fn main() {
     sys::alloc::tune();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let parsed = cli::parse(&args);
-    // A bare `iris` and `iris --daemon` print nothing; any other command
+    // A bare `iris` and `iris --background` print nothing; any other command
     // line prints its output and errors.
     if parsed.prints() {
         sys::console::attach();
@@ -64,7 +65,7 @@ fn main() {
         return;
     }
 
-    let claimed = if parsed.daemon {
+    let claimed = if parsed.background {
         sys::ipc::claim()
     } else {
         // Quit, pause, and the mic toggle act on a running daemon. With
@@ -80,7 +81,7 @@ fn main() {
                     .iter()
                     .all(|c| matches!(c, daemon::Command::Quit))
             {
-                eprintln!("iris: no iris daemon is running");
+                eprintln!("iris: iris is not running");
                 std::process::exit(1);
             }
             return;
@@ -89,10 +90,10 @@ fn main() {
     };
     let claimed = match claimed {
         Ok(Some(claimed)) => claimed,
-        // Delivered, or `--daemon` found a daemon that runs or starts.
+        // Delivered, or `--background` found a daemon that runs or starts.
         Ok(None) => {
-            if parsed.daemon {
-                iris_lib::ilog!("iris: another iris daemon runs or is starting; this one exits");
+            if parsed.background {
+                iris_lib::ilog!("iris: another iris runs or is starting; this one exits");
             }
             return;
         }
@@ -108,8 +109,8 @@ fn main() {
     // process has one thread, and the NVIDIA driver connects to DISPLAY
     // when it is loaded, which starts an on-demand XWayland.
     let app = gpui_platform::application();
-    // Opening iris.app while the daemon runs starts no second process:
-    // macOS reports a reopen to the daemon, which then shows home. The
+    // Opening iris.app while iris runs starts no second process: macOS
+    // reports a reopen to the running app, which then shows home. The
     // other platforms never report one.
     app.on_reopen(|cx| daemon::run(cx, &daemon::Command::Home));
     app.run(move |cx: &mut App| {

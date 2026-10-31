@@ -68,7 +68,7 @@ impl Iris {
         };
         Ok(Self {
             exec: format!(
-                "{} --daemon",
+                "{} --background",
                 exec_arg(&program).map_err(|e| format!("start at login: {e}"))?
             ),
             packaged,
@@ -129,7 +129,7 @@ fn set_in(places: &Places, iris: &Iris, on: bool) -> Result<(), String> {
 /// are the package entry's: the tray's host starts with the panel.
 fn entry(exec: &str) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=iris\nComment=Start the iris daemon at login\n\
+        "[Desktop Entry]\nType=Application\nName=iris\nComment=Start iris at login with its tray icon and global hotkeys\n\
          Exec={exec}\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n\
          X-GNOME-Autostart-Delay=2\nX-KDE-autostart-after=panel\n"
     )

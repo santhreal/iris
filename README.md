@@ -1,6 +1,6 @@
 # iris
 
-iris is a screenshot and screen-recording tool for Linux (X11 and Wayland), Windows, and macOS. A background daemon holds the global hotkeys and the tray icon. A capture freezes the screen for region selection, saves a PNG, copies it to the clipboard, and shows a thumbnail toast that opens the annotation editor.
+iris is a screenshot and screen-recording tool for Linux (X11 and Wayland), Windows, and macOS. iris holds the global hotkeys and the tray icon. A capture freezes the screen for region selection, saves a PNG, copies it to the clipboard, and shows a thumbnail toast that opens the annotation editor.
 
 ![Capture Overlay](docs/images/overlay.png)
 
@@ -11,7 +11,7 @@ iris is a screenshot and screen-recording tool for Linux (X11 and Wayland), Wind
 - [Annotation Editor](docs/editor.md): Vector markup tools including pen, arrows, shapes, text, blur, counter badges, and crop.
 - [Screen Recording](docs/recording.md): Window and region video recording via ffmpeg, with floating indicator chip and MP4, GIF, and WebM export.
 - [Capture Library](docs/library.md): Thumbnail grid with batch selection, file drag-out, quick copy, and folder reveal.
-- [CLI Dispatch](docs/cli.md): Arguments forward to the running daemon over local IPC for window manager and compositor keybindings.
+- [CLI Dispatch](docs/cli.md): Arguments forward to the running iris over local IPC for window manager and compositor keybindings.
 - [Configuration](docs/configuration.md): Plain TOML settings file and graphical configuration editor.
 - [Cross-Platform](docs/platforms.md): Native backend integration for X11, Wayland portals, Windows GDI, and macOS CoreGraphics.
 
@@ -34,7 +34,7 @@ Release packages include FFmpeg. Source builds use `ffmpeg` from `PATH`.
    ```sh
    iris
    ```
-   The home window opens, and the daemon runs in the background with a tray icon. The application menu entry on Linux and the Start menu shortcut on Windows open the same window. On macOS, opening iris.app while the daemon runs with no iris window open shows the home window.
+   The home window opens and iris adds a tray icon. Open iris from the application menu, the Start menu, or Applications in the same way. Closing the window leaves iris running with its hotkeys.
 2. Press `Ctrl+Print` (`Ctrl+F13` on macOS) or run `iris --capture` to open the region capture overlay.
 3. Click a window to capture it, or drag a rectangle and press `Enter`.
 4. Click the preview toast to open the annotation editor.

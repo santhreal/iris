@@ -98,7 +98,7 @@ use xproxy::{Event, Proxy};
 /// The daemon's first line, printed once its platform has connected to
 /// the display and it has grabbed its hotkeys, before the rest of its
 /// start runs.
-const START: &str = "iris: daemon start";
+const START: &str = "iris: starting";
 
 /// The keysyms of `Ctrl+Print`, the default `capture_hotkey`:
 /// `Control_L` and `Print`.

@@ -192,15 +192,15 @@ jobs:
             ! kill -0 "$1" 2>/dev/null || fail "the daemon runs 10 s after --quit"
           }
           "$exe" --home || fail "iris --home exited with $?"
-          pid=$(pgrep -f "installed/iris.app/Contents/MacOS/iris --daemon") || fail "no daemon runs from the bundle"
-          grep -q "iris: daemon start" "$log" || fail "the daemon logged no start line"
+          pid=$(pgrep -f "installed/iris.app/Contents/MacOS/iris --background") || fail "no daemon runs from the bundle"
+          grep -q "iris: starting" "$log" || fail "the daemon logged no start line"
           for _ in $(seq 100); do [ -f "$agent" ] && break; sleep 0.1; done
           grep -qF "installed/iris.app/Contents/MacOS/iris</string>" "$agent" \
             || fail "the first start wrote no LaunchAgent for the bundle"
           quit "$pid"
           rm "$agent"
           "$exe" --home || fail "iris --home exited with $?"
-          pid=$(pgrep -f "installed/iris.app/Contents/MacOS/iris --daemon") || fail "no daemon runs from the bundle"
+          pid=$(pgrep -f "installed/iris.app/Contents/MacOS/iris --background") || fail "no daemon runs from the bundle"
           sleep 3
           [ ! -e "$agent" ] || fail "a later start turned Start at login back on"
           quit "$pid"
@@ -406,7 +406,7 @@ jobs:
           if ($printed -ne "iris $version") { throw "--version printed '$printed'" }
           $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
           $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris'
-          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`" --daemon") { throw "Run value $((Get-ItemProperty $run).iris)" }
+          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`" --background") { throw "Run value $((Get-ItemProperty $run).iris)" }
           if ((Get-ItemProperty $uninstall).DisplayVersion -ne $version) { throw 'Uninstall DisplayVersion' }
           $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'iris.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'iris.lnk'
@@ -414,7 +414,7 @@ jobs:
           function Assert-Shortcut([string]$path) {
             if (-not (Test-Path $path)) { throw "setup did not create $path" }
             $s = $shell.CreateShortcut($path)
-            if ($s.TargetPath -ne "$dir\iris.exe" -or $s.Arguments -ne '--home') { throw "$path runs '$($s.TargetPath)' '$($s.Arguments)'" }
+            if ($s.TargetPath -ne "$dir\iris.exe" -or $s.Arguments -ne '') { throw "$path runs '$($s.TargetPath)' '$($s.Arguments)'" }
           }
           Assert-Shortcut $lnk
           Assert-Shortcut $desktop
@@ -484,11 +484,11 @@ jobs:
           $took = $clock.ElapsedMilliseconds
           if ($upgrade.ExitCode -ne 0) { throw "ffmpeg.exe upgrade exit code $($upgrade.ExitCode) after $took ms" }
           if ($took -lt 4000) { throw "the upgrade took $took ms: it did not wait for ffmpeg.exe" }
-          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`" --daemon") { throw "Run value after an upgrade: $((Get-ItemProperty $run).iris)" }
+          if ((Get-ItemProperty $run).iris -ne "`"$dir\iris.exe`" --background") { throw "Run value after an upgrade: $((Get-ItemProperty $run).iris)" }
           if (Test-Path $desktop) { throw 'an upgrade without /DESKTOP created a desktop shortcut' }
           $again = $shell.CreateShortcut($desktop)
           $again.TargetPath = "$dir\iris.exe"
-          $again.Arguments = '--home'
+          $again.Arguments = ''
           $again.Save()
           # A process holding an installed file (a virus scanner) as the
           # uninstaller deletes it: the uninstaller retries until it closes.

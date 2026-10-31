@@ -80,7 +80,7 @@ For unattended installation, append the `/S` flag:
 iris-<ver>-windows-<arch>-setup.exe /S
 ```
 
-To start iris when the installation ends, append `/RUN`. The installer runs `iris.exe --daemon`, which opens no window, whether the installation succeeded or failed:
+To start iris when the installation ends, append `/RUN`. The installer runs `iris.exe --background`, which opens no window, whether the installation succeeded or failed:
 
 ```cmd
 iris-<ver>-windows-<arch>-setup.exe /S /RUN
@@ -98,7 +98,7 @@ The installer runs per-user without administrative privileges:
 - Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `ffmpeg.exe`, `iris.ico`, license notices, and `uninstall.exe`). FFmpeg notices are in `licenses\ffmpeg`.
 - Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe --home`.
 - Creates a desktop shortcut `iris.lnk` running `iris.exe --home` when **Create a desktop shortcut** on the last page is checked or `/DESKTOP` is given. The box is checked on a first installation and unchecked on an upgrade that finds no desktop shortcut. An upgrade rewrites a desktop shortcut that exists.
-- Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --daemon`. An upgrade rewrites the value when it exists and writes none when **Start iris at login** was turned off ([Start at Login](configuration.md#start-at-login)).
+- Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --background`. An upgrade rewrites the value when it exists and writes none when **Start iris at login** was turned off ([Start at Login](configuration.md#start-at-login)).
 - Registers uninstallation metadata under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris`.
 
 To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
@@ -107,7 +107,7 @@ To uninstall, select **iris** in Windows Settings > Installed apps, or execute:
 "%LOCALAPPDATA%\Programs\iris\uninstall.exe"
 ```
 
-The uninstaller sends `--quit` to a running iris daemon, waits for both executables in the same way, then removes shortcuts, the autostart registry value, application registry entries, and the installed files. It deletes the installation directory once it is empty, retrying for up to 10 seconds while another process, such as a virus scanner, holds a deleted file open. A directory that holds other files stays.
+The uninstaller sends `--quit` to a running iris, waits for both executables in the same way, then removes shortcuts, the autostart registry value, application registry entries, and the installed files. It deletes the installation directory once it is empty, retrying for up to 10 seconds while another process, such as a virus scanner, holds a deleted file open. A directory that holds other files stays.
 
 ### Portable zip
 
@@ -182,7 +182,7 @@ Installed files:
 - Binary: `/usr/bin/iris`
 - FFmpeg runtime: `/usr/lib/iris/ffmpeg`
 - Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
-- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --daemon`
+- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --background`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
 - Icons: `/usr/share/icons/hicolor/*/apps/iris.png`
 - Copyright documentation: `/usr/share/doc/iris/copyright`
@@ -207,7 +207,7 @@ Installed files:
 - Binary: `/usr/bin/iris`
 - FFmpeg runtime: `/usr/lib64/iris/ffmpeg`
 - Desktop entry: `/usr/share/applications/dev.iris.app.desktop`
-- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --daemon`
+- Login autostart entry: `/etc/xdg/autostart/iris-autostart.desktop`, running `iris --background`
 - AppStream metadata: `/usr/share/metainfo/dev.iris.app.metainfo.xml`
 - Icons: `/usr/share/icons/hicolor/*/apps/iris.png`
 - License files: `/usr/share/licenses/iris/`
@@ -233,7 +233,7 @@ chmod +x iris-<ver>-linux-<arch>.AppImage
 
 The first start of the AppImage writes the application menu entry `~/.local/share/applications/dev.iris.app.desktop` (`$XDG_DATA_HOME/applications`), with its icon at `~/.local/share/icons/hicolor/256x256/apps/dev.iris.app.png`, and turns on **Start iris at login** unless this account already has an autostart entry for iris. The entry runs the AppImage's path and hides from the menu once that path is gone (`TryExec`). Each start rewrites the entry and the icon when they differ, so the entry follows a moved AppImage once it runs again.
 
-Turning on **Start iris at login** writes `~/.config/autostart/iris-autostart.desktop` running the AppImage's path with `--daemon` ([Start at Login](configuration.md#start-at-login)). Turn it off before moving or deleting the AppImage.
+Turning on **Start iris at login** writes `~/.config/autostart/iris-autostart.desktop` running the AppImage's path with `--background` ([Start at Login](configuration.md#start-at-login)). Turn it off before moving or deleting the AppImage.
 
 To remove the AppImage, turn off **Start iris at login**, quit iris, and delete the AppImage and the two files above.
 
@@ -257,4 +257,4 @@ Install it with `sudo apt install tesseract-ocr` on Debian and Ubuntu, or `sudo 
 
 ## Updates
 
-The daemon checks for a newer release in the background and offers it in the tray menu, a notice, and the Updates pane of the settings window. `iris --update` installs it. The `stable` channel, the default, offers releases; the `beta` channel (`update_channel = "beta"`) also offers prereleases. iris installs an update only when the download matches its `.sha256` sidecar and its `.minisig` signature verifies. [Updates](updates.md) describes the background check, the channels, the checks, and how each kind of install is updated.
+iris checks for a newer release in the background and offers it in the tray menu, a notice, and the Updates pane of the settings window. `iris --update` installs it. The `stable` channel, the default, offers releases; the `beta` channel (`update_channel = "beta"`) also offers prereleases. iris installs an update only when the download matches its `.sha256` sidecar and its `.minisig` signature verifies. [Updates](updates.md) describes the background check, the channels, the checks, and how each kind of install is updated.

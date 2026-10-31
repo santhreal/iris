@@ -1,4 +1,4 @@
-//! Start at login: this account's OS entry that runs `iris --daemon`
+//! Start at login: this account's OS entry that runs `iris --background`
 //! when the account logs in. The entry is the one record of the
 //! setting: Settings reads it when it opens and writes it on Save.
 //!

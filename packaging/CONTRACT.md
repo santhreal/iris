@@ -178,7 +178,7 @@ FFmpeg and its notices ship at:
   `ffmpeg.exe` beside it on x86_64 and ARM64; Start Menu shortcut; a
   desktop shortcut from the Finish page checkbox or `/DESKTOP`, rewritten
   on an upgrade when it exists; autostart via `HKCU\...\Run` value
-  `iris` = `"...\iris.exe" --daemon`, written on a first install and
+  `iris` = `"...\iris.exe" --background`, written on a first install and
   rewritten on an upgrade only when it exists. The installer writes
   HKCU in the native (64-bit) registry view. The ARM64 installer stops
   on a PC that is not ARM64; the x86_64 installer stops on a PC that is
@@ -191,14 +191,14 @@ FFmpeg and its notices ship at:
 - macOS: `/Applications/iris.app`, with `Contents/MacOS/ffmpeg`;
   autostart via a LaunchAgent
   `~/Library/LaunchAgents/dev.iris.app.plist` running
-  `iris --daemon`, written by Settings' Start at login.
+  `iris --background`, written by Settings' Start at login.
 - Linux (deb/rpm): `/usr/bin/iris`; FFmpeg at `/usr/lib/iris/ffmpeg`
   for deb or `%{_libdir}/iris/ffmpeg` for rpm;
   `dev.iris.app.desktop` in
   `/usr/share/applications`; icon in
   `/usr/share/icons/hicolor/*/apps/iris.png`; autostart via
   `/etc/xdg/autostart/iris-autostart.desktop` (XDG autostart,
-  `Exec=iris --daemon`).
+  `Exec=iris --background`).
 - Linux (AppImage): one file, wherever it is kept. Its `AppRun` runs
   `usr/bin/iris` from the mount with the environment it was given.
   FFmpeg is `usr/bin/ffmpeg` beside iris. AppRun sets no
@@ -210,35 +210,35 @@ FFmpeg and its notices ship at:
   value. It is the one record of the setting.
 
 ## Runtime model
-- `iris` with no args = the app/daemon (tray + hotkeys + IPC listener),
-  or the home window of the daemon that runs.
-- `iris --daemon` = the daemon; exits when a daemon runs or starts. The
-  autostart entries run it, so a login with a daemon already running
-  opens no window.
+- `iris` with no args = the app (tray + hotkeys + IPC listener) with
+  its home window, or the home window of the iris that runs. Every
+  launcher entry (application menu, Start menu, desktop shortcut, the
+  installer's Finish page, iris.app) runs it with no args.
+- `iris --background` = the app with no window; exits when iris runs or
+  starts. The autostart entries run it, so a login with iris already
+  running opens no window.
 - `iris --home`, `--capture`, `--record-window`, `--settings`,
   `--library`, `--quit`, `--version`, `--check-update`, `--update`.
-- The installer registers autostart so the daemon runs at login; the
-  desktop shortcut launches `iris --home` (shows the home window in
-  the running daemon, or starts it).
+- The installer registers autostart so iris runs at login.
 
 ## Update mechanism
 - `iris --check-update`: GET latest release, compare semver to current.
 - `iris --update`: download the asset for this platform and
   architecture, check its SHA-256 against the asset's `.sha256`
   sidecar and its signature against the asset's `.minisig` with the
-  embedded `packaging/minisign.pub`, apply it, restart the daemon. The
+  embedded `packaging/minisign.pub`, apply it, restart iris. The
   signature's trusted comment must be `file:<the asset> version:<the
   release version>`. A release without either sidecar, a download that
   differs from the `.sha256`, or a signature that does not verify or
   whose trusted comment holds another file or version fails the
-  update before the daemon stops; the download is deleted. An
+  update before iris stops; the download is deleted. An
   installed Windows iris
   (uninstall.exe beside iris.exe) starts the NSIS installer with
   `/S /RUN`: it waits for iris.exe and ffmpeg.exe to be free, replaces
   the payload, and starts iris. A portable Windows iris unpacks the
   portable zip beside itself, replaces every packaged file with
   rollback on failure, renames the running iris.exe to iris.exe.old
-  last, and starts it; the daemon deletes iris.exe.old and the staging
+  last, and starts it; iris deletes iris.exe.old and the staging
   directory at its next start.
   macOS mounts the DMG and swaps its iris.app for the bundle iris runs
   from in one rename; Linux replaces the AppImage file at `$APPIMAGE`
@@ -249,5 +249,5 @@ FFmpeg and its notices ship at:
   none of the three, an AppImage or a portable iris in a folder it
   cannot write, a macOS iris outside an .app bundle, or a deb or rpm
   install without its package manager or pkexec fails before the
-  download and leaves the daemon running.
+  download and leaves iris running.
 - Settings UI gets a "Check for updates" row + current version label.

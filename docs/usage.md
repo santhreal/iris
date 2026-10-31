@@ -2,11 +2,11 @@
 
 ## Start iris
 
-Run `iris`. The home window opens, and the daemon starts in the background and adds a tray icon. The daemon holds the global hotkeys and runs every command. A second `iris` forwards its command to the running daemon and exits ([Process Model](cli.md#process-model-and-interprocess-communication)). `iris --daemon`, which the login autostart entries run, starts the daemon with no window.
+Open iris from the application menu on Linux, the Start menu on Windows, or Applications on macOS, or run `iris`. iris starts, opens its home window, and adds a tray icon. Closing the window leaves iris running in the tray with its global hotkeys. Opening iris again while it runs opens the home window of the running iris; no second iris starts ([Process Model](cli.md#process-model-and-interprocess-communication)).
 
-The application menu entry on Linux and the Start menu shortcut on Windows run `iris --home`, which opens the home window. On macOS, opening iris.app while the daemon runs with no iris window open shows the home window.
+`iris --background`, which the login autostart entries run, starts iris with no window.
 
-The home window has three tiles, **New Screenshot**, **Record Window** (**Record Screen** on Windows and macOS, which record the desktop), and **Library**, and a gear in the toolbar that opens the settings window. Under a tile's title, its global shortcut shows as key caps. A tile whose shortcut is unset shows **No shortcut**. A tile whose shortcut the daemon could not bind shows **Shortcut unavailable**, and pointing at it shows the reason, such as **In use by another app**. **New Screenshot** and **Record Window** close the home window before the capture or the window pick starts, so the home window is not in the picture. `Tab` and `Shift+Tab` move a focus ring over the tiles and the gear, the left and right arrow keys move it along the tiles, and `Enter` or `Space` runs the selected tile or the gear. `Ctrl+L` opens the library and `Ctrl+,` opens the settings window (`Cmd` on macOS). `Escape` or `Ctrl+W` closes the home window.
+The home window has three tiles, **New Screenshot**, **Record Window** (**Record Screen** on Windows and macOS, which record the desktop), and **Library**, and a gear in the toolbar that opens the settings window. Under a tile's title, its global shortcut shows as key caps. A tile whose shortcut is unset shows **No shortcut**. A tile whose shortcut iris could not bind shows **Shortcut unavailable**, and pointing at it shows the reason, such as **In use by another app**. **New Screenshot** and **Record Window** close the home window before the capture or the window pick starts, so the home window is not in the picture. `Tab` and `Shift+Tab` move a focus ring over the tiles and the gear, the left and right arrow keys move it along the tiles, and `Enter` or `Space` runs the selected tile or the gear. `Ctrl+L` opens the library and `Ctrl+,` opens the settings window (`Cmd` on macOS). `Escape` or `Ctrl+W` closes the home window.
 
 The tray menu holds the same actions:
 
@@ -18,11 +18,11 @@ The tray menu holds the same actions:
 | **Library** | Open the capture library |
 | **Settings** | Open the settings window |
 | **Install iris** *version* | Download, verify, and install the update the last check found; shown only while one is available ([Updates](updates.md)) |
-| **Quit** | Stop the daemon |
+| **Quit** | Quit iris |
 
 A primary or secondary click on the tray icon opens the tray menu.
 
-To start the daemon at login, turn on **Start iris at login** in the settings window ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
+To start iris at login, turn on **Start iris at login** in the settings window ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
 
 ### First start per platform
 
@@ -68,8 +68,8 @@ Click **Library**, or run `iris --library`. The library shows the captures as th
 
 ## Change Settings
 
-Click the gear in the home window, click **Settings** in the tray menu, or run `iris --settings`. The settings window has five tabs: **General** (Start at login, save folders, file names), **Capture** (capture feedback and the floating thumbnail), **Recording**, **Shortcuts**, and **Updates**. Each change writes `config.toml` at once, and a changed hotkey registers again in the running daemon at once ([Settings Window](configuration.md#settings-window)).
+Click the gear in the home window, click **Settings** in the tray menu, or run `iris --settings`. The settings window has five tabs: **General** (Start at login, save folders, file names), **Capture** (capture feedback and the floating thumbnail), **Recording**, **Shortcuts**, and **Updates**. Each change writes `config.toml` at once, and a changed hotkey registers again in the running iris at once ([Settings Window](configuration.md#settings-window)).
 
 ## Quit
 
-Click **Quit** in the tray menu, or run `iris --quit`. A recording in progress is saved before the daemon exits.
+Click **Quit** in the tray menu, or run `iris --quit`. A recording in progress is saved before iris exits.

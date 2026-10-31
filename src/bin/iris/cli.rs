@@ -1,9 +1,9 @@
 //! The command line. `OPTS` is the single definition of every option:
 //! the parser reads it and `--help` prints it. The client parses its
 //! own argv strictly and forwards only the options that parsed, file
-//! values made absolute. The daemon parses forwarded lines with the
-//! same table and logs what it does not recognize, so a newer client
-//! never wedges an older daemon.
+//! values made absolute. The running iris parses forwarded lines with
+//! the same table and logs what it does not recognize, so a newer
+//! client never wedges an older iris.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -25,8 +25,8 @@ pub enum Local {
 #[derive(Clone, Copy)]
 enum Takes {
     Local(Local),
-    /// Makes this process the daemon; see `Parsed::daemon`.
-    Daemon,
+    /// Starts iris with no window; see `Parsed::background`.
+    Background,
     Nothing(fn() -> Command),
     /// Whole seconds.
     Secs(fn(u64) -> Command),
@@ -44,13 +44,13 @@ struct Opt {
 /// Accepted for `--help`.
 const HELP_SHORT: &str = "-h";
 
-/// Runs the daemon in this process.
-const DAEMON: &str = "--daemon";
+/// Starts iris in this process with no window.
+const BACKGROUND: &str = "--background";
 
-/// The arguments of a daemon started in the background: by a client
-/// that found none, and by an update that restarts it. It opens no
-/// window, as the login item's line opens none.
-pub const DAEMON_LINE: &[&str] = &[DAEMON];
+/// The arguments of an iris started in the background: by a client
+/// that found none running, and by an update that restarts it. It
+/// opens no window, as the login item's line opens none.
+pub const BACKGROUND_LINE: &[&str] = &[BACKGROUND];
 
 const OPTS: &[Opt] = &[
     Opt {
@@ -121,12 +121,12 @@ const OPTS: &[Opt] = &[
     Opt {
         flag: "--quit",
         takes: Takes::Nothing(|| Command::Quit),
-        help: "stop the daemon, saving the active recording first",
+        help: "quit iris, saving the active recording first",
     },
     Opt {
-        flag: DAEMON,
-        takes: Takes::Daemon,
-        help: "run the daemon in this process; exit if one already runs",
+        flag: BACKGROUND,
+        takes: Takes::Background,
+        help: "start iris with no window; exit if iris already runs",
     },
     Opt {
         flag: "--version",
@@ -153,17 +153,17 @@ const OPTS: &[Opt] = &[
 /// One parsed command line.
 #[derive(Default)]
 pub struct Parsed {
-    /// The daemon commands, in argument order.
+    /// The commands for the running iris, in argument order.
     pub cmds: Vec<Command>,
-    /// The daemon-bound options with their values, file values absolute:
-    /// what the client forwards.
+    /// The options for the running iris with their values, file values
+    /// absolute: what the client forwards.
     pub forward: Vec<String>,
     /// The client-only options, in argument order.
     pub local: Vec<Local>,
-    /// `--daemon`: this process becomes the daemon, or exits when
-    /// another process holds the daemon claim. The line holds no other
-    /// option.
-    pub daemon: bool,
+    /// `--background`: this process becomes iris with no window open,
+    /// or exits when another process holds the instance claim. The line
+    /// holds no other option.
+    pub background: bool,
     /// One message per argument that is not an option or lacks a valid
     /// value; the other arguments still parse.
     pub errors: Vec<String>,
@@ -176,8 +176,8 @@ impl Parsed {
     }
 
     /// Whether the process prints to the caller's terminal. A bare line
-    /// and a lone `--daemon` run a daemon, or leave it to the daemon
-    /// that runs, and print nothing: on Windows a daemon attached to the
+    /// and a lone `--background` start iris, or leave it to the iris
+    /// that runs, and print nothing: on Windows an iris attached to the
     /// console of the terminal that started it prints there and ends
     /// when that terminal closes. Every other line prints its output and
     /// errors.
@@ -185,13 +185,13 @@ impl Parsed {
         !(self.cmds.is_empty() && self.local.is_empty() && self.errors.is_empty())
     }
 
-    /// What a process that became the daemon runs once it starts: the
-    /// line's commands, or home for a bare line, as a bare line
-    /// forwarded to a running daemon opens home. Opening iris.app or
-    /// running `iris` shows a window, not only a tray icon. `--daemon`,
-    /// the login item's line, runs nothing.
+    /// What a process that became iris runs once it starts: the line's
+    /// commands, or home for a bare line, as a bare line forwarded to a
+    /// running iris opens home. Opening iris.app, the launcher entry, or
+    /// `iris` shows a window, not only a tray icon. `--background`, the
+    /// login item's line, runs nothing.
     pub fn startup(self) -> Vec<Command> {
-        if self.daemon || !self.cmds.is_empty() {
+        if self.background || !self.cmds.is_empty() {
             self.cmds
         } else {
             vec![Command::Home]
@@ -223,8 +223,8 @@ pub fn parse(args: &[String]) -> Parsed {
                 out.local.push(local);
                 continue;
             }
-            Takes::Daemon => {
-                out.daemon = true;
+            Takes::Background => {
+                out.background = true;
                 continue;
             }
             Takes::Nothing(cmd) => Ok((cmd(), None)),
@@ -251,8 +251,9 @@ pub fn parse(args: &[String]) -> Parsed {
             Err(e) => out.errors.push(e),
         }
     }
-    if out.daemon && !(out.local.is_empty() && out.forward.is_empty()) {
-        out.errors.push(format!("{DAEMON} takes no other option"));
+    if out.background && !(out.local.is_empty() && out.forward.is_empty()) {
+        out.errors
+            .push(format!("{BACKGROUND} takes no other option"));
     }
     out
 }
@@ -274,8 +275,8 @@ fn file(v: &str) -> Result<(PathBuf, String), String> {
 pub fn usage() -> String {
     let mut out = String::from(
         "usage: iris [option]...\n\n\
-         With no option, iris opens the home window, starting the daemon\n\
-         first when none runs.\n\noptions:\n",
+         With no option, iris starts and opens its window, or opens the\n\
+         window of the iris that runs.\n\noptions:\n",
     );
     for opt in OPTS {
         let name = match opt.takes {

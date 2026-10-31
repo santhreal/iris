@@ -25,7 +25,7 @@ fn account(package: bool) -> (tempfile::TempDir, Places) {
 fn iris(program: &str, packaged: bool) -> Iris {
     Iris {
         exec: format!(
-            "{} --daemon",
+            "{} --background",
             exec_arg(Path::new(program)).expect("exec_arg")
         ),
         packaged,
@@ -58,7 +58,7 @@ fn an_appimage_starts_at_login_only_once_turned_on() {
     assert!(enabled_in(&places, &image));
     assert_eq!(
         user_entry(&places),
-        entry(r#""/home/a/Apps/iris.AppImage" --daemon"#)
+        entry(r#""/home/a/Apps/iris.AppImage" --background"#)
     );
     assert_eq!(names(&places.user), [ENTRY]);
     // Another AppImage, or the same one moved, is not the one it starts.
@@ -81,7 +81,10 @@ fn a_package_starts_at_login_until_turned_off() {
     assert_eq!(user_entry(&places), HIDDEN);
     set_in(&places, &packaged, true).expect("on");
     assert!(enabled_in(&places, &packaged));
-    assert_eq!(user_entry(&places), entry(r#""/usr/bin/iris" --daemon"#));
+    assert_eq!(
+        user_entry(&places),
+        entry(r#""/usr/bin/iris" --background"#)
+    );
     assert_eq!(names(&places.user), [ENTRY]);
 }
 
@@ -104,7 +107,10 @@ fn an_entry_that_starts_nothing_reads_as_off() {
             true,
         ),
         (format!("[Desktop Action x]\n{exec}\n"), false),
-        ("[Desktop Entry]\nExec=iris --daemon\n".to_string(), false),
+        (
+            "[Desktop Entry]\nExec=iris --background\n".to_string(),
+            false,
+        ),
     ] {
         std::fs::create_dir_all(&places.user).expect("mkdir");
         std::fs::write(places.user.join(ENTRY), &text).expect("write");

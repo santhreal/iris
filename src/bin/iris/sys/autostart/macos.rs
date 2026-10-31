@@ -72,7 +72,7 @@ fn set_at(agent: &Path, program: &Path, on: bool) -> Result<(), String> {
         .map_err(|e| format!("start at login: write {}: {e}", agent.display()))
 }
 
-/// The LaunchAgent that runs `program --daemon` once at login, in the
+/// The LaunchAgent that runs `program --background` once at login, in the
 /// GUI session (packaging/macos/dev.iris.app.plist).
 fn plist(program: &str) -> String {
     format!(
@@ -85,7 +85,7 @@ fn plist(program: &str) -> String {
 	<key>ProgramArguments</key>
 	<array>
 		<string>{program}</string>
-		<string>--daemon</string>
+		<string>--background</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -136,7 +136,7 @@ mod tests {
         assert!(enabled_at(&agent, program));
         let text = std::fs::read_to_string(&agent).expect("read");
         assert!(text.contains(
-            "<string>/Applications/My &lt;Tools&gt; &amp; iris.app/Contents/MacOS/iris</string>\n\t\t<string>--daemon</string>"
+            "<string>/Applications/My &lt;Tools&gt; &amp; iris.app/Contents/MacOS/iris</string>\n\t\t<string>--background</string>"
         ), "{text}");
         assert_eq!(
             std::fs::read_dir(agent.parent().unwrap())

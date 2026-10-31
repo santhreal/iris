@@ -89,10 +89,13 @@ fn entry(image: &Path, icon: &Path) -> Result<String, String> {
     let icon = xdg::string_value(icon)?;
     let mut text = String::with_capacity(PACKAGE_ENTRY.len() * 2);
     for line in PACKAGE_ENTRY.lines() {
-        if let Some(args) = line.strip_prefix("Exec=iris ") {
+        // `args` is empty for the bare launch, or starts with a space.
+        let args = line
+            .strip_prefix("Exec=iris")
+            .filter(|a| a.is_empty() || a.starts_with(' '));
+        if let Some(args) = args {
             text.push_str("Exec=");
             text.push_str(&exec);
-            text.push(' ');
             text.push_str(args);
         } else if line == "Icon=iris" {
             text.push_str("Icon=");

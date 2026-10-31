@@ -13,7 +13,7 @@
 //! home window for a command that asked for another window. The first
 //! case starts four `iris --home` and a bare `iris` at once, over rounds,
 //! and requires one daemon and one home window. The second starts four
-//! `iris --library` at once, then an `iris --daemon` beside the daemon,
+//! `iris --library` at once, then an `iris --background` beside the daemon,
 //! and requires one daemon, one library window, and no home window. The
 //! third kills the daemon with SIGKILL, which leaves its socket file, and
 //! requires the next `iris --home` to start a daemon in its place.
@@ -139,8 +139,8 @@ fn a_start_that_finds_a_daemon_opens_no_window_of_its_own() {
     }
     let daemon = one_process(dir, 0);
     windows(dir, &conn, root, LIBRARY, 1, 0);
-    let mut late = start(dir, &display, &["--daemon"]);
-    succeeds(dir, &mut late, "iris --daemon beside a daemon");
+    let mut late = start(dir, &display, &["--background"]);
+    succeeds(dir, &mut late, "iris --background beside a daemon");
     std::thread::sleep(SETTLE);
     assert_eq!(
         windows_of(&conn, root, LIBRARY).len(),
@@ -240,7 +240,7 @@ fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
     assert_eq!(stderr, "", "iris --home wrote to stderr");
     let log = std::fs::read_to_string(dir.join("state").join("iris.log")).unwrap();
     let line = format!(
-        "iris: watch the daemon's socket directory: {}: Permission denied (os error 13); \
+        "iris: watch the socket directory: {}: Permission denied (os error 13); \
          retrying the connect every 2 ms",
         run.display()
     );

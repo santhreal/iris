@@ -92,7 +92,7 @@ pub fn claim() -> Result<Option<Claimed>, String> {
 /// surfaces the home window in a running daemon.
 ///
 /// When no daemon answers, a flagged invocation still must not hold the
-/// caller's shell: it starts a detached `iris --daemon`, waits for the
+/// caller's shell: it starts a detached `iris --background`, waits for the
 /// socket, and forwards. A spawned daemon that never binds is an error,
 /// not a cue to start a second daemon in the foreground: the first may
 /// still bind. A process that finds the claim held, by a daemon that is
@@ -109,12 +109,12 @@ pub fn forward_if_running(args: &[String]) -> Result<Option<Claimed>, String> {
             return stream
                 .write_all(effective.join("\n").as_bytes())
                 .map(|()| None)
-                .map_err(|e| format!("iris: send to the running daemon: {e}"));
+                .map_err(|e| format!("iris: send to the running iris: {e}"));
         }
         // The name is bound and this account may not use it, so no
         // daemon this process starts could bind it either.
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-            return Err(format!("iris: connect to the daemon: {e}"));
+            return Err(format!("iris: connect to the running iris: {e}"));
         }
         Err(_) => {}
     }
@@ -129,7 +129,7 @@ pub fn forward_if_running(args: &[String]) -> Result<Option<Claimed>, String> {
         return Ok(None);
     }
     Err(format!(
-        "iris: the daemon did not start within {}s; see {}",
+        "iris: iris did not start within {}s; see {}",
         READY_TIMEOUT.as_secs(),
         iris_lib::dirs::log_file().display()
     ))
@@ -187,17 +187,17 @@ fn quit(name: Name<'_>, within: Duration) -> Quit {
     }
 }
 
-/// Start this executable as a detached `iris --daemon` (see
+/// Start this executable as a detached `iris --background` (see
 /// `sys::detach`), which survives this process's exit and holds none of
 /// its streams. It takes the claim and becomes the daemon, or exits when
 /// another process holds the claim.
 pub fn start_daemon() -> bool {
     match crate::sys::exe::this()
-        .and_then(|exe| crate::sys::detach::spawn(&exe, crate::cli::DAEMON_LINE))
+        .and_then(|exe| crate::sys::detach::spawn(&exe, crate::cli::BACKGROUND_LINE))
     {
         Ok(()) => true,
         Err(e) => {
-            iris_lib::ilog!("iris: start the daemon: {e}");
+            iris_lib::ilog!("iris: start iris in the background: {e}");
             false
         }
     }

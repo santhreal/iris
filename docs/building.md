@@ -70,7 +70,7 @@ On an x86_64 host this writes `iris-<ver>-linux-x86_64.deb`, `.rpm`, and `.AppIm
 
 The release workflow (`.github/workflows/package.yml`) builds the Linux executable in the `rust:1.98.0-bookworm` container (Debian 12, the pinned toolchain), on an x86_64 runner and on an aarch64 runner (`ubuntu-24.04-arm`). That executable uses no glibc symbol version newer than 2.35, so the packages install on glibc 2.35 and later. An executable built on a newer system requires that system's glibc. The same container builds and checks FFmpeg.
 
-`packaging/linux/check_installed.sh` starts an installed iris on a private Xvfb display, waits for the home window, and quits it. With `--upgrade <command>`, it runs the command while the daemon runs, checks that the daemon still runs on the replaced binary, quits it with the upgraded iris, and starts the upgraded iris. To check an upgrade of an installed deb to a package of the same binary at a higher version:
+`packaging/linux/check_installed.sh` starts an installed iris on a private Xvfb display, waits for the home window, and quits it. With `--upgrade <command>`, it runs the command while iris runs, checks that iris still runs on the replaced binary, quits it with the upgraded iris, and starts the upgraded iris. To check an upgrade of an installed deb to a package of the same binary at a higher version:
 
 ```sh
 bash packaging/linux/build_deb.sh --bin target/release/iris --ffmpeg "$runtime" --version 0.1.0.1 --out dist/next

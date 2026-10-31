@@ -27,7 +27,7 @@ impl BindWait {
             Err(e) => {
                 // The error states the directory.
                 iris_lib::log::file_line(&format!(
-                    "iris: watch the daemon's socket directory: {e}; retrying the connect every {} ms",
+                    "iris: watch the socket directory: {e}; retrying the connect every {} ms",
                     crate::sys::ipc::READY_POLL.as_millis()
                 ));
                 Self(None)

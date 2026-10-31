@@ -16,12 +16,12 @@
 ;                          architectures: the per-user Programs folder
 ;                          has no 32-bit or emulated variant
 ;   - Registry:            HKCU in the native (64-bit) view
-;   - Start Menu Shortcut: iris.lnk -> iris.exe --home
-;   - Desktop Shortcut:    iris.lnk -> iris.exe --home, from the Finish
+;   - Start Menu Shortcut: iris.lnk -> iris.exe
+;   - Desktop Shortcut:    iris.lnk -> iris.exe, from the Finish
 ;                          page checkbox or /DESKTOP; an upgrade rewrites
 ;                          one that exists
 ;   - Autostart:           HKCU\Software\Microsoft\Windows\CurrentVersion\Run
-;                          Value 'iris' -> "$INSTDIR\iris.exe" --daemon
+;                          Value 'iris' -> "$INSTDIR\iris.exe" --background
 ;   - License notices: LICENSE-MIT, LICENSE-APACHE, Inter-OFL.txt
 ;                       beside iris.exe; FFmpeg notices under
 ;                       licenses\ffmpeg\
@@ -34,11 +34,11 @@
 ; ARM64 (Windows 11 on ARM runs x64 programs).
 ;
 ; Runtime Model:
-;   - iris (no args) = background daemon (tray + global hotkeys + IPC listener),
-;                      or the home window of the daemon that runs.
-;   - iris --daemon  = background daemon; exits when a daemon runs.
-;   - iris --home    = opens/surfaces the home window in the daemon.
-;   - iris --quit    = sends the running daemon a request to exit.
+;   - iris (no args) = starts iris (tray, global hotkeys, IPC listener) and
+;                      opens its window, or opens the window of the iris
+;                      that runs.
+;   - iris --background = starts iris with no window; exits when iris runs.
+;   - iris --quit    = asks the running iris to quit.
 ;
 ; Supported Parameters:
 ;   - /S             = Silent installation / uninstallation.
@@ -134,7 +134,6 @@ VIAddVersionKey "OriginalFilename" "iris-${VERSION}-windows-${ARCH}-setup.exe"
 
 ; Finish page with optional launch of iris
 !define MUI_FINISHPAGE_RUN "$INSTDIR\iris.exe"
-!define MUI_FINISHPAGE_RUN_PARAMETERS "--home"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch ${APP_NAME}"
 !define MUI_FINISHPAGE_SHOWREADME ""
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "Create a desktop shortcut"
@@ -242,15 +241,15 @@ Function un.onInit
     SetRegView 64
 FunctionEnd
 
-; With /RUN, start $INSTDIR\iris.exe as the daemon: the new one after a
+; With /RUN, start $INSTDIR\iris.exe with no window: the new one after a
 ; successful installation, the one found in place after a failed one.
-; Both open no window, as the daemon the update stopped had none open.
+; Neither opens a window, as the iris the update stopped had none open.
 Function StartIfRequested
     ${GetParameters} $R0
     ClearErrors
     ${GetOptions} $R0 "/RUN" $R1
     ${IfNot} ${Errors}
-        Exec '"$INSTDIR\iris.exe" --daemon'
+        Exec '"$INSTDIR\iris.exe" --background'
     ${EndIf}
 FunctionEnd
 
@@ -260,7 +259,7 @@ FunctionEnd
 
 Function DesktopShortcut
     SetOutPath "$INSTDIR"
-    CreateShortcut "$DESKTOP\iris.lnk" "$INSTDIR\iris.exe" "--home" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
+    CreateShortcut "$DESKTOP\iris.lnk" "$INSTDIR\iris.exe" "" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
 FunctionEnd
 
 ; The Finish page offers the desktop shortcut checked on a first
@@ -298,10 +297,10 @@ Section "Install" SecInstall
     DetailPrint "Creating uninstaller..."
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
-    ; 4. Create Start Menu shortcut: 'iris' running 'iris.exe --home'
+    ; 4. Create Start Menu shortcut: 'iris' running 'iris.exe'
     DetailPrint "Creating Start Menu shortcut..."
     SetOutPath "$INSTDIR"
-    CreateShortcut "$SMPROGRAMS\iris.lnk" "$INSTDIR\iris.exe" "--home" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
+    CreateShortcut "$SMPROGRAMS\iris.lnk" "$INSTDIR\iris.exe" "" "$INSTDIR\iris.ico" 0 SW_SHOWNORMAL "" "${APP_NAME} - ${DESCRIPTION}"
 
     ; 4b. Desktop shortcut: /DESKTOP creates it, and an upgrade rewrites
     ;     one that exists. The Finish page checkbox creates it after
@@ -325,7 +324,7 @@ Section "Install" SecInstall
     ${If} $R2 == ""
     ${OrIf} $R3 != ""
         DetailPrint "Registering login autostart..."
-        WriteRegStr HKCU "${RUN_KEY}" "iris" '"$INSTDIR\iris.exe" --daemon'
+        WriteRegStr HKCU "${RUN_KEY}" "iris" '"$INSTDIR\iris.exe" --background'
     ${EndIf}
 
     ; 6. Store app metadata in registry for update checks and location lookup

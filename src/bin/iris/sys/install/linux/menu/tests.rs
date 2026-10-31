@@ -51,12 +51,14 @@ fn every_exec_of_the_package_entry_runs_the_appimage() {
     let want: Vec<String> = package
         .iter()
         .map(|l| {
-            let args = l.strip_prefix("Exec=iris ").expect("the package runs iris");
-            format!("Exec=\"/home/a/My Apps/iris.AppImage\" {args}")
+            let args = l.strip_prefix("Exec=iris").expect("the package runs iris");
+            format!("Exec=\"/home/a/My Apps/iris.AppImage\"{args}")
         })
         .collect();
     assert_eq!(execs(&text), want);
     assert!(!package.is_empty());
+    // The application launch is the bare app; its actions add an option.
+    assert_eq!(package[0], "Exec=iris");
     let icon = rig.places.icon.to_str().unwrap();
     assert!(text.contains(&format!("\nIcon={icon}\n")), "{text}");
     assert!(!text.contains("\nIcon=iris\n"), "{text}");

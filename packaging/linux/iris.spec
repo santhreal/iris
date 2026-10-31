@@ -41,8 +41,8 @@ Suggests:       tesseract
 %global debug_package %{nil}
 
 %description
-iris is a screenshot and screen-recording tool for X11 and Wayland. A
-background daemon holds the global hotkeys and the tray icon. A capture
+iris is a screenshot and screen-recording tool for X11 and Wayland. Its
+tray icon and global hotkeys stay while its windows are closed. A capture
 freezes the screen for region selection, saves a PNG, copies it to the
 clipboard, and shows a thumbnail toast that opens the annotation editor.
 Recording uses the bundled FFmpeg; the text copy in the toast and the

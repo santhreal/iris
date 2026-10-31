@@ -65,8 +65,8 @@ fn in_contract(suffix: &str) -> bool {
 /// An installed Windows iris does not come here: its installer starts
 /// iris (`/RUN`).
 fn relaunch(exe: &Path) -> ! {
-    if let Err(e) = crate::sys::detach::spawn(exe, crate::cli::DAEMON_LINE) {
-        iris_lib::ilog!("iris: start the updated daemon {}: {e}", exe.display());
+    if let Err(e) = crate::sys::detach::spawn(exe, crate::cli::BACKGROUND_LINE) {
+        iris_lib::ilog!("iris: start the updated iris {}: {e}", exe.display());
     }
     std::process::exit(0);
 }
