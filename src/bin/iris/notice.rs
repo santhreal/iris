@@ -497,8 +497,10 @@ impl Render for Notice {
             return div();
         }
         // A screen that does not blend the window shows the card still,
-        // in its cut-out area: it arrives and leaves at once.
+        // in its cut-out area: it arrives and leaves at once. Under
+        // reduced motion the card does not travel, it fades.
         let still = !crate::sys::window::blended(window);
+        let reduced = cx.reduce_motion();
         // Entrance: decelerating hard into the corner, as the toast.
         let opened = *self.opened.get_or_insert_with(Instant::now);
         let enter_t = if still {
@@ -506,18 +508,20 @@ impl Render for Notice {
         } else {
             (opened.elapsed().as_secs_f32() / motion::tempo(motion::ENTER).as_secs_f32()).min(1.0)
         };
+        let pose = motion::arrive(enter_t, MARGIN, W, reduced);
+        let mut offset = pose.inset;
+        let mut opacity = pose.opacity;
         let ease = 1.0 - (1.0 - enter_t).powi(4);
-        let mut offset = MARGIN - (1.0 - ease) * (W + 2.0 * MARGIN);
-        let mut opacity = 1.0f32;
         let mut animating = enter_t < 1.0;
         // Exit: accelerate off the edge, or fade when replaced.
         if let Some((at, over)) = self.closing {
             let t = (at.elapsed().as_secs_f32() / motion::tempo(over).as_secs_f32()).min(1.0);
             if over > REPLACE_EXIT {
-                offset -= (W + 2.0 * MARGIN + 24.0) * t * t;
-                opacity = 1.0 - ((t - 0.66) / 0.34).clamp(0.0, 1.0);
+                let pose = motion::leave(t, offset, W, MARGIN, reduced);
+                offset = pose.inset;
+                opacity *= pose.opacity;
             } else {
-                opacity = 1.0 - t;
+                opacity *= 1.0 - t;
             }
             if still || t >= 1.0 {
                 window.remove_window();

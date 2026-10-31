@@ -260,8 +260,10 @@ impl Render for ToastStage {
         );
 
         // A screen that does not blend the window shows the card still,
-        // in its cut-out area: it arrives and leaves at once.
+        // in its cut-out area: it arrives and leaves at once. Under
+        // reduced motion the card does not travel, it fades.
         let still = !crate::sys::window::blended(window);
+        let reduced = cx.reduce_motion();
 
         // Entrance: decelerating hard into the corner.
         let opened = *self.opened.get_or_insert_with(Instant::now);
@@ -270,10 +272,10 @@ impl Render for ToastStage {
         } else {
             (opened.elapsed().as_secs_f32() / motion::tempo(ENTER).as_secs_f32()).min(1.0)
         };
-        let ease = 1.0 - (1.0 - enter_t).powi(4);
-        let mut offset = MARGIN - (1.0 - ease) * (w + 2.0 * MARGIN);
-        let mut opacity = 1.0f32;
-        let shadow_vis = ease;
+        let pose = motion::arrive(enter_t, MARGIN, w, reduced);
+        let mut offset = pose.inset;
+        let mut opacity = pose.opacity;
+        let shadow_vis = 1.0 - (1.0 - enter_t).powi(4);
         let mut animating = enter_t < 1.0;
         let reveal = self.reveal(still);
         if self.hover_turn.0.elapsed() < motion::tempo(motion::FADE) && !still {
@@ -288,7 +290,7 @@ impl Render for ToastStage {
         if let Some((started, dx0)) = self.swipe_return {
             let t = (started.elapsed().as_secs_f32() / motion::tempo(SWIPE_RETURN).as_secs_f32())
                 .min(1.0);
-            if still || t >= 1.0 {
+            if still || reduced || t >= 1.0 {
                 self.swipe_return = None;
             } else {
                 offset -= dx0 * (1.0 - motion::spring(t));
@@ -302,10 +304,11 @@ impl Render for ToastStage {
                 / motion::tempo(self.closing_dur).as_secs_f32())
             .min(1.0);
             if self.closing_dur > REPLACE_EXIT {
-                offset = MARGIN - self.exit_from - (w + 2.0 * MARGIN + 24.0) * t * t;
-                opacity = 1.0 - ((t - 0.66) / 0.34).clamp(0.0, 1.0);
+                let pose = motion::leave(t, MARGIN - self.exit_from, w, MARGIN, reduced);
+                offset = pose.inset;
+                opacity *= pose.opacity;
             } else {
-                opacity = 1.0 - t;
+                opacity *= 1.0 - t;
             }
             if still || t >= 1.0 {
                 crate::widgets::release_render(&self.thumb.render, cx);

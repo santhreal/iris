@@ -55,6 +55,50 @@ pub fn spring(t: f32) -> f32 {
         .clamp(0.0, 1.0)
 }
 
+/// A corner card's place on its slide axis and its opacity: `inset` is
+/// the distance from the screen edge it slides through to the card's
+/// near side, negative while part of the card is past that edge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pose {
+    pub inset: f32,
+    pub opacity: f32,
+}
+
+/// A corner card `width` wide arriving at `margin` from the edge, at
+/// `t` (0..=1) of its entrance. It decelerates hard in from past the
+/// edge. Under reduced motion it does not travel: it fades in at rest.
+pub fn arrive(t: f32, margin: f32, width: f32, reduced: bool) -> Pose {
+    let t = t.clamp(0.0, 1.0);
+    if reduced {
+        return Pose {
+            inset: margin,
+            opacity: ease_out(t),
+        };
+    }
+    let ease = 1.0 - (1.0 - t).powi(4);
+    Pose {
+        inset: margin - (1.0 - ease) * (width + 2.0 * margin),
+        opacity: 1.0,
+    }
+}
+
+/// A corner card `width` wide leaving from `inset`, at `t` (0..=1) of
+/// its exit. It accelerates off the edge and fades over its last third.
+/// Under reduced motion it does not travel: it fades out where it is.
+pub fn leave(t: f32, inset: f32, width: f32, margin: f32, reduced: bool) -> Pose {
+    let t = t.clamp(0.0, 1.0);
+    if reduced {
+        return Pose {
+            inset,
+            opacity: 1.0 - t,
+        };
+    }
+    Pose {
+        inset: inset - (width + 2.0 * margin + 24.0) * t * t,
+        opacity: ((1.0 - t) / 0.34).min(1.0),
+    }
+}
+
 /// A value+velocity spring for pointer-coupled state. Unlike the
 /// clock-based curve above, this retains velocity when a hover ends
 /// mid-rise and reverses toward the new target. The exact critically
@@ -91,9 +135,13 @@ impl Spring {
 
 // WHY: the class closed here is "motion math breaks the animation
 // contract": spring() must stay inside 0..=1 (GPUI's animation driver
-// panics outside it) and Spring must converge without oscillation or
-// refresh-rate-dependent timing.
-// Not covered: compositor delivery and paint duration.
+// panics outside it), Spring must converge without oscillation or
+// refresh-rate-dependent timing, and a corner card's pose must start
+// and end where its surface needs it: off the screen edge when moving,
+// at rest with only opacity changing under reduced motion.
+// Not covered: compositor delivery and paint duration, and whether a
+// surface passes the platform's reduced-motion setting into arrive and
+// leave; the flight and the editor morph read it at their call sites.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +239,84 @@ mod tests {
         assert!(s.settled(1.0), "value={} velocity={}", s.value, s.velocity);
         assert_eq!(s.value, 1.0);
         assert_eq!(s.velocity, 0.0);
+    }
+
+    /// Every (t, margin, width) a corner card is posed at.
+    fn samples() -> impl Iterator<Item = (f32, f32, f32)> {
+        [(16.0, 154.0), (16.0, 360.0), (12.0, 320.0), (0.0, 200.0)]
+            .into_iter()
+            .flat_map(|(m, w)| (0..=60).map(move |i| (i as f32 / 60.0, m, w)))
+    }
+
+    #[test]
+    fn corner_cards_slide_in_from_past_the_edge_and_off_again() {
+        for (m, w) in [(16.0, 154.0), (12.0, 320.0), (0.0, 200.0)] {
+            let start = arrive(0.0, m, w, false);
+            assert!(
+                start.inset + w <= 0.0,
+                "m={m} w={w}: {start:?} shows on screen"
+            );
+            assert_eq!(
+                arrive(1.0, m, w, false),
+                Pose {
+                    inset: m,
+                    opacity: 1.0
+                }
+            );
+            let gone = leave(1.0, m, w, m, false);
+            assert!(
+                gone.inset + w <= 0.0,
+                "m={m} w={w}: {gone:?} stays on screen"
+            );
+            assert_eq!(gone.opacity, 0.0);
+            assert_eq!(
+                leave(0.0, m, w, m, false),
+                Pose {
+                    inset: m,
+                    opacity: 1.0
+                }
+            );
+        }
+        let mut last: Option<(f32, Pose, Pose)> = None;
+        for (t, m, w) in samples() {
+            let (a, l) = (arrive(t, m, w, false), leave(t, m, w, m, false));
+            assert_eq!(
+                a.opacity, 1.0,
+                "t={t}: the entrance moves, it does not fade"
+            );
+            assert_eq!(
+                l.opacity == 1.0,
+                t < 0.66,
+                "t={t}: the exit fades over its last third only: {l:?}"
+            );
+            if let Some((t0, a0, l0)) = last.filter(|(t0, ..)| *t0 < t) {
+                assert!(a.inset >= a0.inset, "t={t0}..{t}: entrance moved back");
+                assert!(l.inset <= l0.inset, "t={t0}..{t}: exit moved back");
+                assert!(l.opacity <= l0.opacity, "t={t0}..{t}: exit brightened");
+            }
+            last = Some((t, a, l));
+        }
+    }
+
+    #[test]
+    fn reduced_motion_holds_corner_cards_at_rest_and_dissolves_them() {
+        let mut last: Option<(f32, Pose, Pose)> = None;
+        for (t, m, w) in samples() {
+            let (a, l) = (arrive(t, m, w, true), leave(t, m + 7.0, w, m, true));
+            assert_eq!(a.inset, m, "t={t} m={m} w={w}: the entrance travelled");
+            assert_eq!(l.inset, m + 7.0, "t={t} m={m} w={w}: the exit travelled");
+            if let Some((t0, a0, l0)) = last.filter(|(t0, ..)| *t0 < t) {
+                assert!(
+                    a.opacity > a0.opacity,
+                    "t={t0}..{t}: entrance did not brighten"
+                );
+                assert!(l.opacity < l0.opacity, "t={t0}..{t}: exit did not fade");
+            }
+            last = Some((t, a, l));
+        }
+        assert_eq!(arrive(0.0, 16.0, 154.0, true).opacity, 0.0);
+        assert_eq!(arrive(1.0, 16.0, 154.0, true).opacity, 1.0);
+        assert_eq!(leave(0.0, 16.0, 154.0, 16.0, true).opacity, 1.0);
+        assert_eq!(leave(1.0, 16.0, 154.0, 16.0, true).opacity, 0.0);
     }
 }

@@ -508,7 +508,13 @@ impl Render for Editor {
                 }
                 false => 0.0,
             };
-            let e = motion::spring(t);
+            // Under reduced motion the capture opens at rest and only
+            // the chrome fades in around it.
+            let e = if cx.reduce_motion() {
+                1.0
+            } else {
+                motion::spring(t)
+            };
             stage_rect = (
                 from.0 + (ox - from.0) * e,
                 from.1 + (oy - from.1) * e,

@@ -23,6 +23,7 @@ Dimensions and styling:
 - Edge margin is 12.0 logical pixels from the work area's edges.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.
 - Entrance: Slides in from beyond the work area's edge over 280 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
+- Reduced motion: When the system requests reduced motion, the card does not travel. It fades in on its resting rect over 280 milliseconds and fades out in place when dismissed or expired, a swipe released below the thresholds returns the card at once, and the capture flight is replaced by the card fading in on its resting rect over 140 milliseconds.
 - On X11 with no compositing manager, the window shows only the card, with its corners cut to whole pixels and no shadow. The card appears at rest, stays in place during a dismiss swipe, and closes at once when dismissed or replaced. See [Pop-up Windows](platforms.md#linux-x11).
 
 ## Interaction and Actions
@@ -164,7 +165,7 @@ Failure titles:
 | `Shortcuts did not refresh` | Redrawing the open windows after the global hotkeys bind |
 
 Timing and placement:
-- The card slides in from beyond the screen edge and stays for `toast_duration_ms` (default: 5000 milliseconds). A failure stays for at least 8000 milliseconds. A window pick card stays until the pick ends, and a countdown card until its capture. On X11 with no compositing manager, the card has no shadow, appears at rest, and closes at once, as the toast's.
+- The card slides in from beyond the screen edge and stays for `toast_duration_ms` (default: 5000 milliseconds). A failure stays for at least 8000 milliseconds. A window pick card stays until the pick ends, and a countdown card until its capture. When the system requests reduced motion, the card fades in and out in place. On X11 with no compositing manager, the card has no shadow, appears at rest, and closes at once, as the toast's.
 - Hovering the pointer over the card pauses auto-dismissal. Moving the pointer off restarts the full duration.
 - A newer notice replaces the card, and so does a toast that lands on it. A delayed capture whose card is replaced still runs.
 - Starting a capture, a region pick, or a recording closes the card first, so the capture or recording does not contain it. A window pick card stays. A delayed capture whose card closes this way still runs at its deadline.

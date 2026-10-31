@@ -66,14 +66,22 @@ impl Overlay {
     /// until the toast has presented its first frame, then parks.
     pub(super) fn render_flight(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         const FLIGHT: Duration = Duration::from_millis(280);
+        // Under reduced motion the card does not fly: it fades in on
+        // its resting rect, over the shared fade.
+        let reduced = cx.reduce_motion();
         let f = self.flight.clone().expect("flight checked");
         let flown = f.started.elapsed().as_secs_f32();
-        let t = (flown / crate::motion::tempo(FLIGHT).as_secs_f32()).min(1.0);
-        let e = crate::motion::spring(t);
+        let over = if reduced { crate::motion::FADE } else { FLIGHT };
+        let t = (flown / crate::motion::tempo(over).as_secs_f32()).min(1.0);
+        let (e, opacity) = if reduced {
+            (1.0, crate::motion::ease_out(t))
+        } else {
+            (crate::motion::spring(t), 1.0)
+        };
         // The clock's end bounds the flight whatever the curve does.
         let image_to = f.card.image_at(f.to.0, f.to.1);
-        let at_rest =
-            t >= 1.0 || (flight_at_rest(f.from, f.to, e) && flight_at_rest(f.from, image_to, e));
+        let at_rest = t >= 1.0
+            || (!reduced && flight_at_rest(f.from, f.to, e) && flight_at_rest(f.from, image_to, e));
         if at_rest {
             // Taken once: later frames of this session never reopen it.
             // Until then a slow finalize's notify re-renders this.
@@ -110,7 +118,7 @@ impl Overlay {
         if f.card.letterboxed() {
             card = card.bg(theme::alpha(theme::BG_ELEV, e.clamp(0.0, 1.0)));
         }
-        div().size_full().child(card).child(
+        div().size_full().opacity(opacity).child(card).child(
             // The image rounds itself: a parent's rounded overflow clip
             // is a rectangle.
             img(ImageSource::Render(f.img.clone()))
