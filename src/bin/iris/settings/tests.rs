@@ -198,13 +198,11 @@ fn a_recorded_shortcut_applies_unless_its_partner_holds_it() {
 
     // The two global hotkeys are grabbed together; the overlay reads
     // cancel and confirm together. Case differs in a hand-edited file.
+    // The record hotkey still holds this platform's default.
+    let record = Config::default().record_hotkey.to_lowercase();
     let pairs = [
         (Field::RecordHotkey, Field::CaptureHotkey, "ctrl+shift+3"),
-        (
-            Field::CaptureHotkey,
-            Field::RecordHotkey,
-            "ctrl+shift+print",
-        ),
+        (Field::CaptureHotkey, Field::RecordHotkey, record.as_str()),
         (Field::ConfirmKeybind, Field::CancelKeybind, "Escape"),
         (Field::CancelKeybind, Field::ConfirmKeybind, "Enter"),
     ];
