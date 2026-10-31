@@ -9,10 +9,11 @@
 //! back off the edge, fading in the last third. A flick toward the edge
 //! dismisses it 1:1 under the pointer; any other drag is a file
 //! drag-out. A click runs the configured click action; the default,
-//! Markup, morphs the card into the editor. Hovering the card fades in
-//! a capsule of grouped actions with tooltips, and the right-click menu
-//! acts on the capture too; an action's result takes the capsule's slot
-//! as a status line. A new capture replaces the toast, and the toast
+//! Markup, morphs the card into the editor. Hovering the card dims the
+//! capture and fades in its actions, Copy and Markup at the center and a
+//! round button in each corner, and the right-click menu acts on the
+//! capture too; an action's result takes the actions' place as a status
+//! line. A new capture replaces the toast, and the toast
 //! leaves the screen before that capture reads it.
 
 use std::{
@@ -69,8 +70,8 @@ pub(super) const SWIPE_STALE: Duration = Duration::from_millis(120);
 pub(super) const SWIPE_TRAVEL: f32 = 100.0;
 pub(super) const SWIPE_VELOCITY: f32 = 400.0;
 /// A fresh status holds the action slot this long even under the
-/// pointer, so the result of a click on the capsule is read before the
-/// capsule returns.
+/// pointer, so the result of a click on an action is read before the
+/// actions return.
 pub(super) const STATUS_HOLD: Duration = Duration::from_millis(1600);
 
 /// How far the hover actions show, 0 hidden to 1 shown: `from` at the
@@ -152,12 +153,8 @@ impl Card {
     }
 }
 
-/// The card's least size: the hover actions' capsule with its inset on
-/// every side.
-pub(super) const CARD_MIN: (f32, f32) = (
-    actions::CAPSULE.0 + 2.0 * actions::SLOT_INSET,
-    actions::CAPSULE.1 + 2.0 * actions::SLOT_INSET,
-);
+/// The card's least size: the room its hover actions need.
+pub(super) const CARD_MIN: (f32, f32) = actions::ACTIONS_MIN;
 
 pub struct ToastStage {
     pub(super) path: PathBuf,
@@ -520,7 +517,7 @@ impl Render for ToastStage {
                     }
                 }
                 if self.pinned && reveal < 1.0 {
-                    card = card.child(actions::pinned_badge().opacity(1.0 - reveal));
+                    card = card.child(actions::pinned_badge(&fit).opacity(1.0 - reveal));
                 }
 
                 card.on_hover(cx.listener(|stage, hovering, window, cx| {

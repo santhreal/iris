@@ -64,7 +64,7 @@ const MENU_W: i16 = 168;
 const MENU_PAD: i16 = 5;
 const MENU_ROW_H: i16 = 24;
 const ROWS: i16 = 6;
-const PIN_ROW: i16 = 3;
+const PIN_ROW: i16 = 4;
 
 /// The pins' step down and right (pin::CASCADE).
 const CASCADE: i16 = 24;

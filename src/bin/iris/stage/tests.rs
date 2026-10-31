@@ -93,8 +93,8 @@ fn thumb_fills_the_cards_device_pixels() {
         (
             (700, 1400),
             2.0,
-            (185.0, 140.0),
-            (58.0, 0.0, 70.0, 140.0),
+            (154.0, 140.0),
+            (42.0, 0.0, 70.0, 140.0),
             (140, 280),
         ),
         (
@@ -115,22 +115,22 @@ fn thumb_fills_the_cards_device_pixels() {
         (
             (120, 80),
             2.0,
-            (185.0, 80.0),
-            (33.0, 0.0, 120.0, 80.0),
+            (154.0, 88.0),
+            (17.0, 4.0, 120.0, 80.0),
             (120, 80),
         ),
         (
             (40, 30),
             1.0,
-            (185.0, 44.0),
-            (73.0, 7.0, 40.0, 30.0),
+            (154.0, 88.0),
+            (57.0, 29.0, 40.0, 30.0),
             (40, 30),
         ),
         (
             (1920, 120),
             1.0,
-            (200.0, 44.0),
-            (0.0, 16.0, 200.0, 13.0),
+            (200.0, 88.0),
+            (0.0, 38.0, 200.0, 13.0),
             (200, 13),
         ),
     ];
@@ -154,19 +154,19 @@ fn thumb_fills_the_cards_device_pixels() {
     }
 }
 
-// WHY: the class closed here is "the hover actions cut off by their own
-// card". The card was the capture's aspect-true box and clips what it
-// holds, so the capsule of a square, tall, or short capture lost its
-// end buttons or its top. Every capture size the card can show must
-// give a card that holds the capsule with its inset, and the capture
-// centered on it, aspect-true, at the size it had before, in whole
-// pixels. The capsule's size comes from ToastAction::GROUPS, so a new
-// button widens the least card. Not covered: the capsule's paint, and a
-// layout that draws a button wider than ACTION_BUTTON.
+// WHY: the class closed here is "a hover action cut off by its own
+// card, or drawn over another". The card clips what it holds, so the
+// actions of a square, tall, or short capture lost their end buttons
+// or their top. Every capture size the card can show must give a card
+// that holds every action of ToastAction::ALL inside the inset, in
+// whole pixels, no two of them overlapping, and the capture centered
+// on it, aspect-true, at the size it had before, in whole pixels. A new
+// action is checked with the rest. Not covered: the actions' paint, and
+// a label wider than its button.
 #[test]
-fn every_card_holds_the_hover_actions_and_centers_its_capture() {
-    use actions::{CAPSULE, SLOT_INSET};
-    assert_eq!(CAPSULE, (173.0, 32.0));
+fn every_card_holds_the_hover_actions_apart_and_centers_its_capture() {
+    use actions::{ToastAction, ACTIONS_MIN, SLOT_INSET};
+    assert_eq!(ACTIONS_MIN, (154.0, 88.0));
     let sizes = (1..=40u32)
         .chain((41..=4000).step_by(37))
         .chain([7680, 20000]);
@@ -174,10 +174,26 @@ fn every_card_holds_the_hover_actions_and_centers_its_capture() {
         for ih in sizes.clone() {
             let card = Card::of(iw as f32, ih as f32);
             let case = format!("{iw}x{ih}: {card:?}");
-            assert!(
-                card.w >= CAPSULE.0 + 2.0 * SLOT_INSET && card.h >= CAPSULE.1 + 2.0 * SLOT_INSET,
-                "the card is smaller than the capsule, {case}"
-            );
+            let rects = ToastAction::ALL.map(|a| (a, a.rect(card.w, card.h)));
+            for (a, (x, y, w, h)) in rects {
+                assert!(
+                    x >= SLOT_INSET
+                        && y >= SLOT_INSET
+                        && x + w <= card.w - SLOT_INSET
+                        && y + h <= card.h - SLOT_INSET,
+                    "{a:?} at {:?} leaves the card's inset, {case}",
+                    (x, y, w, h)
+                );
+                assert_eq!((x.fract(), y.fract()), (0.0, 0.0), "{a:?}, {case}");
+            }
+            for (i, (a, (ax, ay, aw, ah))) in rects.iter().enumerate() {
+                for (b, (bx, by, bw, bh)) in &rects[i + 1..] {
+                    assert!(
+                        ax + aw <= *bx || bx + bw <= *ax || ay + ah <= *by || by + bh <= *ay,
+                        "{a:?} overlaps {b:?}, {case}"
+                    );
+                }
+            }
             let (x, y, w, h) = card.image;
             let fit = (MAX_W / iw as f32).min(MAX_H / ih as f32).min(1.0);
             assert_eq!(
@@ -194,14 +210,9 @@ fn every_card_holds_the_hover_actions_and_centers_its_capture() {
             );
             assert_eq!((x.fract(), y.fract()), (0.0, 0.0), "{case}");
             assert_eq!(
-                card.w,
-                w.max(CAPSULE.0 + 2.0 * SLOT_INSET),
-                "the card is wider than it needs, {case}"
-            );
-            assert_eq!(
-                card.h,
-                h.max(CAPSULE.1 + 2.0 * SLOT_INSET),
-                "the card is taller than it needs, {case}"
+                (card.w, card.h),
+                (w.max(ACTIONS_MIN.0), h.max(ACTIONS_MIN.1)),
+                "the card is larger than it needs, {case}"
             );
             assert_eq!(card.letterboxed(), (w, h) != (card.w, card.h), "{case}");
         }
@@ -231,7 +242,7 @@ fn prepare_thumb_reuses_stashed_decode() {
 // WHY: the class closed here is "the hover actions jump or stick". A
 // fade that restarts from 0 or 1 at every edge crossing flickers when the
 // pointer grazes the card, and one that ignores the pointer's side leaves
-// the capsule over the capture after the pointer leaves. Each case pins
+// the actions over the capture after the pointer leaves. Each case pins
 // the start, the end, the clamp past the end, and a reversal in mid-fade
 // for both sides. Not covered: the frame scheduling that advances `t`.
 #[test]

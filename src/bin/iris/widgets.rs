@@ -115,7 +115,7 @@ pub fn icon_button(
 }
 
 /// [`icon_button`] for a HUD that floats over any screen content, the
-/// toast's capsule and the recording chip: the glyph is primary text,
+/// recording chip: the glyph is primary text,
 /// not secondary, so it reads over a busy image as a HUD control does.
 pub fn hud_icon_button(
     id: impl Into<ElementId>,

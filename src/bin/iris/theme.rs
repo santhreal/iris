@@ -51,6 +51,15 @@ pub const SELECTION_RIM: Rgba = alpha(BLACK, 0.35);
 pub const WINDOW_PICK: Rgba = alpha(ACCENT, 0.18);
 /// The fill of an overlay readout's tag.
 pub const READOUT_FILL: Rgba = alpha(BLACK, 0.62);
+/// The toast's hover actions: a scrim over the capture, and light
+/// buttons on it with dark labels and glyphs. The status line shares
+/// the buttons' register.
+pub const THUMB_SCRIM: Rgba = alpha(BLACK, 0.30);
+pub const THUMB_BUTTON: Rgba = alpha(WHITE, 0.90);
+pub const THUMB_BUTTON_HOVER: Rgba = WHITE;
+pub const THUMB_BUTTON_PRESS: Rgba = alpha(WHITE, 0.72);
+pub const THUMB_INK: Rgba = rgb(0.11, 0.11, 0.12);
+pub const THUMB_STATUS: Rgba = alpha(WHITE, 0.92);
 
 /// Label tiers: primary text, secondary (metadata, captions, resting
 /// glyphs), tertiary (placeholders, shortcut columns), disabled.

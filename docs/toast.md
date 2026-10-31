@@ -18,7 +18,7 @@ The work area is the part of the monitor that panels, docks, the taskbar, and th
 
 Dimensions and styling:
 - The thumbnail scales aspect-true to fit within 200×140 logical pixels. Its pixels are box-filtered from the full capture to the thumbnail's size in device pixels: on a 2x display the card holds up to 400×280 pixels of the capture.
-- The card is at least 185×44 logical pixels, the size of the hover action capsule and its inset. A thumbnail narrower or shorter than that is centered on the card's fill. The capture flight lands the thumbnail on its place on the card while the fill grows around it.
+- The card is at least 154×88 logical pixels, the room its hover actions need. A thumbnail narrower or shorter than that is centered on the card's fill. The capture flight lands the thumbnail on its place on the card while the fill grows around it.
 - Corner radius is 12.0 logical pixels.
 - Edge margin is 12.0 logical pixels from the work area's edges.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.
@@ -65,23 +65,27 @@ The card remains visible for `toast_duration_ms` (default: `5000` ms):
 
 ## Hover Actions
 
-When `toast_show_actions` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), moving the pointer over the card fades in a capsule of action buttons centered 6 logical pixels above the card's lower edge; moving the pointer off fades it out. The fade runs 140 milliseconds and continues from its current opacity when the pointer crosses the card's edge mid-fade. On X11 with no compositing manager, the capsule appears and disappears at once. At rest the card shows only the capture.
+When `toast_show_actions` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), moving the pointer over the card dims the capture under a 30% black scrim and fades in the hover actions; moving the pointer off fades them out. The fade runs 140 milliseconds and continues from its current opacity when the pointer crosses the card's edge mid-fade. On X11 with no compositing manager, the actions appear and disappear at once. At rest the card shows only the capture.
 
-The capsule holds 24×24 logical pixel icon buttons with 14 pixel glyphs, in groups separated by hairlines. Resting the pointer on a button for 500 milliseconds shows its name in a tooltip:
-1. **Keep Open** (pin icon): Toggles the pinned state of the toast notification card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). The button fills with the accent color while pinned, and its tooltip reads **Allow to Close**.
-2. **Copy Image** (copy icon): Encodes and copies image pixels to the system clipboard on a background thread.
-3. **Copy File** (document icon): Copies the file path in platform file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
-4. **Show in Folder** (folder icon; **Show in Finder** on macOS, **Show in File Explorer** on Windows): Reveals the file in the desktop file manager.
-5. **Markup** (pen icon): Opens the image in the annotation editor.
-6. **Move to Trash** (trash icon): Moves the PNG file to the system trash, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast ([library.md#move-to-trash](library.md#move-to-trash)).
+Two 68×24 logical pixel buttons, 6 logical pixels apart, sit at the card's center:
+1. **Copy**: Encodes and copies image pixels to the system clipboard on a background thread.
+2. **Markup**: Opens the image in the annotation editor.
 
-A pinned card shows a 20 logical pixel accent disc with a pin glyph in its top-right corner while the capsule is hidden.
+A 22 logical pixel round button with a 12 pixel glyph sits 6 logical pixels in from each corner. Resting the pointer on one for 500 milliseconds shows its name in a tooltip:
+- Top left, **Close** (× glyph): Dismisses the card.
+- Top right, **Keep Open** (pin glyph): Toggles the pinned state of the card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). The button fills with the accent color while pinned, and its tooltip reads **Allow to Close**.
+- Bottom left, **Show in Folder** (folder glyph; **Show in Finder** on macOS, **Show in File Explorer** on Windows): Reveals the file in the desktop file manager.
+- Bottom right, **Move to Trash** (trash glyph): Moves the PNG file to the system trash, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast ([library.md#move-to-trash](library.md#move-to-trash)).
+
+The buttons are white at 90% opacity with dark labels and glyphs.
+
+A pinned card shows its accent **Keep Open** button while the other actions are hidden.
 
 ## Status Line
 
-When an action produces feedback, a status line takes the capsule's place over the card's lower edge:
-- Renders 11 pixel medium-weight text, centered, on the capsule's frosted fill.
-- Shows while the pointer is off the card, while OCR runs, and for 1.6 seconds after it was set; after that, the pointer over the card brings the capsule back.
+When an action produces feedback, a status line takes the place of the hover actions, centered over the card's lower edge:
+- Renders 11 pixel medium-weight dark text, centered, on a white pill at 92% opacity.
+- Shows while the pointer is off the card, while OCR runs, and for 1.6 seconds after it was set; after that, the pointer over the card brings the hover actions back.
 - Re-arms the auto-dismiss timer for `toast_duration_ms` so the message remains readable.
 - Displays completion feedback (such as `"Copied image"` or `"Copied file"`) or error descriptions (such as `"Could not move <file> to the Trash: <reason>"`).
 
@@ -103,10 +107,10 @@ Right-clicking the toast card opens a context menu that fades in over 140 millis
 Menu choices in order:
 1. **Markup**: Opens the annotation editor over the capture.
 2. **Copy**: Copies raw image pixels to the system clipboard.
-3. **Copy Text**: Extracts text through OCR and copies it to the clipboard.
-4. **Pin to Screen**: Opens the capture in a [pinned window](#pinned-windows) and dismisses the toast.
-5. **Move to Trash**: Moves the PNG file to the system trash, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
-6. **Close**: Dismisses the toast card immediately.
+3. **Copy File**: Copies the file in the platform's file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
+4. **Copy Text**: Extracts text through OCR and copies it to the clipboard.
+5. **Pin to Screen**: Opens the capture in a [pinned window](#pinned-windows) and dismisses the toast.
+6. **Move to Trash**: Moves the PNG file to the system trash, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
 
 ## Reveal in Folder
 

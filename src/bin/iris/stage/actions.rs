@@ -313,150 +313,195 @@ impl ToastStage {
         match row {
             ToastRow::Markup => self.hand_off_to_editor(window, cx),
             ToastRow::Copy => self.copy_image(cx),
+            ToastRow::CopyFile => self.copy_file(cx),
             ToastRow::CopyText => self.copy_text(cx),
             ToastRow::Pin => {
                 crate::pin::open(cx, &self.path, self.pin_over);
                 self.begin_close(cx);
             }
             ToastRow::Trash => self.delete_capture(cx),
-            ToastRow::Close => self.begin_close(cx),
         }
     }
 
-    /// The hover actions: one frosted capsule centered over the card's
-    /// lower edge, in ToastAction::GROUPS split by hairlines. Keep Open
-    /// shows when `toast_pin_enabled`. Every button carries a tooltip.
+    /// The hover actions on a scrim over the capture: Copy and Markup at
+    /// the card's center and a round button in each corner, each at its
+    /// `ToastAction::rect`. Keep Open shows when `toast_pin_enabled`.
+    /// Every round button has a tooltip.
     pub(super) fn render_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.cfg.toast_show_actions {
             return None;
         }
-        let mut capsule = div()
-            .flex()
-            .items_center()
-            .p(px(CAPSULE_PAD))
-            .rounded(px(ACTION_BUTTON / 2.0 + CAPSULE_PAD))
-            .bg(theme::alpha(theme::BG_ELEV, 0.96))
-            .border_1()
-            .border_color(theme::HAIRLINE)
-            .shadow(theme::shadow_float());
-        let shown =
-            |action: &&ToastAction| **action != ToastAction::KeepOpen || self.cfg.toast_pin_enabled;
-        let mut groups = ToastAction::GROUPS
-            .iter()
-            .filter(|group| group.iter().any(|a| shown(&a)))
-            .peekable();
-        while let Some(group) = groups.next() {
-            for &action in group.iter().filter(shown) {
-                let (glyph, label) = action.face(self.pinned);
-                let active = action == ToastAction::KeepOpen && self.pinned;
-                capsule = capsule.child(
-                    crate::widgets::hud_icon_button(action.id(), glyph, active, ACTION_BUTTON)
-                        .tooltip(tip(label, None))
-                        .on_click(cx.listener(move |stage, _, window, cx| {
-                            cx.stop_propagation();
-                            stage.run_action(action, window, cx);
-                        })),
-                );
+        let card = self.thumb.card;
+        let mut layer = div()
+            .absolute()
+            .inset_0()
+            .child(div().absolute().inset_0().bg(theme::THUMB_SCRIM));
+        for action in ToastAction::ALL {
+            if action == ToastAction::KeepOpen && !self.cfg.toast_pin_enabled {
+                continue;
             }
-            if groups.peek().is_some() {
-                capsule = capsule.child(group_rule());
-            }
+            let (x, y, _, _) = action.rect(card.w, card.h);
+            let label = action.label(self.pinned);
+            let button = match action.place() {
+                Place::Center(_) => pill(action.id(), label),
+                Place::Corner(_) => disc(
+                    action.id(),
+                    action.glyph(),
+                    action == ToastAction::KeepOpen && self.pinned,
+                )
+                .tooltip(tip(label, None)),
+            };
+            layer = layer.child(
+                button
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .on_click(cx.listener(move |stage, _, window, cx| {
+                        cx.stop_propagation();
+                        stage.run_action(action, window, cx);
+                    })),
+            );
         }
-        Some(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom(px(SLOT_INSET))
-                .flex()
-                .justify_center()
-                .child(capsule),
-        )
+        Some(layer)
     }
 
     fn run_action(&mut self, action: ToastAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
             ToastAction::KeepOpen => self.toggle_pin(cx),
             ToastAction::CopyImage => self.copy_image(cx),
-            ToastAction::CopyFile => self.copy_file(cx),
             ToastAction::Reveal => self.open_folder(),
             ToastAction::Markup => self.hand_off_to_editor(window, cx),
             ToastAction::Trash => self.delete_capture(cx),
+            ToastAction::Close => self.begin_close(cx),
         }
     }
 }
 
-/// A button of the toast's hover capsule.
+/// A hover action of the toast.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ToastAction {
-    KeepOpen,
     CopyImage,
-    CopyFile,
-    Reveal,
     Markup,
+    Close,
+    KeepOpen,
+    Reveal,
     Trash,
 }
 
+/// A corner of the card.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// Where a hover action sits: the `n`th button of the centered row, or
+/// a round button in a corner.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Place {
+    Center(u8),
+    Corner(Corner),
+}
+
 impl ToastAction {
-    /// The capsule's buttons left to right, in groups split by a rule.
-    pub(super) const GROUPS: [&'static [ToastAction]; 4] = [
-        &[ToastAction::KeepOpen],
-        &[ToastAction::CopyImage, ToastAction::CopyFile],
-        &[ToastAction::Reveal, ToastAction::Markup],
-        &[ToastAction::Trash],
+    pub(super) const ALL: [ToastAction; 6] = [
+        ToastAction::CopyImage,
+        ToastAction::Markup,
+        ToastAction::Close,
+        ToastAction::KeepOpen,
+        ToastAction::Reveal,
+        ToastAction::Trash,
     ];
+
+    pub(super) fn place(self) -> Place {
+        match self {
+            ToastAction::CopyImage => Place::Center(0),
+            ToastAction::Markup => Place::Center(1),
+            ToastAction::Close => Place::Corner(Corner::TopLeft),
+            ToastAction::KeepOpen => Place::Corner(Corner::TopRight),
+            ToastAction::Reveal => Place::Corner(Corner::BottomLeft),
+            ToastAction::Trash => Place::Corner(Corner::BottomRight),
+        }
+    }
+
+    /// The action's rect on a `w`x`h` card, in whole logical pixels.
+    pub(super) fn rect(self, w: f32, h: f32) -> Rect {
+        match self.place() {
+            Place::Center(n) => {
+                let row = 2.0 * PILL.0 + PILL_GAP;
+                (
+                    ((w - row) / 2.0).round() + f32::from(n) * (PILL.0 + PILL_GAP),
+                    ((h - PILL.1) / 2.0).round(),
+                    PILL.0,
+                    PILL.1,
+                )
+            }
+            Place::Corner(corner) => {
+                let (left, top) = match corner {
+                    Corner::TopLeft => (true, true),
+                    Corner::TopRight => (false, true),
+                    Corner::BottomLeft => (true, false),
+                    Corner::BottomRight => (false, false),
+                };
+                let far = |edge: f32| edge - SLOT_INSET - DISC;
+                (
+                    if left { SLOT_INSET } else { far(w) },
+                    if top { SLOT_INSET } else { far(h) },
+                    DISC,
+                    DISC,
+                )
+            }
+        }
+    }
 
     fn id(self) -> &'static str {
         match self {
-            ToastAction::KeepOpen => "toast-action-pin",
             ToastAction::CopyImage => "toast-action-copy-img",
-            ToastAction::CopyFile => "toast-action-copy-file",
-            ToastAction::Reveal => "toast-action-open-folder",
             ToastAction::Markup => "toast-action-markup",
+            ToastAction::Close => "toast-action-close",
+            ToastAction::KeepOpen => "toast-action-pin",
+            ToastAction::Reveal => "toast-action-open-folder",
             ToastAction::Trash => "toast-action-delete",
         }
     }
 
-    /// The glyph and the tooltip, for a toast `pinned` or not.
-    fn face(self, pinned: bool) -> (Icon, &'static str) {
+    /// The label of a centered button, or the tooltip of a round one,
+    /// for a toast `pinned` or not.
+    fn label(self, pinned: bool) -> &'static str {
         match self {
-            ToastAction::KeepOpen if pinned => (Icon::Pin, "Allow to Close"),
-            ToastAction::KeepOpen => (Icon::Pin, "Keep Open"),
-            ToastAction::CopyImage => (Icon::Copy, "Copy Image"),
-            ToastAction::CopyFile => (Icon::File, "Copy File"),
-            ToastAction::Reveal => (Icon::Folder, crate::sys::reveal::LABEL),
-            ToastAction::Markup => (Icon::Pen, "Markup"),
-            ToastAction::Trash => (Icon::Trash, "Move to Trash"),
+            ToastAction::CopyImage => "Copy",
+            ToastAction::Markup => "Markup",
+            ToastAction::Close => "Close",
+            ToastAction::KeepOpen if pinned => "Allow to Close",
+            ToastAction::KeepOpen => "Keep Open",
+            ToastAction::Reveal => crate::sys::reveal::LABEL,
+            ToastAction::Trash => "Move to Trash",
+        }
+    }
+
+    fn glyph(self) -> Icon {
+        match self {
+            ToastAction::CopyImage => Icon::Copy,
+            ToastAction::Markup => Icon::Pen,
+            ToastAction::Close => Icon::Close,
+            ToastAction::KeepOpen => Icon::Pin,
+            ToastAction::Reveal => Icon::Folder,
+            ToastAction::Trash => Icon::Trash,
         }
     }
 }
-
-/// The hover capsule's size with every button shown: the buttons, a
-/// rule between groups, the padding, and the 1px border.
-pub(super) const CAPSULE: (f32, f32) = {
-    let mut buttons = 0;
-    let mut g = 0;
-    while g < ToastAction::GROUPS.len() {
-        buttons += ToastAction::GROUPS[g].len();
-        g += 1;
-    }
-    let rules = ToastAction::GROUPS.len() - 1;
-    let rim = 2.0 * (CAPSULE_PAD + 1.0);
-    (
-        buttons as f32 * ACTION_BUTTON + rules as f32 * (RULE_W + 2.0 * RULE_MARGIN) + rim,
-        ACTION_BUTTON + rim,
-    )
-};
 
 /// A row of the toast's context menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ToastRow {
     Markup,
     Copy,
+    CopyFile,
     CopyText,
     Pin,
     Trash,
-    Close,
 }
 
 impl ToastRow {
@@ -464,20 +509,20 @@ impl ToastRow {
     pub(super) const ALL: [ToastRow; 6] = [
         ToastRow::Markup,
         ToastRow::Copy,
+        ToastRow::CopyFile,
         ToastRow::CopyText,
         ToastRow::Pin,
         ToastRow::Trash,
-        ToastRow::Close,
     ];
 
     fn id(self) -> &'static str {
         match self {
             ToastRow::Markup => "toast-markup",
             ToastRow::Copy => "toast-copy",
+            ToastRow::CopyFile => "toast-copy-file",
             ToastRow::CopyText => "toast-ocr",
             ToastRow::Pin => "toast-pin",
             ToastRow::Trash => "toast-delete",
-            ToastRow::Close => "toast-close",
         }
     }
 
@@ -485,10 +530,10 @@ impl ToastRow {
         match self {
             ToastRow::Markup => "Markup",
             ToastRow::Copy => "Copy",
+            ToastRow::CopyFile => "Copy File",
             ToastRow::CopyText => "Copy Text",
             ToastRow::Pin => "Pin to Screen",
             ToastRow::Trash => "Move to Trash",
-            ToastRow::Close => "Close",
         }
     }
 }
@@ -508,49 +553,95 @@ pub(super) fn menu_place(at: (f32, f32), win: (f32, f32)) -> (f32, f32) {
     )
 }
 
-/// Edge of one capsule button: 24, a form control's height; the glyph
-/// is 14.
-const ACTION_BUTTON: f32 = 24.0;
-/// The capsule's padding around its buttons.
-const CAPSULE_PAD: f32 = 3.0;
-/// The rule between two groups of capsule buttons, and its margin on
-/// either side.
-const RULE_W: f32 = 1.0;
-const RULE_MARGIN: f32 = 3.0;
-/// The action slot's inset from the card's lower and side edges.
+/// A centered button's size: Copy and Markup.
+pub(super) const PILL: (f32, f32) = (68.0, 24.0);
+/// The space between the two centered buttons.
+const PILL_GAP: f32 = 6.0;
+/// A corner button's edge; its glyph is 12.
+const DISC: f32 = 22.0;
+/// A corner button's inset from the card's two edges at its corner.
 pub(super) const SLOT_INSET: f32 = 6.0;
+/// The least space between the centered row and a corner button's row.
+const CLEAR: f32 = 4.0;
 
-/// The hairline between two groups of capsule buttons.
-fn group_rule() -> Div {
+/// The card's least size: the centered row with its inset, over the
+/// height of two rows of corner buttons with the centered row between
+/// them.
+pub(super) const ACTIONS_MIN: (f32, f32) = (
+    2.0 * PILL.0 + PILL_GAP + 2.0 * SLOT_INSET,
+    2.0 * (SLOT_INSET + DISC + CLEAR) + PILL.1,
+);
+
+/// A centered hover action: its label on a light pill.
+fn pill(id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
-        .w(px(RULE_W))
-        .h(px(14.))
-        .mx(px(RULE_MARGIN))
-        .bg(theme::HAIRLINE)
+        .id(id)
+        .w(px(PILL.0))
+        .h(px(PILL.1))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(theme::THUMB_BUTTON)
+        .hover(|s| s.bg(theme::THUMB_BUTTON_HOVER))
+        .active(|s| s.bg(theme::THUMB_BUTTON_PRESS))
+        .shadow(theme::shadow_tight())
+        .cursor_pointer()
+        .text_size(px(12.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme::THUMB_INK)
+        .child(label)
 }
 
-/// The pinned toast's mark at rest: an accent disc with the pin glyph in
-/// the card's top-right corner. The hover actions show the same state
-/// on their pin button.
-pub(super) fn pinned_badge() -> Div {
+/// A corner hover action: its glyph on a light disc, or on the accent
+/// while `active`.
+fn disc(id: &'static str, glyph: Icon, active: bool) -> Stateful<Div> {
+    let (fill, ink) = if active {
+        (theme::ACCENT, theme::ACCENT_INK)
+    } else {
+        (theme::THUMB_BUTTON, theme::THUMB_INK)
+    };
+    let el = div()
+        .id(id)
+        .size(px(DISC))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(fill)
+        .shadow(theme::shadow_tight())
+        .cursor_pointer();
+    let el = if active {
+        el
+    } else {
+        el.hover(|s| s.bg(theme::THUMB_BUTTON_HOVER))
+            .active(|s| s.bg(theme::THUMB_BUTTON_PRESS))
+    };
+    el.child(crate::icons::icon(glyph, ink, 12.0))
+}
+
+/// The pinned toast's mark at rest: its Keep Open button, on the
+/// accent, where the hover actions draw it.
+pub(super) fn pinned_badge(card: &Card) -> Div {
+    let (x, y, _, _) = ToastAction::KeepOpen.rect(card.w, card.h);
     div()
         .absolute()
-        .top(px(SLOT_INSET))
-        .right(px(SLOT_INSET))
-        .size(px(20.))
+        .left(px(x))
+        .top(px(y))
+        .size(px(DISC))
         .rounded_full()
         .flex()
         .items_center()
         .justify_center()
         .bg(theme::ACCENT)
-        .shadow(theme::shadow_float())
+        .shadow(theme::shadow_tight())
         .child(crate::icons::icon(Icon::Pin, theme::ACCENT_INK, 12.0))
 }
 
 /// The last action's result in the slot along the card's lower edge,
-/// on the capsule's frosted fill. The card is the toast's only surface,
-/// so a failure shows here, not only in the log. Text wraps to the card
-/// width; the card clips the overflow.
+/// on a light pill. The card is the toast's only surface, so a failure
+/// shows here, not only in the log. Text wraps to the card width; the
+/// card clips the overflow.
 pub(super) fn status_band(text: SharedString) -> Div {
     div()
         .absolute()
@@ -564,13 +655,11 @@ pub(super) fn status_band(text: SharedString) -> Div {
                 .px(px(10.))
                 .py(px(5.))
                 .rounded(px(theme::RADIUS_CONTROL + 2.0))
-                .bg(theme::alpha(theme::BG_ELEV, 0.96))
-                .border_1()
-                .border_color(theme::HAIRLINE)
-                .shadow(theme::shadow_float())
+                .bg(theme::THUMB_STATUS)
+                .shadow(theme::shadow_tight())
                 .text_size(px(theme::TEXT_SMALL))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(theme::FG)
+                .text_color(theme::THUMB_INK)
                 .text_center()
                 .child(text),
         )
