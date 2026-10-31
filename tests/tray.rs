@@ -1,7 +1,7 @@
-//! The tray item's answer to a primary click and its menu during a
-//! recording, read over a private session bus.
+//! The tray item's answer to a primary click, its icon, and its menu
+//! during a recording, read over a private session bus.
 //!
-//! WHY: two classes close here. "A primary click on the tray icon opens
+//! WHY: three classes close here. "A primary click on the tray icon opens
 //! nothing on Linux": on a primary click a panel reads the
 //! StatusNotifierItem's `ItemIsMenu` property and calls its `Activate`
 //! method: Plasma 6.4 and later open the menu when `ItemIsMenu` is true,
@@ -10,7 +10,10 @@
 //! answered `Activate` with success, so a primary click opened nothing,
 //! where on Windows and macOS it opens the menu. The first case starts
 //! the daemon on a private Xvfb and a private dbus-daemon and reads both
-//! answers from the item.
+//! answers from the item. "The panel draws a jagged or miscolored
+//! glyph": the item served one 22 px raster with its bytes in RGBA
+//! order; the same case reads `IconPixmap` and holds every raster to
+//! ARGB32 white at its own size.
 //! "The tray menu does not follow the recording": the menu offered
 //! **Record Window** while a recording ran, and that row stopped it.
 //! The second case starts a window recording, reads **Stop Recording**
@@ -179,6 +182,45 @@ fn a_primary_click_on_the_tray_icon_opens_its_menu() {
              AppIndicator extension and Plasma before 6.4 open no menu on a primary click"
         ),
     }
+
+    // The panel draws the glyph from IconPixmap: one ARGB32 raster per
+    // size, white wherever it is covered, so a panel scales none.
+    let reply = zbus::block_on(bus.call_method(
+        Some(item.as_str()),
+        PATH,
+        Some("org.freedesktop.DBus.Properties"),
+        "Get",
+        &(ITEM, "IconPixmap"),
+    ))
+    .unwrap();
+    let pixmaps = reply.body().deserialize::<OwnedValue>().unwrap();
+    let Value::Array(pixmaps) = &*pixmaps else {
+        panic!("IconPixmap is {pixmaps:?}, not an array");
+    };
+    let mut sizes = Vec::new();
+    for pixmap in pixmaps.iter() {
+        let Value::Structure(pixmap) = pixmap else {
+            panic!("an IconPixmap entry is {pixmap:?}, not (iiay)");
+        };
+        let [Value::I32(w), Value::I32(h), Value::Array(data)] = pixmap.fields() else {
+            panic!("an IconPixmap entry is {pixmap:?}, not (iiay)");
+        };
+        let data: Vec<u8> = data
+            .iter()
+            .map(|b| match b {
+                Value::U8(b) => *b,
+                other => panic!("an IconPixmap byte is {other:?}"),
+            })
+            .collect();
+        assert_eq!(data.len(), (w * h * 4) as usize, "{w}x{h}");
+        assert!(
+            data.chunks(4)
+                .all(|p| p[0] == 0 || p[1..] == [255, 255, 255]),
+            "the {w}x{h} pixmap is not a white glyph in ARGB order"
+        );
+        sizes.push((*w, *h));
+    }
+    assert_eq!(sizes, [(16, 16), (22, 22), (24, 24), (32, 32), (48, 48)]);
 }
 
 #[test]

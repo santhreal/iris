@@ -12,13 +12,53 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use iris_lib::sys::objc::{
     class, class_addMethod, nsstring, objc_allocateClassPair, objc_registerClassPair, sel, send,
-    send1, send3, Id, Imp, Sel,
+    send1, send2, send3, Bool, Id, Imp, Sel,
 };
 
 use super::Drawn;
 
 /// The status item, once `spawn` made it.
 static ITEM: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// The menu bar glyph: the aperture, black on transparency, 36 px for
+/// 18 pt at 2x. As a template image AppKit tints it for the menu bar's
+/// appearance and its highlight.
+static TEMPLATE: &[u8] = include_bytes!("../../../../../packaging/icons/tray-template.png");
+
+/// The glyph's size in points.
+const GLYPH_PT: f64 = 18.0;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NSSize {
+    width: f64,
+    height: f64,
+}
+
+/// `TEMPLATE` as a template NSImage, retained for the caller; null when
+/// it does not decode.
+unsafe fn template_image() -> Id {
+    let data: Id = send2(
+        class(c"NSData"),
+        sel(c"dataWithBytes:length:"),
+        TEMPLATE.as_ptr(),
+        TEMPLATE.len(),
+    );
+    let image: Id = send1(
+        send::<Id>(class(c"NSImage"), sel(c"alloc")),
+        sel(c"initWithData:"),
+        data,
+    );
+    if !image.is_null() {
+        let size = NSSize {
+            width: GLYPH_PT,
+            height: GLYPH_PT,
+        };
+        send1::<NSSize, ()>(image, sel(c"setSize:"), size);
+        send1::<Bool, ()>(image, sel(c"setTemplate:"), 1);
+    }
+    image
+}
 
 /// `onItem:` — the menu action. `sender` is the NSMenuItem; its tag
 /// is the row id. Signature `v@:@` (void, self, _cmd, sender).
@@ -56,13 +96,17 @@ unsafe fn build_menu() -> Id {
                 send1::<Id, ()>(menu, sel(c"addItem:"), mi);
             }
             Drawn::Item(label) => {
+                // nsstring returns +1; the item copies both strings.
+                let (title, key) = (nsstring(&label), nsstring(""));
                 let mi: Id = send3(
                     send::<Id>(class(c"NSMenuItem"), sel(c"alloc")),
                     sel(c"initWithTitle:action:keyEquivalent:"),
-                    nsstring(&label),
+                    title,
                     sel(c"onItem:"),
-                    nsstring(""),
+                    key,
                 );
+                send::<()>(title, sel(c"release"));
+                send::<()>(key, sel(c"release"));
                 // Row ids are small: the cast cannot wrap.
                 send1::<isize, ()>(mi, sel(c"setTag:"), id as isize);
                 send1::<Id, ()>(mi, sel(c"setTarget:"), target);
@@ -97,7 +141,19 @@ pub(super) fn spawn() {
         let _: Id = send(item, sel(c"retain"));
         let button: Id = send(item, sel(c"button"));
         if !button.is_null() {
-            send1::<Id, ()>(button, sel(c"setTitle:"), nsstring("iris"));
+            // nsstring returns +1; the button holds its own references.
+            let name = nsstring("iris");
+            let image = template_image();
+            if image.is_null() {
+                iris_lib::ilog!("iris: tray: the menu bar glyph does not decode");
+                send1::<Id, ()>(button, sel(c"setTitle:"), name);
+            } else {
+                send1::<Id, ()>(button, sel(c"setImage:"), image);
+                send::<()>(image, sel(c"release"));
+            }
+            // VoiceOver reads an image-only button by this label.
+            send1::<Id, ()>(button, sel(c"setAccessibilityLabel:"), name);
+            send::<()>(name, sel(c"release"));
         }
         set_menu(item);
         ITEM.store(item, Ordering::Release);

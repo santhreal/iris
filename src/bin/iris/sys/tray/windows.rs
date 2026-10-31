@@ -1,10 +1,14 @@
 //! The system-tray icon on Windows via `Shell_NotifyIconW`.
 //!
 //! A tray icon needs a window to receive its callback and menu
-//! commands, so one thread owns a message-only window (`HWND_MESSAGE`
-//! parent) and pumps it. The icon's callback message arrives on a
-//! click and shows the popup menu drawn from the shared rows; the
-//! chosen row id comes back as `WM_COMMAND`.
+//! commands, so one thread owns a hidden top-level window and pumps
+//! it. The icon's callback message arrives on a click and shows the
+//! popup menu drawn from the shared rows; the chosen row id comes back
+//! as `WM_COMMAND`. The window is top-level, not message-only, so the
+//! `TaskbarCreated` broadcast reaches it and the icon comes back after
+//! Explorer restarts.
+
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -12,12 +16,13 @@ use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateIcon, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon,
-    DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadCursorW,
-    PostQuitMessage, RegisterClassExW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
-    CW_USEDEFAULT, HICON, HMENU, HWND_MESSAGE, IDC_ARROW, MF_SEPARATOR, MF_STRING, MSG,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU,
-    WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSEXW,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
+    DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, GetSystemMetrics, LoadCursorW,
+    LoadImageW, PostQuitMessage, RegisterClassExW, RegisterWindowMessageW, SetForegroundWindow,
+    TrackPopupMenu, TranslateMessage, CW_USEDEFAULT, HICON, HMENU, IDC_ARROW, IMAGE_ICON,
+    LR_DEFAULTCOLOR, MF_SEPARATOR, MF_STRING, MSG, SM_CXSMICON, SM_CYSMICON, TPM_BOTTOMALIGN,
+    TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP,
+    WM_RBUTTONUP, WNDCLASSEXW, WS_EX_TOOLWINDOW,
 };
 
 use super::Drawn;
@@ -26,42 +31,45 @@ use super::Drawn;
 /// thread's `WM_APP` offsets; they live on different queues anyway).
 const WM_TRAYICON: u32 = WM_APP + 2;
 
-/// A 16x16 tray icon: a white aperture ring with a center dot on
-/// transparency, matching the Linux tray glyph. `CreateIcon` takes the
-/// AND mask (1bpp, 4-byte-aligned rows, 1 = transparent) and the XOR
-/// color bits (32bpp BGRA, bottom-up) directly.
-fn build_icon() -> HICON {
-    const N: usize = 16;
-    let stride = N.div_ceil(32) * 4;
-    let mut and_mask = vec![0u8; stride * N];
-    let mut xor = vec![0u8; N * N * 4];
-    for y in 0..N {
-        for x in 0..N {
-            let dx = x as i32 - 8;
-            let dy = y as i32 - 8;
-            let r2 = dx * dx + dy * dy;
-            let opaque = (20..=40).contains(&r2) || r2 <= 5;
-            if opaque {
-                // XOR rows are bottom-up.
-                let i = ((N - 1 - y) * N + x) * 4;
-                xor[i..i + 4].copy_from_slice(&[244, 244, 246, 255]);
-            } else {
-                and_mask[y * stride + x / 8] |= 0x80 >> (x % 8);
-            }
-        }
-    }
+/// The `TaskbarCreated` message id, registered by `spawn`: Explorer
+/// broadcasts it when it starts again, with every tray icon gone.
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+
+/// The app icon at the notification area's size, from the executable's
+/// resources: `packaging/windows/iris.rc` embeds `iris.ico` as icon 1,
+/// the icon GPUI's windows load too. Null without the resource.
+fn load_icon() -> HICON {
     unsafe {
-        CreateIcon(
+        LoadImageW(
             GetModuleHandleW(core::ptr::null()),
-            N as i32,
-            N as i32,
-            1,
-            32,
-            and_mask.as_ptr(),
-            xor.as_ptr(),
+            // MAKEINTRESOURCEW(1).
+            core::ptr::without_provenance::<u16>(1),
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON),
+            GetSystemMetrics(SM_CYSMICON),
+            LR_DEFAULTCOLOR,
         )
     }
 }
+
+/// The notification area entry for `hwnd` with `icon`.
+fn notify_data(hwnd: HWND, icon: HICON) -> NOTIFYICONDATAW {
+    let mut nid: NOTIFYICONDATAW = unsafe { core::mem::zeroed() };
+    nid.cbSize = core::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAYICON;
+    nid.hIcon = icon;
+    for (i, c) in "iris".encode_utf16().enumerate() {
+        nid.szTip[i] = c;
+    }
+    nid
+}
+
+/// The icon `spawn` loaded, for the re-add after Explorer restarts.
+static ICON: std::sync::atomic::AtomicPtr<core::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 /// Show the tray menu at the cursor and let `TrackPopupMenu` deliver
 /// the pick back here as `WM_COMMAND`. `SetForegroundWindow` first so
@@ -117,12 +125,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             PostQuitMessage(0);
             0
         }
+        _ if msg != 0 && msg == TASKBAR_CREATED.load(Ordering::Relaxed) => {
+            let nid = notify_data(hwnd, ICON.load(Ordering::Relaxed));
+            if Shell_NotifyIconW(NIM_ADD, &nid) == 0 {
+                iris_lib::ilog!("iris: tray: Shell_NotifyIconW failed after Explorer restarted");
+            }
+            0
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
 /// Spawn the tray on its own thread: register the window class, create
-/// the message-only window, add the icon, and pump messages for the
+/// the hidden window, add the icon, and pump messages for the
 /// process lifetime. A failure degrades to a log line, never a crash.
 pub(super) fn spawn() {
     std::thread::spawn(|| unsafe {
@@ -138,8 +153,12 @@ pub(super) fn spawn() {
             iris_lib::ilog!("iris: tray: RegisterClassExW failed");
             return;
         }
+        let taskbar: Vec<u16> = "TaskbarCreated\0".encode_utf16().collect();
+        TASKBAR_CREATED.store(RegisterWindowMessageW(taskbar.as_ptr()), Ordering::Relaxed);
+        // Never shown: no WS_VISIBLE, and a tool window has no taskbar
+        // button or Alt+Tab entry.
         let hwnd = CreateWindowExW(
-            0,
+            WS_EX_TOOLWINDOW,
             class.as_ptr(),
             class.as_ptr(),
             0,
@@ -147,7 +166,7 @@ pub(super) fn spawn() {
             CW_USEDEFAULT,
             0,
             0,
-            HWND_MESSAGE,
+            core::ptr::null_mut(),
             core::ptr::null_mut(),
             hinst,
             core::ptr::null(),
@@ -157,17 +176,12 @@ pub(super) fn spawn() {
             return;
         }
 
-        let icon = build_icon();
-        let mut nid: NOTIFYICONDATAW = core::mem::zeroed();
-        nid.cbSize = core::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = 1;
-        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-        nid.uCallbackMessage = WM_TRAYICON;
-        nid.hIcon = icon;
-        for (i, c) in "iris".encode_utf16().enumerate() {
-            nid.szTip[i] = c;
+        let icon = load_icon();
+        if icon.is_null() {
+            iris_lib::ilog!("iris: tray: the executable has no icon resource 1");
         }
+        ICON.store(icon, Ordering::Relaxed);
+        let nid = notify_data(hwnd, icon);
         if Shell_NotifyIconW(NIM_ADD, &nid) == 0 {
             iris_lib::ilog!("iris: tray: Shell_NotifyIconW failed");
         }

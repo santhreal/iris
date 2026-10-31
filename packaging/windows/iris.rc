@@ -6,7 +6,8 @@
 
 #include <windows.h>
 
-IDI_ICON1 ICON "..\\icons\\iris.ico"
+// Icon id 1: GPUI's window class and the tray icon load it by that id.
+1 ICON "..\\icons\\iris.ico"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION     IRIS_VERSION_QUAD

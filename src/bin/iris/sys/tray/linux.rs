@@ -20,31 +20,10 @@ impl ksni::Tray for IrisTray {
         "iris".into()
     }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        // 22x22: white shutter glyph on transparent. Plain ARGB32.
-        // Static: ksni re-queries the pixmap on every tray update, so
-        // the raster is built once and cloned.
-        static ICON: std::sync::LazyLock<ksni::Icon> = std::sync::LazyLock::new(|| {
-            let n = 22;
-            let mut data = vec![0u8; n * n * 4];
-            for y in 4..18 {
-                for x in 4..18 {
-                    let dx = x as i32 - 11;
-                    let dy = y as i32 - 11;
-                    let ring = (36..=49).contains(&(dx * dx + dy * dy));
-                    let dot = dx * dx + dy * dy <= 4;
-                    if ring || dot {
-                        let i = (y * n + x) * 4;
-                        data[i..i + 4].copy_from_slice(&[242, 242, 244, 255]);
-                    }
-                }
-            }
-            ksni::Icon {
-                width: n as i32,
-                height: n as i32,
-                data,
-            }
-        });
-        vec![ICON.clone()]
+        // ksni re-queries the pixmaps on every tray update, so they are
+        // decoded once and cloned.
+        static ICONS: std::sync::LazyLock<Vec<ksni::Icon>> = std::sync::LazyLock::new(pixmaps);
+        ICONS.clone()
     }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::*;
@@ -72,6 +51,43 @@ impl ksni::Tray for IrisTray {
         iris_lib::ilog!("iris: tray waiting for a StatusNotifierWatcher: {reason:?}");
         true
     }
+}
+
+/// The tray glyph, white on transparency, at each size
+/// `packaging/gen_icons.py` renders: the panel picks the one that fits.
+const GLYPHS: [&[u8]; 5] = [
+    include_bytes!("../../../../../packaging/icons/tray-16.png"),
+    include_bytes!("../../../../../packaging/icons/tray-22.png"),
+    include_bytes!("../../../../../packaging/icons/tray-24.png"),
+    include_bytes!("../../../../../packaging/icons/tray-32.png"),
+    include_bytes!("../../../../../packaging/icons/tray-48.png"),
+];
+
+/// `png` as a StatusNotifierItem pixmap: ARGB32, each pixel's bytes in
+/// network order. None for a PNG that does not decode.
+fn pixmap(png: &[u8]) -> Option<ksni::Icon> {
+    let img = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .map_err(|e| iris_lib::ilog!("iris: tray: glyph does not decode: {e}"))
+        .ok()?
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    let data = img
+        .pixels()
+        .flat_map(|p| {
+            let [r, g, b, a] = p.0;
+            [a, r, g, b]
+        })
+        .collect();
+    Some(ksni::Icon {
+        width: i32::try_from(width).ok()?,
+        height: i32::try_from(height).ok()?,
+        data,
+    })
+}
+
+/// Every glyph that decodes, as pixmaps.
+pub(super) fn pixmaps() -> Vec<ksni::Icon> {
+    GLYPHS.iter().filter_map(|png| pixmap(png)).collect()
 }
 
 /// Spawn the StatusNotifierItem on its own thread and keep it

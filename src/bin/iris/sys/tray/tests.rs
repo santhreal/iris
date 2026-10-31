@@ -216,3 +216,31 @@ fn the_usage_chapter_lists_every_item_in_order() {
         assert!(labels.contains(label), "{label:?} is not in {labels:?}");
     }
 }
+
+// WHY: the class closed here is "the tray glyph reaches the panel with
+// its channels swapped, jagged, or at one size the panel rescales". A
+// StatusNotifierItem pixmap is ARGB32 in network byte order; RGBA bytes
+// in it read as a red-tinted glyph with alpha taken from blue. Every
+// glyph decodes square at a size of its own, every covered pixel reads
+// white in ARGB order, and the edges hold partial coverage. Not covered:
+// how a panel scales or tints it.
+#[cfg(target_os = "linux")]
+#[test]
+fn every_tray_pixmap_is_a_white_antialiased_argb_glyph() {
+    let icons = super::linux::pixmaps();
+    let sizes: Vec<i32> = icons.iter().map(|icon| icon.width).collect();
+    assert_eq!(sizes, [16, 22, 24, 32, 48]);
+    for icon in &icons {
+        let n = icon.width;
+        assert_eq!(icon.height, n);
+        assert_eq!(icon.data.len(), (n * n * 4) as usize, "{n} px");
+        let (px, _) = icon.data.as_chunks::<4>();
+        assert!(
+            px.iter().all(|p| p[0] == 0 || p[1..] == [255, 255, 255]),
+            "{n} px: a covered pixel is not white in ARGB order"
+        );
+        let solid = px.iter().filter(|p| p[0] == 255).count();
+        let edge = px.iter().filter(|p| p[0] > 0 && p[0] < 255).count();
+        assert!(solid > 0 && edge > 0, "{n} px: {solid} solid, {edge} edge");
+    }
+}

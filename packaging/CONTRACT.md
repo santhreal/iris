@@ -25,9 +25,11 @@ deviate without updating this file and every consumer.
 
 ## Icons (already generated in packaging/icons/)
 - `iris.ico`: Windows (multi-size 16..256)
-- `iris.icns`: macOS
+- `iris.icns`: macOS, on the macOS icon grid (824 px body on 1024 px)
 - `iris-{16,24,32,48,64,128,256,512,1024}.png`: Linux hicolor icons,
   installed by the deb, the rpm and the AppImage at every size
+- `tray-{16,22,24,32,48}.png`: the Linux tray glyph, embedded in the binary
+- `tray-template.png`: the macOS menu bar template glyph, embedded in the binary
 - Regenerate with `python3 packaging/gen_icons.py`
 
 ## Release asset names (CI produces these names and no others)
