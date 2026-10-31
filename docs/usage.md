@@ -28,12 +28,12 @@ To start iris at login, turn on **Start iris at login** in the settings window (
 
 - **Linux (X11)**: iris grabs the capture and record hotkeys itself. A key another program grabbed first is not bound. The **Shortcuts** pane of the settings window shows **In use by another app** for it; set another key there.
 - **Linux (Wayland)**: iris asks the desktop for the capture and record hotkeys through the GlobalShortcuts portal (`org.freedesktop.portal.GlobalShortcuts`). The desktop can show a dialog to confirm them on first use. A desktop with no GlobalShortcuts portal binds none; bind `iris --capture` and `iris --record-window` in the compositor's configuration instead ([Window Manager and Compositor Keybindings](cli.md#window-manager-and-compositor-keybindings)).
-- **macOS**: The first capture requests Screen Recording permission. Enable iris in System Settings > Privacy & Security > Screen Recording, then restart iris. The capture hotkey is `Ctrl+F13`: macOS keyboards have no `Print` key.
+- **macOS**: The first capture requests Screen Recording permission. Enable iris in System Settings > Privacy & Security > Screen Recording, then restart iris. The capture hotkey is `Cmd+Shift+2` and the record hotkey `Cmd+Option+Shift+2`: `Cmd+Shift+3` through `Cmd+Shift+6` are the system's screenshot shortcuts, and Mac keyboards have no `Print` key. Menus and tooltips show shortcuts as macOS symbols (`⇧⌘2`).
 - **Windows**: The tray icon is in the notification area, or in its overflow menu.
 
 ## Take a Screenshot
 
-1. Press `Ctrl+Print` (`Ctrl+F13` on macOS), click **New Screenshot** in the library or the tray menu, or run `iris --capture`. The screen freezes and dims.
+1. Press `Ctrl+Print` (`Cmd+Shift+2` on macOS), click **New Screenshot** in the library or the tray menu, or run `iris --capture`. The screen freezes and dims.
 2. Click a window to capture it (X11, Windows, and macOS), or drag a rectangle and press `Enter` or click **Capture** on the bar at the bottom of the screen. The bar also captures the entire screen or records the screen or a selection. `Escape`, **Cancel**, or a right click cancels.
 3. The capture is saved as a PNG in `~/Pictures/iris` and copied to the clipboard.
 
@@ -55,10 +55,10 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 
 ## Record the Screen
 
-1. Press `Ctrl+Shift+Print`, click **Record Window** (**Record Screen** on Windows and macOS) in the library or the tray menu, or run `iris --record-window`.
+1. Press `Ctrl+Shift+Print` (`Cmd+Option+Shift+2` on macOS), click **Record Window** (**Record Screen** on Windows and macOS) in the library or the tray menu, or run `iris --record-window`.
 2. On X11, click the window to record. A card in the toast corner reads **Click a window to record it** until the click, and `Escape` cancels. A click on a menu, a tooltip, or the card itself picks nothing. On Wayland, pick the window in the compositor's dialog. Windows and macOS record the whole desktop.
 3. A chip with a timer and pause, stop, and microphone buttons floats beside the recorded area (X11, Windows, and macOS). A GIF recording has no microphone button.
-4. Press `Ctrl+Shift+Print` again, click the chip's stop button, or run `iris --record-window` to stop.
+4. Press the record hotkey again, click the chip's stop button, or run `iris --record-window` to stop.
 
 `iris --record-region` records a rectangle drawn as for a screenshot (X11, Windows, and macOS). Recordings are saved in `~/Videos/iris`. Release packages include FFmpeg; source builds use `ffmpeg` from `PATH` ([Screen Recording](recording.md)).
 

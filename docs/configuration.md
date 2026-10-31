@@ -146,10 +146,10 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 
 ### Keyboard
 
-- `capture_hotkey` (String, default: `"Ctrl+Print"`):
-  Global hotkey chord to open the region capture overlay. macOS keyboards have no Print Screen key; on macOS, `Print` binds `F13`. The default leaves `Print`, `Shift+Print`, and `Alt+Print` to the desktop's own screenshot tool.
-- `record_hotkey` (String, default: `"Ctrl+Shift+Print"`):
-  Global hotkey chord to toggle window or screen recording. A global hotkey takes the chord from every application.
+- `capture_hotkey` (String, default: `"Ctrl+Print"`, `"Cmd+Shift+2"` on macOS):
+  Global hotkey chord to open the region capture overlay. The default leaves `Print`, `Shift+Print`, and `Alt+Print` to the desktop's own screenshot tool, and on macOS leaves `Cmd+Shift+3` through `Cmd+Shift+6` to the system. On macOS, `Print` binds `F13`.
+- `record_hotkey` (String, default: `"Ctrl+Shift+Print"`, `"Cmd+Option+Shift+2"` on macOS):
+  Global hotkey chord to toggle window or screen recording. A global hotkey takes the chord from every application. The modifiers are `Ctrl`, `Shift`, `Alt` (`Option`), and `Super` (`Cmd`, `Win`).
 - `cancel_keybind` (String, default: `"Escape"`):
   Key to cancel overlay selection, recording pick mode, or editor changes.
 - `confirm_keybind` (String, default: `"Enter"`):

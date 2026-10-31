@@ -13,13 +13,13 @@ While a capture overlay, a region-pick overlay, or an X11 window pick is open, i
 ### Window Recording
 
 Start window recording through any of the following triggers:
-- Keybind: `Ctrl+Shift+Print` (configured by `record_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
+- Keybind: `Ctrl+Shift+Print`, `Cmd+Option+Shift+2` on macOS (configured by `record_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
 - Command-line interface: `iris --record-window` (see [cli.md#command-reference](cli.md#command-reference))
 - Library window: **Record Window** toolbar button (**Record Screen** on Windows and macOS, which record the desktop)
 - System tray menu: **Record Window** (**Record Screen** on Windows and macOS)
 
 Stop an active recording through any of the following triggers:
-- Press `Ctrl+Shift+Print` (or the configured `record_hotkey`)
+- Press the record hotkey again (`record_hotkey`)
 - Run `iris --record-window`
 - Click **Stop Recording** in the system tray menu, which shows it in place of **Record Window** or **Record Screen** while a recording runs
 - Click **Record Window** or **Record Screen** in the library

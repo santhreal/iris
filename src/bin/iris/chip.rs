@@ -161,7 +161,8 @@ pub fn open(
             crate::sys::window::Cutout::default().set(window, &[PILL]);
             let mut chip = Chip::new(mic, Instant::now());
             let keys = iris_lib::config::Config::load().record_hotkey;
-            chip.record_hotkey = SharedString::from(keys.trim().to_owned());
+            chip.record_hotkey =
+                crate::widgets::shortcut_text(&crate::widgets::chord_label(&keys)).into();
             cx.new(|_| chip)
         },
     )

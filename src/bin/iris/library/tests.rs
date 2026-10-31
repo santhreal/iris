@@ -818,20 +818,22 @@ fn every_shortcuts_sheet_row_reads_as_key_caps() {
 // that does nothing". The hint named the configured key whether or not
 // the daemon bound it, so a key another app holds, or none at all, read
 // as a working shortcut. A bound or still-binding key is named in its
-// display case; a refused or unset one sends the reader to the toolbar's
-// capture button. Not covered: the hint's paint.
+// display form, macOS's symbols on macOS; a refused or unset one sends
+// the reader to the toolbar's capture button. Not covered: the hint's
+// paint.
 #[test]
 fn the_empty_hint_names_the_shortcut_only_while_it_works() {
     let press = "Press Print to capture a region of the screen.";
     let button = "Click New Screenshot to capture a region of the screen.";
+    let chord = if cfg!(target_os = "macos") {
+        "Press ⌃⇧4 to capture a region of the screen."
+    } else {
+        "Press Ctrl+Shift+4 to capture a region of the screen."
+    };
     for (keys, binding, want) in [
         ("print", Some(Binding::Live), press),
         ("Print", None, press),
-        (
-            "ctrl+shift+4",
-            Some(Binding::Live),
-            "Press Ctrl+Shift+4 to capture a region of the screen.",
-        ),
+        ("ctrl + shift+4", Some(Binding::Live), chord),
         (
             "Print",
             Some(Binding::Refused("In use by another app".into())),

@@ -286,11 +286,14 @@ fn each_config_file_loads_its_own_values_whatever_its_stamp() {
 }
 
 // WHY: the class closed here is "a default global hotkey belongs to
-// someone else": `Print` never bound under GNOME or with the Windows 11
-// Snipping Tool, and the grab of `Ctrl+Shift+R` took hard reload from
-// every browser. Each row is a chord a stock desktop or a common app
-// holds; a default that matches one fails. Not covered: chords a user
-// or a less common desktop binds.
+// someone else, or to no key on the keyboard": `Print` never bound under
+// GNOME or with the Windows 11 Snipping Tool, the grab of `Ctrl+Shift+R`
+// took hard reload from every browser, and `Ctrl+Print` bound F13 on
+// macOS, a key no Mac laptop has. Each row is a chord a stock desktop or
+// a common app holds; a default that matches one fails, on either
+// platform's defaults, and a macOS default must use a key a Mac
+// keyboard has. Not covered: chords a user or a less common desktop
+// binds.
 #[test]
 fn the_default_hotkeys_avoid_chords_desktops_and_apps_hold() {
     const CTRL: u8 = 1;
@@ -324,6 +327,7 @@ fn the_default_hotkeys_avoid_chords_desktops_and_apps_hold() {
         ("3", SUPER | SHIFT, "macOS screenshot"),
         ("4", SUPER | SHIFT, "macOS region screenshot"),
         ("5", SUPER | SHIFT, "macOS screenshot toolbar"),
+        ("6", SUPER | SHIFT, "macOS Touch Bar screenshot"),
         ("r", CTRL, "browser reload"),
         ("r", CTRL | SHIFT, "browser hard reload, editor refactor"),
         ("s", CTRL | SHIFT, "Save As"),
@@ -331,32 +335,97 @@ fn the_default_hotkeys_avoid_chords_desktops_and_apps_hold() {
         ("f5", 0, "reload"),
         ("f5", CTRL, "hard reload"),
     ];
-    let cfg = Config::default();
-    let defaults = [
-        ("capture_hotkey", &cfg.capture_hotkey),
-        ("record_hotkey", &cfg.record_hotkey),
-    ];
-    for (field, chord) in defaults {
-        for &(key, mods, holder) in held {
-            let pressed = |m| mods & m != 0;
+    for macos in [false, true] {
+        let (capture, record) = default_hotkeys(macos);
+        for (field, chord) in [("capture_hotkey", capture), ("record_hotkey", record)] {
+            for &(key, mods, holder) in held {
+                let pressed = |m| mods & m != 0;
+                assert!(
+                    !keybind_matches(
+                        chord,
+                        key,
+                        pressed(CTRL),
+                        pressed(SHIFT),
+                        pressed(ALT),
+                        pressed(SUPER)
+                    ),
+                    "macos {macos}: {field} {chord:?} is held by {holder}"
+                );
+            }
+            let key = chord
+                .rsplit('+')
+                .next()
+                .unwrap()
+                .trim()
+                .to_ascii_lowercase();
+            let mac_has = key.len() == 1
+                || matches!(
+                    key.as_str(),
+                    "f1" | "f2"
+                        | "f3"
+                        | "f4"
+                        | "f5"
+                        | "f6"
+                        | "f7"
+                        | "f8"
+                        | "f9"
+                        | "f10"
+                        | "f11"
+                        | "f12"
+                );
             assert!(
-                !keybind_matches(
-                    chord,
-                    key,
-                    pressed(CTRL),
-                    pressed(SHIFT),
-                    pressed(ALT),
-                    pressed(SUPER)
-                ),
-                "{field} {chord:?} is held by {holder}"
+                !macos || mac_has,
+                "{field} {chord:?} binds a key a Mac keyboard does not have"
             );
         }
+        assert_ne!(
+            capture.to_ascii_lowercase(),
+            record.to_ascii_lowercase(),
+            "macos {macos}: one press would run both commands"
+        );
     }
-    assert_ne!(
-        cfg.capture_hotkey.to_ascii_lowercase(),
-        cfg.record_hotkey.to_ascii_lowercase(),
-        "one press would run both commands"
+    assert_eq!(
+        (
+            Config::default().capture_hotkey.as_str(),
+            Config::default().record_hotkey.as_str()
+        ),
+        default_hotkeys(cfg!(target_os = "macos"))
     );
+}
+
+// WHY: the class closed here is "a modifier the hotkey grammar reads
+// that a pressed-key match ignores": the global hotkey parsers read
+// `Option` as Alt and `Command` as the logo key, and a keybind that
+// names them must match the same press. Not covered: the parsers
+// themselves, which `sys::hotkeys` tests per platform.
+#[test]
+fn every_modifier_spelling_matches_its_press() {
+    // (binding, (ctrl, shift, alt, super))
+    for (binding, mods) in [
+        ("Ctrl+K", (true, false, false, false)),
+        ("control+k", (true, false, false, false)),
+        ("Alt+K", (false, false, true, false)),
+        ("Option+K", (false, false, true, false)),
+        ("Cmd+K", (false, false, false, true)),
+        ("Command+K", (false, false, false, true)),
+        ("Super+K", (false, false, false, true)),
+        ("Win+K", (false, false, false, true)),
+        ("Windows+K", (false, false, false, true)),
+        ("Meta+K", (false, false, false, true)),
+        ("Cmd+Option+Shift+K", (false, true, true, true)),
+    ] {
+        let (ctrl, shift, alt, super_) = mods;
+        assert!(
+            keybind_matches(binding, "k", ctrl, shift, alt, super_),
+            "{binding:?} does not match its press"
+        );
+        assert!(
+            !keybind_matches(binding, "k", !ctrl, shift, alt, super_)
+                && !keybind_matches(binding, "k", ctrl, shift, !alt, super_)
+                && !keybind_matches(binding, "k", ctrl, shift, alt, !super_),
+            "{binding:?} matches a press with another modifier"
+        );
+    }
 }
 
 /// WHY: the class closed here is "a screenshot file name template that

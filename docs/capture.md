@@ -13,7 +13,7 @@ While the region overlay, the region-recording overlay, or an X11 window pick is
 ### Region Capture
 
 Trigger region capture using any of the following interfaces:
-- Keybind: `Ctrl+Print` (configured by `capture_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
+- Keybind: `Ctrl+Print`, `Cmd+Shift+2` on macOS (configured by `capture_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
 - Command-line interface: `iris --capture` (see [cli.md#command-reference](cli.md#command-reference))
 - Library window: **New Screenshot** toolbar button
 - System tray menu: **New Screenshot**

@@ -52,11 +52,11 @@ impl Render for Tooltip {
                 .whitespace_nowrap()
                 .text_color(theme::FG)
                 .child(self.label.clone())
-                .children(
-                    self.shortcut
-                        .clone()
-                        .map(|keys| div().text_color(theme::FG_DIM).child(keys)),
-                ),
+                .children(self.shortcut.as_deref().map(|keys| {
+                    div()
+                        .text_color(theme::FG_DIM)
+                        .child(super::shortcut_text(keys))
+                })),
         )
     }
 }

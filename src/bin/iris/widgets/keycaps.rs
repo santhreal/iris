@@ -9,29 +9,155 @@ use crate::theme;
 const CAP_H: f32 = 18.0;
 const CAP_RADIUS: f32 = 4.0;
 
+/// Whether shortcuts read as macOS writes them: modifiers and named keys
+/// as their symbols, modifiers in the order Control, Option, Shift,
+/// Command, and a chord's keys written with no separator.
+const MAC: bool = cfg!(target_os = "macos");
+
 /// The keys of `chord` in display case, in the order written: known
 /// modifiers and named keys by their keyboard label, a single character
 /// upper case, a function key as `F` and its number. Empty segments
-/// (a stray `+`) are dropped.
+/// (a stray `+`) are dropped. On macOS the modifiers lead in macOS's
+/// order and read as symbols.
 pub fn chord_keys(chord: &str) -> Vec<SharedString> {
-    chord
+    chord_keys_for(chord, MAC)
+}
+
+fn chord_keys_for(chord: &str, mac: bool) -> Vec<SharedString> {
+    let mut keys: Vec<&str> = chord
         .split('+')
         .map(str::trim)
         .filter(|k| !k.is_empty())
-        .map(key_label)
+        .collect();
+    if mac {
+        keys.sort_by_key(|key| modifier_rank(key));
+    }
+    keys.into_iter()
+        .map(|key| key_label_for(key, mac))
         .collect()
 }
 
-/// `chord` written in display case, its keys joined by `+`: the label a
-/// sentence or a tooltip shows for it.
+/// `chord` in the config grammar, its keys in display case joined by
+/// `+`: the form a hint is written in, on every platform.
 pub fn chord_label(chord: &str) -> String {
-    chord_keys(chord).join("+")
+    chord_keys_for(chord, false).join("+")
+}
+
+/// `hint`, a shortcut hint in the config grammar, as text on this
+/// platform: what a tooltip or a sentence shows. Each chord reads as
+/// its keys, joined by `+`, or on macOS as their symbols with no
+/// separator ("Cmd+Shift+Z" reads "⇧⌘Z").
+pub fn shortcut_text(hint: &str) -> String {
+    hint_text_for(hint, MAC)
+}
+
+fn hint_text_for(hint: &str, mac: bool) -> String {
+    let mut out = String::new();
+    let mut rest = hint;
+    loop {
+        let Some((at, sep, _)) = next_joiner(rest) else {
+            out.push_str(&segment_text(rest.trim(), mac));
+            return out;
+        };
+        out.push_str(&segment_text(rest[..at].trim(), mac));
+        out.push_str(sep);
+        rest = &rest[at + sep.len()..];
+    }
+}
+
+/// One segment of a hint between joiners, as text: a key or a chord by
+/// its display keys, a phrase word by word.
+fn segment_text(seg: &str, mac: bool) -> String {
+    if is_key(seg) {
+        return key_label_for(seg, mac).to_string();
+    }
+    if seg.contains(' ') {
+        return seg
+            .split_whitespace()
+            .map(|word| segment_text(word, mac))
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    if is_chord(seg) {
+        return chord_keys_for(seg, mac).join(if mac { "" } else { "+" });
+    }
+    if mac && seg.contains('+') {
+        // A modifier with a pointer action: "Command-click".
+        return seg
+            .split('+')
+            .filter(|part| !part.is_empty())
+            .map(|part| mac_name(part).unwrap_or(part))
+            .collect::<Vec<_>>()
+            .join("-");
+    }
+    seg.to_owned()
+}
+
+/// Whether `seg` is a chord: keys joined by `+`, every one a key.
+fn is_chord(seg: &str) -> bool {
+    seg.contains('+') && seg.split('+').filter(|p| !p.is_empty()).all(is_key)
 }
 
 fn key_label(key: &str) -> SharedString {
+    key_label_for(key, MAC)
+}
+
+fn key_label_for(key: &str, mac: bool) -> SharedString {
     match named(key) {
-        Some(label) => label.into(),
+        Some(label) => mac
+            .then(|| mac_symbol(label))
+            .flatten()
+            .unwrap_or(label)
+            .into(),
         None => capitalized(key).into(),
+    }
+}
+
+/// The symbol macOS shows for the key labeled `label`, or None for a
+/// key it writes as a word.
+fn mac_symbol(label: &str) -> Option<&'static str> {
+    Some(match label {
+        "Ctrl" => "⌃",
+        "Alt" | "Option" => "⌥",
+        "Shift" => "⇧",
+        "Cmd" | "Super" | "Meta" | "Win" => "⌘",
+        "Enter" => "↩",
+        "Tab" => "⇥",
+        "Backspace" => "⌫",
+        "Delete" => "⌦",
+        "Up" => "↑",
+        "Down" => "↓",
+        "Left" => "←",
+        "Right" => "→",
+        "Page Up" => "⇞",
+        "Page Down" => "⇟",
+        "Home" => "↖",
+        "End" => "↘",
+        _ => return None,
+    })
+}
+
+/// The word macOS writes for the modifier `key` in prose, None for any
+/// other key.
+fn mac_name(key: &str) -> Option<&'static str> {
+    Some(match named(key)? {
+        "Ctrl" => "Control",
+        "Alt" | "Option" => "Option",
+        "Shift" => "Shift",
+        "Cmd" | "Super" | "Meta" | "Win" => "Command",
+        _ => return None,
+    })
+}
+
+/// Where `key` sits in a chord written as macOS writes it: Control,
+/// Option, Shift, Command, then every other key.
+fn modifier_rank(key: &str) -> u8 {
+    match named(key) {
+        Some("Ctrl") => 0,
+        Some("Alt" | "Option") => 1,
+        Some("Shift") => 2,
+        Some("Cmd" | "Super" | "Meta" | "Win") => 3,
+        _ => 4,
     }
 }
 
@@ -138,44 +264,55 @@ fn capitalized(word: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The first joiner in `rest`: its byte offset, its text, and the word
+/// it shows as.
+fn next_joiner(rest: &str) -> Option<(usize, &'static str, &'static str)> {
+    (0..rest.len())
+        .filter(|&i| rest.is_char_boundary(i))
+        .find_map(|i| {
+            JOINERS
+                .iter()
+                .find(|(sep, _)| rest[i..].starts_with(sep))
+                .map(|&(sep, word)| (i, sep, word))
+        })
+}
+
 /// The pieces of a shortcut hint, in reading order: "Shift+F10, then
 /// Left / Right" reads as Shift, F10, then, Left, /, Right. A chord's
-/// keys are caps and its other parts words ("Shift+click"); a phrase
-/// splits into words ("Esc twice"), except a key name of two words
-/// ("Page Up").
+/// keys are caps, in macOS's order on macOS, and its other parts words
+/// ("Shift+click"); a phrase splits into words ("Esc twice"), except a
+/// key name of two words ("Page Up").
 pub(crate) fn hint_pieces(hint: &str) -> Vec<Piece> {
+    hint_pieces_for(hint, MAC)
+}
+
+fn hint_pieces_for(hint: &str, mac: bool) -> Vec<Piece> {
     let mut out = Vec::new();
     let mut rest = hint;
     loop {
-        let next = (0..rest.len())
-            .filter(|&i| rest.is_char_boundary(i))
-            .find_map(|i| {
-                JOINERS
-                    .iter()
-                    .find(|(sep, _)| rest[i..].starts_with(sep))
-                    .map(|&(sep, word)| (i, sep, word))
-            });
-        let Some((at, sep, word)) = next else {
-            segment(rest, &mut out);
+        let Some((at, sep, word)) = next_joiner(rest) else {
+            segment(rest, mac, &mut out);
             return out;
         };
-        segment(&rest[..at], &mut out);
+        segment(&rest[..at], mac, &mut out);
         out.push(Piece::Word(word.into()));
         rest = &rest[at + sep.len()..];
     }
 }
 
-fn segment(seg: &str, out: &mut Vec<Piece>) {
+fn segment(seg: &str, mac: bool, out: &mut Vec<Piece>) {
     let seg = seg.trim();
     if is_key(seg) {
-        out.push(Piece::Cap(key_label(seg)));
+        out.push(Piece::Cap(key_label_for(seg, mac)));
     } else if seg.contains(' ') {
         for word in seg.split_whitespace() {
-            segment(word, out);
+            segment(word, mac, out);
         }
+    } else if is_chord(seg) {
+        out.extend(chord_keys_for(seg, mac).into_iter().map(Piece::Cap));
     } else if seg.contains('+') {
         for part in seg.split('+').filter(|p| !p.is_empty()) {
-            segment(part, out);
+            segment(part, mac, out);
         }
     } else if !seg.is_empty() {
         out.push(Piece::Word(seg.to_string().into()));
@@ -268,28 +405,87 @@ mod tests {
 
     #[test]
     fn chords_split_into_display_labels() {
-        for (chord, want) in [
-            ("Ctrl+Shift+R", vec!["Ctrl", "Shift", "R"]),
-            ("ctrl+shift+r", vec!["Ctrl", "Shift", "R"]),
-            ("CONTROL + prtsc", vec!["Ctrl", "Print"]),
-            ("Print", vec!["Print"]),
-            ("f9", vec!["F9"]),
-            ("Super+pgdn", vec!["Super", "Page Down"]),
-            ("Cmd+Option+5", vec!["Cmd", "Option", "5"]),
-            ("Ctrl++L", vec!["Ctrl", "L"]),
-            ("  ", vec![]),
+        for (chord, pc, mac) in [
+            (
+                "Ctrl+Shift+R",
+                vec!["Ctrl", "Shift", "R"],
+                vec!["⌃", "⇧", "R"],
+            ),
+            (
+                "ctrl+shift+r",
+                vec!["Ctrl", "Shift", "R"],
+                vec!["⌃", "⇧", "R"],
+            ),
+            ("CONTROL + prtsc", vec!["Ctrl", "Print"], vec!["⌃", "Print"]),
+            ("Print", vec!["Print"], vec!["Print"]),
+            ("f9", vec!["F9"], vec!["F9"]),
+            ("Super+pgdn", vec!["Super", "Page Down"], vec!["⌘", "⇟"]),
+            (
+                "Cmd+Option+5",
+                vec!["Cmd", "Option", "5"],
+                vec!["⌥", "⌘", "5"],
+            ),
+            (
+                "Cmd+Shift+Alt+Ctrl+enter",
+                vec!["Cmd", "Shift", "Alt", "Ctrl", "Enter"],
+                vec!["⌃", "⌥", "⇧", "⌘", "↩"],
+            ),
+            ("Win+Space", vec!["Win", "Space"], vec!["⌘", "Space"]),
+            ("Ctrl++L", vec!["Ctrl", "L"], vec!["⌃", "L"]),
+            ("  ", vec![], vec![]),
         ] {
-            let got: Vec<SharedString> = chord_keys(chord);
-            let got: Vec<&str> = got.iter().map(|s| s.as_ref()).collect();
-            assert_eq!(got, want, "{chord:?}");
+            for (mac, want) in [(false, pc), (true, mac)] {
+                let got: Vec<SharedString> = chord_keys_for(chord, mac);
+                let got: Vec<&str> = got.iter().map(|s| s.as_ref()).collect();
+                assert_eq!(got, want, "{chord:?} mac={mac}");
+            }
         }
     }
 
     #[test]
     fn a_chord_label_joins_its_display_keys() {
         assert_eq!(chord_label(" ctrl + shift+r"), "Ctrl+Shift+R");
+        assert_eq!(chord_label("cmd+option+shift+2"), "Cmd+Option+Shift+2");
         assert_eq!(chord_label("prtsc"), "Print");
         assert_eq!(chord_label(""), "");
+    }
+
+    // A hint in the config grammar reads unchanged off macOS, and on
+    // macOS each chord reads as its symbols in macOS's order with no
+    // separator, and a modifier with a pointer action as its name.
+    #[test]
+    fn a_hint_reads_as_text_in_the_platform_style() {
+        for (hint, pc, mac) in [
+            ("Ctrl+Shift+R", "Ctrl+Shift+R", "⌃⇧R"),
+            ("ctrl+shift+r", "Ctrl+Shift+R", "⌃⇧R"),
+            ("Cmd+Shift+Z", "Cmd+Shift+Z", "⇧⌘Z"),
+            ("Cmd+Option+Shift+2", "Cmd+Option+Shift+2", "⌥⇧⌘2"),
+            (
+                "Shift+F10, then Left / Right",
+                "Shift+F10, then Left / Right",
+                "⇧F10, then ← / →",
+            ),
+            (
+                "Ctrl+S / Cmd+W / Enter",
+                "Ctrl+S / Cmd+W / Enter",
+                "⌃S / ⌘W / ↩",
+            ),
+            (
+                "Shift+F10 or right-click",
+                "Shift+F10 or right-click",
+                "⇧F10 or right-click",
+            ),
+            ("Cmd+click", "Cmd+click", "Command-click"),
+            ("Space + drag", "Space + drag", "Space + drag"),
+            ("Esc twice", "Esc twice", "Esc twice"),
+            ("Print", "Print", "Print"),
+            ("Cmd+,", "Cmd+,", "⌘,"),
+            ("Double-click", "Double-click", "Double-click"),
+            ("", "", ""),
+        ] {
+            assert_eq!(hint_text_for(hint, false), pc, "{hint:?}");
+            assert_eq!(hint_text_for(hint, true), mac, "{hint:?} on macOS");
+        }
     }
 
     #[test]
@@ -351,7 +547,7 @@ mod tests {
             ("Double-click", vec![(W, "Double-click")]),
             ("", vec![]),
         ] {
-            let got: Vec<(bool, String)> = hint_pieces(hint)
+            let got: Vec<(bool, String)> = hint_pieces_for(hint, false)
                 .into_iter()
                 .map(|p| match p {
                     Piece::Cap(k) => (K, k.to_string()),
@@ -362,6 +558,28 @@ mod tests {
                 want.into_iter().map(|(k, s)| (k, s.to_string())).collect();
             assert_eq!(got, want, "{hint:?}");
         }
+    }
+
+    // On macOS a chord's caps lead with its modifiers in macOS's order
+    // and read as symbols; the words between keys stay words.
+    #[test]
+    fn on_macos_a_hint_reads_as_symbol_caps() {
+        let caps = |hint: &str| -> Vec<String> {
+            hint_pieces_for(hint, true)
+                .into_iter()
+                .map(|p| match p {
+                    Piece::Cap(k) => format!("[{k}]"),
+                    Piece::Word(w) => w.to_string(),
+                })
+                .collect()
+        };
+        assert_eq!(caps("Cmd+Shift+Z"), ["[⇧]", "[⌘]", "[Z]"]);
+        assert_eq!(
+            caps("Ctrl+S / Cmd+W / return"),
+            ["[⌃]", "[S]", "/", "[⌘]", "[W]", "/", "[↩]"]
+        );
+        assert_eq!(caps("Shift+click"), ["[⇧]", "click"]);
+        assert_eq!(caps("Esc twice"), ["[Esc]", "twice"]);
     }
 
     #[test]

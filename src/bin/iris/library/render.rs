@@ -432,7 +432,7 @@ pub(super) fn empty_hint(keys: &str, binding: Option<Binding>) -> String {
     match binding {
         Some(Binding::Live) | None if !keys.trim().is_empty() => format!(
             "Press {} to capture a region of the screen.",
-            widgets::chord_label(keys)
+            widgets::shortcut_text(&widgets::chord_label(keys))
         ),
         _ => "Click New Screenshot to capture a region of the screen.".to_owned(),
     }

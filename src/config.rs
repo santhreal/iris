@@ -148,6 +148,7 @@ impl Default for Config {
             .as_ref()
             .and_then(|u| u.video_dir().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| home().join("Videos"));
+        let (capture, record) = default_hotkeys(cfg!(target_os = "macos"));
         Self {
             screenshots_dir: pictures.join("iris"),
             recordings_dir: videos.join("iris"),
@@ -157,8 +158,8 @@ impl Default for Config {
             recording_format: RecordingFormat::Mp4,
             recording_encoder: RecordingEncoder::Auto,
             show_toast_after_capture: true,
-            capture_hotkey: "Ctrl+Print".to_string(),
-            record_hotkey: "Ctrl+Shift+Print".to_string(),
+            capture_hotkey: capture.to_string(),
+            record_hotkey: record.to_string(),
             flash_on_capture: true,
             sound_on_capture: true,
             toast_click_action: ToastClickAction::Markup,
@@ -173,6 +174,17 @@ impl Default for Config {
             check_for_updates: true,
             update_channel: UpdateChannel::Stable,
         }
+    }
+}
+
+/// The default global hotkeys, capture then record, on macOS when
+/// `macos` and elsewhere otherwise. A Mac keyboard has no Print key, and
+/// macOS holds Shift+Cmd+3 through 6 for its own screenshots.
+pub fn default_hotkeys(macos: bool) -> (&'static str, &'static str) {
+    if macos {
+        ("Cmd+Shift+2", "Cmd+Option+Shift+2")
+    } else {
+        ("Ctrl+Print", "Ctrl+Shift+Print")
     }
 }
 
@@ -426,8 +438,8 @@ pub fn keybind_matches(
         match part.trim().to_ascii_lowercase().as_str() {
             "ctrl" | "control" => want_ctrl = true,
             "shift" => want_shift = true,
-            "alt" => want_alt = true,
-            "super" | "meta" | "cmd" | "win" => want_super = true,
+            "alt" | "option" => want_alt = true,
+            "super" | "cmd" | "command" | "meta" | "win" | "windows" => want_super = true,
             other => want_key = other.to_string(),
         }
     }
