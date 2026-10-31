@@ -277,7 +277,12 @@ impl Render for PinStage {
             .group("pin")
             .size_full()
             .font_family(theme::FONT)
-            .rounded(crate::widgets::window_corner(window, 8.))
+            // The pin places itself, so DWM leaves its corners to it.
+            .rounded(if crate::sys::window::platform_frame(window) {
+                px(0.)
+            } else {
+                px(8.)
+            })
             .overflow_hidden()
             .bg(theme::BG_ELEV)
             .track_focus(&self.focus)

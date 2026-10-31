@@ -288,7 +288,7 @@ pub const CLIENT_RESIZE: bool = cfg!(target_os = "linux");
 /// that opens while no compositor runs to blend a drawn frame's
 /// transparent corners, and a Wayland compositor may decline to leave
 /// the frame to the window. The macOS and Windows windows of iris draw
-/// their own frames.
+/// their own title bars; see `platform_shape` for their outline.
 pub fn platform_frame(window: &gpui::Window) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -299,6 +299,15 @@ pub fn platform_frame(window: &gpui::Window) -> bool {
         let _ = window;
         false
     }
+}
+
+/// Whether the platform draws an app window's outline: its corners and
+/// its 1px border. Windows' DWM does for every movable window (round
+/// corners on Windows 11, square on Windows 10), and so does a Linux
+/// platform frame (`platform_frame`). Elsewhere the window is
+/// transparent and its root draws the rounded shape and the rim.
+pub fn platform_shape(window: &gpui::Window) -> bool {
+    cfg!(windows) || platform_frame(window)
 }
 
 /// Hand a left-button press on a window edge to a resize from `edge`.

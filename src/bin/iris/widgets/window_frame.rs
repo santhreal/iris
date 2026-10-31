@@ -87,8 +87,8 @@ impl Toolbar {
 /// transparent; this root's 12px corners are the window's shape), a
 /// TOOLBAR_H unified toolbar (`toolbar_bar`), then the content. The
 /// toolbar has no divider: it shares the window's background with the
-/// content. Under a platform frame (`sys::window::platform_frame`),
-/// which has the window controls and the shape, the root is square.
+/// content. Where the platform draws the outline
+/// (`sys::window::platform_shape`), the root is square.
 pub fn toolbar_frame(
     window: &Window,
     cx: &App,
@@ -114,10 +114,10 @@ pub fn toolbar_frame(
 /// The 1px rim of a client-drawn window, `radius` round, for the last
 /// child of a `relative` root: it lies over the content's edge pixels
 /// and takes no input, so the content keeps its layout and its hit
-/// areas. `opacity` scales it with chrome that fades. `None` under a
-/// platform frame, which draws its own border.
+/// areas. `opacity` scales it with chrome that fades. `None` where the
+/// platform draws the outline (`sys::window::platform_shape`).
 pub fn window_edge(window: &Window, radius: f32, opacity: f32) -> Option<Div> {
-    if crate::sys::window::platform_frame(window) {
+    if crate::sys::window::platform_shape(window) {
         return None;
     }
     Some(
@@ -248,10 +248,10 @@ pub fn toolbar_bar(window: &Window, cx: &App, toolbar: Toolbar, resizable: bool)
 }
 
 /// The corner radius of a window root that draws the window's shape:
-/// `radius` logical px, or square under a platform frame, where the
-/// window has no transparent corners to show the desktop through.
+/// `radius` logical px, or square where the platform draws the outline
+/// (`sys::window::platform_shape`) and clips the window to it.
 pub fn window_corner(window: &Window, radius: f32) -> Pixels {
-    if crate::sys::window::platform_frame(window) {
+    if crate::sys::window::platform_shape(window) {
         px(0.)
     } else {
         px(radius)
