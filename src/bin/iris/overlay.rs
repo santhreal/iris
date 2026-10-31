@@ -127,6 +127,9 @@ pub struct Overlay {
     /// mousemove; keeping the allocation across rebuilds removes the
     /// per-move alloc/free churn.
     loupe_scratch: Vec<u8>,
+    /// The frosted frame under the capture bar, and the frame rect it
+    /// was built for: the bar's glass, rebuilt only when the bar moves.
+    bar_glass: Option<(crate::pipeline::Region, Arc<RenderImage>)>,
     finishing: bool,
     /// Enter landed before the background grab did: finish() defers
     /// here and set_frame() completes it once the frame exists.

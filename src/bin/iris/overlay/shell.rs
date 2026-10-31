@@ -159,6 +159,7 @@ fn open_shell_opts(
                     loupe: None,
                     loupe_at: None,
                     loupe_scratch: Vec::new(),
+                    bar_glass: None,
                     finishing: false,
                     pending_finish: false,
                     hover_in: None,

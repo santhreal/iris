@@ -292,6 +292,9 @@ impl Overlay {
             if let Some(frame) = self.frame_img.take() {
                 crate::widgets::release_render(&frame, cx);
             }
+            if let Some((_, glass)) = self.bar_glass.take() {
+                crate::widgets::release_render(&glass, cx);
+            }
             // The toast lands on the monitor under the selection's
             // center, in the toast's corner of that monitor's work area.
             // The selection in root space: the frame plus the origin.
@@ -352,6 +355,9 @@ impl Overlay {
         }
         if let Some((img, _)) = self.loupe.take() {
             crate::widgets::release_render(&img, cx);
+        }
+        if let Some((_, glass)) = self.bar_glass.take() {
+            crate::widgets::release_render(&glass, cx);
         }
     }
 

@@ -5,6 +5,7 @@ pub mod capture;
 pub mod clipboard;
 pub mod config;
 pub mod dirs;
+pub mod frost;
 pub mod history;
 pub mod library;
 pub mod log;

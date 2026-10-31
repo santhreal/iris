@@ -6,7 +6,7 @@
 //! committed selection. The confirm and cancel keys run the same two
 //! actions; each button's tooltip prints its key.
 
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use gpui::*;
 use iris_lib::capture::WinRect;
@@ -41,6 +41,13 @@ pub(super) const DIVIDER_W: f32 = 9.0;
 pub(super) const BAR_H: f32 = BUTTON + 2.0 * PAD + 2.0;
 /// The distance from the monitor's bottom edge to the bar's.
 pub(super) const BAR_LIFT: f32 = 64.0;
+pub(super) const BAR_RADIUS: f32 = 14.0;
+/// The bar's glass: the frozen frame under it averaged into cells this
+/// many logical px across, blurred this many cells each way, under a
+/// tint dark enough for the bar's white glyphs over a white page.
+const GLASS_CELL: f32 = 4.0;
+const GLASS_RADIUS: u32 = 3;
+pub(super) const GLASS_TINT: f32 = 0.78;
 
 /// The bar's top-left corner and width, logical px, on a monitor at
 /// logical `(x, y, w, h)`: centered horizontally, `BAR_LIFT` above the
@@ -188,6 +195,41 @@ impl Overlay {
         self.scope = scope;
     }
 
+    /// The frosted frame under the bar at logical `rect`, rebuilt only
+    /// when the rect's frame pixels change; None before the frozen frame
+    /// lands, when the bar draws its opaque fill.
+    fn glass(
+        &mut self,
+        window: &Window,
+        rect: (f32, f32, f32, f32),
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
+        let (frame, (fw, fh)) = self.frame_img.as_ref().zip(self.frame_size)?;
+        let region = Self::rect_to_frame(window, self.view, rect);
+        if let Some((at, glass)) = &self.bar_glass {
+            if *at == region {
+                return Some(glass.clone());
+            }
+        }
+        let (sx, _) = Self::scale(window, self.view);
+        let step = (GLASS_CELL * window.scale_factor() * sx).round().max(1.0) as u32;
+        let cells = iris_lib::frost::frost(
+            frame.as_bytes(0)?,
+            fw,
+            fh,
+            (region.x, region.y, region.width, region.height),
+            step,
+            GLASS_RADIUS,
+        )?;
+        // The frame is BGRA, the RenderImage's own order: the cells
+        // keep it, so they go in with no swizzle.
+        let glass = Arc::new(RenderImage::new([image::Frame::new(cells)]));
+        if let Some((_, old)) = self.bar_glass.replace((region, glass.clone())) {
+            crate::widgets::release_render(&old, cx);
+        }
+        Some(glass)
+    }
+
     /// Whether the run button has a selection to run on.
     fn runnable(&self) -> bool {
         self.current
@@ -211,6 +253,33 @@ impl Overlay {
         let (sx, sy) = Self::scale(window, self.view);
         let monitor = Self::to_logical(self.origin, &self.bar_monitor(), sf, sx, sy);
         let (left, top) = bar_origin(monitor, bar_width());
+        // Over the frozen frame the bar is glass: the frame under it,
+        // frosted, behind a translucent tint, with the shadow on the
+        // glass so it does not darken the bar through the tint.
+        let glass = self.glass(window, (left, top, bar_width(), BAR_H), cx);
+        let fill = if glass.is_some() { GLASS_TINT } else { 0.96 };
+        let glass = glass.map(|frosted| {
+            div()
+                .absolute()
+                .left(px(left))
+                .top(px(top))
+                .w(px(bar_width()))
+                .h(px(BAR_H))
+                .rounded(px(BAR_RADIUS))
+                .overflow_hidden()
+                .shadow(theme::shadow_float())
+                .child(
+                    img(ImageSource::Render(frosted))
+                        .size_full()
+                        .object_fit(ObjectFit::Fill)
+                        .rounded(px(BAR_RADIUS)),
+                )
+        });
+        let shadow = if glass.is_some() {
+            Vec::new()
+        } else {
+            theme::shadow_float()
+        };
         let cancel_keys = SharedString::from(self.cfg.cancel_keybind.clone());
         let confirm_keys = SharedString::from(self.cfg.confirm_keybind.clone());
 
@@ -224,11 +293,11 @@ impl Overlay {
             .items_center()
             .gap(px(GAP))
             .p(px(PAD))
-            .rounded(px(14.))
-            .bg(theme::alpha(theme::BG_ELEV, 0.96))
+            .rounded(px(BAR_RADIUS))
+            .bg(theme::alpha(theme::BG_ELEV, fill))
             .border_1()
             .border_color(theme::HAIRLINE)
-            .shadow(theme::shadow_float())
+            .shadow(shadow)
             .text_size(px(theme::TEXT_BODY))
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme::FG)
@@ -291,6 +360,6 @@ impl Overlay {
         } else {
             run.opacity(theme::DISABLED_OPACITY)
         };
-        root.child(bar.child(divider()).child(run))
+        root.children(glass).child(bar.child(divider()).child(run))
     }
 }
