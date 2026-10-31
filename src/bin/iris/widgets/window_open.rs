@@ -1,7 +1,8 @@
 //! Opening a window. Every iris window opens through `open_window`,
 //! which sets the app id of the desktop entry, the window's title, the
-//! frame rate of its animations while it has no focus, and whether iris
-//! shows in the macOS Dock and menu bar.
+//! frame rate of its animations while it has no focus, whether iris
+//! shows in the macOS Dock and menu bar, and an app window's platform
+//! window controls.
 
 use std::cell::{Cell, RefCell};
 
@@ -27,7 +28,10 @@ use gpui::{
 /// an app window: while one is open iris has a Dock icon and a menu bar
 /// on macOS, and with none open it has neither, as the capture overlay,
 /// the toast, notices, pins, and the recording chip are not app
-/// windows.
+/// windows. An app window has AppKit's own close, minimize, and zoom
+/// buttons on macOS, at `MAC_TRAFFIC_LIGHTS` in its transparent title
+/// bar, and moves only from its toolbar's own drag; on Linux it draws
+/// again when the desktop's button layout changes.
 ///
 /// `options` sets everything else. clippy.toml disallows
 /// `App::open_window` and `AsyncApp::open_window` outside this function.
@@ -44,9 +48,31 @@ pub fn open_window<V: 'static + Render>(
         icon: options.icon.or_else(|| app_window.then(app_icon).flatten()),
         ..options
     };
+    #[cfg(target_os = "macos")]
+    let options = if app_window {
+        let (x, y) = super::window_controls::MAC_TRAFFIC_LIGHTS;
+        WindowOptions {
+            titlebar: Some(gpui::TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                traffic_light_position: Some(gpui::point(gpui::px(x), gpui::px(y))),
+            }),
+            app_owns_titlebar_drag: true,
+            ..options
+        }
+    } else {
+        options
+    };
     let handle = cx.open_window(iris_options(options), |window, cx| {
         window.set_window_title(title);
-        build(window, cx)
+        let view = build(window, cx);
+        if app_window {
+            view.update(cx, |_, cx| {
+                cx.observe_button_layout_changed(window, |_, _, cx| cx.notify())
+                    .detach()
+            });
+        }
+        view
     })?;
     if app_window {
         watch_closes(cx);

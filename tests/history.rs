@@ -177,11 +177,12 @@ const OUTRO_PAST: std::time::Duration = std::time::Duration::from_millis(600);
 const PROMPT_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 /// The More menu's geometry, from `theme` and `widgets::menu`: the
 /// menu drops 4 px under the 28 px button centered in the 52 px toolbar,
-/// is snapped 8 px inside the window's right edge, and is 168 px wide
-/// with 5 px of padding, 24 px rows, and 9 px separators.
+/// from the button's left edge, kept 8 px inside the window's right
+/// edge, and is 168 px wide with 5 px of padding, 24 px rows, and 9 px
+/// separators.
 const MENU_TOP: i16 = (52 - 28) / 2 + 28 + 4;
 const MENU_W: i16 = 168;
-const MENU_CENTER_FROM_RIGHT: i16 = 8 + MENU_W / 2;
+const MENU_MARGIN: i16 = 8;
 const MENU_PAD: i16 = 5;
 const MENU_ROW: i16 = 24;
 const MENU_SEPARATOR: i16 = 9;
@@ -349,8 +350,7 @@ impl Session {
         self.daemon.settle();
         // The first row's label: light pixels across the panel's first
         // row, where the options bar under a misplaced menu has none.
-        let w = self.canvas().0 as i16;
-        let left = w - MENU_CENTER_FROM_RIGHT - MENU_W / 2;
+        let left = self.more_menu_left();
         let first = MENU_TOP + MENU_PAD..MENU_TOP + MENU_PAD + MENU_ROW;
         self.daemon
             .until("the More menu to drop 4 px under its button", || {
@@ -372,14 +372,22 @@ impl Session {
 
     /// The center of row `item` in the open More menu.
     fn more_row(&self, item: MenuItem) -> (i16, i16) {
-        let w = self.canvas().0 as i16;
         let y = MENU_TOP
             + MENU_PAD
             + item.rows * MENU_ROW
             + item.separators * MENU_SEPARATOR
             + MENU_ROW / 2;
-        let x = w - MENU_CENTER_FROM_RIGHT;
+        let x = self.more_menu_left() + MENU_W / 2;
         (self.at.0 + x, self.at.1 + y)
+    }
+
+    /// The More menu's left edge in the editor window: the More
+    /// button's left edge, moved left to keep the menu inside the
+    /// window's right edge.
+    fn more_menu_left(&self) -> i16 {
+        let w = self.canvas().0 as i16;
+        let button = self.more_button().0 - self.at.0 - 14;
+        button.min(w - MENU_MARGIN - MENU_W)
     }
 
     /// The Undo and Redo buttons' centers. Ink is any pixel off the

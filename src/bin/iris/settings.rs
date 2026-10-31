@@ -391,6 +391,7 @@ impl Render for Settings {
             )
             .child(widgets::toolbar_frame(
                 window,
+                cx,
                 widgets::Toolbar {
                     on_close: self.on_close.clone(),
                     ..widgets::Toolbar::default()

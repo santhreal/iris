@@ -24,8 +24,8 @@
 //! (it owns the screen's `_NET_WM_CM_S<n>` selection, EWMH) and writes the
 //! root `_NET_SUPPORTED` list a window manager would. The states with a
 //! compositor are the controls for the pointer checks: in them a drag on
-//! the left strip resizes the window and a click on the close control
-//! closes it.
+//! the library's left strip resizes it and a click on the Settings
+//! window's close control closes it.
 //!
 //! Not covered: a compositor that starts or exits while a window is open,
 //! whose frame stays as it opened; how a real window manager draws the
@@ -109,10 +109,16 @@ const SCREEN: &str = "1280x1024x24";
 const FRAMED: u32 = 1;
 const UNFRAMED: u32 = 0;
 
+/// The window whose close control a case clicks: the Settings window,
+/// whose toolbar has no trailing buttons, so that under the window
+/// manager's frame the click lands on empty toolbar.
+const SETTINGS: (&str, &str) = ("--settings", "Settings - iris");
+
 /// The close control of a frame the window draws, from the window's
-/// top-left corner in pixels: the first control, 20 px in and centered
-/// in the 52 px toolbar.
-const CLOSE: (i16, i16) = (26, 26);
+/// top-right corner in pixels: with no desktop button layout to read,
+/// the last control, 24 px round, 12 px in, and centered in the 52 px
+/// toolbar.
+const CLOSE: (i16, i16) = (12 + 12, 26);
 
 /// A point on the left resize strip, 6 px wide, from the window's left
 /// edge, and how far a drag takes it leftward.
@@ -215,7 +221,18 @@ fn a_window_draws_its_own_frame_exactly_when_a_compositor_runs_as_it_opens() {
                  {after:?}; the window draws its own strips: {own}"
             ));
         }
-        x11::click(&conn, root, (after.0 + CLOSE.0, after.1 + CLOSE.1));
+        let (option, title) = SETTINGS;
+        daemon.send(&[option]);
+        let window = daemon.until(
+            &format!("{option} to open, {state:?}"),
+            || match windows_of(&conn, root, title).as_slice() {
+                [window] => Some(*window),
+                _ => None,
+            },
+        );
+        daemon.settle();
+        let at = rect(&conn, root, window);
+        x11::click(&conn, root, (at.0 + at.2 as i16 - CLOSE.0, at.1 + CLOSE.1));
         daemon.settle();
         let closed = windows_of(&conn, root, title).is_empty();
         if closed != own {

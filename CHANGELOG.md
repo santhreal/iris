@@ -42,6 +42,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - Every window sets its text in the bundled Inter typeface, and the editor's text tool draws in Inter Bold.
 - The library is the iris app window, and its toolbar and its empty state start a screenshot or a recording.
 - The settings, library, and editor windows share one toolbar control style.
+- The library, settings, and editor windows show the platform's window controls: AppKit's close, minimize, and zoom buttons on macOS, caption buttons on Windows, and round buttons on the sides set by the desktop's button layout on Linux.
 - The settings window groups its options in General, Capture, Recording, Shortcuts, and Updates panes selected from its toolbar.
 - The settings window writes each change to `config.toml` as it is made: a toggle or menu choice on the click, a text field on `Return` or when it loses focus, and a shortcut when it is pressed.
 - The settings window's **Start iris at login** toggle reads and writes the account's XDG autostart entry, LaunchAgent, or Run registry value.

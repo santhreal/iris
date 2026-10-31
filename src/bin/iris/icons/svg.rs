@@ -78,6 +78,13 @@ documents! {
     Download => r##"<circle cx="9" cy="9" r="6.6"/><path d="M9 5L9 12.4"/><path d="M6.2 9.8L9 12.6L11.8 9.8"/>"##,
     Sliders => r##"<path d="M3 6L15 6"/><path d="M3 12L15 12"/><circle cx="6.6" cy="6" r="2.3" fill="#fff" stroke="none"/><circle cx="11.4" cy="12" r="2.3" fill="#fff" stroke="none"/>"##,
     Timer => r##"<circle cx="9" cy="10" r="5.6"/><path d="M7.2 2.6L10.8 2.6"/><path d="M9 2.6L9 4.4"/><path d="M9 10L9 7.2"/><path d="M13.2 4.8L14.2 5.8"/>"##,
+    Minimize => r##"<path d="M5.4 11.6L12.6 11.6"/>"##,
+    Maximize => r##"<rect x="5.4" y="5.4" width="7.2" height="7.2" rx="1"/>"##,
+    Restore => r##"<rect x="5.4" y="7.4" width="5.2" height="5.2" rx="0.8"/><path d="M7.4 5.4L12.6 5.4L12.6 10.6"/>"##,
+    CaptionMinimize => r##"<path d="M4 9.5L14 9.5" stroke-width="1" stroke-linecap="butt"/>"##,
+    CaptionMaximize => r##"<rect x="4.5" y="4.5" width="9" height="9" rx="1" stroke-width="1"/>"##,
+    CaptionRestore => r##"<rect x="4.5" y="6.5" width="7" height="7" rx="1" stroke-width="1"/><path d="M6.5 4.5L12.5 4.5A1 1 0 0 1 13.5 5.5L13.5 11.5" stroke-width="1"/>"##,
+    CaptionClose => r##"<path d="M4.5 4.5L13.5 13.5" stroke-width="1"/><path d="M13.5 4.5L4.5 13.5" stroke-width="1"/>"##,
 }
 
 // WHY: the class closed here is "an icon draws outside its box or not

@@ -11,8 +11,8 @@
 //! file and the config. A stand-in compositing manager runs, so iris
 //! draws its own frame and close control.
 //!
-//! Not covered: Home and the Library, which have nothing to finish and
-//! remove the window; an editor whose image never decoded, which closes
+//! Not covered: the Library, which has nothing to finish and removes
+//! the window; an editor whose image never decoded, which closes
 //! without saving; the close button of a window manager that sends
 //! something other than `WM_DELETE_WINDOW`; Windows and macOS. The cases
 //! run only with `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without them
@@ -45,8 +45,10 @@ const SETTINGS: &str = "Settings - iris";
 /// The image's size and its one color, [r, g, b].
 const SIZE: (u32, u32) = (600, 400);
 const IMAGE: [u8; 3] = [60, 140, 200];
-/// The close control, `theme::WIN_CLOSE` (#ff5f57), as [r, g, b].
-const CLOSE: [u8; 3] = [0xff, 0x5f, 0x57];
+/// The close control's centre from the window's top-right corner,
+/// pixels: with no desktop button layout to read, the last window
+/// control, 24 px round, 12 px in, and centered in the 52 px toolbar.
+const CLOSE: (usize, usize) = (12 + 12, 26);
 /// Keysyms.
 const R: u32 = 0x72;
 const X: u32 = 0x78;
@@ -76,28 +78,13 @@ impl Close {
     fn run(self, conn: &RustConnection, root: u32, window: u32) {
         match self {
             Close::Control => {
-                // The close control: the pixels of its color in the
-                // toolbar's top-left corner, clicked at their center.
-                let (w, h, px) = client(conn, root, window);
-                let corner = 100.min(w).min(h);
-                let near = |p: [u8; 3]| {
-                    let rgb = [p[2], p[1], p[0]];
-                    (0..3).all(|c| rgb[c].abs_diff(CLOSE[c]) <= 12)
-                };
-                let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
-                for y in 0..corner {
-                    for x in (0..corner).filter(|&x| near(px[y * w + x])) {
-                        (left, top) = (left.min(x), top.min(y));
-                        (right, bottom) = (right.max(x), bottom.max(y));
-                    }
-                }
-                assert!(left <= right, "the toolbar shows the close control");
+                let (w, _, _) = client(conn, root, window);
                 let at = conn
                     .translate_coordinates(window, root, 0, 0)
                     .unwrap()
                     .reply()
                     .unwrap();
-                let center = ((left + right) / 2, (top + bottom) / 2);
+                let center = (w - CLOSE.0, CLOSE.1);
                 click(
                     conn,
                     root,

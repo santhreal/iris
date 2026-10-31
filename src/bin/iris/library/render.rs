@@ -374,7 +374,7 @@ impl Render for Library {
                     this.drag_start = None;
                 }),
             )
-            .child(widgets::toolbar_frame(window, toolbar, true, grid));
+            .child(widgets::toolbar_frame(window, cx, toolbar, true, grid));
 
         if let Some((x0, y0, x1, y1)) = self.band {
             root = root.child(

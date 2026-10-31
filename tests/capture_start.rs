@@ -49,8 +49,11 @@ const WHITE: u32 = 0x00ff_ffff;
 const LIBRARY: &str = "Library - iris";
 /// The library's New Screenshot button's centre from the window's top
 /// right corner, at scale 1: the last of the toolbar's trailing
-/// controls, 28px square, 12px from the right edge of the 52px band.
-const NEW_SCREENSHOT: (i16, i16) = (26, 26);
+/// controls, 28px square, 12px left of the window controls in the 52px
+/// band. With no desktop button layout to read, the window controls are
+/// minimize, maximize, and close: three 24px buttons 8px apart, 12px
+/// from the right edge.
+const NEW_SCREENSHOT: (i16, i16) = (12 + 3 * 24 + 2 * 8 + 12 + 14, 26);
 /// How far inside the library's left edge the frozen frame is read, and
 /// twice how far outside it the root beside it is.
 const INSET: i16 = 48;

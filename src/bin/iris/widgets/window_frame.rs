@@ -1,37 +1,15 @@
 //! The Normal-window scaffold: the rounded root, the unified toolbar
-//! that is the window's title bar, and the macOS window controls, or a
-//! square root with no controls under a platform frame.
+//! that is the window's title bar, and the platform's window controls
+//! (`window_controls`), or a square root with no controls under a
+//! platform frame.
 
 use std::rc::Rc;
 
 use gpui::*;
 
+use super::window_controls::{self, Register, REGISTER};
 use super::{move_handle, Double};
 use crate::theme;
-
-/// Window-control geometry: 12px dots 8px apart, the first 20px from
-/// the window's leading edge, vertically centered in the toolbar.
-pub const DOT: f32 = 12.0;
-pub const DOT_GAP: f32 = 8.0;
-pub const DOT_INSET: f32 = 20.0;
-/// The leading edge of toolbar content after the window controls.
-pub const AFTER_DOTS: f32 = DOT_INSET + 3.0 * DOT + 2.0 * DOT_GAP + 16.0;
-
-/// One window-control dot (close/minimize/zoom). Brightens on hover,
-/// darkens on press.
-fn win_dot(id: &'static str, color: Rgba) -> Stateful<Div> {
-    div()
-        .id(ElementId::Name(id.into()))
-        .w(px(DOT))
-        .h(px(DOT))
-        .rounded_full()
-        .bg(color)
-        .cursor_pointer()
-        .hover(move |s| s.bg(theme::alpha(color, 0.85)))
-        .active(move |s| s.bg(theme::alpha(color, 0.65)))
-        // A press on a window control must not start a title-bar drag.
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-}
 
 /// What the close control runs. A window that has work to finish on
 /// close (a save, a typed value) runs the same handler from its close
@@ -61,38 +39,6 @@ pub fn close_route<V: 'static>(
             window.remove_window();
         }
     })
-}
-
-/// The three window controls, macOS order and register: close,
-/// minimize, zoom. Every Normal window offers the same controls in the
-/// same place. A fixed-size window gets a dimmed, inert zoom control,
-/// as on macOS. Close runs `on_close`, or removes the window.
-fn traffic_lights(resizable: bool, on_close: Option<OnClose>) -> Div {
-    let zoom = if resizable {
-        win_dot("win-zoom", theme::WIN_ZOOM)
-            .on_click(|_, window, _| crate::sys::window::zoom_control(window))
-    } else {
-        div()
-            .id("win-zoom")
-            .w(px(DOT))
-            .h(px(DOT))
-            .rounded_full()
-            .bg(theme::alpha(theme::FG, 0.18))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    };
-    div()
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .gap(px(DOT_GAP))
-        .child(win_dot("win-close", theme::WIN_CLOSE).on_click(
-            move |_, window, cx| match &on_close {
-                Some(close) => close(window, cx),
-                None => window.remove_window(),
-            },
-        ))
-        .child(win_dot("win-min", theme::WIN_MIN).on_click(|_, window, _| window.minimize_window()))
-        .child(zoom)
 }
 
 /// What a unified toolbar holds besides the window controls: a title
@@ -135,37 +81,22 @@ impl Toolbar {
         self.on_close = Some(on_close);
         self
     }
-
-    fn is_empty(&self) -> bool {
-        self.title.is_empty()
-            && self.caption.is_none()
-            && self.center.is_none()
-            && self.trailing.is_empty()
-    }
 }
 
 /// The Normal-window scaffold: a rounded root (the window is
 /// transparent; this root's 12px corners are the window's shape), a
-/// TOOLBAR_H unified toolbar with the traffic lights, the title and
-/// caption, the centered element, and the trailing cluster, then the
-/// content. The toolbar has no divider: it shares the window's
-/// background with the content. The toolbar is the window's title bar
-/// (`move_handle`): a drag moves the window, and a double click on a
-/// resizable one runs the platform's title bar action.
-///
-/// A toolbar with nothing in it takes no band: the content fills the
-/// window and the traffic lights and the drag strip lie over its top
-/// TOOLBAR_H. Under a platform frame (`sys::window::platform_frame`),
-/// which has the window controls and the shape, the root is square and
-/// the toolbar has no traffic lights; an empty toolbar is dropped.
+/// TOOLBAR_H unified toolbar (`toolbar_bar`), then the content. The
+/// toolbar has no divider: it shares the window's background with the
+/// content. Under a platform frame (`sys::window::platform_frame`),
+/// which has the window controls and the shape, the root is square.
 pub fn toolbar_frame(
     window: &Window,
+    cx: &App,
     toolbar: Toolbar,
     resizable: bool,
     content: impl IntoElement,
 ) -> Div {
-    let framed = crate::sys::window::platform_frame(window);
-    let root = div()
+    div()
         .size_full()
         .relative()
         .font_family(theme::FONT)
@@ -174,35 +105,8 @@ pub fn toolbar_frame(
         .bg(theme::BG)
         .text_color(theme::FG)
         .flex()
-        .flex_col();
-    let double = if resizable {
-        Double::TitleBar
-    } else {
-        Double::Nothing
-    };
-    if toolbar.is_empty() {
-        if framed {
-            return root.child(content);
-        }
-        return root
-            .child(content)
-            .child(
-                div()
-                    .id("frame-toolbar")
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .w_full()
-                    .h(px(theme::TOOLBAR_H))
-                    .flex()
-                    .items_center()
-                    .pl(px(DOT_INSET))
-                    .child(move_handle(double))
-                    .child(traffic_lights(resizable, toolbar.on_close)),
-            )
-            .children(window_edge(window, 12., 1.0));
-    }
-    root.child(toolbar_bar(window, toolbar, resizable))
+        .flex_col()
+        .child(toolbar_bar(window, cx, toolbar, resizable))
         .child(content)
         .children(window_edge(window, 12., 1.0))
 }
@@ -229,13 +133,15 @@ pub fn window_edge(window: &Window, radius: f32, opacity: f32) -> Option<Div> {
     )
 }
 
-/// The TOOLBAR_H unified toolbar band on its own: the traffic lights
-/// (none under a platform frame), the title and caption, the centered
-/// element, and the trailing cluster. `toolbar_frame` stacks it over
-/// the content; a window that positions its own layers (the editor)
-/// places it directly. The band is the window's title bar
-/// (`move_handle`).
-pub fn toolbar_bar(window: &Window, toolbar: Toolbar, resizable: bool) -> Stateful<Div> {
+/// The TOOLBAR_H unified toolbar band on its own: the window controls
+/// (`window_controls`; none under a platform frame), the title and
+/// caption, the centered element, and the trailing cluster.
+/// `toolbar_frame` stacks it over the content; a window that positions
+/// its own layers (the editor) places it directly. The band is the
+/// window's title bar (`move_handle`): a drag moves the window, and a
+/// double click on a resizable one runs the platform's title bar
+/// action.
+pub fn toolbar_bar(window: &Window, cx: &App, toolbar: Toolbar, resizable: bool) -> Stateful<Div> {
     let framed = crate::sys::window::platform_frame(window);
     let double = if resizable {
         Double::TitleBar
@@ -249,12 +155,27 @@ pub fn toolbar_bar(window: &Window, toolbar: Toolbar, resizable: bool) -> Statef
         trailing,
         on_close,
     } = toolbar;
-    let mut cluster = div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_end()
-        .gap(px(8.));
+    // A platform frame has its own controls.
+    let (lead, trail) = if framed {
+        (None, None)
+    } else {
+        let sides = window_controls::sides(REGISTER, cx.button_layout(), resizable);
+        (
+            window_controls::side(sides.left, resizable, &on_close, window),
+            window_controls::side(sides.right, resizable, &on_close, window),
+        )
+    };
+    let pl = match (framed, REGISTER, lead.is_some()) {
+        (false, Register::Mac, _) => window_controls::MAC_LEADING,
+        (_, _, true) => window_controls::ROUND_EDGE,
+        _ => theme::INSET,
+    };
+    let pr = match (REGISTER, trail.is_some()) {
+        (Register::Windows, true) => 0.,
+        (_, true) => window_controls::ROUND_EDGE,
+        _ => 12.,
+    };
+    let mut cluster = div().flex().items_center().gap(px(8.));
     for el in trailing {
         cluster = cluster.child(el);
     }
@@ -289,9 +210,22 @@ pub fn toolbar_bar(window: &Window, toolbar: Toolbar, resizable: bool) -> Statef
         .min_w_0()
         .flex()
         .items_center()
-        .gap(px(AFTER_DOTS - DOT_INSET - 3.0 * DOT - 2.0 * DOT_GAP))
-        .children((!framed).then(|| traffic_lights(resizable, on_close)))
+        .gap(px(16.))
+        .children(lead)
         .child(titles);
+    let trailing = div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap(px(if REGISTER == Register::Windows {
+            8.
+        } else {
+            12.
+        }))
+        .child(cluster)
+        .children(trail);
     div()
         .id("frame-toolbar")
         .h(px(theme::TOOLBAR_H))
@@ -299,8 +233,8 @@ pub fn toolbar_bar(window: &Window, toolbar: Toolbar, resizable: bool) -> Statef
         .flex()
         .items_center()
         .gap(px(12.))
-        .pl(px(if framed { theme::INSET } else { DOT_INSET }))
-        .pr(px(12.))
+        .pl(px(pl))
+        .pr(px(pr))
         .child(move_handle(double))
         .child(leading)
         .children(center.map(|c| {
@@ -310,7 +244,7 @@ pub fn toolbar_bar(window: &Window, toolbar: Toolbar, resizable: bool) -> Statef
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(c)
         }))
-        .child(cluster)
+        .child(trailing)
 }
 
 /// The corner radius of a window root that draws the window's shape:

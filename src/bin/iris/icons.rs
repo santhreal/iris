@@ -63,6 +63,13 @@ pub enum Icon {
     Download,
     Sliders,
     Timer,
+    Minimize,
+    Maximize,
+    Restore,
+    CaptionMinimize,
+    CaptionMaximize,
+    CaptionRestore,
+    CaptionClose,
 }
 
 /// A `size`px square canvas that paints `kind` in `color`. It neither

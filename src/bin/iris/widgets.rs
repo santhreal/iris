@@ -13,6 +13,7 @@ mod resize;
 mod scroll;
 mod tooltip;
 mod vanish;
+mod window_controls;
 mod window_frame;
 mod window_move;
 mod window_open;

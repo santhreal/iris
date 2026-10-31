@@ -409,7 +409,7 @@ impl Editor {
             .on_close(self.on_close.clone());
         // The toolbar is opaque and over the stage: a zoomed image runs
         // under it and never takes its presses, hover, or wheel.
-        widgets::toolbar_bar(window, toolbar, true)
+        widgets::toolbar_bar(window, cx, toolbar, true)
             .absolute()
             .top_0()
             .left_0()

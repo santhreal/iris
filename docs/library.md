@@ -13,7 +13,7 @@ One library window is open at a time. Opening the library while it is open raise
 
 ## Toolbar
 
-The window's title bar is a unified toolbar, 52 pixels high, with the traffic light window controls, the title **Library**, and under it the capture count (for example, `42 captures`) once `library.json` is read. The trailing buttons depend on the selection:
+The window's title bar is a unified toolbar, 52 pixels high, with the window controls, the title **Library**, and under it the capture count (for example, `42 captures`) once `library.json` is read. The trailing buttons depend on the selection:
 
 - **No selection**:
   - **Keyboard Shortcuts** (keyboard icon): toggles the shortcut reference sheet.
@@ -97,7 +97,7 @@ A right-click on a card opens a context menu at the pointer: **Open**, **Quick L
 | `?` or `/` | Open the shortcut reference sheet; its rows scroll when the window is too short to show them all. `Escape`, `?`, or `/` closes it. While it is open, `Ctrl+W` or `Cmd+W` closes the window and other keys do nothing |
 | Title bar double-click | Run the platform title bar action: toggle maximize on Linux and Windows, or the action set in the macOS Desktop & Dock settings |
 
-The traffic lights in the top-left corner close (red), minimize (yellow), and zoom (green: fullscreen on macOS, maximize on Linux and Windows) the window. On X11 with no compositing manager, the window manager frames the window and the toolbar has no traffic lights ([Window Frame](platforms.md)).
+The window controls close, minimize, and maximize the window in each platform's place: on macOS, AppKit's close, minimize, and zoom buttons in the top-left corner, where zoom enters fullscreen; on Windows, the minimize, maximize, and close caption buttons in the top-right corner; on Linux, round buttons on the sides set by the desktop's button layout, or minimize, maximize, and close in the top-right corner when the desktop sets none ([Window Controls](platforms.md#platform-capabilities-matrix)). On X11 with no compositing manager, the window manager frames the window and the toolbar has no window controls ([Window Frame](platforms.md)).
 
 Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×480.
 

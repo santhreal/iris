@@ -63,10 +63,16 @@ pub const DANGER: Rgba = rgb(1.0, 0.271, 0.227);
 /// systemGreen (dark), #30D158: a finished save.
 pub const SUCCESS: Rgba = rgb(0.188, 0.820, 0.345);
 
-/// Window control dots (the macOS traffic-light register).
-pub const WIN_CLOSE: Rgba = rgb(1.0, 0.373, 0.341);
-pub const WIN_MIN: Rgba = rgb(0.996, 0.741, 0.180);
-pub const WIN_ZOOM: Rgba = rgb(0.157, 0.784, 0.251);
+/// Windows caption buttons (Windows 11 dark): the hover and press
+/// washes, and the close button's fills.
+pub const CAPTION_HOVER: Rgba = alpha(WHITE, 0.06);
+pub const CAPTION_PRESS: Rgba = alpha(WHITE, 0.04);
+pub const CAPTION_CLOSE: Rgba = rgb(0.769, 0.169, 0.110);
+pub const CAPTION_CLOSE_PRESS: Rgba = alpha(CAPTION_CLOSE, 0.9);
+/// Linux round window controls (libadwaita dark): rest, hover, press.
+pub const ROUND_FILL: Rgba = alpha(WHITE, 0.10);
+pub const ROUND_HOVER: Rgba = alpha(WHITE, 0.15);
+pub const ROUND_PRESS: Rgba = alpha(WHITE, 0.30);
 
 /// Pills and small floating chips.
 pub const RADIUS_SM: f32 = 8.0;
