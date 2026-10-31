@@ -21,7 +21,6 @@ mod cli;
 mod daemon;
 mod editor;
 mod flash;
-mod home;
 mod icons;
 mod library;
 mod motion;
@@ -114,9 +113,9 @@ fn main() {
     // LSUIElement keeps the Dock icon from showing at launch.
     let app = app.with_activation_policy(ActivationPolicy::Accessory);
     // Opening iris.app while iris runs starts no second process: macOS
-    // reports a reopen to the running app, which then shows home. The
-    // other platforms never report one.
-    app.on_reopen(|cx| daemon::run(cx, &daemon::Command::Home));
+    // reports a reopen to the running app, which then shows the
+    // library. The other platforms never report one.
+    app.on_reopen(|cx| daemon::run(cx, &daemon::Command::Library));
     app.run(move |cx: &mut App| {
         theme::load_fonts(cx);
         sys::menu_bar::install(cx);

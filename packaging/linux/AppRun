@@ -7,6 +7,6 @@
 # or XDG_DATA_DIRS. iris and every program it starts keep the caller's
 # environment; no path refers to a mount that exits with iris.
 #
-# With no arguments iris starts and opens its home window; --background
+# With no arguments iris starts and opens its library window; --background
 # starts iris with no window.
 exec "$(dirname "$(readlink -f "$0")")/usr/bin/iris" "$@"

@@ -320,7 +320,7 @@ impl Daemon {
     /// Start the daemon with `session` setting its display variables, and
     /// return without waiting for its socket; see [`Daemon::bound`]. It
     /// runs as `iris --background`, which opens no window: a bare `iris`
-    /// opens home.
+    /// opens the library.
     pub fn spawn(dir: &Path, session: impl FnOnce(&mut Command)) -> Daemon {
         let mut cmd = iris(dir);
         cmd.arg("--background");

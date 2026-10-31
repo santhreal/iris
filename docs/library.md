@@ -1,13 +1,13 @@
 # Capture Library
 
-The library window displays stored screenshots, thumbnail previews, file metadata, and batch management actions.
+The library window is the iris app window. It displays stored screenshots, thumbnail previews, file metadata, and batch management actions, and its toolbar starts a screenshot or a recording.
 
 ![Library Window](images/library.png)
 
 Open the library via:
+- Opening iris from the application menu, the Start menu, or Applications, or running `iris`
 - Command-line interface: `iris --library`
 - System tray context menu: **Library** item
-- Home window: **Library** tile
 
 One library window is open at a time. Opening the library while it is open raises and focuses that window.
 
@@ -18,6 +18,7 @@ The window's title bar is a unified toolbar, 52 pixels high, with the traffic li
 - **No selection**:
   - **Keyboard Shortcuts** (keyboard icon): toggles the shortcut reference sheet.
   - **Settings** (gear icon): opens the Settings window ([configuration.md#settings-window](configuration.md#settings-window)).
+  - **Record Window** (**Record Screen** on Windows and macOS; record icon): closes the library, then starts a recording, as `iris --record-window` does. The recording does not contain the library. While a recording runs, the button is highlighted, its tooltip reads **Stop Recording**, and a click stops the recording and leaves the library open.
   - **New Screenshot** (viewfinder icon): closes the library, then starts a region capture, as `iris --capture` does. The capture does not contain the library.
 - **One or more cards selected**:
   - The selection count (for example, `3 selected`).
@@ -37,7 +38,7 @@ A capture saved from the editor keeps its place and the time it was taken, and i
 
 - **Auto-refresh**: A capture that iris saves, re-saves from the editor, or moves to the trash shows in the grid at once. A capture file that another program deletes, or moves out of its folder, leaves the grid at once: the library watches the folders that hold its captures. Where the system refuses the watch, the library reads `library.json` every 1.5 seconds and writes the reason to the log. A watch does not report a change that another computer makes to a folder on a network filesystem.
 - **Opening**: The library reads `library.json` and decodes the thumbnails of the first screen of cards on background threads, then opens the window with them drawn. When that takes longer than 100 ms, the window opens empty, shows the grid when the read lands, and shows each thumbnail as it decodes. The thumbnails of the cards in view decode before the ones scrolled out of view.
-- **Empty library**: With no captures, the window shows a viewfinder glyph, **No Captures**, and the capture hotkey.
+- **Empty library**: With no captures, the window shows a viewfinder glyph, **No Captures**, the capture hotkey, and the **Record Window** and **New Screenshot** buttons, which run as the toolbar's do.
 - **Scrolling**: A mouse wheel tick scrolls the grid over about 120 ms, and ticks during the motion extend it. Touchpad scrolling follows the fingers. When the system requests reduced motion, a wheel tick scrolls at once. A hairline under the toolbar marks content scrolled under it.
 
 Each card is 216 pixels wide:

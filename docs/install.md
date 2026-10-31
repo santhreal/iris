@@ -96,8 +96,8 @@ When iris is installed and running, the installer sends it `--quit` and waits up
 
 The installer runs per-user without administrative privileges:
 - Installs application files to `%LOCALAPPDATA%\Programs\iris` (`iris.exe`, `ffmpeg.exe`, `iris.ico`, license notices, and `uninstall.exe`). FFmpeg notices are in `licenses\ffmpeg`.
-- Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe --home`.
-- Creates a desktop shortcut `iris.lnk` running `iris.exe --home` when **Create a desktop shortcut** on the last page is checked or `/DESKTOP` is given. The box is checked on a first installation and unchecked on an upgrade that finds no desktop shortcut. An upgrade rewrites a desktop shortcut that exists.
+- Creates a Start Menu shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\iris.lnk` running `iris.exe`.
+- Creates a desktop shortcut `iris.lnk` running `iris.exe` when **Create a desktop shortcut** on the last page is checked or `/DESKTOP` is given. The box is checked on a first installation and unchecked on an upgrade that finds no desktop shortcut. An upgrade rewrites a desktop shortcut that exists.
 - Registers login autostart under registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, setting value `iris` to `"%LOCALAPPDATA%\Programs\iris\iris.exe" --background`. An upgrade rewrites the value when it exists and writes none when **Start iris at login** was turned off ([Start at Login](configuration.md#start-at-login)).
 - Registers uninstallation metadata under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\iris`.
 

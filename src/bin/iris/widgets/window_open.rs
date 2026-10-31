@@ -23,7 +23,7 @@ use gpui::{
 /// capture while another application has focus. Every iris animation
 /// settles and requests no frames at rest, so the cap saves nothing.
 ///
-/// A window that can minimize (home, library, settings, the editor) is
+/// A window that can minimize (the library, settings, the editor) is
 /// an app window: while one is open iris has a Dock icon and a menu bar
 /// on macOS, and with none open it has neither, as the capture overlay,
 /// the toast, notices, pins, and the recording chip are not app

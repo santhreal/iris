@@ -2,7 +2,7 @@
 """Render the iris app icon into PNG, ICO, and ICNS.
 
 The glyph is the iris mark: a 6-blade aperture pinwheel on a dark
-rounded tile, matching `home.rs::iris_mark`. Rendered at 1024 then
+rounded tile. Rendered at 1024 then
 downsampled so every size is anti-aliased.
 
 Outputs into packaging/icons/:

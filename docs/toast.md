@@ -155,7 +155,7 @@ Failure titles:
 | `Library update failed` | Recording a saved capture in `library.json` |
 | `Save failed` | Writing the edited image when the editor closes |
 | `Pin failed` | Pinning a capture |
-| `Home did not open`, `Library did not open`, `Settings did not open`, `Editor did not open`, `Toast did not open`, `Recording chip did not open` | Opening that window |
+| `Library did not open`, `Settings did not open`, `Editor did not open`, `Toast did not open`, `Recording chip did not open` | Opening that window |
 | `Quit failed` | `--quit` |
 | `Shortcuts did not refresh` | Redrawing the open windows after the global hotkeys bind |
 

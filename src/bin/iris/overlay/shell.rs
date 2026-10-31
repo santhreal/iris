@@ -59,7 +59,7 @@ pub fn open_shell(cx: &mut App, layout: &ShellLayout) -> Result<WindowHandle<Ove
 /// the pool without stealing input focus at startup. The window still
 /// maps (show:true) so GPUI builds its renderer; a `show:false` window
 /// never does and the pooled handle comes up dead. Until the park takes
-/// it off the screen, input passes through it: a click meant for Home,
+/// it off the screen, input passes through it: a click meant for the library,
 /// or for the window a record pick waits on, reaches that window, and
 /// the restore takes input again.
 fn open_shell_opts(

@@ -11,16 +11,16 @@
 //! cases rest a toast or a notice in the corner, capture, and read the
 //! desktop where the card stood. A region pick and a window recording
 //! start with the toast closed the same way, and a recording's stop
-//! leaves it. `tests/home.rs` covers Home and `tests/delay.rs` the
-//! countdown card. The capture overlay and a window pick are such
-//! surfaces too: a full-screen capture sent while the overlay was up
-//! saved the dimmed overlay, a window pick started under it, and a
-//! capture sent during a window pick opened the overlay, whose window
-//! the pick's click then recorded. Two cases send every command that
-//! starts reading the screen under the overlay and during a pick, read
-//! that none ran, then that a capture after the session ends runs; a
-//! third reads that a region pick's own commit still starts its
-//! recording.
+//! leaves it. `tests/capture_start.rs` covers the library and
+//! `tests/delay.rs` the countdown card. The capture overlay and a
+//! window pick are such surfaces too: a full-screen capture sent while
+//! the overlay was up saved the dimmed overlay, a window pick started
+//! under it, and a capture sent during a window pick opened the
+//! overlay, whose window the pick's click then recorded. Two cases send
+//! every command that starts reading the screen under the overlay and
+//! during a pick, read that none ran, then that a capture after the
+//! session ends runs; a third reads that a region pick's own commit
+//! still starts its recording.
 //!
 //! Each pop-up case runs with no compositing manager, where a pop-up
 //! closes at once, and under picom fading windows out over two seconds,

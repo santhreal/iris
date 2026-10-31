@@ -339,12 +339,12 @@ fn a_forward_lands_soon_after_a_starting_daemon_binds() {
                     (Instant::now(), rx)
                 })
             };
-            assert!(forward_when_ready(&name, &ready, &argv(&["--home"])));
+            assert!(forward_when_ready(&name, &ready, &argv(&["--library"])));
             let forwarded = Instant::now();
             let (bound, mut rx) = daemon.join().unwrap();
             assert_eq!(
                 next_within(&mut rx, Duration::from_secs(5)),
-                argv(&["--home"])
+                argv(&["--library"])
             );
             forwarded.saturating_duration_since(bound)
         })

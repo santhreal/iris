@@ -101,7 +101,7 @@ impl Daemon {
         )
         .unwrap();
         let log = std::fs::File::create(dir.path().join("daemon.log")).unwrap();
-        // `--background` opens no window; a bare `iris` opens home.
+        // `--background` opens no window; a bare `iris` opens the library.
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_iris"));
         configure(&mut cmd, dir.path(), display);
         cmd.arg("--background");

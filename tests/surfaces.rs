@@ -1,4 +1,4 @@
-//! Single-instance surfaces: a second open of the home, library, or
+//! Single-instance surfaces: a second open of the library or the
 //! settings window, or of the editor on one file, focuses the window
 //! already open instead of opening another.
 //!

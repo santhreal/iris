@@ -136,9 +136,29 @@ impl Library {
             ),
         ))
         .trailing(ring(
+            Tool::Record,
+            widgets::icon_button(
+                "record",
+                Icon::Record,
+                crate::daemon::RECORDING.active(),
+                theme::TOOLBAR_CONTROL_H,
+            )
+            .tooltip(if crate::daemon::RECORDING.active() {
+                tip("Stop Recording", shortcut(&self.cfg, Chord::Record))
+            } else {
+                tip(
+                    screen_title(Tool::Record),
+                    shortcut(&self.cfg, Chord::Record),
+                )
+            }),
+        ))
+        .trailing(ring(
             Tool::Capture,
             widgets::icon_button("capture", Icon::Viewfinder, false, theme::TOOLBAR_CONTROL_H)
-                .tooltip(tip("New Screenshot", shortcut(&self.cfg))),
+                .tooltip(tip(
+                    screen_title(Tool::Capture),
+                    shortcut(&self.cfg, Chord::Capture),
+                )),
         ))
     }
 
@@ -162,9 +182,14 @@ impl Library {
             .child(title)
     }
 
-    fn empty_state(&self) -> impl IntoElement {
+    /// The empty library: what to do next, and the two buttons that do it.
+    fn empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let keys = Chord::Capture.keys(&self.cfg);
         let hint = empty_hint(keys, hotkeys::binding(Chord::Capture, keys));
+        let action = |id: &'static str, style, tool: Tool| {
+            widgets::push_button(id, screen_title(tool), style)
+                .on_click(cx.listener(move |this, _, window, cx| this.run_tool(tool, window, cx)))
+        };
         div()
             .size_full()
             .flex()
@@ -187,6 +212,14 @@ impl Library {
                     .text_size(px(theme::TEXT_BODY))
                     .text_color(theme::FG_DIM)
                     .child(hint),
+            )
+            .child(
+                div()
+                    .mt(px(12.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(action("empty-record", ButtonStyle::Bordered, Tool::Record))
+                    .child(action("empty-capture", ButtonStyle::Primary, Tool::Capture)),
             )
     }
 }
@@ -322,7 +355,7 @@ impl Render for Library {
         // Until the store answers, the grid shows nothing: an empty
         // state then is a false "no captures" flash on every open.
         grid = if self.listing.listed().is_some() && self.listing.entries().is_empty() {
-            grid.child(self.empty_state())
+            grid.child(self.empty_state(cx))
         } else {
             grid.child(content)
         };
@@ -382,9 +415,14 @@ impl Render for Library {
     }
 }
 
-/// The capture shortcut a tooltip shows: none when no key is set.
-fn shortcut(cfg: &iris_lib::config::Config) -> Option<SharedString> {
-    let label = widgets::chord_label(Chord::Capture.keys(cfg));
+/// The title of `tool`, a button that reads the screen.
+fn screen_title(tool: Tool) -> &'static str {
+    tool.screen_action().map_or("", |(_, title)| title)
+}
+
+/// The shortcut of `chord` a tooltip shows: none when no key is set.
+fn shortcut(cfg: &iris_lib::config::Config, chord: Chord) -> Option<SharedString> {
+    let label = widgets::chord_label(chord.keys(cfg));
     (!label.is_empty()).then(|| label.into())
 }
 
@@ -396,7 +434,7 @@ pub(super) fn empty_hint(keys: &str, binding: Option<Binding>) -> String {
             "Press {} to capture a region of the screen.",
             widgets::chord_label(keys)
         ),
-        _ => "Click New Screenshot in the toolbar to capture a region of the screen.".to_owned(),
+        _ => "Click New Screenshot to capture a region of the screen.".to_owned(),
     }
 }
 

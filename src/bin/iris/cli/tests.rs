@@ -52,7 +52,6 @@ fn expected(flag: &str) -> Option<Command> {
         "--record-mic" => Command::RecordMic,
         "--library" => Command::Library,
         "--settings" => Command::Settings,
-        "--home" => Command::Home,
         "--annotate" => Command::Annotate(manifest()),
         "--toast" => Command::Toast(manifest()),
         "--quit" => Command::Quit,
@@ -148,11 +147,11 @@ fn the_background_option_takes_no_other_option() {
 
 /// WHY: a bare `iris` that found none running started iris and opened
 /// nothing, so a first launch of iris.app or of `iris` in a terminal
-/// showed no window. A bare line opens home whether it forwards or
-/// starts iris; `--background`, the login item's line, opens nothing;
-/// a flagged line runs its own commands and no home.
+/// showed no window. A bare line opens the library whether it forwards
+/// or starts iris; `--background`, the login item's line, opens
+/// nothing; a flagged line runs its own commands and no library.
 #[test]
-fn a_start_runs_home_only_for_a_bare_line() {
+fn a_start_opens_the_library_only_for_a_bare_line() {
     let names = |line: &[&str]| -> Vec<String> {
         parse(&argv(line))
             .startup()
@@ -160,16 +159,16 @@ fn a_start_runs_home_only_for_a_bare_line() {
             .map(|c| format!("{c:?}"))
             .collect()
     };
-    assert_eq!(names(&[]), ["Home"]);
-    assert_eq!(names(&["-psn_0_12345"]), ["Home"]);
+    assert_eq!(names(&[]), ["Library"]);
+    assert_eq!(names(&["-psn_0_12345"]), ["Library"]);
     assert!(names(&["--background"]).is_empty());
     assert_eq!(names(&["--capture"]), ["Capture"]);
+    assert_eq!(names(&["--settings"]), ["Settings"]);
     assert_eq!(names(&["--library", "--settings"]), ["Library", "Settings"]);
-    assert_eq!(names(&["--home"]), ["Home"]);
 }
 
 /// WHY: an update restarted the daemon as a bare `iris`, and a bare
-/// line opens home, so every update opened the home window. Each line
+/// line opens the library, so every update opened the library. Each line
 /// that starts iris in the background is parsed here: `BACKGROUND_LINE`,
 /// which a client and an update spawn, the Windows installer's `/RUN`
 /// start and Run value, and the Linux and macOS login entries, read
@@ -227,7 +226,7 @@ fn every_background_start_opens_no_window() {
 /// itself: each launcher entry, read from the packaging files (the Linux
 /// application entry, the Windows Start menu and desktop shortcuts, and
 /// the installer's Finish page launch), is a bare line that prints
-/// nothing, does not start iris windowless, and opens home. iris.app
+/// nothing, does not start iris windowless, and opens the library. iris.app
 /// passes no arguments. Not covered: the Desktop Actions, which run one
 /// command each.
 #[test]
@@ -265,7 +264,7 @@ fn every_launcher_entry_starts_the_app_itself() {
         assert!(!p.prints(), "{source}: {args:?} prints");
         assert!(!p.background, "{source}: {args:?} opens no window");
         let opens: Vec<String> = p.startup().iter().map(|c| format!("{c:?}")).collect();
-        assert_eq!(opens, ["Home"], "{source}: {args:?}");
+        assert_eq!(opens, ["Library"], "{source}: {args:?}");
     }
 }
 

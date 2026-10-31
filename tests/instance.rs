@@ -9,25 +9,27 @@
 //! processes apart: each found no daemon, and on Unix each bind replaced
 //! the socket file of the one before, so all of them ran on, each with a
 //! tray icon and windows of its own. A child that started after another
-//! had bound forwarded `--home`, as a bare `iris` does, and opened the
-//! home window for a command that asked for another window. The first
-//! case starts four `iris --home` and a bare `iris` at once, over rounds,
-//! and requires one daemon and one home window. The second starts four
-//! `iris --library` at once, then an `iris --background` beside the daemon,
-//! and requires one daemon, one library window, and no home window. The
-//! third kills the daemon with SIGKILL, which leaves its socket file, and
-//! requires the next `iris --home` to start a daemon in its place.
+//! had bound forwarded `--library`, as a bare `iris` does, and opened
+//! the library for a command that asked for another window. The first
+//! case starts four `iris --library` and a bare `iris` at once, over
+//! rounds, and requires one daemon and one library window. The second
+//! starts four `iris --settings` at once, then an `iris --background`
+//! beside the daemon, and requires one daemon, one settings window, and
+//! no library window; a bare `iris` after it opens the library in the
+//! same daemon. The third kills the daemon with SIGKILL, which
+//! leaves its socket file, and requires the next `iris --library` to
+//! start a daemon in its place.
 //!
 //! The fourth closes "a client that cannot watch for the bind reports
 //! the command it completes as an error": a client that starts the
 //! daemon waits for its bind on an inotify watch, and when the watch
 //! cannot be made, as when the user's inotify instances are used up, the
 //! client retried on a timer and wrote the watch's error to stderr of a
-//! command that succeeded. The case runs `iris --home` with the runtime
-//! directory at mode 0300, where inotify refuses the watch, and requires
-//! it to succeed with nothing on stderr, the error in the log file, and
-//! one daemon with its home window. It does not run for a user that
-//! reads a directory of mode 0300, as root does.
+//! command that succeeded. The case runs `iris --library` with the
+//! runtime directory at mode 0300, where inotify refuses the watch, and
+//! requires it to succeed with nothing on stderr, the error in the log
+//! file, and one daemon with its library window. It does not run for a
+//! user that reads a directory of mode 0300, as root does.
 //!
 //! The cases run only with `IRIS_X11_TEST_DISPLAY` set and need `Xvfb`;
 //! without it a case prints that it did not run. Not covered: a start
@@ -67,11 +69,11 @@ const BOUND: Duration = Duration::from_secs(12);
 /// How long a window or a process that should not exist has to appear.
 const SETTLE: Duration = Duration::from_millis(1500);
 
-/// The home window's title.
-const HOME: &str = "iris";
-
 /// The library window's title.
 const LIBRARY: &str = "Library - iris";
+
+/// The settings window's title.
+const SETTINGS: &str = "Settings - iris";
 
 #[test]
 fn processes_that_start_at_once_leave_one_daemon() {
@@ -88,24 +90,24 @@ fn processes_that_start_at_once_leave_one_daemon() {
     let _reaper = Reaper(dir);
     for round in 0..ROUNDS {
         let clients: Vec<Child> = (0..CLIENTS)
-            .map(|_| start(dir, &display, &["--home"]))
+            .map(|_| start(dir, &display, &["--library"]))
             .collect();
         let mut bare = start(dir, &display, &[]);
         for mut client in clients {
-            succeeds(dir, &mut client, "iris --home");
+            succeeds(dir, &mut client, "iris --library");
         }
         let daemon = one_process(dir, round);
-        // A bare `iris` that did not become the daemon raised home in
-        // the one that did.
+        // A bare `iris` that did not become the daemon raised the
+        // library in the one that did.
         if bare.id() != daemon {
             succeeds(dir, &mut bare, "a bare iris");
         }
-        windows(dir, &conn, root, HOME, 1, round);
+        windows(dir, &conn, root, LIBRARY, 1, round);
         std::thread::sleep(SETTLE);
         assert_eq!(
-            windows_of(&conn, root, HOME).len(),
+            windows_of(&conn, root, LIBRARY).len(),
             1,
-            "round {round}: a second home window opened"
+            "round {round}: a second library window opened"
         );
         assert_eq!(
             processes(dir),
@@ -132,27 +134,32 @@ fn a_start_that_finds_a_daemon_opens_no_window_of_its_own() {
     let dir = home.path();
     let _reaper = Reaper(dir);
     let clients: Vec<Child> = (0..CLIENTS)
-        .map(|_| start(dir, &display, &["--library"]))
+        .map(|_| start(dir, &display, &["--settings"]))
         .collect();
     for mut client in clients {
-        succeeds(dir, &mut client, "iris --library");
+        succeeds(dir, &mut client, "iris --settings");
     }
     let daemon = one_process(dir, 0);
-    windows(dir, &conn, root, LIBRARY, 1, 0);
+    windows(dir, &conn, root, SETTINGS, 1, 0);
     let mut late = start(dir, &display, &["--background"]);
     succeeds(dir, &mut late, "iris --background beside a daemon");
     std::thread::sleep(SETTLE);
     assert_eq!(
-        windows_of(&conn, root, LIBRARY).len(),
+        windows_of(&conn, root, SETTINGS).len(),
         1,
-        "a second library window opened"
+        "a second settings window opened"
     );
     assert_eq!(
-        windows_of(&conn, root, HOME).len(),
+        windows_of(&conn, root, LIBRARY).len(),
         0,
-        "a home window opened"
+        "a library window opened"
     );
     assert_eq!(processes(dir), [daemon], "a second daemon started");
+    // A bare `iris` beside the daemon opens the library in it and exits.
+    let mut bare = start(dir, &display, &[]);
+    succeeds(dir, &mut bare, "a bare iris beside a daemon");
+    windows(dir, &conn, root, LIBRARY, 1, 0);
+    assert_eq!(processes(dir), [daemon], "a bare iris started a daemon");
     quit(dir, &display);
 }
 
@@ -179,11 +186,11 @@ fn a_start_replaces_a_killed_daemon() {
         dir.join("run").join("iris.sock").exists(),
         "the killed daemon's socket file is gone"
     );
-    let mut client = start(dir, &display, &["--home"]);
-    succeeds(dir, &mut client, "iris --home after a killed daemon");
+    let mut client = start(dir, &display, &["--library"]);
+    succeeds(dir, &mut client, "iris --library after a killed daemon");
     let started = one_process(dir, 0);
     assert_ne!(started, killed);
-    windows(dir, &conn, root, HOME, 1, 0);
+    windows(dir, &conn, root, LIBRARY, 1, 0);
     quit(dir, &display);
 }
 
@@ -214,7 +221,7 @@ fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
         return;
     }
     let mut client = cmd
-        .arg("--home")
+        .arg("--library")
         .env("DISPLAY", &display)
         .env_remove("WAYLAND_DISPLAY")
         .stdin(Stdio::null())
@@ -222,7 +229,7 @@ fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let status = within(dir, "iris --home to exit", || {
+    let status = within(dir, "iris --library to exit", || {
         client
             .try_wait()
             .unwrap()
@@ -236,8 +243,8 @@ fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
         .unwrap()
         .read_to_string(&mut stderr)
         .unwrap();
-    assert!(status.success(), "iris --home exited {status}: {stderr}");
-    assert_eq!(stderr, "", "iris --home wrote to stderr");
+    assert!(status.success(), "iris --library exited {status}: {stderr}");
+    assert_eq!(stderr, "", "iris --library wrote to stderr");
     let log = std::fs::read_to_string(dir.join("state").join("iris.log")).unwrap();
     let line = format!(
         "iris: watch the socket directory: {}: Permission denied (os error 13); \
@@ -246,7 +253,7 @@ fn a_client_that_cannot_watch_for_the_bind_reaches_the_daemon_quietly() {
     );
     assert!(log.contains(&line), "the log lacks {line:?}:\n{log}");
     one_process(dir, 0);
-    windows(dir, &conn, root, HOME, 1, 0);
+    windows(dir, &conn, root, LIBRARY, 1, 0);
     quit(dir, &display);
 }
 

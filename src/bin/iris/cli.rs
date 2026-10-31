@@ -104,11 +104,6 @@ const OPTS: &[Opt] = &[
         help: "open the settings window",
     },
     Opt {
-        flag: "--home",
-        takes: Takes::Nothing(|| Command::Home),
-        help: "open the home window",
-    },
-    Opt {
         flag: "--annotate",
         takes: Takes::File(Command::Annotate),
         help: "open <file> in the editor",
@@ -186,15 +181,15 @@ impl Parsed {
     }
 
     /// What a process that became iris runs once it starts: the line's
-    /// commands, or home for a bare line, as a bare line forwarded to a
-    /// running iris opens home. Opening iris.app, the launcher entry, or
-    /// `iris` shows a window, not only a tray icon. `--background`, the
-    /// login item's line, runs nothing.
+    /// commands, or the library for a bare line, as a bare line
+    /// forwarded to a running iris opens it. Opening iris.app, the
+    /// launcher entry, or `iris` shows a window, not only a tray icon.
+    /// `--background`, the login item's line, runs nothing.
     pub fn startup(self) -> Vec<Command> {
         if self.background || !self.cmds.is_empty() {
             self.cmds
         } else {
-            vec![Command::Home]
+            vec![Command::Library]
         }
     }
 }

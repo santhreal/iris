@@ -5,7 +5,7 @@
 //! own way: X11 key grabs or the GlobalShortcuts portal on Linux,
 //! `RegisterHotKey` on Windows, Carbon hotkeys on macOS. The per-OS
 //! module owns the detail; this facade fixes the call shape and holds
-//! the outcome of each registration, which Home and Settings show.
+//! the outcome of each registration, which the library and Settings show.
 
 use futures::channel::mpsc::UnboundedSender;
 use iris_lib::config::Config;

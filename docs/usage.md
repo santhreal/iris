@@ -2,11 +2,11 @@
 
 ## Start iris
 
-Open iris from the application menu on Linux, the Start menu on Windows, or Applications on macOS, or run `iris`. iris starts, opens its home window, and adds a tray icon. Closing the window leaves iris running in the tray with its global hotkeys. Opening iris again while it runs opens the home window of the running iris; no second iris starts ([Process Model](cli.md#process-model-and-interprocess-communication)).
+Open iris from the application menu on Linux, the Start menu on Windows, or Applications on macOS, or run `iris`. iris starts, opens its library window, and adds a tray icon. Closing the window leaves iris running in the tray with its global hotkeys. Opening iris again while it runs opens the library window of the running iris; no second iris starts ([Process Model](cli.md#process-model-and-interprocess-communication)).
 
 `iris --background`, which the login autostart entries run, starts iris with no window.
 
-The home window has three tiles, **New Screenshot**, **Record Window** (**Record Screen** on Windows and macOS, which record the desktop), and **Library**, and a gear in the toolbar that opens the settings window. Under a tile's title, its global shortcut shows as key caps. A tile whose shortcut is unset shows **No shortcut**. A tile whose shortcut iris could not bind shows **Shortcut unavailable**, and pointing at it shows the reason, such as **In use by another app**. **New Screenshot** and **Record Window** close the home window before the capture or the window pick starts, so the home window is not in the picture. `Tab` and `Shift+Tab` move a focus ring over the tiles and the gear, the left and right arrow keys move it along the tiles, and `Enter` or `Space` runs the selected tile or the gear. `Ctrl+L` opens the library and `Ctrl+,` opens the settings window (`Cmd` on macOS). `Escape` or `Ctrl+W` closes the home window.
+The library window shows past captures ([Capture Library](library.md)). Its toolbar ends with **Settings**, **Record Window** (**Record Screen** on Windows and macOS, which record the desktop), and **New Screenshot**; pointing at a button shows its name and global shortcut. With no captures, the library shows the capture shortcut and the **Record Window** and **New Screenshot** buttons. **New Screenshot** and **Record Window** close the library before the capture or the window pick starts, so the library is not in the picture. While a recording runs, **Record Window** stops it and the library stays open.
 
 The tray menu holds the same actions:
 
@@ -26,14 +26,14 @@ To start iris at login, turn on **Start iris at login** in the settings window (
 
 ### First start per platform
 
-- **Linux (X11)**: iris grabs the capture and record hotkeys itself. A key another program grabbed first is not bound. The home window and the **Shortcuts** pane of the settings window show **In use by another app** for it; set another key there.
+- **Linux (X11)**: iris grabs the capture and record hotkeys itself. A key another program grabbed first is not bound. The **Shortcuts** pane of the settings window shows **In use by another app** for it; set another key there.
 - **Linux (Wayland)**: iris asks the desktop for the capture and record hotkeys through the GlobalShortcuts portal (`org.freedesktop.portal.GlobalShortcuts`). The desktop can show a dialog to confirm them on first use. A desktop with no GlobalShortcuts portal binds none; bind `iris --capture` and `iris --record-window` in the compositor's configuration instead ([Window Manager and Compositor Keybindings](cli.md#window-manager-and-compositor-keybindings)).
 - **macOS**: The first capture requests Screen Recording permission. Enable iris in System Settings > Privacy & Security > Screen Recording, then restart iris. The capture hotkey is `Ctrl+F13`: macOS keyboards have no `Print` key.
 - **Windows**: The tray icon is in the notification area, or in its overflow menu.
 
 ## Take a Screenshot
 
-1. Press `Ctrl+Print` (`Ctrl+F13` on macOS), click **New Screenshot** in the home window or the tray menu, or run `iris --capture`. The screen freezes and dims.
+1. Press `Ctrl+Print` (`Ctrl+F13` on macOS), click **New Screenshot** in the library or the tray menu, or run `iris --capture`. The screen freezes and dims.
 2. Click a window to capture it (X11, Windows, and macOS), or drag a rectangle and press `Enter`. `Escape` or a right click cancels.
 3. The capture is saved as a PNG in `~/Pictures/iris` and copied to the clipboard.
 
@@ -55,7 +55,7 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 
 ## Record the Screen
 
-1. Press `Ctrl+Shift+Print`, click **Record Window** (**Record Screen** on Windows and macOS) in the home window or the tray menu, or run `iris --record-window`.
+1. Press `Ctrl+Shift+Print`, click **Record Window** (**Record Screen** on Windows and macOS) in the library or the tray menu, or run `iris --record-window`.
 2. On X11, click the window to record. A card in the toast corner reads **Click a window to record it** until the click, and `Escape` cancels. A click on a menu, a tooltip, or the card itself picks nothing. On Wayland, pick the window in the compositor's dialog. Windows and macOS record the whole desktop.
 3. A chip with a timer and pause, stop, and microphone buttons floats beside the recorded area (X11, Windows, and macOS). A GIF recording has no microphone button.
 4. Press `Ctrl+Shift+Print` again, click the chip's stop button, or run `iris --record-window` to stop.
@@ -64,11 +64,11 @@ The editor draws lines, arrows, rectangles, ellipses, pen and highlighter stroke
 
 ## Find Past Captures
 
-Click **Library**, or run `iris --library`. The library shows the captures as thumbnails, newest first. Click a thumbnail to open it in the editor, drag thumbnails out to drop their files, and select several to copy or delete them at once ([Capture Library](library.md)).
+Open iris, click **Library** in the tray menu, or run `iris --library`. The library shows the captures as thumbnails, newest first. Click a thumbnail to open it in the editor, drag thumbnails out to drop their files, and select several to copy or delete them at once ([Capture Library](library.md)).
 
 ## Change Settings
 
-Click the gear in the home window, click **Settings** in the tray menu, or run `iris --settings`. The settings window has five tabs: **General** (Start at login, save folders, file names), **Capture** (capture feedback and the floating thumbnail), **Recording**, **Shortcuts**, and **Updates**. Each change writes `config.toml` at once, and a changed hotkey registers again in the running iris at once ([Settings Window](configuration.md#settings-window)).
+Click the gear in the library's toolbar, click **Settings** in the tray menu, or run `iris --settings`. The settings window has five tabs: **General** (Start at login, save folders, file names), **Capture** (capture feedback and the floating thumbnail), **Recording**, **Shortcuts**, and **Updates**. Each change writes `config.toml` at once, and a changed hotkey registers again in the running iris at once ([Settings Window](configuration.md#settings-window)).
 
 ## Quit
 

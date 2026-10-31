@@ -191,7 +191,7 @@ jobs:
             for _ in $(seq 100); do kill -0 "$1" 2>/dev/null || break; sleep 0.1; done
             ! kill -0 "$1" 2>/dev/null || fail "the daemon runs 10 s after --quit"
           }
-          "$exe" --home || fail "iris --home exited with $?"
+          "$exe" --library || fail "iris --library exited with $?"
           pid=$(pgrep -f "installed/iris.app/Contents/MacOS/iris --background") || fail "no daemon runs from the bundle"
           grep -q "iris: starting" "$log" || fail "the daemon logged no start line"
           for _ in $(seq 100); do [ -f "$agent" ] && break; sleep 0.1; done
@@ -199,7 +199,7 @@ jobs:
             || fail "the first start wrote no LaunchAgent for the bundle"
           quit "$pid"
           rm "$agent"
-          "$exe" --home || fail "iris --home exited with $?"
+          "$exe" --library || fail "iris --library exited with $?"
           pid=$(pgrep -f "installed/iris.app/Contents/MacOS/iris --background") || fail "no daemon runs from the bundle"
           sleep 3
           [ ! -e "$agent" ] || fail "a later start turned Start at login back on"
@@ -612,7 +612,7 @@ jobs:
       # there: the deb on ubuntu:22.04, the oldest release it supports,
       # and on ubuntu:24.04; the rpm on fedora:42. In each,
       # check_installed.sh starts the daemon on Xvfb with the lavapipe
-      # Vulkan driver and waits for the home window. The package from
+      # Vulkan driver and waits for the library window. The package from
       # dist/next then upgrades the running install: the daemon runs on
       # the replaced binary, exits on --quit from the upgraded one, and
       # the upgraded iris starts. The AppImage mounts itself with FUSE on

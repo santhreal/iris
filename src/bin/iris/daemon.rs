@@ -39,14 +39,13 @@ pub(crate) fn command_tx() -> Option<UnboundedSender<Command>> {
 }
 
 /// How long after the daemon starts the overlay warmup runs: past the
-/// first frame of a window the start opens, home on a launch, and of
-/// one a client that waited for the bind forwards.
+/// first frame of a window the start opens, the library on a launch,
+/// and of one a client that waited for the bind forwards.
 const WARMUP_AFTER: Duration = Duration::from_millis(400);
 
 /// One command line, forwarded to or invoked on the daemon.
 #[derive(Debug, Clone)]
 pub enum Command {
-    Home,
     Capture,
     CaptureFullscreen,
     CaptureWindow,
@@ -118,7 +117,6 @@ impl Command {
             Command::HotkeysBound => "Shortcuts did not refresh",
             Command::RecordPause => "Pause failed",
             Command::RecordMic => "Microphone toggle failed",
-            Command::Home => "Home did not open",
             Command::Library => "Library did not open",
             Command::Settings => "Settings did not open",
             Command::Annotate(_) => "Editor did not open",
@@ -145,7 +143,6 @@ impl Command {
             Command::Delayed(_)
             // Stops the live recording.
             | Command::RecordToggle
-            | Command::Home
             | Command::Library
             | Command::Settings
             | Command::Annotate(_)
@@ -194,8 +191,7 @@ pub fn live_daemon_only(cmds: &[Command]) -> bool {
     !cmds.is_empty()
         && cmds.iter().all(|c| match c {
             Command::Quit | Command::RecordPause | Command::RecordMic | Command::RecordStop => true,
-            Command::Home
-            | Command::Capture
+            Command::Capture
             | Command::CaptureFullscreen
             | Command::CaptureWindow
             | Command::Delayed(_)
@@ -216,12 +212,17 @@ pub fn live_daemon_only(cmds: &[Command]) -> bool {
 }
 
 /// Run `cmd` and show why it failed in a notice: a hotkey, the tray,
-/// a home tile, or a forwarded command line has no other place to show
-/// it.
+/// a toolbar button, or a forwarded command line has no other place
+/// to show it. A command that starts or ends the recording redraws the
+/// open windows: the library's Record button shows whether one runs.
 pub fn run(cx: &mut App, cmd: &Command) {
+    let recording = RECORDING.active();
     if let Err(e) = dispatch(cx, cmd) {
         iris_lib::ilog!("iris: {cmd:?}: {e}");
         crate::notice::failed(cx, cmd.failure_title(), &e);
+    }
+    if RECORDING.active() != recording {
+        cx.refresh_windows();
     }
 }
 
@@ -264,7 +265,6 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         return Ok(());
     }
     match cmd {
-        Command::Home => crate::home::open(cx),
         Command::Capture => capture::capture_region(cx),
         Command::CaptureFullscreen => capture::capture_fullscreen(cx),
         Command::CaptureWindow => capture::capture_active_window(cx),
@@ -412,8 +412,8 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
     });
     // Warm the overlay pool once the start's own window is up: the
     // warmup builds a renderer (~130ms on the main thread), and run
-    // inline it held back the home window a launch opens, and a
-    // forwarded `--home` behind it. A capture before the warmup opens
+    // inline it held back the library a launch opens, and a forwarded
+    // `--library` behind it. A capture before the warmup opens
     // a fresh shell. The install tidy runs after it: the `iris
     // --update` that started this daemon exits right after the start,
     // and Windows deletes no file a process still runs. The first-start
@@ -485,7 +485,6 @@ mod tests {
             vec![Delayed(3)],
             vec![Library],
             vec![Settings],
-            vec![Home],
             vec![RecordToggle],
             vec![RecordRegionPick],
             vec![Annotate("shot.png".into())],

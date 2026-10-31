@@ -1,13 +1,14 @@
-//! Library panel: the main window. A grid of captures, newest first,
-//! grouped by the local day each was taken.
+//! Library: the app window, which a launch, a reopen, and the tray
+//! open. A grid of captures, newest first, grouped by the local day
+//! each was taken.
 //!
 //! Click opens the canvas editor, Ctrl/Shift-click multi-selects, the
 //! arrow keys move the selection, Return opens and Space previews the
 //! selected capture, and hover reveals per-card copy/reveal/trash
-//! actions. The toolbar starts a region capture or opens settings. The
-//! grid lists a capture this process saves at once, and a watch on the
-//! capture folders drops a capture another program deletes or moves
-//! away.
+//! actions. The toolbar starts a region capture or a recording, or
+//! opens settings. The grid lists a capture this process saves at
+//! once, and a watch on the capture folders drops a capture another
+//! program deletes or moves away.
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -68,6 +69,7 @@ pub(super) enum Tool {
     Done,
     Shortcuts,
     Settings,
+    Record,
     Capture,
 }
 
@@ -75,7 +77,20 @@ impl Tool {
     /// The buttons a selection shows, left to right.
     pub(super) const SELECTION: [Tool; 3] = [Tool::Copy, Tool::Trash, Tool::Done];
     /// The buttons the window shows with nothing selected.
-    pub(super) const WINDOW: [Tool; 3] = [Tool::Shortcuts, Tool::Settings, Tool::Capture];
+    pub(super) const WINDOW: [Tool; 4] =
+        [Tool::Shortcuts, Tool::Settings, Tool::Record, Tool::Capture];
+
+    /// The command a button that reads the screen runs, and its title,
+    /// the tray row's that runs the same command; `None` for the
+    /// buttons that act on the window or the selection.
+    pub(super) fn screen_action(self) -> Option<(crate::daemon::Command, &'static str)> {
+        use crate::daemon::Command;
+        match self {
+            Tool::Capture => Some((Command::Capture, "New Screenshot")),
+            Tool::Record => Some((Command::RecordToggle, crate::sys::record::START_TITLE)),
+            Tool::Copy | Tool::Trash | Tool::Done | Tool::Shortcuts | Tool::Settings => None,
+        }
+    }
 }
 
 pub struct Library {

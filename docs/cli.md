@@ -16,7 +16,6 @@ iris is a single-instance app. A command line forwards over local interprocess c
 | `--record-mic` | None | Toggle microphone capture on active recording. Requires a running iris. Returns an error for a GIF recording, which has no audio track. |
 | `--library` | None | Open [capture library](library.md#capture-library) window, or raise and focus the one already open. |
 | `--settings` | None | Open [settings window](configuration.md#settings-window), or raise and focus the one already open. |
-| `--home` | None | Open home window displaying quick action buttons, or raise and focus the one already open. |
 | `--annotate` | `<file>` | Open [annotation editor](editor.md#annotation-editor) for the image at `<file>`, or raise and focus the editor already open on that file. |
 | `--toast` | `<file>` | Display [toast notification](toast.md#toast-notifications) for the image at `<file>`. |
 | `--quit` | None | Quit the running iris after saving the active recording and any stopped recording still being joined. Requires a running iris. |
@@ -55,7 +54,7 @@ On Linux iris exits when its X server or Wayland compositor exits, as at the end
 ### Invocations While iris Is Not Running
 
 1. Bare invocation (`iris` without arguments):
-   The process takes the instance claim and runs iris. It connects to the display, loads its fonts, registers the global hotkeys, binds the single-instance IPC socket, and starts the system tray icon, in that order, before it opens any window. A hotkey pressed once the socket accepts connections reaches iris. A command, hotkey, or tray menu item that arrives during startup runs once startup completes. It then opens the home window. When another process holds the claim, the process waits up to 8 seconds for that iris to bind the socket, transmits `--home`, and exits with status 0.
+   The process takes the instance claim and runs iris. It connects to the display, loads its fonts, registers the global hotkeys, binds the single-instance IPC socket, and starts the system tray icon, in that order, before it opens any window. A hotkey pressed once the socket accepts connections reaches iris. A command, hotkey, or tray menu item that arrives during startup runs once startup completes. It then opens the library window. When another process holds the claim, the process waits up to 8 seconds for that iris to bind the socket, transmits `--library`, and exits with status 0.
 2. Commands for a running iris only (`--quit`, `--record-pause`, `--record-mic`):
    The client attempts to connect to the socket and does not start iris. When no iris answers, `--quit` exits with status 0; `--record-pause` and `--record-mic` print `iris: iris is not running` to standard error and exit with status 1.
 3. Other flagged commands (`--capture`, `--library`, `--settings`, etc.):
@@ -66,7 +65,7 @@ On Linux iris exits when its X server or Wayland compositor exits, as at the end
 ### Invocations While iris Runs
 
 1. Bare invocation (`iris` without arguments):
-   The client connects to the socket, transmits `--home` to display the home window, and exits with status 0.
+   The client connects to the socket, transmits `--library` to display the library window, and exits with status 0.
 2. Flagged invocations:
    The client connects to the socket, transmits the options, each `<file>` as an absolute path, separated by newlines, and exits with status 0. iris receives the options and dispatches the corresponding tasks.
 3. `iris --background`:

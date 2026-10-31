@@ -32,10 +32,6 @@ pub const HAIRLINE: Rgba = alpha(WHITE, 0.09);
 pub const WINDOW_EDGE: Rgba = alpha(WHITE, 0.10);
 /// Grouped-list card fill (macOS System Settings register).
 pub const GROUP_BG: Rgba = alpha(WHITE, 0.05);
-/// A clickable group card under the pointer and pressed: the card fill
-/// with the hover and press washes over it.
-pub const CARD_HOVER: Rgba = alpha(WHITE, 0.10);
-pub const CARD_PRESS: Rgba = alpha(WHITE, 0.14);
 /// Row separator inside a group card, inset to the label's leading edge.
 pub const SEPARATOR: Rgba = alpha(WHITE, 0.08);
 /// Text field fill and its 1px inner border.
@@ -66,19 +62,6 @@ pub const TEXT_SELECTION: Rgba = alpha(ACCENT, 0.40);
 pub const DANGER: Rgba = rgb(1.0, 0.271, 0.227);
 /// systemGreen (dark), #30D158: a finished save.
 pub const SUCCESS: Rgba = rgb(0.188, 0.820, 0.345);
-/// systemIndigo (dark), #5E5CE6: the Library's badge.
-pub const INDIGO: Rgba = rgb(0.369, 0.361, 0.902);
-
-/// `color` moved `t` of the way to white, alpha kept: the lit top of
-/// a filled badge.
-pub const fn lighten(color: Rgba, t: f32) -> Rgba {
-    Rgba {
-        r: color.r + (1.0 - color.r) * t,
-        g: color.g + (1.0 - color.g) * t,
-        b: color.b + (1.0 - color.b) * t,
-        a: color.a,
-    }
-}
 
 /// Window control dots (the macOS traffic-light register).
 pub const WIN_CLOSE: Rgba = rgb(1.0, 0.373, 0.341);
@@ -118,8 +101,6 @@ pub const HEADER_GAP: f32 = 6.0;
 pub const TOOLBAR_H: f32 = 52.0;
 
 /// Type scale, logical px (weights in the doc of each).
-/// Large title, Bold: the Home wordmark.
-pub const TEXT_LARGE_TITLE: f32 = 24.0;
 /// Title, SemiBold: pane and sheet titles.
 pub const TEXT_TITLE: f32 = 15.0;
 /// Headline, SemiBold: window titles in the toolbar, row titles.

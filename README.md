@@ -34,13 +34,13 @@ Release packages include FFmpeg. Source builds use `ffmpeg` from `PATH`.
    ```sh
    iris
    ```
-   The home window opens and iris adds a tray icon. Open iris from the application menu, the Start menu, or Applications in the same way. Closing the window leaves iris running with its hotkeys.
+   The library window opens and iris adds a tray icon. Open iris from the application menu, the Start menu, or Applications in the same way. Closing the window leaves iris running with its hotkeys.
 2. Press `Ctrl+Print` (`Ctrl+F13` on macOS) or run `iris --capture` to open the region capture overlay.
 3. Click a window to capture it, or drag a rectangle and press `Enter`.
 4. Click the preview toast to open the annotation editor.
 5. Press `Ctrl+Shift+Print` (`Ctrl+Shift+F13` on macOS) or run `iris --record-window` to toggle window recording.
 
-![Home Window](docs/images/home.png)
+![Library Window](docs/images/library.png)
 
 ## Documentation
 

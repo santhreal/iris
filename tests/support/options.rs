@@ -30,7 +30,6 @@ pub const OPTIONS: &[(&str, Kind)] = &[
     ("--record-mic", Kind::Other),
     ("--library", Kind::Single("Library - iris")),
     ("--settings", Kind::Single("Settings - iris")),
-    ("--home", Kind::Single("iris")),
     ("--annotate", Kind::Single(EDITOR)),
     ("--toast", Kind::Other),
     ("--quit", Kind::Other),

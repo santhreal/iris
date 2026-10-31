@@ -7,7 +7,7 @@
 //!   whichever blocking release the lock file resolves to.
 //! - A window that runs frames with nothing to draw. The X11 platform ran
 //!   a timer at the display refresh rate for every open window, so a
-//!   daemon with its home window open woke its main thread 60 times a
+//!   daemon with a window open woke its main thread 60 times a
 //!   second. Every option of `tests/support/options.rs` that opens a
 //!   window opens it here, each in a daemon of its own, and `ALLOWED`
 //!   requires a decision on the main-thread wakeups of each, so a window
@@ -100,12 +100,7 @@ fn an_idle_window_does_not_wake_the_main_thread() {
 
     /// The main-thread wakeups each window is allowed in `WATCH` at idle,
     /// by title. A frame timer at the display refresh rate makes 120.
-    const ALLOWED: &[(&str, u64)] = &[
-        ("Library - iris", 0),
-        ("Settings - iris", 0),
-        ("iris", 0),
-        (EDITOR, 0),
-    ];
+    const ALLOWED: &[(&str, u64)] = &[("Library - iris", 0), ("Settings - iris", 0), (EDITOR, 0)];
 
     if !enabled() {
         return;

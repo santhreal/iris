@@ -89,7 +89,7 @@ pub fn claim() -> Result<Option<Claimed>, String> {
 /// `Ok(None)`: delivered, the caller exits. `Ok(Some(_))`: no daemon
 /// runs and this process holds the claim: it becomes the daemon in the
 /// foreground and runs `args` itself. A bare invocation (no flags)
-/// surfaces the home window in a running daemon.
+/// opens the library in a running daemon.
 ///
 /// When no daemon answers, a flagged invocation still must not hold the
 /// caller's shell: it starts a detached `iris --background`, waits for the
@@ -100,7 +100,7 @@ pub fn claim() -> Result<Option<Claimed>, String> {
 pub fn forward_if_running(args: &[String]) -> Result<Option<Claimed>, String> {
     let name = imp::socket_name()?;
     let effective: &[String] = if args.is_empty() {
-        &["--home".to_string()]
+        &["--library".to_string()]
     } else {
         args
     };

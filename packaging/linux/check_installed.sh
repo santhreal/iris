@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs an installed iris on a private Xvfb display: the daemon starts,
-# maps the home window (WM_CLASS dev.iris.app), and exits on --quit.
+# maps the library window (WM_CLASS dev.iris.app), and exits on --quit.
 # CI runs it in a clean container after the package installs, so a
 # library the package does not depend on is missing there.
 #
@@ -54,12 +54,12 @@ mkdir -m 0700 "$home/run"
 export DISPLAY=":$n" IRIS_HOME="$home" XDG_RUNTIME_DIR="$home/run"
 unset WAYLAND_DISPLAY
 
-# The home window, titled "iris", is mapped.
-home_window() {
+# The library window, titled "Library - iris", is mapped.
+library_window() {
   local line id=
   while read -r line; do
     case $line in
-      *'"iris": ("dev.iris.app" "dev.iris.app")'*)
+      *'"Library - iris": ("dev.iris.app" "dev.iris.app")'*)
         id=${line%% *}
         break
         ;;
@@ -84,12 +84,12 @@ daemon_pid() {
   return 1
 }
 
-# Start the daemon through --home; sets $pid once the window maps.
+# Start the daemon through --library; sets $pid once the window maps.
 start() {
-  "$@" --home || fail "iris --home exited with $?"
-  wait_for home_window 20 || fail "no home window within 20 s"
+  "$@" --library || fail "iris --library exited with $?"
+  wait_for library_window 20 || fail "no library window within 20 s"
   pid=$(daemon_pid) || fail "no daemon process"
-  echo "check_installed: daemon $pid mapped the home window"
+  echo "check_installed: daemon $pid mapped the library window"
 }
 
 # The daemon's binary; fails once the daemon has exited, as a zombie
@@ -101,7 +101,7 @@ daemon_exe() {
 quit() {
   "$@" --quit || fail "iris --quit exited with $?"
   wait_for '! daemon_exe >/dev/null' 10 || fail "the daemon runs 10 s after --quit"
-  wait_for '! home_window' 10 || fail "the home window is mapped 10 s after the daemon exited"
+  wait_for '! library_window' 10 || fail "the library window is mapped 10 s after the daemon exited"
   echo "check_installed: the daemon exited on --quit"
 }
 

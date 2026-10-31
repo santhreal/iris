@@ -68,16 +68,10 @@ fn named(key: &str) -> Option<&'static str> {
     })
 }
 
-/// `chord` as a row of key caps in secondary text: a faint fill and no
-/// outline, so a shortcut reads as a hint beside its label rather than
-/// as a row of buttons. Tabular figures keep a function key's number
-/// from shifting the row.
-pub fn keycaps(chord: &str) -> Div {
-    keycaps_in(chord, theme::FG_DIM)
-}
-
-/// `chord` as [`keycaps`] with its labels in `ink`: primary text where
-/// the chord is a control's value, as in a shortcut field.
+/// `chord` as a row of key caps with its labels in `ink`: a faint fill
+/// and no outline, so a shortcut reads as a hint beside its label rather
+/// than as a row of buttons. Tabular figures keep a function key's
+/// number from shifting the row.
 pub fn keycaps_in(chord: &str, ink: Rgba) -> Div {
     div()
         .flex()

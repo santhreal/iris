@@ -24,10 +24,11 @@ use desktop as native;
 #[cfg(target_os = "linux")]
 use linux as native;
 
-/// The name of the command that starts a recording (the home tile, the
-/// tray menu, the settings, the shortcut sheet), after what it records: a
-/// picked window on Linux, the desktop on Windows and macOS. Title Case
-/// for the tile and the menu row, sentence case for a setting.
+/// The name of the command that starts a recording (the library's
+/// button, the tray menu, the settings, the shortcut sheet), after what
+/// it records: a picked window on Linux, the desktop on Windows and
+/// macOS. Title Case for the button and the menu row, sentence case for
+/// a setting.
 pub const START_TITLE: &str = if cfg!(target_os = "linux") {
     "Record Window"
 } else {

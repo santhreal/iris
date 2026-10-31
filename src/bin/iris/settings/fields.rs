@@ -773,8 +773,8 @@ impl Settings {
     }
 
     pub(super) fn hotkey_row(&self, field: Field, cx: &mut Context<Self>) -> Div {
-        // At rest the chord shows as key caps, as Home and the shortcut
-        // sheets show it; recording shows the prompt.
+        // At rest the chord shows as key caps, as the shortcut sheets
+        // show it; recording shows the prompt.
         let recording = self.recording == Some(field);
         let state = if recording {
             widgets::FieldState::Recording

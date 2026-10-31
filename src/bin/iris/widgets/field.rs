@@ -664,7 +664,7 @@ mod tests {
     use super::{edit_line, keep_in_view, ring_step, Line, LineKey};
 
     // WHY: closes "Tab stalls at an end or skips a stop" for every ring
-    // the keyboard moves, Home's tiles and the Settings controls: every
+    // the keyboard moves, the library's toolbar and the Settings controls: every
     // stop is reached in both directions, n steps return to the start,
     // and a surface with no stops lands nowhere instead of panicking.
     #[test]

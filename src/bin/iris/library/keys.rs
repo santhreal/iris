@@ -216,6 +216,16 @@ impl Library {
 
     /// Run toolbar button `tool`, as a click on it does.
     pub(super) fn run_tool(&mut self, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
+        // Stopping a live recording reads no screen: the library stays
+        // open.
+        if tool == Tool::Record && crate::daemon::RECORDING.active() {
+            crate::daemon::run(cx, &crate::daemon::Command::RecordToggle);
+            return;
+        }
+        if let Some((cmd, _)) = tool.screen_action() {
+            self.leave_and_run(cmd, window, cx);
+            return;
+        }
         match tool {
             Tool::Copy => self.copy_selection(cx),
             Tool::Trash => self.trash_selection(cx),
@@ -229,10 +239,7 @@ impl Library {
                     self.set_status(e, cx);
                 }
             }
-            Tool::Capture => {
-                self.start_capture(window, cx);
-                return;
-            }
+            Tool::Capture | Tool::Record => {}
         }
         cx.notify();
     }

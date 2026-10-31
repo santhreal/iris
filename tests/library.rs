@@ -537,11 +537,11 @@ fn tab_runs_the_window_buttons() {
         open.mapped(SETTINGS).then_some(())
     });
     open.point();
-    // Right moves on to New Screenshot, which closes the library for
-    // the overlay.
-    open.keys(&[RIGHT, RETURN]);
+    // Right moves on to Record and then to New Screenshot, which
+    // closes the library for the overlay.
+    open.keys(&[RIGHT, RIGHT, RETURN]);
     open.daemon
-        .until("Right and Return to start a capture", || {
+        .until("Right twice and Return to start a capture", || {
             (open.mapped(OVERLAY) && !open.mapped(LIBRARY)).then_some(())
         });
 }
@@ -572,9 +572,9 @@ fn tab_runs_the_selection_buttons() {
     open.daemon.settle();
     open.keys(&[ESCAPE]);
     open.sheet(false, "Escape to close the sheet");
-    // Tab past New Screenshot returns to the grid, where Return opens
-    // the capture under the cursor.
-    open.keys(&[TAB, TAB, TAB, RETURN]);
+    // Tab past Settings, Record, and New Screenshot returns to the grid,
+    // where Return opens the capture under the cursor.
+    open.keys(&[TAB, TAB, TAB, TAB, RETURN]);
     open.daemon.until(
         "Tab past the last button and Return to open the capture",
         || open.mapped("first.png - iris").then_some(()),

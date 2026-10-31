@@ -15,7 +15,7 @@ use super::layout::{
 use super::listing::{first_screen, ListPass, Listing};
 use super::preview::fit;
 use super::render::{empty_hint, help_rows};
-use super::{CARD_H, CARD_W, GAP, MIN_SIZE, THUMB_H};
+use super::{Tool, CARD_H, CARD_W, GAP, MIN_SIZE, THUMB_H};
 use crate::sys::hotkeys::Binding;
 use crate::widgets::MENU_W;
 
@@ -823,7 +823,7 @@ fn every_shortcuts_sheet_row_reads_as_key_caps() {
 #[test]
 fn the_empty_hint_names_the_shortcut_only_while_it_works() {
     let press = "Press Print to capture a region of the screen.";
-    let button = "Click New Screenshot in the toolbar to capture a region of the screen.";
+    let button = "Click New Screenshot to capture a region of the screen.";
     for (keys, binding, want) in [
         ("print", Some(Binding::Live), press),
         ("Print", None, press),
@@ -1015,4 +1015,24 @@ fn an_open_decodes_the_cards_its_first_frame_draws() {
         assert_eq!(decoded, shown, "{n} captures in {width}x{height}");
         assert_eq!(hi > lo, n > 0, "{n} captures draw no card");
     }
+}
+
+// WHY: the class closed here is "one command, two names": a toolbar
+// button that reads the screen and the tray row that runs the same
+// command read the same, for every button. The window's buttons offer
+// both screen commands, New Screenshot last at the trailing edge, where
+// `tests/capture_start.rs` clicks it; the selection's buttons offer none. Not
+// covered: the tooltips' shortcuts, which describe a command rather
+// than name it.
+#[test]
+fn every_screen_button_reads_as_the_tray_row_that_runs_its_command() {
+    let mut screen = Vec::new();
+    for tool in Tool::WINDOW.into_iter().chain(Tool::SELECTION) {
+        if let Some((cmd, title)) = tool.screen_action() {
+            assert_eq!(crate::sys::tray::label_of(&cmd), Some(title), "{tool:?}");
+            screen.push(format!("{cmd:?}"));
+        }
+    }
+    assert_eq!(screen, ["RecordToggle", "Capture"]);
+    assert_eq!(Tool::WINDOW.last(), Some(&Tool::Capture));
 }

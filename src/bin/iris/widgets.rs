@@ -45,7 +45,7 @@ pub use self::field::{
 pub use self::image::*;
 #[cfg(test)]
 pub(crate) use self::keycaps::assert_hints_read_as_keys;
-pub use self::keycaps::{chord_label, key_hint, keycaps, keycaps_in, text_with_key};
+pub use self::keycaps::{chord_label, key_hint, keycaps_in, text_with_key};
 pub use self::menu::{
     hover_row, menu, menu_at, menu_key, menu_separator, popup_button, popup_menu, MenuItem,
     MenuKey, MENU_PAD, MENU_RADIUS, MENU_ROW_H, MENU_W,
