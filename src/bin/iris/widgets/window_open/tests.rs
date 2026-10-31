@@ -13,9 +13,11 @@
 use std::prelude::v1::test;
 use std::time::Duration;
 
-use gpui::{point, px, size, Bounds, WindowBounds, WindowKind, WindowOptions};
+use gpui::{
+    point, px, size, ActivationPolicy, Bounds, WindowBounds, WindowId, WindowKind, WindowOptions,
+};
 
-use super::iris_options;
+use super::{iris_options, AppWindows};
 
 #[test]
 fn every_window_animates_unthrottled_under_the_iris_app_id() {
@@ -78,5 +80,36 @@ fn the_callers_other_options_pass_through() {
             ),
             (focus, show, !focus, focus)
         );
+    }
+}
+
+/// WHY: iris has a Dock icon and a menu bar on macOS while an app window
+/// is open and neither once the last one closes. Closed here: a second
+/// app window, a reopened one, or the close of a window that is not an
+/// app window (the overlay, a pin) that changes the policy, and a last
+/// close that leaves iris in the Dock. Not covered: what AppKit does with
+/// the policy, which only runs on macOS.
+#[test]
+fn only_the_first_open_and_the_last_close_change_the_dock() {
+    let (a, b, other) = (WindowId::from(1), WindowId::from(2), WindowId::from(3));
+    let mut open = AppWindows::default();
+    let steps: [(&str, bool, WindowId, Option<ActivationPolicy>); 9] = [
+        ("open a", true, a, Some(ActivationPolicy::Regular)),
+        ("open b", true, b, None),
+        ("open a again", true, a, None),
+        ("close a pop-up", false, other, None),
+        ("close a", false, a, None),
+        ("close a again", false, a, None),
+        ("close b", false, b, Some(ActivationPolicy::Accessory)),
+        ("close b again", false, b, None),
+        ("open b after", true, b, Some(ActivationPolicy::Regular)),
+    ];
+    for (step, opens, id, want) in steps {
+        let got = if opens {
+            open.opened(id)
+        } else {
+            open.closed(id)
+        };
+        assert_eq!(got, want, "{step}");
     }
 }

@@ -1,8 +1,14 @@
 //! Opening a window. Every iris window opens through `open_window`,
-//! which sets the app id of the desktop entry, the window's title, and
-//! the frame rate of its animations while it has no focus.
+//! which sets the app id of the desktop entry, the window's title, the
+//! frame rate of its animations while it has no focus, and whether iris
+//! shows in the macOS Dock and menu bar.
 
-use gpui::{App, Entity, Render, Window, WindowHandle, WindowOptions};
+use std::cell::{Cell, RefCell};
+
+use gpui::{
+    ActivationPolicy, AnyWindowHandle, App, Entity, Render, Window, WindowHandle, WindowId,
+    WindowOptions,
+};
 
 /// Open a window titled `title` with the app id `iris_lib::APP_ID`: the
 /// X11 class and Wayland app id that docks, task switchers, and window
@@ -17,6 +23,12 @@ use gpui::{App, Entity, Render, Window, WindowHandle, WindowOptions};
 /// capture while another application has focus. Every iris animation
 /// settles and requests no frames at rest, so the cap saves nothing.
 ///
+/// A window that can minimize (home, library, settings, the editor) is
+/// an app window: while one is open iris has a Dock icon and a menu bar
+/// on macOS, and with none open it has neither, as the capture overlay,
+/// the toast, notices, pins, and the recording chip are not app
+/// windows.
+///
 /// `options` sets everything else. clippy.toml disallows
 /// `App::open_window` and `AsyncApp::open_window` outside this function.
 #[allow(clippy::disallowed_methods)] // the one caller of App::open_window
@@ -26,10 +38,65 @@ pub fn open_window<V: 'static + Render>(
     options: WindowOptions,
     build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
 ) -> gpui::Result<WindowHandle<V>> {
-    cx.open_window(iris_options(options), |window, cx| {
+    let app_window = options.is_minimizable;
+    let handle = cx.open_window(iris_options(options), |window, cx| {
         window.set_window_title(title);
         build(window, cx)
+    })?;
+    if app_window {
+        watch_closes(cx);
+        let id = AnyWindowHandle::from(handle).window_id();
+        let change = APP_WINDOWS.with(|w| w.borrow_mut().opened(id));
+        if let Some(policy) = change {
+            cx.set_activation_policy(policy);
+        }
+    }
+    Ok(handle)
+}
+
+thread_local! {
+    /// The app windows open now. GPUI windows live on the main thread.
+    static APP_WINDOWS: RefCell<AppWindows> = RefCell::default();
+    /// Whether `watch_closes` has subscribed.
+    static WATCHING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Subscribe once to window closes, which take a closed app window out
+/// of `APP_WINDOWS`.
+fn watch_closes(cx: &mut App) {
+    if WATCHING.with(|w| w.replace(true)) {
+        return;
+    }
+    cx.on_window_closed(|cx, id| {
+        if let Some(policy) = APP_WINDOWS.with(|w| w.borrow_mut().closed(id)) {
+            cx.set_activation_policy(policy);
+        }
     })
+    .detach();
+}
+
+/// The open app windows, and the activation policy each open and close
+/// changes to.
+#[derive(Default)]
+struct AppWindows(Vec<WindowId>);
+
+impl AppWindows {
+    /// Record `id` open. The first app window puts iris in the Dock.
+    fn opened(&mut self, id: WindowId) -> Option<ActivationPolicy> {
+        let first = self.0.is_empty();
+        if !self.0.contains(&id) {
+            self.0.push(id);
+        }
+        first.then_some(ActivationPolicy::Regular)
+    }
+
+    /// Record `id` closed. The last app window to close takes iris out
+    /// of the Dock; any other window changes nothing.
+    fn closed(&mut self, id: WindowId) -> Option<ActivationPolicy> {
+        let before = self.0.len();
+        self.0.retain(|w| *w != id);
+        (before == 1 && self.0.is_empty()).then_some(ActivationPolicy::Accessory)
+    }
 }
 
 /// `options` with the app id and frame rate every iris window opens with.

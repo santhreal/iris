@@ -109,12 +109,17 @@ fn main() {
     // process has one thread, and the NVIDIA driver connects to DISPLAY
     // when it is loaded, which starts an on-demand XWayland.
     let app = gpui_platform::application();
+    // iris starts out of the Dock and the menu bar on macOS; the first
+    // app window puts it there (widgets::open_window). The bundle's
+    // LSUIElement keeps the Dock icon from showing at launch.
+    let app = app.with_activation_policy(ActivationPolicy::Accessory);
     // Opening iris.app while iris runs starts no second process: macOS
     // reports a reopen to the running app, which then shows home. The
     // other platforms never report one.
     app.on_reopen(|cx| daemon::run(cx, &daemon::Command::Home));
     app.run(move |cx: &mut App| {
         theme::load_fonts(cx);
+        sys::menu_bar::install(cx);
         daemon::start(cx, claimed);
         for cmd in &cmds {
             daemon::run(cx, cmd);

@@ -17,7 +17,7 @@
 //! Windows command line to its terminal; both are empty elsewhere.
 //! `autostart`, `hotkeys`, `install`, `record`, `reveal`, `sound`,
 //! `tray`, `watch`, and `window` have a per-OS implementation each.
-//! `xdg` writes Linux desktop entries.
+//! `xdg` writes Linux desktop entries. `menu_bar` is the macOS menu bar.
 
 pub mod alloc;
 pub mod console;
@@ -28,6 +28,7 @@ pub mod ipc;
 pub mod autostart;
 pub mod hotkeys;
 pub mod install;
+pub mod menu_bar;
 pub mod record;
 pub mod reveal;
 pub mod sound;
