@@ -46,6 +46,25 @@ pub fn windows_of(conn: &impl Connection, root: u32, title: &str) -> Vec<u32> {
         .collect()
 }
 
+/// The width and height of `window`'s `_NET_WM_ICON`, when it sets one
+/// whose length holds them and that many pixels.
+pub fn icon_size(conn: &impl Connection, window: u32) -> Option<(u32, u32)> {
+    let atom = conn
+        .intern_atom(false, b"_NET_WM_ICON")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let reply = conn
+        .get_property(false, window, atom, AtomEnum::CARDINAL, 0, u32::MAX / 4)
+        .unwrap()
+        .reply()
+        .ok()?;
+    let data: Vec<u32> = reply.value32()?.collect();
+    let (w, h) = (*data.first()?, *data.get(1)?);
+    (data.len() == 2 + (w * h) as usize).then_some((w, h))
+}
+
 /// The window with the input focus.
 pub fn focus(conn: &impl Connection) -> u32 {
     conn.get_input_focus().unwrap().reply().unwrap().focus

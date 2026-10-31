@@ -10,7 +10,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt as _, InputFocus};
 
 use crate::options::{open_args, single_png, Kind, EDITOR, OPTIONS};
-use crate::x11::{focus, windows_of};
+use crate::x11::{focus, icon_size, windows_of};
 
 /// How long a window that should not exist has to map.
 const SETTLE: Duration = Duration::from_millis(800);
@@ -38,6 +38,9 @@ fn a_second_open_focuses_the_window_already_open() {
                 _ => None,
             },
         );
+        // Every window an option opens is an app window, which a taskbar
+        // with no desktop entry for its class shows by this icon.
+        assert_eq!(icon_size(&conn, first), Some((128, 128)), "{option}");
         // Focus leaves the window; the round trip orders the change
         // before the second open.
         conn.set_input_focus(InputFocus::POINTER_ROOT, root, x11rb::CURRENT_TIME)

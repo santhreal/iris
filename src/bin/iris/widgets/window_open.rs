@@ -39,6 +39,11 @@ pub fn open_window<V: 'static + Render>(
     build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
 ) -> gpui::Result<WindowHandle<V>> {
     let app_window = options.is_minimizable;
+    #[cfg(target_os = "linux")]
+    let options = WindowOptions {
+        icon: options.icon.or_else(|| app_window.then(app_icon).flatten()),
+        ..options
+    };
     let handle = cx.open_window(iris_options(options), |window, cx| {
         window.set_window_title(title);
         build(window, cx)
@@ -52,6 +57,26 @@ pub fn open_window<V: 'static + Render>(
         }
     }
     Ok(handle)
+}
+
+/// The PNG of the icon an X11 app window sets as `_NET_WM_ICON`.
+#[cfg(target_os = "linux")]
+const ICON_PNG: &[u8] = include_bytes!("../../../../packaging/icons/iris-128.png");
+
+/// The app icon an X11 taskbar or window switcher shows for an app
+/// window when no installed desktop entry matches its class, as for a
+/// source build or an AppImage before its first start. Decoded once.
+#[cfg(target_os = "linux")]
+fn app_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
+    static ICON: std::sync::OnceLock<Option<std::sync::Arc<image::RgbaImage>>> =
+        std::sync::OnceLock::new();
+    ICON.get_or_init(|| {
+        image::load_from_memory_with_format(ICON_PNG, image::ImageFormat::Png)
+            .map(|icon| std::sync::Arc::new(icon.to_rgba8()))
+            .map_err(|e| iris_lib::ilog!("iris: decode the window icon: {e}"))
+            .ok()
+    })
+    .clone()
 }
 
 thread_local! {

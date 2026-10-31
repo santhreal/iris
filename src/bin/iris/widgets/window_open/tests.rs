@@ -113,3 +113,19 @@ fn only_the_first_open_and_the_last_close_change_the_dock() {
         assert_eq!(got, want, "{step}");
     }
 }
+
+/// WHY: an X11 app window shows the iris icon in a taskbar with no
+/// desktop entry for its class only when the embedded PNG decodes; a
+/// decode failure logs and leaves the generic icon. Closed here: an
+/// embedded file that does not decode or has another size. Not covered:
+/// which icon a window manager draws.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_window_icon_decodes_at_its_size() {
+    let icon = super::app_icon().expect("the embedded icon decodes");
+    assert_eq!(icon.dimensions(), (128, 128));
+    assert!(
+        icon.pixels().any(|p| p.0[3] == 255),
+        "the icon has opaque pixels"
+    );
+}
