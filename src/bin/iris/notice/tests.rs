@@ -105,19 +105,26 @@ fn card_holds_its_text_and_buttons_with_no_slack() {
     }
 }
 
+/// WHY: a saved recording's card leads with its first frame, not the
+/// badge. The class closed is "the poster pushes the card out of the
+/// size it was measured for": the name must fit the column beside the
+/// poster and both buttons, and the poster must fit the one-line card,
+/// so the card is no taller than the text it holds.
 #[test]
-fn detail_column_fits_a_recording_name_beside_both_buttons() {
+fn detail_column_fits_a_recording_name_beside_its_poster_and_both_buttons() {
     // The longest name reserve_recording_path makes, but the millis
     // fallback: a date, a time, a 3-digit suffix, and the extension.
     let name = theme::advance_sum("2026-08-09_14-02-11_999.webm", theme::TEXT_SMALL);
+    let column = text_width(lead(Kind::Saved, true), 2);
+    assert!(name < column, "{name}px of name in a {column}px column");
     assert!(
-        name < text_width(2),
-        "{name}px of name in a {}px column",
-        text_width(2)
-    );
-    assert!(
-        text_width(2) < text_width(1),
+        column < text_width(lead(Kind::Saved, true), 1),
         "the reveal button narrows the column"
+    );
+    assert_eq!(lead(Kind::Saved, true), POSTER_W);
+    assert!(
+        POSTER_H <= card_height(1) - 2.0 * (BORDER + PAD),
+        "a {POSTER_H}px poster in a one-line card"
     );
 }
 
@@ -136,8 +143,19 @@ fn a_guide_card_has_no_buttons_and_its_detail_takes_the_row() {
     ] {
         assert_eq!(buttons(kind, file), want, "{kind:?} with file {file}");
     }
-    assert_eq!(text_width(0), W - 2.0 * (BORDER + PAD) - BADGE - GAP);
-    assert_eq!(text_width(1), text_width(0) - BUTTON - GAP);
+    assert_eq!(text_width(BADGE, 0), W - 2.0 * (BORDER + PAD) - BADGE - GAP);
+    assert_eq!(text_width(BADGE, 1), text_width(BADGE, 0) - BUTTON - GAP);
+    // Only a saved file has a frame to lead with; every other card
+    // leads with its badge.
+    for (kind, file) in [
+        (Kind::Saved, false),
+        (Kind::Failure, false),
+        (Kind::Update, false),
+        (Kind::Guide, false),
+        (Kind::Countdown(Instant::now()), false),
+    ] {
+        assert_eq!(lead(kind, file), BADGE, "{kind:?}");
+    }
 }
 
 #[test]

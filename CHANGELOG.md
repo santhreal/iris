@@ -32,6 +32,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `Shift+F10` or the Menu key opens the library's card context menu on the selected card and the editor's More menu, where `Left` and `Right` switch to the Copy menu.
 - Window and region recording through ffmpeg writes MP4, GIF, or WebM, with pause, a microphone toggle, and an indicator chip that is excluded from the recording where the platform allows it.
 - The tray menu shows Stop Recording in place of Record Window, or Record Screen on Windows and macOS, while a recording runs.
+- A saved recording's notice shows the recording's first frame, which opens the recording in the system's default player.
 - A touchpad pinch zooms the editor's image about the pinch center.
 - The capture library shows every capture in a thumbnail grid with multiple selection, file drag-out, copy, and reveal in the file manager.
 - The library has keyboard navigation, a context menu on each card, and a Quick Look preview on `Space`.

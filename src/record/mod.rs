@@ -8,8 +8,10 @@ pub(crate) mod child;
 pub mod codec;
 mod doorbell;
 pub mod join;
+mod poster;
 
 pub use doorbell::Doorbell;
+pub use poster::poster;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

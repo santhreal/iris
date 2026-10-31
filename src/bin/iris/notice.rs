@@ -7,7 +7,8 @@
 //! a live toast. It slides in from past the screen edge, stays for the
 //! toast duration (a failure for at least 8 seconds; hovering holds
 //! it), and slides back out. A newer notice replaces it, and so does a
-//! toast that lands on it. A saved file offers Show in Folder. The
+//! toast that lands on it. A saved recording leads with its first
+//! frame, which opens the recording, and offers Show in Folder. The
 //! window never takes focus.
 //!
 //! A guide is the one notice that does not time out: it states the
@@ -52,6 +53,15 @@ const BORDER: f32 = 1.0;
 const GLYPH: f32 = 14.0;
 const BADGE: f32 = TITLE_LINE;
 const BADGE_FILL: f32 = 0.18;
+/// A saved recording's first frame, in the badge's place: as tall as
+/// the title and one detail line, at 16:10.
+const POSTER_H: f32 = TITLE_LINE + DETAIL_LINE;
+const POSTER_W: f32 = 62.0;
+/// The play disc centred on the poster, and its glyph.
+const PLAY: f32 = 20.0;
+const PLAY_GLYPH: f32 = 10.0;
+/// The poster fades in over the slot once ffmpeg has decoded it.
+const POSTER_FADE: Duration = Duration::from_millis(160);
 /// A form control's edge: 24, with a 14px glyph.
 const BUTTON: f32 = 24.0;
 const BUTTON_GAP: f32 = 4.0;
@@ -87,7 +97,8 @@ enum Kind {
     Countdown(Instant),
 }
 
-/// A file was written: its name, and Show in Folder.
+/// A recording was written: its first frame, its name, and Show in
+/// Folder.
 pub fn saved(cx: &mut App, title: &str, path: &Path) {
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
@@ -288,15 +299,28 @@ pub struct Notice {
     cutout: crate::sys::window::Cutout,
     /// Draw nothing: a countdown at zero leaves the screen to the capture.
     hidden: bool,
+    /// A saved recording's first frame, once ffmpeg has decoded it, and
+    /// when it arrived, for its fade.
+    poster: Option<(std::sync::Arc<RenderImage>, Instant)>,
 }
 
-/// Width of the detail text beside the glyph and `buttons` buttons.
-fn text_width(buttons: usize) -> f32 {
+/// Width of the leading glyph, or poster, on a card of `kind`.
+fn lead(kind: Kind, file: bool) -> f32 {
+    if kind == Kind::Saved && file {
+        POSTER_W
+    } else {
+        BADGE
+    }
+}
+
+/// Width of the detail text beside a `lead` wide glyph and `buttons`
+/// buttons.
+fn text_width(lead: f32, buttons: usize) -> f32 {
     let row = match buttons {
         0 => 0.0,
         n => n as f32 * BUTTON + (n - 1) as f32 * BUTTON_GAP + GAP,
     };
-    W - 2.0 * (BORDER + PAD) - BADGE - GAP - row
+    W - 2.0 * (BORDER + PAD) - lead - GAP - row
 }
 
 /// The buttons on a card of `kind`: reveal with a file, install on an
@@ -389,7 +413,7 @@ fn open(
             &detail,
             theme::TEXT_SMALL,
             FontWeight::NORMAL,
-            text_width(buttons),
+            text_width(lead(kind, file.is_some()), buttons),
         )
         .min(MAX_LINES)
     };
@@ -415,6 +439,7 @@ fn open(
         armed: 0,
         cutout: Default::default(),
         hidden: false,
+        poster: None,
     };
     let handle = crate::widgets::open_window(
         cx,
@@ -453,10 +478,100 @@ fn open(
             })
             .map_err(|e| format!("arm notice dismiss: {e}"))?;
     }
+    if kind == Kind::Saved {
+        handle
+            .update(cx, |n, window, cx| n.load_poster(window.scale_factor(), cx))
+            .map_err(|e| format!("load notice poster: {e}"))?;
+    }
     Ok(())
 }
 
 impl Notice {
+    /// Decode the saved recording's first frame off the UI thread at
+    /// the window's `scale`, so its texels land 1:1 on the slot. The
+    /// card opens without waiting; the frame fades in as it arrives,
+    /// inside the entrance. A frame that fails leaves the empty slot.
+    fn load_poster(&mut self, scale: f32, cx: &mut Context<Self>) {
+        let Some(path) = self.file.clone() else {
+            return;
+        };
+        let (w, h) = (
+            (POSTER_W * scale).round() as u32,
+            (POSTER_H * scale).round() as u32,
+        );
+        let frame = cx
+            .background_executor()
+            .spawn(async move { iris_lib::record::poster(&path, w, h) });
+        cx.spawn(async move |this, cx| {
+            let frame = frame.await;
+            this.update(cx, |n, cx| match frame {
+                Ok(rgba) => {
+                    let render = widgets::render_image_from_rgba_owned(rgba);
+                    n.poster = Some((render, Instant::now()));
+                    cx.notify();
+                }
+                Err(e) => iris_lib::ilog!("iris: notice poster: {e}"),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The saved recording's first frame under a play disc, faded in by
+    /// `shown`; until it arrives, the dark slot and the disc. A click
+    /// opens the recording in the system's player.
+    fn poster_slot(&self, path: PathBuf, shown: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        let radius = px(theme::RADIUS_CONTROL);
+        div()
+            .id("notice-poster")
+            .flex_none()
+            .relative()
+            .w(px(POSTER_W))
+            .h(px(POSTER_H))
+            .rounded(radius)
+            .bg(theme::FIELD_BG)
+            .overflow_hidden()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .children(self.poster.as_ref().map(|(frame, _)| {
+                img(ImageSource::Render(frame.clone()))
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .object_fit(ObjectFit::Fill)
+                    .rounded(radius)
+                    .opacity(shown)
+            }))
+            .child(
+                div()
+                    .size(px(PLAY))
+                    .rounded_full()
+                    .bg(theme::READOUT_FILL)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon(Icon::Play, theme::THUMB_STATUS, PLAY_GLYPH)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .rounded(radius)
+                    .border_1()
+                    .border_color(theme::HAIRLINE),
+            )
+            .tooltip(widgets::tip("Open", None))
+            .on_click(cx.listener(move |n, _, _, cx| {
+                cx.open_with_system(&path);
+                n.leave(EXIT, cx);
+            }))
+    }
+
     /// Leave after `wait`, or later while the pointer rests on the card.
     /// A guide and a countdown stay until their interaction ends.
     fn arm(&mut self, wait: Duration, cx: &mut Context<Self>) {
@@ -525,9 +640,24 @@ impl Render for Notice {
             }
             if still || t >= 1.0 {
                 window.remove_window();
+                if let Some((poster, _)) = self.poster.take() {
+                    widgets::release_render(&poster, cx);
+                }
             } else {
                 animating = true;
             }
+        }
+        // The first frame fades in over its slot; a screen that does not
+        // blend shows it at once.
+        let poster_t = self.poster.as_ref().map_or(0.0, |(_, at)| {
+            if still {
+                1.0
+            } else {
+                (at.elapsed().as_secs_f32() / motion::tempo(POSTER_FADE).as_secs_f32()).min(1.0)
+            }
+        });
+        if self.poster.is_some() && poster_t < 1.0 {
+            animating = true;
         }
         if animating {
             window.request_animation_frame();
@@ -638,15 +768,19 @@ impl Render for Notice {
             .shadow(theme::card_shadow(ease))
             .opacity(opacity)
             .child(
-                div()
-                    .flex_none()
-                    .size(px(BADGE))
-                    .rounded_full()
-                    .bg(theme::alpha(tint, BADGE_FILL))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icon(glyph, tint, GLYPH)),
+                match self.file.clone().filter(|_| self.kind == Kind::Saved) {
+                    Some(path) => self.poster_slot(path, poster_t, cx).into_any_element(),
+                    None => div()
+                        .flex_none()
+                        .size(px(BADGE))
+                        .rounded_full()
+                        .bg(theme::alpha(tint, BADGE_FILL))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(glyph, tint, GLYPH))
+                        .into_any_element(),
+                },
             )
             .child(text)
             .children((buttons(self.kind, self.file.is_some()) > 0).then(|| {

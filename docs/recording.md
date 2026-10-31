@@ -235,7 +235,7 @@ Generated from local clock time. If a file with that name exists, iris appends `
 ### Completion and Failure Notices
 
 When a recording finishes or fails, iris displays a corner notice card on the primary display in the corner configured by `toast_position` in [configuration.md#toast](configuration.md#toast):
-- **Saved recording**: Displays `"Recording saved"` with the output filename and a folder button. Clicking the folder button opens the containing directory in the system file manager with the file selected. The card dismisses after `toast_duration_ms` (default: 5000 milliseconds).
+- **Saved recording**: Displays the first frame of the recording, `"Recording saved"`, the output filename, and a folder button. Clicking the frame opens the recording in the system's default player. Clicking the folder button opens the containing directory in the system file manager with the file selected. The card dismisses after `toast_duration_ms` (default: 5000 milliseconds).
 - **Failed recording**: Displays `"Recording failed"` with the error description. The card remains visible for `toast_duration_ms`, held to a minimum of 8000 milliseconds (`FAILURE_HOLD`).
 - Hovering the pointer over a notice card pauses auto-dismissal.
 - A notice that would cover a toast resting in the same corner stacks beyond the toast card instead: above it in a bottom corner, below it in a top corner.
