@@ -44,7 +44,10 @@ pub(super) const BAR_LIFT: f32 = 64.0;
 pub(super) const BAR_RADIUS: f32 = 14.0;
 /// The bar's glass: the frozen frame under it averaged into cells this
 /// many logical px across, blurred this many cells each way, under a
-/// tint dark enough for the bar's white glyphs over a white page.
+/// tint dark enough for the bar's white glyphs over a white page. The
+/// frame is static, so it is blurred once on the CPU: gpui's
+/// `backdrop_blur` samples 24 taps a frame, which bands into copies of
+/// the frame's hard edges at a radius this wide.
 const GLASS_CELL: f32 = 4.0;
 const GLASS_RADIUS: u32 = 3;
 pub(super) const GLASS_TINT: f32 = 0.78;
