@@ -59,7 +59,7 @@ Each card is 216 pixels wide:
 
 ## Card Actions
 
-A pointer on a card lifts its shadow and shows three buttons in the tile's bottom-right corner, each with a tooltip:
+A pointer on a card lifts its shadow and shows three buttons, each with a tooltip:
 
 1. **Copy** (copy icon): copies the capture's decoded pixels to the clipboard. The PNG decodes on a background thread.
 2. **Show in Folder** (folder icon; **Show in Finder** on macOS, **Show in File Explorer** on Windows): opens the system file manager with the capture selected:
@@ -67,6 +67,8 @@ A pointer on a card lifts its shadow and shows three buttons in the tile's botto
    - macOS: runs `/usr/bin/open -R <path>`. If the file does not exist, opens the parent folder.
    - Windows: calls `SHOpenFolderAndSelectItems`. Without it, runs `explorer.exe <folder>`.
 3. **Move to Trash** (trash icon): moves the capture to the system trash ([Move to Trash](#move-to-trash)).
+
+The buttons sit 6 pixels inside the capture's bottom-right corner. Along a side where the capture is too small to hold them, they center on the capture.
 
 A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Pin to Screen**, **Copy**, **Show in Folder**, and **Move to Trash**. `Shift+F10` or the Menu key opens the same menu on the selected card, at the center of its tile, and scrolls the card into view. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. **Pin to Screen** opens the card's capture in a [pinned window](toast.md#pinned-windows) centered on the app window. In the open menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` runs the highlighted row, and other keys do nothing. A click outside the menu or `Escape` closes it.
 
@@ -98,7 +100,7 @@ A right-click on a card opens a context menu at the pointer: **Open**, **Quick L
 
 The window controls close, minimize, and maximize the window in each platform's place: on macOS, AppKit's close, minimize, and zoom buttons in the top-left corner, where zoom enters fullscreen; on Windows, the minimize, maximize, and close caption buttons in the top-right corner; on Linux, round buttons on the sides set by the desktop's button layout, or minimize, maximize, and close in the top-right corner when the desktop sets none ([Window Controls](platforms.md#platform-capabilities-matrix)). On X11 with no compositing manager, the window manager frames the window and the toolbar has no window controls ([Window Frame](platforms.md)).
 
-Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 640×480.
+Drag the toolbar to move the window. Drag an edge or corner to resize it; the window stops at 760×480.
 
 ## Storage Paths
 

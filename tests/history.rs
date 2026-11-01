@@ -178,10 +178,10 @@ const PROMPT_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 /// The More menu's geometry, from `theme` and `widgets::menu`: the
 /// menu drops 4 px under the 28 px button centered in the 52 px toolbar,
 /// from the button's left edge, kept 8 px inside the window's right
-/// edge, and is 168 px wide with 5 px of padding, 24 px rows, and 9 px
+/// edge, and is 192 px wide with 5 px of padding, 24 px rows, and 9 px
 /// separators.
 const MENU_TOP: i16 = (52 - 28) / 2 + 28 + 4;
-const MENU_W: i16 = 168;
+const MENU_W: i16 = 192;
 const MENU_MARGIN: i16 = 8;
 const MENU_PAD: i16 = 5;
 const MENU_ROW: i16 = 24;

@@ -15,7 +15,7 @@ use crate::theme;
 /// is MENU_W wide with MENU_RADIUS corners. A menu of `rows` is
 /// MENU_ROW_H*rows + MENU_PAD*2 tall: 4px of padding and the 1px
 /// border at each end.
-pub const MENU_W: f32 = 168.0;
+pub const MENU_W: f32 = 192.0;
 pub const MENU_ROW_H: f32 = 24.0;
 pub const MENU_RADIUS: f32 = theme::RADIUS_MENU;
 pub const MENU_PAD: f32 = 5.0;

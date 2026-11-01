@@ -10,7 +10,7 @@ use iris_lib::library::CaptureEntry;
 
 use crate::icons::Icon;
 use crate::theme;
-use crate::widgets::tip;
+use crate::widgets::{tip, OVERLAY_BUTTON};
 
 use super::listing::Caption;
 use super::{Library, CAPTION_GAP, CAPTION_H, CARD_W, THUMB_H};
@@ -37,6 +37,34 @@ pub(super) fn thumb_rect(w: u32, h: u32) -> (f32, f32, f32, f32) {
 /// The selection ring: RING wide, RING_GAP outside the tile.
 pub(super) const RING: f32 = 2.0;
 pub(super) const RING_GAP: f32 = 2.0;
+
+/// The hover actions: a row of ACTIONS buttons ACTION_GAP apart, set
+/// ACTION_INSET in from the capture's bottom-right corner.
+const ACTIONS: f32 = 3.0;
+const ACTION_GAP: f32 = 4.0;
+const ACTION_INSET: f32 = 6.0;
+
+/// Where the hover actions' row goes in the tile, as (left, top), for a
+/// capture drawn at `rect` (`thumb_rect`): ACTION_INSET in from its
+/// bottom-right corner, so the row sits on the capture and not across
+/// its edge and the mat. Along an axis where the capture is too small
+/// to hold the row and both insets, the row centers on the capture.
+/// Whole device pixels at 2x, as the capture is.
+pub(super) fn actions_origin((x, y, w, h): (f32, f32, f32, f32)) -> (f32, f32) {
+    let row = (
+        ACTIONS * OVERLAY_BUTTON + (ACTIONS - 1.0) * ACTION_GAP,
+        OVERLAY_BUTTON,
+    );
+    let place = |start: f32, len: f32, row: f32| {
+        let at = if len >= row + 2.0 * ACTION_INSET {
+            start + len - ACTION_INSET - row
+        } else {
+            start + (len - row) / 2.0
+        };
+        (2.0 * at).round() / 2.0
+    };
+    (place(x, w, row.0), place(y, h, row.1))
+}
 
 /// One shared transparent tile for a card whose thumbnail has not
 /// decoded: minting a RenderImage per missing thumb per frame allocates
@@ -99,16 +127,18 @@ impl Library {
                     .border_color(theme::HAIRLINE),
             );
 
-        // Quick actions, bottom-right, only while the pointer is on the
-        // card: they cover the image, so they do not rest on it.
+        // Quick actions in the capture's bottom-right corner, only while
+        // the pointer is on the card: they cover the image, so they do
+        // not rest on it.
         if hovered {
+            let (ax, ay) = actions_origin((ix, iy, iw, ih));
             thumb = thumb.child(
                 div()
                     .absolute()
-                    .bottom(px(6.))
-                    .right(px(6.))
+                    .left(px(ax))
+                    .top(px(ay))
                     .flex()
-                    .gap(px(4.))
+                    .gap(px(ACTION_GAP))
                     .opacity(hover_amt)
                     .child(
                         crate::widgets::overlay_icon_button(("copy", index), Icon::Copy)

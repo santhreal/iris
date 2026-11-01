@@ -4,7 +4,7 @@ use std::prelude::v1::test;
 use iris_lib::library::CaptureEntry;
 use iris_lib::time::days_from_civil;
 
-use super::card::thumb_rect;
+use super::card::{actions_origin, thumb_rect};
 use super::context_menu::{place, MENU_H};
 use super::entries::{trash_status, ThumbWant};
 use super::keys::{arrow, arrow_step};
@@ -869,6 +869,24 @@ fn the_empty_hint_names_the_shortcut_only_while_it_works() {
     }
 }
 
+/// Capture sizes across the shapes a card holds: 16:9 at 1x and 2x,
+/// portrait, either side of the thumbnail box, panoramas, tiny, and
+/// empty.
+const CAPTURE_SIZES: [(u32, u32); 12] = [
+    (1920, 1080),
+    (3840, 2160),
+    (1080, 1920),
+    (432, 264),
+    (433, 264),
+    (1000, 200),
+    (300, 1000),
+    (8, 6),
+    (7, 5),
+    (100_000, 10),
+    (10, 100_000),
+    (0, 0),
+];
+
 // WHY: closes "a card crops its capture, draws it off its mat, or
 // resamples it": every capture's thumbnail sits whole inside the
 // card's CARD_W x THUMB_H tile at half its pixel size, with at least
@@ -884,20 +902,7 @@ fn a_thumbnail_sits_whole_and_centered_in_its_tile() {
         (bw as f32, bh as f32),
         (2.0 * (CARD_W - 2.0 * MAT), 2.0 * (THUMB_H - 2.0 * MAT))
     );
-    for (w, h) in [
-        (1920, 1080),
-        (3840, 2160),
-        (1080, 1920),
-        (432, 264),
-        (433, 264),
-        (1000, 200),
-        (300, 1000),
-        (8, 6),
-        (7, 5),
-        (100_000, 10),
-        (10, 100_000),
-        (0, 0),
-    ] {
+    for (w, h) in CAPTURE_SIZES {
         let (x, y, iw, ih) = thumb_rect(w, h);
         let (tw, th) = iris_lib::library::thumb_size(w, h);
         assert_eq!(
@@ -924,6 +929,52 @@ fn a_thumbnail_sits_whole_and_centered_in_its_tile() {
     // height.
     assert_eq!(thumb_rect(1920, 1080), (MAT, 9.5, 200.0, 112.5));
     assert_eq!(thumb_rect(1080, 1920), (75.0, MAT, 65.5, 116.0));
+}
+
+// WHY: closes "the hover actions straddle the capture's edge": the row
+// of three 26 px buttons 4 px apart sits 6 px inside the capture's
+// bottom-right corner where the capture holds it with both insets,
+// centers on the capture along an axis too small to, and stays inside
+// the tile on whole device pixels at 2x. Not covered: the drawn chips,
+// which the docshots hover review shows.
+#[test]
+fn the_hover_actions_sit_on_the_capture() {
+    const ROW: (f32, f32) = (3.0 * 26.0 + 2.0 * 4.0, 26.0);
+    const INSET: f32 = 6.0;
+    for (w, h) in CAPTURE_SIZES {
+        let (x, y, iw, ih) = thumb_rect(w, h);
+        let (ax, ay) = actions_origin((x, y, iw, ih));
+        for (axis, at, start, len, row, tile) in [
+            ("x", ax, x, iw, ROW.0, CARD_W),
+            ("y", ay, y, ih, ROW.1, THUMB_H),
+        ] {
+            if len >= row + 2.0 * INSET {
+                assert_eq!(
+                    at + row,
+                    start + len - INSET,
+                    "{w}x{h}: {axis} {INSET} px inside the capture's far edge"
+                );
+            } else {
+                assert!(
+                    (at + row / 2.0 - (start + len / 2.0)).abs() <= 0.25,
+                    "{w}x{h}: {axis} {at} centered on the capture at {start}+{len}"
+                );
+            }
+            assert!(
+                at >= 0.0 && at + row <= tile,
+                "{w}x{h}: {axis} {at} inside the tile"
+            );
+            assert_eq!(
+                (2.0 * at).fract(),
+                0.0,
+                "{w}x{h}: {axis} {at} on a whole device pixel"
+            );
+        }
+    }
+    // A 16:9 capture holds the row in its corner; a portrait one is too
+    // narrow, so the row centers across it.
+    assert_eq!(actions_origin(thumb_rect(1920, 1080)), (116.0, 90.0));
+    assert_eq!(actions_origin(thumb_rect(1080, 1920)), (65.0, 92.0));
 }
 
 // WHY: closes "the drawn cards wait on the slack rows": a prefetch

@@ -105,21 +105,19 @@ impl Library {
                 )
                 .trailing(ring(
                     Tool::Copy,
-                    widgets::button("sel-copy", "Copy", false).tooltip(tip(
+                    widgets::button("sel-copy", "Copy", ButtonStyle::Ghost).tooltip(tip(
                         "Copy",
                         Some(crate::widgets::meta_shortcut!("C").into()),
                     )),
                 ))
                 .trailing(ring(
                     Tool::Trash,
-                    widgets::push_button("sel-trash", "Move to Trash", ButtonStyle::Destructive)
-                        .h(px(theme::TOOLBAR_CONTROL_H))
-                        .px(px(12.))
+                    widgets::button("sel-trash", "Move to Trash", ButtonStyle::GhostDestructive)
                         .tooltip(tip("Move to Trash", Some("Delete".into()))),
                 ))
                 .trailing(ring(
                     Tool::Done,
-                    widgets::button("sel-done", "Done", false)
+                    widgets::button("sel-done", "Done", ButtonStyle::Ghost)
                         .tooltip(tip("Clear Selection", Some("Esc".into()))),
                 ));
         }

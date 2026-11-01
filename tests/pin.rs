@@ -60,7 +60,7 @@ const TO: (i16, i16) = (520, 440);
 /// MENU_ROW_H tall, ROWS of them, and stays 2 px inside the window
 /// (theme::CARD_BLEED, widgets::menu). Pin to Screen is row PIN_ROW.
 const BLEED: i16 = 44;
-const MENU_W: i16 = 168;
+const MENU_W: i16 = 192;
 const MENU_PAD: i16 = 5;
 const MENU_ROW_H: i16 = 24;
 const ROWS: i16 = 6;

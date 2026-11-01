@@ -165,9 +165,15 @@ impl Library {
                     .gap(px(8.))
                     .whitespace_nowrap()
                     .text_size(px(crate::theme::TEXT_BODY))
-                    .font_features(crate::theme::tabular())
+                    // The name reads as a word, in proportional figures;
+                    // the dimensions are a number, as the card's caption.
                     .child(div().text_color(crate::theme::FG).child(c.name.clone()))
-                    .child(div().text_color(crate::theme::FG_DIM).child(c.dims.clone()))
+                    .child(
+                        div()
+                            .text_color(crate::theme::FG_DIM)
+                            .font_features(crate::theme::tabular())
+                            .child(c.dims.clone()),
+                    )
             }))
     }
 }

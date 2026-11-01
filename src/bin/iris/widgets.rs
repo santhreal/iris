@@ -66,20 +66,16 @@ use gpui::*;
 use crate::{icons, theme};
 use icons::Icon;
 
-/// Toolbar text button, TOOLBAR_CONTROL_H tall. Ghost (hover wash)
-/// unless `primary`, the one accent-filled action on a surface. Forms
-/// use `push_button`.
-pub fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div> {
+/// Toolbar text button, TOOLBAR_CONTROL_H tall: Ghost, GhostDestructive,
+/// or Primary for the one accent-filled action on a surface. Forms use
+/// `push_button`.
+pub fn button(id: &'static str, label: &'static str, style: ButtonStyle) -> Stateful<Div> {
     controls::styled_button(
         div()
             .id(ElementId::Name(id.into()))
             .h(px(theme::TOOLBAR_CONTROL_H))
             .px(px(12.)),
-        if primary {
-            ButtonStyle::Primary
-        } else {
-            ButtonStyle::Ghost
-        },
+        style,
     )
     .child(label)
 }
@@ -90,9 +86,9 @@ pub fn button_with_icon(
     id: &'static str,
     label: &'static str,
     glyph: Icon,
-    primary: bool,
+    style: ButtonStyle,
 ) -> Stateful<Div> {
-    button(id, label, primary).child(icons::icon_in_text_color(glyph, 10.0))
+    button(id, label, style).child(icons::icon_in_text_color(glyph, 10.0))
 }
 
 /// The glyph size for an icon-only control of edge `size`: 16 in a
@@ -156,51 +152,26 @@ fn icon_button_inked(
     ))
 }
 
-/// Small icon button for card overlays: 26px on a frosted chip.
-pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Div> {
-    overlay_icon_button_active(id, glyph, false)
-}
+/// The edge of a card overlay's icon button.
+pub const OVERLAY_BUTTON: f32 = 26.0;
 
-/// Small icon button for card overlays, with optional active/highlight state.
-pub fn overlay_icon_button_active(
-    id: impl Into<ElementId>,
-    glyph: Icon,
-    active: bool,
-) -> Stateful<Div> {
+/// Small icon button for card overlays: OVERLAY_BUTTON square on a
+/// dark chip that keeps its fill under the pointer and on a press.
+pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Div> {
     div()
         .id(id)
-        .w(px(26.))
-        .h(px(26.))
+        .size(px(OVERLAY_BUTTON))
         .rounded(px(theme::RADIUS_CONTROL))
-        .bg(if active {
-            theme::ACCENT
-        } else {
-            theme::alpha(theme::BG_ELEV, 0.92)
-        })
+        .bg(theme::OVERLAY_CHIP)
         .flex()
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .hover(move |s| {
-            if active {
-                s
-            } else {
-                s.bg(theme::alpha(theme::BG_ELEV, 1.0))
-            }
-        })
-        .active(move |s| {
-            if active {
-                s
-            } else {
-                s.bg(theme::SURFACE_PRESS)
-            }
-        })
-        .child(icons::icon(
-            glyph,
-            if active { theme::ACCENT_INK } else { theme::FG },
-            theme::ICON_ROW,
-        ))
+        .hover(|s| s.bg(theme::BG_ELEV))
+        .active(|s| s.bg(theme::OVERLAY_CHIP_PRESS))
+        .child(icons::icon(glyph, theme::FG, theme::ICON_ROW))
 }
+
 /// How long a transient status message stays up.
 pub const STATUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 
@@ -318,7 +289,7 @@ pub fn shortcuts_sheet(
                         .text_size(px(theme::TEXT_BODY))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme::FG)
-                        .child("Keyboard shortcuts"),
+                        .child("Keyboard Shortcuts"),
                 )
                 .child(list),
         )

@@ -66,6 +66,12 @@ pub const THUMB_BUTTON_PRESS: Rgba = alpha(WHITE, 0.72);
 pub const THUMB_INK: Rgba = rgb(0.11, 0.11, 0.12);
 pub const THUMB_STATUS: Rgba = alpha(WHITE, 0.92);
 
+/// The library card's hover actions: dark chips over the capture,
+/// opaque BG_ELEV under the pointer and this lighter gray on a press,
+/// so the glyph keeps its backdrop over a light capture.
+pub const OVERLAY_CHIP: Rgba = alpha(BG_ELEV, 0.92);
+pub const OVERLAY_CHIP_PRESS: Rgba = rgb(0.231, 0.231, 0.231);
+
 /// Label tiers: primary text, secondary (metadata, captions, resting
 /// glyphs), tertiary (placeholders, shortcut columns), disabled.
 pub const FG: Rgba = alpha(WHITE, 0.90);

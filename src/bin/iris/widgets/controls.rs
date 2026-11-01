@@ -136,12 +136,16 @@ impl RenderOnce for ToggleFace {
 pub enum ButtonStyle {
     /// Text on a quiet fill: the default form button (Choose…, Check Now).
     Bordered,
-    /// Text with a hover wash and no fill.
+    /// Text with a hover wash and no fill: a toolbar button.
     Ghost,
     /// The one accent-filled action of a surface.
     Primary,
-    /// Destructive text, no fill.
+    /// Destructive text on the quiet fill: a form button that discards
+    /// what the form holds (Restore Defaults).
     Destructive,
+    /// Destructive text with a hover wash and no fill: a toolbar's
+    /// destructive action (Move to Trash).
+    GhostDestructive,
 }
 
 /// A form push button, CONTROL_H tall with a body label.
@@ -186,6 +190,10 @@ pub(super) fn styled_button(base: Stateful<Div>, style: ButtonStyle) -> Stateful
             .text_color(theme::DANGER)
             .hover(|s| s.bg(theme::alpha(theme::FG, 0.14)))
             .active(|s| s.bg(theme::alpha(theme::FG, 0.20))),
+        ButtonStyle::GhostDestructive => base
+            .text_color(theme::DANGER)
+            .hover(|s| s.bg(theme::SURFACE_HOVER))
+            .active(|s| s.bg(theme::SURFACE_PRESS)),
     }
 }
 

@@ -9,7 +9,7 @@ use super::action::{hex_rgba, Transform, COLORS, TOOLS};
 use super::Editor;
 use crate::icons::Icon;
 use crate::theme;
-use crate::widgets::{self, tip, MenuItem, MenuKey, Segment, Toolbar};
+use crate::widgets::{self, tip, ButtonStyle, MenuItem, MenuKey, Segment, Toolbar};
 
 /// The tool options bar's height, under the toolbar.
 pub(super) const OPTIONS_H: f32 = 40.0;
@@ -311,7 +311,7 @@ impl Editor {
         // open, its press-outside dismissal runs first.
         let copy_open = self.copy_menu;
         let mut copy = div().relative().child(
-            widgets::button_with_icon("btn-copy", "Copy", Icon::ChevronDown, false)
+            widgets::button_with_icon("btn-copy", "Copy", Icon::ChevronDown, ButtonStyle::Ghost)
                 .tooltip(tip("Copy Image, File, or Path", None))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -393,7 +393,7 @@ impl Editor {
             more = more.child(drop_menu(panel));
         }
 
-        let done = widgets::button("btn-done", "Done", true)
+        let done = widgets::button("btn-done", "Done", ButtonStyle::Primary)
             .tooltip(tip("Save and Close", Some("Enter".into())))
             .on_click(cx.listener(|this, _, window, cx| this.finish(window, cx)));
 
