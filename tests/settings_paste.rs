@@ -39,6 +39,10 @@
 
 #![cfg(target_os = "linux")]
 
+// The other test files use the rest of the layout.
+#[allow(dead_code)]
+#[path = "support/app_window.rs"]
+mod app_window;
 // The other test files use the rest of the harness.
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
@@ -77,8 +81,6 @@ const RETURN: u32 = 0xff0d;
 const ESCAPE: u32 = 0xff1b;
 const CONTROL: u32 = 0xffe3;
 const SHIFT: u32 = 0xffe1;
-/// The Settings window's width, logical px.
-const WIDTH: f32 = 600.0;
 /// The center of the File name row on the General pane, logical px:
 /// under the toolbar (52), the inset (20), the login card (36), the
 /// group gap (20), the Storage header (20), and two rows of the storage
@@ -144,7 +146,7 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
     // row's center line. The file name preview sits left of it; its ink
     // moves with the clock, so the card's fill is read in the padding.
     let (w, _, px) = client(&conn, root, settings);
-    let scale = w as f32 / WIDTH;
+    let scale = app_window::scale(w);
     let y = (TEMPLATE_Y * scale) as usize;
     let row = &px[y * w..(y + 1) * w];
     let card = row[w - ((INSET + 6.0) * scale) as usize];

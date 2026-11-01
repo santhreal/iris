@@ -27,7 +27,7 @@
 //!             deb or rpm, and relaunches /usr/bin/iris.
 //!
 //! `main` handles `--check-update`/`--update` client-side before the
-//! forward probe, the Settings window calls `check` on a background
+//! forward probe, the settings page calls `check` on a background
 //! thread, and the daemon checks on a thread of its own (`schedule`).
 //! None of them blocks the UI loop. Every check that gets an answer
 //! records it in `update.json` (`state`), which `offered` and
@@ -406,7 +406,7 @@ fn install(
 }
 
 /// Download and verify the update `info` states, then start a detached
-/// `iris --update` to install it. The daemon, where the Settings window
+/// `iris --update` to install it. The daemon, where the settings page
 /// runs, cannot install an update itself: the install stops the daemon
 /// first. The `iris --update` finds the verified download in the update
 /// directory, checks it again, and does not fetch it again.

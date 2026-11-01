@@ -1,23 +1,22 @@
 # Capture Library
 
-The library window is the iris app window. It displays stored screenshots, thumbnail previews, file metadata, and batch management actions, and its toolbar starts a screenshot or a recording.
+The library is the first page of the iris app window. It displays stored screenshots, thumbnail previews, file metadata, and batch management actions, and its toolbar starts a screenshot or a recording. The window's sidebar lists **Library** above the panes of the [settings page](configuration.md#settings-page); a click on a row shows its page, and `Ctrl+,` (`Cmd+,` on macOS) shows the settings.
 
-![Library Window](images/library.png)
+![Library](images/library.png)
 
 Open the library via:
 - Opening iris from the application menu, the Start menu, or Applications, or running `iris`
 - Command-line interface: `iris --library`
 - System tray context menu: **Library** item
 
-One library window is open at a time. Opening the library while it is open raises and focuses that window.
+One app window is open at a time. Opening the library while it is open shows the library and raises and focuses the window.
 
 ## Toolbar
 
-The window's title bar is a unified toolbar, 52 pixels high, with the window controls, the title **Library**, and under it the capture count (for example, `42 captures`) once `library.json` is read. The trailing buttons depend on the selection:
+The window's title bar is the 52-pixel band across the top: the sidebar's part holds the window controls on a desktop that puts them on the leading side; the toolbar beside it holds the title **Library**, under it the capture count (for example, `42 captures`) once `library.json` is read, and the trailing buttons. The trailing buttons depend on the selection:
 
 - **No selection**:
   - **Keyboard Shortcuts** (keyboard icon): toggles the shortcut reference sheet.
-  - **Settings** (gear icon): opens the Settings window ([configuration.md#settings-window](configuration.md#settings-window)).
   - **Record Window** (**Record Screen** on Windows and macOS; record icon): closes the library, then starts a recording, as `iris --record-window` does. The recording does not contain the library. While a recording runs, the button is highlighted, its tooltip reads **Stop Recording**, and a click stops the recording and leaves the library open.
   - **New Screenshot** (viewfinder icon): closes the library, then starts a region capture, as `iris --capture` does. The capture does not contain the library.
 - **One or more cards selected**:
@@ -32,7 +31,7 @@ A pointer that rests on a toolbar button for half a second shows a tooltip with 
 
 ## Grid
 
-The grid lists captures newest first under a title per local day: **Today**, **Yesterday**, then the weekday and date (`Tuesday, October 6`), with the year for a day in another year. The titles change at local midnight while the window is open. Each day starts a new row. The columns are 216 pixels wide with 16 pixels between them, as many as fit the window with 20 pixels of margin on each side, and the grid is centered in the window.
+The grid lists captures newest first under a title per local day: **Today**, **Yesterday**, then the weekday and date (`Tuesday, October 6`), with the year for a day in another year. The titles change at local midnight while the window is open. Each day starts a new row. The columns are 216 pixels wide with 16 pixels between them, as many as fit beside the sidebar with 20 pixels of margin on each side. The first column and the day titles start 20 pixels from the sidebar, under the toolbar's title. At the window's opening width of 920 pixels, three columns fill the page.
 
 A capture saved from the editor keeps its place and the time it was taken, and its card shows the saved image.
 
@@ -43,8 +42,8 @@ A capture saved from the editor keeps its place and the time it was taken, and i
 
 Each card is 216 pixels wide:
 
-- The thumbnail, in an area 132 pixels high: the whole capture at its own aspect, scaled down to fit the area and never up, centered across the card and resting on the caption line. It has 8-pixel corners and a hairline border. A capture that fits smaller than 104×48 pixels sits centered on a matte of that size. A selected card has a 2-pixel accent ring 2 pixels outside the thumbnail.
-- Under it, the local time the capture was taken (`14:02`) at the thumbnail's left edge and its pixel dimensions (`1920 × 1080`) at its right edge. Under a thumbnail narrower than 140 pixels, the line is 140 pixels wide and centered. A pointer resting on this line shows the file name.
+- The thumbnail tile, 132 pixels high, with 8-pixel corners and a hairline border: the whole capture at its own aspect with 4-pixel corners, scaled down to fit inside an 8-pixel mat and never up, and centered. A selected card has a 2-pixel accent ring 2 pixels outside the tile.
+- Under it, the local time the capture was taken (`14:02`) at the tile's left edge and its pixel dimensions (`1920 × 1080`) at its right edge. A pointer resting on this line shows the file name.
 
 ## Selection
 
@@ -60,7 +59,7 @@ Each card is 216 pixels wide:
 
 ## Card Actions
 
-A pointer on a card lifts its shadow and shows three buttons in the thumbnail's bottom-right corner, each with a tooltip:
+A pointer on a card lifts its shadow and shows three buttons in the tile's bottom-right corner, each with a tooltip:
 
 1. **Copy** (copy icon): copies the capture's decoded pixels to the clipboard. The PNG decodes on a background thread.
 2. **Show in Folder** (folder icon; **Show in Finder** on macOS, **Show in File Explorer** on Windows): opens the system file manager with the capture selected:
@@ -69,7 +68,7 @@ A pointer on a card lifts its shadow and shows three buttons in the thumbnail's 
    - Windows: calls `SHOpenFolderAndSelectItems`. Without it, runs `explorer.exe <folder>`.
 3. **Move to Trash** (trash icon): moves the capture to the system trash ([Move to Trash](#move-to-trash)).
 
-A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Pin to Screen**, **Copy**, **Show in Folder**, and **Move to Trash**. `Shift+F10` or the Menu key opens the same menu on the selected card, at the center of its thumbnail, and scrolls the card into view. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. **Pin to Screen** opens the card's capture in a [pinned window](toast.md#pinned-windows) centered on the library window. In the open menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` runs the highlighted row, and other keys do nothing. A click outside the menu or `Escape` closes it.
+A right-click on a card opens a context menu at the pointer: **Open**, **Quick Look**, **Pin to Screen**, **Copy**, **Show in Folder**, and **Move to Trash**. `Shift+F10` or the Menu key opens the same menu on the selected card, at the center of its tile, and scrolls the card into view. A card outside the selection becomes the selection first; a card inside it keeps the selection, and **Copy** and **Move to Trash** act on every selected capture. **Pin to Screen** opens the card's capture in a [pinned window](toast.md#pinned-windows) centered on the app window. In the open menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` runs the highlighted row, and other keys do nothing. A click outside the menu or `Escape` closes it.
 
 ## Quick Look
 
@@ -117,4 +116,4 @@ When the `IRIS_HOME` environment variable is defined and non-empty, paths resolv
 - Metadata: `$IRIS_HOME/data/library.json`
 - Thumbnail cache: `$IRIS_HOME/cache/thumbs/`
 
-Each thumbnail file is stored in PNG format named after an FNV-1a hash of the source image path (`<hash>.png`). A thumbnail is the whole capture box-filtered to fit inside 432×264 pixels, the card's image area at 2x, with its aspect kept; a capture smaller than that box keeps its own size. A thumbnail of another size, such as one written by an earlier release, is rebuilt from the capture when the library shows it. The library lists every capture whose file exists.
+Each thumbnail file is stored in PNG format named after an FNV-1a hash of the source image path (`<hash>.png`). A thumbnail is the whole capture box-filtered to fit inside 400×232 pixels, the image area inside the card's mat at 2x, with its aspect kept; a capture smaller than that box keeps its own size. A thumbnail of another size, such as one written by an earlier release, is rebuilt from the capture when the library shows it. The library lists every capture whose file exists.

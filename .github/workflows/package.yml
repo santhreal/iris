@@ -192,8 +192,8 @@ jobs:
             ! kill -0 "$1" 2>/dev/null || fail "the daemon runs 10 s after --quit"
           }
           "$exe" --library || fail "iris --library exited with $?"
-          # The library and settings windows on the runner's desktop, for
-          # review; a failed capture fails nothing.
+          # The app window's library and settings pages on the runner's
+          # desktop, for review; a failed capture fails nothing.
           mkdir -p screens
           sleep 3
           screencapture -x screens/macos-library.png || true
@@ -464,7 +464,7 @@ jobs:
           $daemon = Start-Process -PassThru -FilePath "$dir\iris.exe"
           $null = $daemon.Handle
           Wait-Until $pipe 'the daemon pipe'
-          # The library a bare start opens and the settings window on the
+          # The library a bare start opens and the settings page on the
           # runner's desktop, for review; a failed capture fails nothing.
           function Save-Screen([string]$name) {
             try {
@@ -650,7 +650,7 @@ jobs:
       # there: the deb on ubuntu:22.04, the oldest release it supports,
       # and on ubuntu:24.04; the rpm on fedora:42. In each,
       # check_installed.sh starts the daemon on Xvfb with the lavapipe
-      # Vulkan driver and waits for the library window. The package from
+      # Vulkan driver and waits for the app window. The package from
       # dist/next then upgrades the running install: the daemon runs on
       # the replaced binary, exits on --quit from the upgraded one, and
       # the upgraded iris starts. The AppImage mounts itself with FUSE on

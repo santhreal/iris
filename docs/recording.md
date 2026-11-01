@@ -15,7 +15,7 @@ While a capture overlay, a region-pick overlay, or an X11 window pick is open, i
 Start window recording through any of the following triggers:
 - Keybind: `Ctrl+Shift+Print`, `Cmd+Option+Shift+2` on macOS (configured by `record_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
 - Command-line interface: `iris --record-window` (see [cli.md#command-reference](cli.md#command-reference))
-- Library window: **Record Window** toolbar button (**Record Screen** on Windows and macOS, which record the desktop)
+- Library: **Record Window** toolbar button (**Record Screen** on Windows and macOS, which record the desktop)
 - System tray menu: **Record Window** (**Record Screen** on Windows and macOS)
 
 Stop an active recording through any of the following triggers:
@@ -214,7 +214,7 @@ record_mic_default = false
 
 ### Framerate Bounds
 
-The `recording_fps` setting defaults to 30. The configuration settings window clamps input values between 1 and 120 fps. Input values outside 1-120 produce the error `fps must be 1-120`.
+The `recording_fps` setting defaults to 30. The settings page clamps input values between 1 and 120 fps. Input values outside 1-120 produce the error `fps must be 1-120`.
 
 GIF recordings clamp framerates to at most 20 fps (`fps.min(20)`), corresponding to 5 centiseconds per frame (one integer GIF delay unit).
 

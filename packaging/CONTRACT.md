@@ -213,9 +213,10 @@ FFmpeg and its notices ship at:
 
 ## Runtime model
 - `iris` with no args = the app (tray + hotkeys + IPC listener) with
-  its library window, or the library window of the iris that runs. Every
-  launcher entry (application menu, Start menu, desktop shortcut, the
-  installer's Finish page, iris.app) runs it with no args.
+  its app window on the library, or the library in the app window of
+  the iris that runs. Every launcher entry (application menu, Start
+  menu, desktop shortcut, the installer's Finish page, iris.app) runs
+  it with no args.
 - `iris --background` = the app with no window; exits when iris runs or
   starts. The autostart entries run it, so a login with iris already
   running opens no window.

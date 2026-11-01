@@ -28,7 +28,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `Left`, `Right`, `Home`, `End`, and `Delete`, alone or with `Ctrl`, `Option`, or `Cmd`, move the caret and delete at it in the editor's text entry and in a Settings text field, and a click on the text places the caret at the click.
 - `Shift` with a caret key or a click, a drag, a double-click on a word, or a triple-click selects text in the editor's text entry and in a Settings text field, `Ctrl+A` or `Cmd+A` selects all of it, typing or a paste replaces the selection, and `Ctrl+C`, `Cmd+C`, `Ctrl+X`, and `Cmd+X` copy and cut it.
 - `Up`, `Down`, `Return`, and `Space` move through and choose from an open menu: a Settings pop-up, the editor's Copy and More menus, and the Library's context menu.
-- `Tab` and `Shift+Tab` move a focus ring over the settings window's controls and the library's toolbar buttons, `Space` or `Return` runs the control under it, and `Ctrl+Tab` and `Ctrl+Shift+Tab` switch settings panes.
+- `Tab` and `Shift+Tab` move a focus ring over the settings page's controls and the library's toolbar buttons, `Space` or `Return` runs the control under it, and `Ctrl+Tab` and `Ctrl+Shift+Tab` switch settings panes.
 - `Shift+F10` or the Menu key opens the library's card context menu on the selected card and the editor's More menu, where `Left` and `Right` switch to the Copy menu.
 - Window and region recording through ffmpeg writes MP4, GIF, or WebM, with pause, a microphone toggle, and an indicator chip that is excluded from the recording where the platform allows it.
 - The tray menu shows Stop Recording in place of Record Window, or Record Screen on Windows and macOS, while a recording runs.
@@ -42,33 +42,33 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The Windows installer creates a desktop shortcut from a checkbox on its last page or from `/DESKTOP` in a silent installation.
 - Moving a capture to the trash from the library or the toast moves the file to the freedesktop Trash on Linux, the Trash on macOS, or the Recycle Bin on Windows, where the file manager can restore it.
 - Every window sets its text in the bundled Inter typeface, and the editor's text tool draws in Inter Bold.
-- The library is the iris app window, and its toolbar and its empty state start a screenshot or a recording.
-- The settings, library, and editor windows share one toolbar control style.
-- The library, settings, and editor windows show the platform's window controls: AppKit's close, minimize, and zoom buttons on macOS, caption buttons on Windows, and round buttons on the sides set by the desktop's button layout on Linux.
-- The settings window groups its options in General, Capture, Recording, Shortcuts, and Updates panes selected from its toolbar.
-- The settings window writes each change to `config.toml` as it is made: a toggle or menu choice on the click, a text field on `Return` or when it loses focus, and a shortcut when it is pressed.
-- The settings window's **Start iris at login** toggle reads and writes the account's XDG autostart entry, LaunchAgent, or Run registry value.
+- The iris app window shows the library and the settings as pages chosen from its sidebar, and the library's toolbar and empty state start a screenshot or a recording.
+- The app and editor windows share one toolbar control style.
+- The app and editor windows show the platform's window controls: AppKit's close, minimize, and zoom buttons on macOS, caption buttons on Windows, and round buttons on the sides set by the desktop's button layout on Linux.
+- The settings page groups its options in General, Capture, Recording, Shortcuts, and Updates panes listed in the app window's sidebar.
+- The settings page writes each change to `config.toml` as it is made: a toggle or menu choice on the click, a text field on `Return` or when it loses focus, and a shortcut when it is pressed.
+- The settings page's **Start iris at login** toggle reads and writes the account's XDG autostart entry, LaunchAgent, or Run registry value.
 - Releases ship a Windows installer and portable zip for x86_64 and aarch64, a universal macOS disk image, and deb, rpm, and AppImage packages for Linux x86_64 and aarch64.
 - Every release package bundles FFmpeg with its license notices and source locations, so recording needs no separate FFmpeg installation.
 - Every release asset has a `.sha256` checksum sidecar and a minisign `.minisig` signature made with the key in `packaging/minisign.pub`.
 - `iris --update` installs the latest release in place for the Windows installer, the portable zip, the macOS app, the AppImage, the deb, and the rpm after it checks the download's SHA-256 and minisign signature.
-- iris checks for a newer release about a minute after it starts and then once a day, and offers it in the tray menu, a notice, and the settings window's Updates pane.
+- iris checks for a newer release about a minute after it starts and then once a day, and offers it in the tray menu, a notice, and the settings page's Updates pane.
 - `check_for_updates = false` in `config.toml` turns off the background update check.
 - `update_channel = "beta"` in `config.toml` offers prereleases as well as stable releases.
 - On Wayland iris binds the capture and record hotkeys through the GlobalShortcuts portal where the desktop provides it.
-- The settings window's Shortcuts pane shows a global hotkey that another program holds as unavailable, with the reason.
+- The settings page's Shortcuts pane shows a global hotkey that another program holds as unavailable, with the reason.
 - An X11 window pick shows a card that states the click and the `Escape` key until the pick ends.
 - The AppImage adds its application menu entry and icon on each start, and turns on Start at login on its first start.
 - The macOS app turns on Start at login on its first start outside the disk image.
-- On macOS, iris has a Dock icon and an iris, File, and Window menu bar while its library, settings, or editor window is open.
+- On macOS, iris has a Dock icon and an iris, File, and Window menu bar while its app or editor window is open.
 - A panic on any thread writes its thread, source location, and message to `iris.log`.
 
 ### Changed
 
 - Reduced capture-overlay, capture-toast, Library-opening, and wheel-scrolling latency.
-- A bare `iris` and every launcher entry open the library window, and `iris --background` starts iris with no window.
+- A bare `iris` and every launcher entry open the app window on the library, and `iris --background` starts iris with no window.
 - The default capture hotkey is `Ctrl+Print` and the default record hotkey is `Ctrl+Shift+Print`.
-- iris runs the command it started for, such as opening the library window, before it prepares the capture renderer, and skips that preparation while a recording runs.
+- iris runs the command it started for, such as opening the app window, before it prepares the capture renderer, and skips that preparation while a recording runs.
 - An empty library shows no `0 captures` count, and its hint names the capture shortcut only while that shortcut is bound.
 
 ### Fixed
@@ -79,7 +79,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The library's New Screenshot and Record Window or Record Screen buttons close the library before the capture starts, so it does not appear in the frozen frame.
 - The capture overlay opens with the window under a resting pointer snapped and the pointer readout at the pointer, instead of waiting for the pointer to move.
 - An X11 window pick ignores a click on a menu, a tooltip, or an iris card.
-- An icon in a row whose text overflows keeps its size instead of shrinking to a sliver, as the folder glyph in the settings window's storage rows did.
+- An icon in a row whose text overflows keeps its size instead of shrinking to a sliver, as the folder glyph in the settings page's storage rows did.
 
 ### Security
 

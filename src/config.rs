@@ -403,7 +403,7 @@ pub fn expand_home(dir: &Path) -> PathBuf {
 }
 
 /// `dir` with the home directory written as `~`, the inverse of
-/// [`expand_home`]: config.toml and the settings window use this form.
+/// [`expand_home`]: config.toml and the settings page use this form.
 /// A path outside the home directory is unchanged.
 pub fn contract_home(dir: &Path) -> PathBuf {
     let Some(rest) = home_dir().and_then(|home| dir.strip_prefix(home).ok().map(Path::to_path_buf))

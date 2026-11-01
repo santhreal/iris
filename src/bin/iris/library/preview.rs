@@ -91,8 +91,9 @@ pub(super) fn fit(w: u32, h: u32, scale: f32, avail_w: f32, avail_h: f32) -> (f3
 }
 
 impl Library {
-    /// The preview over the grid: the capture fitted to the content area,
-    /// its file name and size under it. A click anywhere closes it.
+    /// The preview over the library page: the capture fitted to the
+    /// grid's area, its file name and size under it. A click anywhere
+    /// closes it.
     pub(super) fn preview_view(
         &self,
         preview: &Preview,
@@ -102,7 +103,7 @@ impl Library {
         let entry = self.listing.entries().get(preview.index);
         let caption = self.listing.captions().get(preview.index);
         let win = window.bounds().size;
-        let avail_w = f32::from(win.width) - 2.0 * MARGIN;
+        let avail_w = f32::from(win.width) - crate::theme::SIDEBAR_W - 2.0 * MARGIN;
         let avail_h = f32::from(win.height) - crate::theme::TOOLBAR_H - 2.0 * MARGIN - FOOTER_H;
         // The thumbnail stands in until the full decode lands.
         let image = preview
@@ -146,10 +147,7 @@ impl Library {
         div()
             .id("preview")
             .absolute()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .top(px(crate::theme::TOOLBAR_H))
+            .inset_0()
             .bg(crate::theme::alpha(crate::theme::BG, 0.96))
             .occlude()
             .flex()

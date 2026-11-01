@@ -38,7 +38,7 @@ macro_rules! meta_shortcut {
 }
 pub(crate) use meta_shortcut;
 
-pub use self::controls::{push_button, segmented, toggle, ButtonStyle, Segment, SegmentStyle};
+pub use self::controls::{push_button, segmented, toggle, ButtonStyle, Segment};
 pub use self::field::{
     choose_folder, edit_line, field_scroll, folder_field, ring_step, ringed, text_field,
     FieldState, Line, LineKey, TextOrigin,
@@ -56,7 +56,7 @@ pub use self::scroll::scroll_y;
 pub use self::tooltip::tip;
 pub use self::vanish::{clear_then_run, close_then_run};
 pub use self::window_frame::{
-    close_route, toolbar_bar, toolbar_frame, window_corner, window_edge, OnClose, Toolbar,
+    close_route, sidebar_frame, toolbar_bar, window_corner, window_edge, OnClose, Toolbar,
 };
 pub use self::window_move::{move_handle, Double};
 pub use self::window_open::open_window;

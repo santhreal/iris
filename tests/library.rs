@@ -22,8 +22,8 @@
 //! selected one runs Open on the wrong capture.
 //!
 //! The fifth case closes "the shortcut sheet overflows a small window
-//! and passes the pointer through": at the library's 640x480 minimum
-//! the sheet's top and bottom rows fell outside the window, and a wheel
+//! and passes the pointer through": at the window's 760x480 minimum the
+//! sheet's top and bottom rows fell outside the window, and a wheel
 //! over the dim layer scrolled the grid under it. The card now ends
 //! inside the window, the wheel over the dim layer moves nothing, and
 //! the wheel over the card scrolls its rows.
@@ -38,6 +38,9 @@
 //! where Return should open a capture. They also close "keys act on
 //! the grid under the shortcut sheet": End under the open sheet moved
 //! the cursor to the last capture, and Ctrl+A selected every capture.
+//! The sixth case also reads Ctrl+, showing the Settings page in the
+//! window and Escape returning to the Library page, the window's title
+//! following the page.
 //!
 //! Not covered: a read on a timer, which `tests/idle.rs` rejects; the
 //! watches of Wayland, Windows, and macOS, which the tests of
@@ -78,6 +81,7 @@ const SHIFT: u32 = 0xffe1;
 const F10: u32 = 0xffc7;
 const MENU: u32 = 0xff67;
 const SLASH: u32 = 0x2f;
+const COMMA: u32 = 0x2c;
 const TAB: u32 = 0xff09;
 const CONTROL: u32 = 0xffe3;
 const A: u32 = 0x61;
@@ -86,7 +90,8 @@ const SPACE: u32 = 0x20;
 const LEFT: u32 = 0xff51;
 const RIGHT: u32 = 0xff53;
 const ESCAPE: u32 = 0xff1b;
-/// The titles of the settings window and the capture overlay.
+/// The titles of the app window on its Settings page and of the capture
+/// overlay.
 const SETTINGS: &str = "Settings - iris";
 const OVERLAY: &str = "Capture - iris";
 /// The wheel's down button.
@@ -334,7 +339,7 @@ fn the_shortcut_sheet_fits_a_minimum_window_and_holds_the_wheel() {
     let daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
     });
-    // Enough cards that the grid scrolls in a 640x480 window.
+    // Enough cards that the grid scrolls in a 760x480 window.
     let shots = dir.path().join("shots");
     let listed: Vec<_> = (0..12)
         .map(|i| png(&shots.join(format!("shot-{i}.png"))))
@@ -344,13 +349,13 @@ fn the_shortcut_sheet_fits_a_minimum_window_and_holds_the_wheel() {
     let library = daemon.until("the library window to map", || {
         windows_of(&conn, root, LIBRARY).first().copied()
     });
-    conn.configure_window(library, &ConfigureWindowAux::new().width(640).height(480))
+    conn.configure_window(library, &ConfigureWindowAux::new().width(760).height(480))
         .unwrap();
     conn.flush().unwrap();
     let [r, g, b, _] = CAPTURE;
-    daemon.until("the 640x480 grid to draw", || {
+    daemon.until("the 760x480 grid to draw", || {
         let shot = client(&conn, root, library);
-        (shot.0 == 640 && shot.1 == 480)
+        (shot.0 == 760 && shot.1 == 480)
             .then(|| extent(&shot, [r, g, b]))
             .flatten()
     });
@@ -531,17 +536,23 @@ fn tab_runs_the_window_buttons() {
     open.sheet(true, "Tab and Space to open the shortcut sheet");
     open.keys(&[SPACE]);
     open.sheet(false, "Space on Keyboard Shortcuts to close the sheet");
-    // Tab moves on to Settings.
-    open.keys(&[TAB, RETURN]);
-    open.daemon.until("Tab and Return to open Settings", || {
-        open.mapped(SETTINGS).then_some(())
+    // Ctrl+, shows the Settings page in the window, and Escape returns
+    // to the Library page.
+    chord(&open.conn, open.root, &[CONTROL, COMMA]);
+    open.daemon.until("Ctrl+, to show the Settings page", || {
+        (open.mapped(SETTINGS) && !open.mapped(LIBRARY)).then_some(())
     });
-    open.point();
-    // Right moves on to Record and then to New Screenshot, which
-    // closes the library for the overlay.
-    open.keys(&[RIGHT, RIGHT, RETURN]);
+    open.keys(&[ESCAPE]);
     open.daemon
-        .until("Right twice and Return to start a capture", || {
+        .until("Escape to return to the Library page", || {
+            (open.mapped(LIBRARY) && !open.mapped(SETTINGS)).then_some(())
+        });
+    // Tab rings Keyboard Shortcuts again, and Right moves on to Record
+    // and then to New Screenshot, which closes the library for the
+    // overlay.
+    open.keys(&[TAB, RIGHT, RIGHT, RETURN]);
+    open.daemon
+        .until("Tab, Right twice, and Return to start a capture", || {
             (open.mapped(OVERLAY) && !open.mapped(LIBRARY)).then_some(())
         });
 }
@@ -572,9 +583,10 @@ fn tab_runs_the_selection_buttons() {
     open.daemon.settle();
     open.keys(&[ESCAPE]);
     open.sheet(false, "Escape to close the sheet");
-    // Tab past Settings, Record, and New Screenshot returns to the grid,
-    // where Return opens the capture under the cursor.
-    open.keys(&[TAB, TAB, TAB, TAB, RETURN]);
+    // From Keyboard Shortcuts, Tab past Record and New Screenshot
+    // returns to the grid, where Return opens the capture under the
+    // cursor.
+    open.keys(&[TAB, TAB, TAB, RETURN]);
     open.daemon.until(
         "Tab past the last button and Return to open the capture",
         || open.mapped("first.png - iris").then_some(()),

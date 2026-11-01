@@ -1,9 +1,9 @@
-//! Single-instance surfaces: a second open of the library or the
-//! settings window, or of the editor on one file, focuses the window
-//! already open instead of opening another.
+//! Single-instance surfaces: a second open of the app window, on its
+//! Library or Settings page, or of the editor on one file, focuses the
+//! window already open instead of opening another.
 //!
 //! WHY: the class closed here is "a surface with one window per subject
-//! opens a second window". Two settings windows each save their own
+//! opens a second window". Two settings pages each save their own
 //! config snapshot over the other's edits, and two editors on one file
 //! each save their own markup over the other's. Every option in
 //! `iris --help` is classified in `OPTIONS`, so an option added without

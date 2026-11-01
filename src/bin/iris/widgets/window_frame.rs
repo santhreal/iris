@@ -1,7 +1,7 @@
-//! The Normal-window scaffold: the rounded root, the unified toolbar
-//! that is the window's title bar, and the platform's window controls
-//! (`window_controls`), or a square root with no controls under a
-//! platform frame.
+//! The Normal-window scaffold: the rounded root, the sidebar beside the
+//! unified toolbar that is the window's title bar, and the platform's
+//! window controls (`window_controls`), or a square root with no
+//! controls under a platform frame.
 
 use std::rc::Rc;
 
@@ -83,34 +83,6 @@ impl Toolbar {
     }
 }
 
-/// The Normal-window scaffold: a rounded root (the window is
-/// transparent; this root's 12px corners are the window's shape), a
-/// TOOLBAR_H unified toolbar (`toolbar_bar`), then the content. The
-/// toolbar has no divider: it shares the window's background with the
-/// content. Where the platform draws the outline
-/// (`sys::window::platform_shape`), the root is square.
-pub fn toolbar_frame(
-    window: &Window,
-    cx: &App,
-    toolbar: Toolbar,
-    resizable: bool,
-    content: impl IntoElement,
-) -> Div {
-    div()
-        .size_full()
-        .relative()
-        .font_family(theme::FONT)
-        .rounded(window_corner(window, 12.))
-        .overflow_hidden()
-        .bg(theme::BG)
-        .text_color(theme::FG)
-        .flex()
-        .flex_col()
-        .child(toolbar_bar(window, cx, toolbar, resizable))
-        .child(content)
-        .children(window_edge(window, 12., 1.0))
-}
-
 /// The 1px rim of a client-drawn window, `radius` round, for the last
 /// child of a `relative` root: it lies over the content's edge pixels
 /// and takes no input, so the content keeps its layout and its hit
@@ -136,12 +108,93 @@ pub fn window_edge(window: &Window, radius: f32, opacity: f32) -> Option<Div> {
 /// The TOOLBAR_H unified toolbar band on its own: the window controls
 /// (`window_controls`; none under a platform frame), the title and
 /// caption, the centered element, and the trailing cluster.
-/// `toolbar_frame` stacks it over the content; a window that positions
-/// its own layers (the editor) places it directly. The band is the
-/// window's title bar (`move_handle`): a drag moves the window, and a
-/// double click on a resizable one runs the platform's title bar
-/// action.
+/// `sidebar_frame` places it over the content beside a sidebar; a
+/// window that positions its own layers (the editor) places it
+/// directly. The band is the window's title bar (`move_handle`): a drag
+/// moves the window, and a double click on a resizable one runs the
+/// platform's title bar action.
 pub fn toolbar_bar(window: &Window, cx: &App, toolbar: Toolbar, resizable: bool) -> Stateful<Div> {
+    bar(window, cx, toolbar, resizable, true)
+}
+
+/// The app window scaffold: a SIDEBAR_W sidebar beside a column of the
+/// unified toolbar over `content`. The sidebar's top band is the
+/// leading part of the title bar: macOS draws its traffic lights there,
+/// and a Linux desktop that puts window buttons on the leading side
+/// gets them there; elsewhere it is empty. The toolbar beside it starts
+/// at INSET and holds the trailing controls.
+pub fn sidebar_frame(
+    window: &Window,
+    cx: &App,
+    sidebar: impl IntoElement,
+    toolbar: Toolbar,
+    resizable: bool,
+    content: impl IntoElement,
+) -> Div {
+    let framed = crate::sys::window::platform_frame(window);
+    let lead = if framed {
+        None
+    } else {
+        let sides = window_controls::sides(REGISTER, cx.button_layout(), resizable);
+        window_controls::side(sides.left, resizable, &toolbar.on_close, window)
+    };
+    let band = div()
+        .id("sidebar-band")
+        .relative()
+        .h(px(theme::TOOLBAR_H))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .pl(px(window_controls::ROUND_EDGE))
+        .child(move_handle(if resizable {
+            Double::TitleBar
+        } else {
+            Double::Nothing
+        }))
+        .children(lead);
+    let side = div()
+        .w(px(theme::SIDEBAR_W))
+        .h_full()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .bg(theme::SIDEBAR_BG)
+        .border_r_1()
+        .border_color(theme::HAIRLINE)
+        .child(band)
+        .child(sidebar);
+    let column = div()
+        .relative()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .child(bar(window, cx, toolbar, resizable, false))
+        .child(content);
+    div()
+        .size_full()
+        .relative()
+        .font_family(theme::FONT)
+        .rounded(window_corner(window, 12.))
+        .overflow_hidden()
+        .bg(theme::BG)
+        .text_color(theme::FG)
+        .flex()
+        .child(side)
+        .child(column)
+        .children(window_edge(window, 12., 1.0))
+}
+
+/// The toolbar band: `lead_controls` false leaves the leading window
+/// controls to a sidebar's band and starts the title at INSET.
+fn bar(
+    window: &Window,
+    cx: &App,
+    toolbar: Toolbar,
+    resizable: bool,
+    lead_controls: bool,
+) -> Stateful<Div> {
     let framed = crate::sys::window::platform_frame(window);
     let double = if resizable {
         Double::TitleBar
@@ -161,11 +214,13 @@ pub fn toolbar_bar(window: &Window, cx: &App, toolbar: Toolbar, resizable: bool)
     } else {
         let sides = window_controls::sides(REGISTER, cx.button_layout(), resizable);
         (
-            window_controls::side(sides.left, resizable, &on_close, window),
+            window_controls::side(sides.left, resizable, &on_close, window)
+                .filter(|_| lead_controls),
             window_controls::side(sides.right, resizable, &on_close, window),
         )
     };
     let pl = match (framed, REGISTER, lead.is_some()) {
+        _ if !lead_controls => theme::INSET,
         (false, Register::Mac, _) => window_controls::MAC_LEADING,
         (_, _, true) => window_controls::ROUND_EDGE,
         _ => theme::INSET,

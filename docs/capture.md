@@ -15,7 +15,7 @@ While the region overlay, the region-recording overlay, or an X11 window pick is
 Trigger region capture using any of the following interfaces:
 - Keybind: `Ctrl+Print`, `Cmd+Shift+2` on macOS (configured by `capture_hotkey` in [configuration.md#keyboard](configuration.md#keyboard))
 - Command-line interface: `iris --capture` (see [cli.md#command-reference](cli.md#command-reference))
-- Library window: **New Screenshot** toolbar button
+- Library: **New Screenshot** toolbar button
 - System tray menu: **New Screenshot**
 
 The region overlay applies a dimming layer at 0.32 opacity immediately and freezes the screen into an image frame across all monitors.
@@ -83,5 +83,5 @@ When a capture commits, iris executes the following pipeline in order:
 5. **Filename Reservation**: Formats the output path under `screenshots_dir` using `screenshot_template` (default: `"{date}_{time}"`). Substitutes `{date}` with `YYYY-MM-DD` and `{time}` with `HH-MM-SS` from a single local clock read. Creates the selected file without replacing an existing file, appending `_2.png`, `_3.png`, and ascending numbers on collision, as recordings do. Concurrent captures reserve different paths.
 6. **Disk Save**: Writes the encoded PNG into the reserved file. A failed write removes the partial file.
 7. **Pixel Stashing**: Caches decoded RGBA pixels in a process-wide single-slot memory cache so immediate thumbnail generation or annotation avoids re-decoding the saved file.
-8. **Library Registration**: Starts a background thread named `iris-library`, which writes a cached thumbnail to disk and records image dimensions, file path, and creation timestamp into `library.json`. The toast opens without waiting on the thread. An open library window shows the capture once the entry is recorded, before the rewritten `library.json` reaches the disk. A failure keeps the capture file and shows the notice **Library update failed**.
+8. **Library Registration**: Starts a background thread named `iris-library`, which writes a cached thumbnail to disk and records image dimensions, file path, and creation timestamp into `library.json`. The toast opens without waiting on the thread. An open library shows the capture once the entry is recorded, before the rewritten `library.json` reaches the disk. A failure keeps the capture file and shows the notice **Library update failed**.
 9. **Interactive Toast**: If `show_toast_after_capture` is true in [configuration.md#toast](configuration.md#toast) (default: `true`), opens the toast stage. Region captures animate the capture card from selection coordinates to the resting card position over the live desktop; fullscreen and window captures display the toast directly (see [toast.md#toast-notifications](toast.md#toast-notifications)).

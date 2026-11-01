@@ -2,10 +2,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Thumbnails fit inside this pixel box: the library card's 216x132
-/// logical image area at 2x device scale, so a HiDPI display draws the
-/// card from at least as many pixels as it shows.
-pub const THUMB_BOX: (u32, u32) = (432, 264);
+/// Thumbnails fit inside this pixel box: the image area inside the
+/// 8-pixel mat of the library card's 216x132 logical tile, at 2x device
+/// scale, so a HiDPI display draws the card from as many pixels as it
+/// shows.
+pub const THUMB_BOX: (u32, u32) = (400, 232);
 
 /// One capture in the library: the image plus its cached thumbnail.
 #[derive(Serialize, Deserialize, Clone)]

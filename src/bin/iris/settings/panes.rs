@@ -1,6 +1,6 @@
-//! What each Settings pane shows: its tab, its groups of rows, and the
-//! window height that fits them. The render and the height both read
-//! these tables, so a row added to a pane also grows its window.
+//! What each Settings pane shows: its sidebar row and its groups of
+//! rows. The render and the height check both read these tables, so a
+//! row added to a pane is held to the window's minimum height.
 
 use gpui::SharedString;
 use iris_lib::config::{
@@ -11,8 +11,10 @@ use super::Field;
 use crate::icons::Icon;
 use crate::theme;
 
-/// The window's fixed width; the height follows the pane.
-pub(super) const WIDTH: f32 = 600.0;
+/// The form's widest: the content beside the sidebar of a window at its
+/// opening width (920 logical). A wider window leaves the extra width
+/// beside the form, so a label and its control stay within one glance.
+pub(super) const FORM_MAX_W: f32 = 720.0;
 /// A group header: one caption line and the gap above its card.
 const HEADER_LINE: f32 = 14.0;
 pub(super) const HEADER_H: f32 = HEADER_LINE + theme::HEADER_GAP;
@@ -50,6 +52,7 @@ pub(crate) enum Row {
 }
 
 impl Row {
+    #[cfg(test)]
     pub(super) fn height(self) -> f32 {
         match self {
             Row::Version => theme::ROW_H_TALL,
@@ -95,7 +98,7 @@ impl Requires {
 }
 
 impl Pane {
-    pub(super) const ALL: [Pane; 5] = [
+    pub(crate) const ALL: [Pane; 5] = [
         Pane::General,
         Pane::Capture,
         Pane::Recording,
@@ -103,7 +106,7 @@ impl Pane {
         Pane::Updates,
     ];
 
-    pub(super) fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Pane::General => "General",
             Pane::Capture => "Capture",
@@ -113,7 +116,7 @@ impl Pane {
         }
     }
 
-    pub(super) fn icon(self) -> Icon {
+    pub(crate) fn icon(self) -> Icon {
         match self {
             Pane::General => Icon::Gear,
             Pane::Capture => Icon::Viewfinder,
@@ -227,9 +230,11 @@ impl Pane {
         }
     }
 
-    /// The window height that shows every row of the pane: the toolbar,
-    /// the content insets, and each group's header, rows, and the
-    /// hairlines between them, with GROUP_GAP between groups.
+    /// The window height that shows every row of the pane without a
+    /// scroll: the toolbar, the content insets, and each group's
+    /// header, rows, and the hairlines between them, with GROUP_GAP
+    /// between groups.
+    #[cfg(test)]
     pub(super) fn height(self) -> f32 {
         let groups = self.groups();
         let body: f32 = groups

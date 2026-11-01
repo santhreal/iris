@@ -15,41 +15,26 @@ use crate::widgets::tip;
 use super::listing::Caption;
 use super::{Library, CAPTION_GAP, CAPTION_H, CARD_W, THUMB_H};
 
-/// Thumbnail corner radius.
+/// The tile's corner radius, and the image's inside the mat.
 pub(super) const THUMB_RADIUS: f32 = 8.0;
-/// The smallest thumbnail frame: room for the three hover actions. A
-/// capture that fits smaller sits centered on a matte inside it.
-pub(super) const MIN_FRAME: (f32, f32) = (104.0, 48.0);
+const IMAGE_RADIUS: f32 = 4.0;
 
-/// Where a `w`x`h` capture's thumbnail frame sits in the card's
-/// CARD_W x THUMB_H image area, as (left, top, width, height): its
-/// thumbnail at half its pixel size, the 2x device scale the box is
-/// sized for, centered across the area and resting on the caption.
-pub(super) fn thumb_frame(w: u32, h: u32) -> (f32, f32, f32, f32) {
-    let (iw, ih) = thumb_image(w, h);
-    let (fw, fh) = (iw.max(MIN_FRAME.0), ih.max(MIN_FRAME.1));
-    ((CARD_W - fw) / 2.0, THUMB_H - fh, fw, fh)
-}
-
-/// The drawn size of a `w`x`h` capture's thumbnail, logical px.
-fn thumb_image(w: u32, h: u32) -> (f32, f32) {
+/// Where a `w`x`h` capture's thumbnail sits in its card's CARD_W x
+/// THUMB_H tile, as (left, top, width, height): the whole thumbnail at
+/// half its pixel size, the 2x device scale the tile is sized for,
+/// centered on whole device pixels so the image draws unresampled.
+pub(super) fn thumb_rect(w: u32, h: u32) -> (f32, f32, f32, f32) {
+    let (bw, bh) = ((2.0 * CARD_W) as u32, (2.0 * THUMB_H) as u32);
     let (tw, th) = iris_lib::library::thumb_size(w, h);
-    (tw as f32 / 2.0, th as f32 / 2.0)
+    (
+        (bw.saturating_sub(tw) / 2) as f32 / 2.0,
+        (bh.saturating_sub(th) / 2) as f32 / 2.0,
+        tw as f32 / 2.0,
+        th as f32 / 2.0,
+    )
 }
 
-/// The narrowest caption: a time beside a five-digit pixel size.
-pub(super) const CAPTION_MIN: f32 = 140.0;
-
-/// The caption line's span under a thumbnail frame `fw` wide, as
-/// (left, width) in the card: the frame's own edges, so the time and
-/// the size end where the thumbnail does, and at least CAPTION_MIN
-/// wide, centered under a narrower frame.
-pub(super) fn caption_span(fw: f32) -> (f32, f32) {
-    let w = fw.clamp(CAPTION_MIN, CARD_W);
-    ((CARD_W - w) / 2.0, w)
-}
-
-/// The selection ring: RING wide, RING_GAP outside the thumbnail.
+/// The selection ring: RING wide, RING_GAP outside the tile.
 pub(super) const RING: f32 = 2.0;
 pub(super) const RING_GAP: f32 = 2.0;
 
@@ -80,14 +65,11 @@ impl Library {
         // One Rc bump feeds every closure below; the alternative is a
         // PathBuf clone per closure per render.
         let entry = entry.clone();
-        let (iw, ih) = thumb_image(entry.width, entry.height);
-        let (_, _, fw, fh) = thumb_frame(entry.width, entry.height);
+        let (ix, iy, iw, ih) = thumb_rect(entry.width, entry.height);
 
         let mut thumb = div()
             .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
+            .relative()
             .rounded(px(THUMB_RADIUS))
             .overflow_hidden()
             .bg(theme::SURFACE)
@@ -98,9 +80,12 @@ impl Library {
                         .cloned()
                         .unwrap_or_else(blank),
                 ))
+                .absolute()
+                .left(px(ix))
+                .top(px(iy))
                 .w(px(iw))
                 .h(px(ih))
-                .flex_shrink_0()
+                .rounded(px(IMAGE_RADIUS))
                 .object_fit(ObjectFit::Fill),
             )
             // The hairline sits over the image: a border on the clipping
@@ -171,10 +156,12 @@ impl Library {
             s.offset.y = px(2. + 3.0 * hover_amt);
             s
         };
-        let frame = div()
+        // Every card's tile is the same CARD_W x THUMB_H, the capture
+        // whole and centered on a matte, so rows and captions line up.
+        let tile = div()
             .relative()
-            .w(px(fw))
-            .h(px(fh))
+            .w(px(CARD_W))
+            .h(px(THUMB_H))
             .flex_shrink_0()
             .rounded(px(THUMB_RADIUS))
             .shadow(vec![lift])
@@ -185,30 +172,18 @@ impl Library {
                     .absolute()
                     .top(px(-out))
                     .left(px(-out))
-                    .w(px(fw + 2.0 * out))
-                    .h(px(fh + 2.0 * out))
+                    .w(px(CARD_W + 2.0 * out))
+                    .h(px(THUMB_H + 2.0 * out))
                     .rounded(px(THUMB_RADIUS + out))
                     .border(px(RING))
                     .border_color(theme::ACCENT)
             }));
-        // The image area: the frame centered across it, resting on the
-        // caption, as Finder's gallery seats a thumbnail.
-        let area = div()
-            .w(px(CARD_W))
-            .h(px(THUMB_H))
-            .flex()
-            .items_end()
-            .justify_center()
-            .child(frame);
 
-        let (caption_x, caption_w) = caption_span(fw);
         let caption_row = div()
             .id(("caption", index))
             .mt(px(CAPTION_GAP))
-            .ml(px(caption_x))
-            .w(px(caption_w))
+            .w(px(CARD_W))
             .h(px(CAPTION_H))
-            .px(px(2.))
             .flex()
             .items_center()
             .justify_between()
@@ -309,7 +284,7 @@ impl Library {
                     this.set_status(e, cx);
                 }
             }))
-            .child(area)
+            .child(tile)
             .child(caption_row)
     }
 }

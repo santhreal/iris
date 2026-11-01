@@ -101,7 +101,7 @@ const OPTS: &[Opt] = &[
     Opt {
         flag: "--settings",
         takes: Takes::Nothing(|| Command::Settings),
-        help: "open the settings window",
+        help: "open the settings in the app window",
     },
     Opt {
         flag: "--annotate",

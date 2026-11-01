@@ -1,6 +1,7 @@
-//! The library window: the unified toolbar, the virtualized grid of day
-//! sections, the empty state, and the overlays over them (rubber band,
-//! preview, context menu, shortcuts sheet, status pill).
+//! The app window: the sidebar, the unified toolbar, and the page the
+//! sidebar selects. The library page is the virtualized grid of day
+//! sections or the empty state, with the overlays over them (rubber
+//! band, preview, context menu, shortcuts sheet, status pill).
 
 use std::{collections::HashMap, time::Instant};
 
@@ -13,7 +14,7 @@ use crate::theme;
 use crate::widgets::{self, tip, ButtonStyle, Toolbar};
 
 use super::layout::{Layout, Row, HEADER_H};
-use super::{evict_thumbs, Library, Tool, MIN_SIZE};
+use super::{evict_thumbs, Library, Page, Tool, MIN_SIZE};
 
 /// Space between a day title's baseline row and the cards under it.
 const HEADER_PAD_B: f32 = 10.0;
@@ -76,6 +77,9 @@ impl Library {
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Toolbar {
         let mut bar = Toolbar::new("Library");
+        if let Some(on_close) = &self.on_close {
+            bar = bar.on_close(on_close.clone());
+        }
         if !self.listing.count().is_empty() {
             bar = bar.caption(self.listing.count().clone());
         }
@@ -130,12 +134,6 @@ impl Library {
             .tooltip(tip("Keyboard Shortcuts", Some("?".into()))),
         ))
         .trailing(ring(
-            Tool::Settings,
-            widgets::icon_button("settings", Icon::Gear, false, theme::TOOLBAR_CONTROL_H).tooltip(
-                tip("Settings", Some(crate::widgets::meta_shortcut!(",").into())),
-            ),
-        ))
-        .trailing(ring(
             Tool::Record,
             widgets::icon_button(
                 "record",
@@ -167,9 +165,9 @@ impl Library {
         let grid_w = layout.cols as f32 * super::CARD_W + (layout.cols - 1) as f32 * super::GAP;
         div()
             .absolute()
-            .left(px(layout.x0 + 2.0))
+            .left(px(layout.x0))
             .top(px(top))
-            .w(px(grid_w - 2.0))
+            .w(px(grid_w))
             .h(px(HEADER_H))
             .pb(px(HEADER_PAD_B))
             .flex()
@@ -224,12 +222,11 @@ impl Library {
     }
 }
 
-impl Render for Library {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.leaving {
-            // The transparent window shows nothing while it closes.
-            return div();
-        }
+impl Library {
+    /// The library page: the grid under the toolbar, with the preview
+    /// and the status pill over it. It syncs the selection the toolbar
+    /// reads, so it renders first.
+    fn library_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         self.sync_selection();
         // The ring leaves with its button: a selection's buttons go when
         // it clears, and the window's when one begins.
@@ -253,12 +250,13 @@ impl Render for Library {
             window.request_animation_frame();
         }
 
-        // The grid spans the window's width under the toolbar. The
-        // window's size is this frame's; the scroll container's bounds
-        // are the last paint's, a resize behind on the first frame after
-        // one, which laid out columns for the old width.
+        // The grid spans the window's width beside the sidebar, under
+        // the toolbar. The window's size is this frame's; the scroll
+        // container's bounds are the last paint's, a resize behind on
+        // the first frame after one, which laid out columns for the old
+        // width.
         let win = window.bounds().size;
-        let width = f32::from(win.width);
+        let width = f32::from(win.width) - theme::SIDEBAR_W;
         let viewport_h = f32::from(win.height) - theme::TOOLBAR_H;
         self.viewport_h = viewport_h;
         self.relayout(width);
@@ -360,11 +358,54 @@ impl Render for Library {
             grid.child(content)
         };
 
-        let toolbar = self.toolbar(cx);
-        let mut root = div()
-            .size_full()
-            .font_family(theme::FONT)
-            .track_focus(&self.focus)
+        let mut page = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(grid);
+        if let Some(preview) = &self.preview {
+            page = page.child(self.preview_view(preview, window, cx));
+        }
+        if let Some(status) = &self.status {
+            page = page.child(widgets::status_pill(status.clone(), 10.0));
+        }
+        page
+    }
+}
+
+impl Render for Library {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.leaving {
+            // The transparent window shows nothing while it closes.
+            return div();
+        }
+        let sidebar = self.sidebar(cx);
+        let settings = self
+            .settings
+            .clone()
+            .filter(|_| self.page == Page::Settings);
+        let (toolbar, page) = match settings {
+            Some(settings) => {
+                let mut bar = Toolbar::new(settings.read(cx).pane().label());
+                if let Some(on_close) = &self.on_close {
+                    bar = bar.on_close(on_close.clone());
+                }
+                (bar, settings.into_any_element())
+            }
+            None => {
+                let page = self.library_page(window, cx).into_any_element();
+                (self.toolbar(cx), page)
+            }
+        };
+        let mut root = div().size_full().font_family(theme::FONT);
+        // The settings page holds the keyboard while it shows: a press
+        // on the sidebar leaves it there.
+        if self.page == Page::Library {
+            root = root.track_focus(&self.focus);
+        }
+        let mut root = root
             .on_key_down(cx.listener(Self::on_key))
             .on_mouse_up(
                 MouseButton::Left,
@@ -374,7 +415,9 @@ impl Render for Library {
                     this.drag_start = None;
                 }),
             )
-            .child(widgets::toolbar_frame(window, cx, toolbar, true, grid));
+            .child(widgets::sidebar_frame(
+                window, cx, sidebar, toolbar, true, page,
+            ));
 
         if let Some((x0, y0, x1, y1)) = self.band {
             root = root.child(
@@ -390,9 +433,6 @@ impl Render for Library {
                     .rounded(px(4.)),
             );
         }
-        if let Some(preview) = &self.preview {
-            root = root.child(self.preview_view(preview, window, cx));
-        }
         if let Some(menu) = &self.menu {
             root = root.child(self.context_menu(menu, window, cx));
         }
@@ -407,9 +447,6 @@ impl Render for Library {
             );
         } else {
             self.help_scroll.set_offset(Point::default());
-        }
-        if let Some(status) = &self.status {
-            root = root.child(widgets::status_pill(status.clone(), 10.0));
         }
         root.children(widgets::resize_edges(window, MIN_SIZE))
     }

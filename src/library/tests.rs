@@ -237,19 +237,19 @@ const RED: [u8; 4] = [200, 0, 0, 255];
 #[test]
 fn thumb_size_fits_the_whole_capture_in_the_box() {
     let cases = [
-        ((1920, 1080), (432, 243)),
-        ((3840, 2160), (432, 243)),
-        ((1080, 1920), (149, 264)),
-        ((432, 264), (432, 264)),
-        ((864, 528), (432, 264)),
+        ((1920, 1080), (400, 225)),
+        ((3840, 2160), (400, 225)),
+        ((1080, 1920), (131, 232)),
+        ((400, 232), (400, 232)),
+        ((800, 464), (400, 232)),
         // Smaller than the box on one side: scaled to fit the other.
-        ((300, 1000), (79, 264)),
-        ((1000, 200), (432, 86)),
+        ((300, 1000), (70, 232)),
+        ((1000, 200), (400, 80)),
         // Smaller than the box: never enlarged.
         ((8, 6), (8, 6)),
         ((400, 100), (400, 100)),
         // Extreme strips keep at least one pixel.
-        ((100_000, 10), (432, 1)),
+        ((100_000, 10), (400, 1)),
         ((0, 0), (1, 1)),
     ];
     for ((w, h), fitted) in cases {
@@ -278,11 +278,11 @@ fn add_writes_the_whole_capture_at_the_fitted_size() {
     img.save(&shot).unwrap();
     let entry = add(&shot, &img).unwrap();
     let thumb = image::open(&entry.thumb).unwrap().into_rgba8();
-    assert_eq!(thumb.dimensions(), (432, 243));
-    for y in [0, 121, 242] {
+    assert_eq!(thumb.dimensions(), (400, 225));
+    for y in [0, 112, 224] {
         assert_eq!(thumb.get_pixel(0, y).0, RED, "left edge, row {y}");
-        assert_eq!(thumb.get_pixel(431, y).0, RED, "right edge, row {y}");
-        assert_eq!(thumb.get_pixel(216, y).0, GREEN, "center, row {y}");
+        assert_eq!(thumb.get_pixel(399, y).0, RED, "right edge, row {y}");
+        assert_eq!(thumb.get_pixel(200, y).0, GREEN, "center, row {y}");
     }
     assert_eq!(thumbnail(&entry).unwrap(), thumb);
 }
@@ -360,7 +360,7 @@ fn thumbnail_reads_a_current_file_without_rebuilding() {
     let entry = add(&shot, &img).unwrap();
     // The right size in another color: served from the file, so the
     // capture is not decoded again.
-    solid(&entry.thumb, 432, 243, RED);
+    solid(&entry.thumb, 400, 225, RED);
     assert_eq!(thumbnail(&entry).unwrap().get_pixel(0, 0).0, RED);
 }
 
@@ -372,15 +372,17 @@ fn thumbnail_rebuilds_a_stale_or_missing_file() {
     let img = solid(&shot, 880, 495, GREEN);
     let entry = add(&shot, &img).unwrap();
     // An older build's 320px-wide thumbnail, an older build's center
-    // crop to the box's aspect, then no file at all.
-    for what in ["stale", "cropped", "missing"] {
+    // crop to the box's aspect, a fit to the earlier 432x264 box, then
+    // no file at all.
+    for what in ["stale", "cropped", "older box", "missing"] {
         match what {
             "stale" => drop(solid(&entry.thumb, 320, 180, RED)),
-            "cropped" => drop(solid(&entry.thumb, 432, 264, RED)),
+            "cropped" => drop(solid(&entry.thumb, 400, 232, RED)),
+            "older box" => drop(solid(&entry.thumb, 432, 243, RED)),
             _ => std::fs::remove_file(&entry.thumb).unwrap(),
         }
         let rebuilt = thumbnail(&entry).unwrap();
-        assert_eq!(rebuilt.dimensions(), (432, 243), "{what}");
+        assert_eq!(rebuilt.dimensions(), (400, 225), "{what}");
         assert_eq!(rebuilt.get_pixel(0, 0).0, GREEN, "{what}");
         let on_disk = image::open(&entry.thumb).unwrap().into_rgba8();
         assert_eq!(on_disk, rebuilt, "{what}: written back");
@@ -418,7 +420,7 @@ fn rebuild_leaves_the_file_of_an_entry_that_changed() {
         created_ms: entry.created_ms - 1,
         ..entry.clone()
     };
-    assert_eq!(thumbnail(&older).unwrap().dimensions(), (432, 243));
+    assert_eq!(thumbnail(&older).unwrap().dimensions(), (400, 225));
     let on_disk = image::open(&entry.thumb).unwrap().into_rgba8();
     assert_eq!(on_disk.dimensions(), (320, 180), "the newer entry's file");
 }
@@ -432,11 +434,11 @@ fn rebuild_adopts_a_capture_resized_outside_iris() {
     let entry = add(&shot, &img).unwrap();
     solid(&shot, 300, 300, GREEN);
     std::fs::remove_file(&entry.thumb).unwrap();
-    assert_eq!(thumbnail(&entry).unwrap().dimensions(), (264, 264));
+    assert_eq!(thumbnail(&entry).unwrap().dimensions(), (232, 232));
     let stored = list().into_iter().find(|e| e.path == shot).unwrap();
     assert_eq!((stored.width, stored.height), (300, 300));
     // The entry's size now matches its thumbnail: no rebuild next time.
-    solid(&entry.thumb, 264, 264, RED);
+    solid(&entry.thumb, 232, 232, RED);
     assert_eq!(thumbnail(&stored).unwrap().get_pixel(0, 0).0, RED);
 }
 

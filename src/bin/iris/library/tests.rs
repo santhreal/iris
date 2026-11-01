@@ -4,7 +4,7 @@ use std::prelude::v1::test;
 use iris_lib::library::CaptureEntry;
 use iris_lib::time::days_from_civil;
 
-use super::card::{caption_span, thumb_frame, CAPTION_MIN, MIN_FRAME};
+use super::card::thumb_rect;
 use super::context_menu::{place, MENU_H};
 use super::entries::{trash_status, ThumbWant};
 use super::keys::{arrow, arrow_step};
@@ -107,8 +107,10 @@ fn sections_are_the_runs_of_one_day() {
 // Closed here: two cards drawn over each other, a card out of listing
 // order, a day whose first card does not start a row under its title, a
 // grid that leaves a column's room unused or passes the window's padding,
-// and a content height that clips the last row or scrolls past it. Every
-// width and section shape below is checked against these invariants.
+// a first column off the toolbar title's leading edge, an opening width
+// whose columns leave the right margin wider than the left, and a
+// content height that clips the last row or scrolls past it. Every width
+// and section shape below is checked against these invariants.
 // Not covered: the paint of the rows.
 #[test]
 fn every_card_has_its_own_place_in_reading_order() {
@@ -122,11 +124,21 @@ fn every_card_has_its_own_place_in_reading_order() {
         &[8, 8],
     ];
     let span = |c: usize| c as f32 * CARD_W + (c as f32 - 1.0) * GAP;
-    for width in [100.0, MIN_SIZE.width.into(), 700.0, 960.0, 1234.5, 2560.0] {
+    let open = super::OPEN_SIZE.0 - crate::theme::SIDEBAR_W;
+    for width in [
+        100.0,
+        MIN_SIZE.width.into(),
+        700.0,
+        open,
+        960.0,
+        1234.5,
+        2560.0,
+    ] {
         for sizes in shapes {
             let (secs, l) = grid(sizes, width);
             let n: usize = sizes.iter().sum();
             assert!(l.cols >= 1);
+            assert_eq!(l.x0, PAD_X, "{width}: the first column under the title");
             if l.cols > 1 {
                 assert!(span(l.cols) + 2.0 * PAD_X <= width, "{width}: {}", l.cols);
             }
@@ -175,6 +187,13 @@ fn every_card_has_its_own_place_in_reading_order() {
             assert_eq!(l.height, if n == 0 { 0.0 } else { bottom + BOTTOM_PAD });
         }
     }
+    let (_, l) = grid(&[3], open);
+    assert_eq!(l.cols, 3);
+    assert_eq!(
+        l.x0 + span(l.cols),
+        open - PAD_X,
+        "even margins when opened"
+    );
 }
 
 // WHY: the grid builds only the rows rows_in returns. Closed here: a row
@@ -850,100 +869,61 @@ fn the_empty_hint_names_the_shortcut_only_while_it_works() {
     }
 }
 
-// WHY: closes "a card crops its capture or draws it off its frame": the
-// frame holds the whole thumbnail at half its pixel size, keeps the
-// capture's aspect, is never smaller than room for the hover actions,
-// sits centered across the card's image area, and rests on its bottom
-// edge above the caption. The pixel box is the image area at 2x. It
-// does not cover the drawn pixels; the docshots review does.
+// WHY: closes "a card crops its capture, draws it off its mat, or
+// resamples it": every capture's thumbnail sits whole inside the
+// card's CARD_W x THUMB_H tile at half its pixel size, with at least
+// the 8 px mat on every side, centered to within half a device pixel,
+// on whole device pixels at the 2x scale the tile is sized for. The
+// pixel box is the tile less the mat, at 2x. It does not cover the
+// drawn pixels; the docshots review does.
 #[test]
-fn a_thumbnail_frame_fits_the_whole_capture_in_the_card() {
+fn a_thumbnail_sits_whole_and_centered_in_its_tile() {
+    const MAT: f32 = 8.0;
     let (bw, bh) = iris_lib::library::THUMB_BOX;
-    assert_eq!((bw as f32, bh as f32), (2.0 * CARD_W, 2.0 * THUMB_H));
+    assert_eq!(
+        (bw as f32, bh as f32),
+        (2.0 * (CARD_W - 2.0 * MAT), 2.0 * (THUMB_H - 2.0 * MAT))
+    );
     for (w, h) in [
         (1920, 1080),
         (3840, 2160),
         (1080, 1920),
         (432, 264),
+        (433, 264),
         (1000, 200),
         (300, 1000),
         (8, 6),
+        (7, 5),
         (100_000, 10),
         (10, 100_000),
         (0, 0),
     ] {
-        let (x, y, fw, fh) = thumb_frame(w, h);
+        let (x, y, iw, ih) = thumb_rect(w, h);
         let (tw, th) = iris_lib::library::thumb_size(w, h);
-        let (iw, ih) = (tw as f32 / 2.0, th as f32 / 2.0);
+        assert_eq!(
+            (iw, ih),
+            (tw as f32 / 2.0, th as f32 / 2.0),
+            "{w}x{h}: half the thumbnail's pixels"
+        );
         assert!(
-            x >= 0.0 && x + fw <= CARD_W + 0.001,
-            "{w}x{h}: x {x} w {fw}"
+            x >= MAT && y >= MAT && x + iw <= CARD_W - MAT && y + ih <= THUMB_H - MAT,
+            "{w}x{h}: {x},{y} {iw}x{ih} inside the mat"
+        );
+        assert!(
+            (x + iw / 2.0 - CARD_W / 2.0).abs() <= 0.25
+                && (y + ih / 2.0 - THUMB_H / 2.0).abs() <= 0.25,
+            "{w}x{h}: {x},{y} {iw}x{ih} centered"
         );
         assert_eq!(
-            (x * 2.0 + fw, y + fh),
-            (CARD_W, THUMB_H),
-            "{w}x{h}: centered, on the caption"
+            ((2.0 * x).fract(), (2.0 * y).fract()),
+            (0.0, 0.0),
+            "{w}x{h}: {x},{y} on whole device pixels"
         );
-        assert!(fw >= MIN_FRAME.0 && fh >= MIN_FRAME.1, "{w}x{h}: {fw}x{fh}");
-        assert!(fw >= iw && fh >= ih, "{w}x{h}: the frame holds the image");
-        if iw >= MIN_FRAME.0 && ih >= MIN_FRAME.1 {
-            assert_eq!(
-                (fw, fh),
-                (iw, ih),
-                "{w}x{h}: no matte around a large capture"
-            );
-        }
     }
-    // A 16:9 capture fills the width and keeps its aspect.
-    assert_eq!(
-        thumb_frame(1920, 1080),
-        (0.0, THUMB_H - 121.5, CARD_W, 121.5)
-    );
-    // A portrait capture fills the height, on a matte as wide as the
-    // hover actions need.
-    assert_eq!(
-        thumb_frame(1080, 1920),
-        ((CARD_W - MIN_FRAME.0) / 2.0, 0.0, MIN_FRAME.0, THUMB_H)
-    );
-}
-
-// WHY: closes "a card's caption overhangs or falls short of its
-// thumbnail": the caption line ends at the thumbnail frame's edges, and
-// under a frame narrower than CAPTION_MIN it is CAPTION_MIN wide,
-// centered, inside the card. It does not measure the caption text
-// against CAPTION_MIN; the docshots review does.
-#[test]
-fn a_caption_lines_up_with_its_thumbnail() {
-    for (w, h) in [
-        (1920, 1080),
-        (1200, 820),
-        (1080, 1920),
-        (300, 1000),
-        (8, 6),
-        (100_000, 10),
-        (10, 100_000),
-    ] {
-        let (fx, _, fw, _) = thumb_frame(w, h);
-        let (cx, cw) = caption_span(fw);
-        assert!(
-            cx >= 0.0 && cx + cw <= CARD_W + 0.001,
-            "{w}x{h}: caption {cx} + {cw} inside the card"
-        );
-        if fw >= CAPTION_MIN {
-            assert_eq!((cx, cw), (fx, fw), "{w}x{h}: on the frame's edges");
-        } else {
-            assert_eq!(
-                (cx, cw),
-                ((CARD_W - CAPTION_MIN) / 2.0, CAPTION_MIN),
-                "{w}x{h}: CAPTION_MIN, centered"
-            );
-        }
-    }
-    // A 1200x820 capture's frame is narrower than the card, and so is
-    // its caption.
-    let (fx, _, fw, _) = thumb_frame(1200, 820);
-    assert!(fw < CARD_W && fw > CAPTION_MIN, "{fw}");
-    assert_eq!(caption_span(fw), (fx, fw));
+    // A 16:9 capture spans the image area's width, a portrait one its
+    // height.
+    assert_eq!(thumb_rect(1920, 1080), (MAT, 9.5, 200.0, 112.5));
+    assert_eq!(thumb_rect(1080, 1920), (75.0, MAT, 65.5, 116.0));
 }
 
 // WHY: closes "the drawn cards wait on the slack rows": a prefetch

@@ -46,7 +46,7 @@ The log file holds iris's diagnostic lines and the warnings and errors of the li
 
 ### Tilde Expansion
 
-A leading `~` in `screenshots_dir` and `recordings_dir` expands to the home directory (`directories::UserDirs::new().home_dir()`) on every platform. iris writes a directory under the home directory in `~` form, both when it generates `config.toml` and when the settings window writes a change, so the file stays valid on a machine with a different home directory. The settings window shows the directories in the same form.
+A leading `~` in `screenshots_dir` and `recordings_dir` expands to the home directory (`directories::UserDirs::new().home_dir()`) on every platform. iris writes a directory under the home directory in `~` form, both when it generates `config.toml` and when the settings page writes a change, so the file stays valid on a machine with a different home directory. The settings page shows the directories in the same form.
 
 ## Default Configuration
 
@@ -112,7 +112,7 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 - `toast_drag_enabled` (Boolean, default: `true`):
   Enables dragging the thumbnail directly into external file managers, browsers, or applications.
 - `toast_pin_enabled` (Boolean, default: `true`):
-  Controls display of the **Keep Open** button in the toast's hover actions (see [Hover Actions](toast.md#hover-actions)). Configured in `config.toml`; not exposed in the settings window.
+  Controls display of the **Keep Open** button in the toast's hover actions (see [Hover Actions](toast.md#hover-actions)). Configured in `config.toml`; not on the settings page.
 - `toast_show_actions` (Boolean, default: `true`):
   Shows the action buttons when the pointer is over the toast thumbnail.
 - `toast_duration_ms` (Integer, default: `5000`):
@@ -158,22 +158,22 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 ### Updates
 
 - `check_for_updates` (Boolean, default: `true`):
-  Checks GitHub for a newer release in the background, about a minute after iris starts and then once a day. **Check Now** in the settings window checks regardless of this setting.
+  Checks GitHub for a newer release in the background, about a minute after iris starts and then once a day. **Check Now** on the settings page checks regardless of this setting.
 - `update_channel` (String enum, default: `"stable"`):
   Releases an update check offers (see [Channels](updates.md#channels)).
   Allowed values:
   - `"stable"`: The latest release. A draft or prerelease offers nothing.
   - `"beta"`: The newest release by version, prerelease or not.
 
-## Settings Window
+## Settings Page
 
-![Settings Window](images/settings.png)
+![Settings Page](images/settings.png)
 
-Open the settings window by executing `iris --settings`, selecting **Settings** from the system tray menu, or clicking the gear button in the library's toolbar. One settings window is open at a time: each of these raises and focuses the settings window when it is already open.
+The settings are a page of the app window, beside the [library](library.md). Show it by running `iris --settings`, selecting **Settings** from the system tray menu, clicking a pane in the window's sidebar, or pressing `Ctrl+,` (`Cmd+,` on macOS) in the library. Each of these opens the app window when it is closed, and raises and focuses it when it is open.
 
-The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`Cmd+1` through `Cmd+5` on macOS), to show its pane. `Ctrl+Tab` shows the next pane and `Ctrl+Shift+Tab` the previous one. The window resizes to the height of the pane.
+The sidebar lists **Library**, then the five panes under **Settings**, and fills the row of the pane shown. Click a pane, or press `Ctrl+1` through `Ctrl+5` (`Cmd+1` through `Cmd+5` on macOS), to show it. `Ctrl+Tab` shows the next pane and `Ctrl+Shift+Tab` the previous one. The toolbar shows the name of the pane.
 
-| Tab | Settings |
+| Pane | Settings |
 | --- | --- |
 | **General** | **Start iris at login** (see [Start at Login](#start-at-login)); the screenshots and recordings folders and the file name template; **Restore Defaults** |
 | **Capture** | Screen flash, shutter sound, clipboard copy; the floating thumbnail ([toast](toast.md#toast-notifications)): show after capture, click action, dismiss delay (2, 3, 5, 8, or 10 seconds), screen corner, drag to export, action buttons |
@@ -183,16 +183,16 @@ The toolbar holds five tabs. Click a tab, or press `Ctrl+1` through `Ctrl+5` (`C
 
 With **Show floating thumbnail** off, the floating thumbnail's other settings show dimmed: a click and the focus ring pass over them, and they keep their values until the switch is on again. **MP4 encoder** shows dimmed the same way while **Format** is GIF or WebM.
 
-Press `Ctrl+W` (`Cmd+W` on macOS) or `Escape`, or click the close control, to close the window. Drag the toolbar to move it.
+Press `Escape` with no field or menu open, or click **Library** in the sidebar, to return to the library. Press `Ctrl+W` (`Cmd+W` on macOS), or click the close control, to close the window. Drag the toolbar to move it.
 
 `Tab` and `Shift+Tab` move a focus ring over the controls of the pane, top to bottom, and wrap at either end. `Space` or `Return` runs the control under the ring as a click does: it turns a switch, opens a pop-up menu, opens the folder picker, starts recording a shortcut, or presses a button. A text field opens for typing when the ring reaches it and applies its value when the ring leaves it; a rejected value keeps the ring in the field. A mouse press or a pane change removes the ring.
 
 ### Applying Changes
 
-Each change writes `config.toml` through `Config::store` at once, and the in-memory configuration cache updates with the directories expanded. The window has no Save button.
+Each change writes `config.toml` through `Config::store` at once, and the in-memory configuration cache updates with the directories expanded. The page has no Save button.
 
 - A switch or pop-up button applies on click. In an open pop-up menu, `Up` and `Down` move the highlight, as the pointer does, `Return` or `Space` chooses the highlighted option, and `Escape` closes the menu.
-- A text field applies on `Enter`, on a click elsewhere in the window, on a tab change, when the window loses focus, and when the window closes by `Ctrl+W`, the close control, or the window manager. `Escape` discards the typed text. A directory must be an absolute path or start with `~`, the file name template must include `{date}` or `{time}` and none of `/ \ : * ? " < > |`, and frames per second must be an integer from 1 to 120. A rejected value stays in the field with the reason beside it, and the window keeps the current tab until the value is corrected or discarded. Closing the window drops a rejected value.
+- A text field applies on `Enter`, on a click elsewhere in the window, on a pane change, on a return to the library, when the window loses focus, and when the window closes by `Ctrl+W`, the close control, or the window manager. `Escape` discards the typed text. A directory must be an absolute path or start with `~`, the file name template must include `{date}` or `{time}` and none of `/ \ : * ? " < > |`, and frames per second must be an integer from 1 to 120. A rejected value stays in the field with the reason beside it, and the page keeps the current pane until the value is corrected or discarded. Closing the window drops a rejected value.
 - The file name field shows beside it the name a screenshot taken at that moment is saved under, from the typed text while the field is open. A template Settings rejects shows no name.
 - Clicking a text field opens it with the caret at the character boundary nearest the click, and clicking an open field moves the caret there; `Shift`-clicking an open field selects the text from the caret to the click. Dragging from a click selects the text the pointer passes over, double-clicking selects the word, run of spaces, or run of punctuation under the pointer, and triple-clicking selects the whole value. A field opened from the keyboard has the caret after its text. A value longer than its field moves left as far as the caret needs to stay in view. `Left` and `Right` move the caret one character, `Ctrl+Left` and `Ctrl+Right` (`Option` on macOS) one word, and `Home` and `End` (`Cmd+Left` and `Cmd+Right` on macOS) to the start or end; `Shift` with these keys selects the text the caret passes over. Without `Shift`, a move clears the selection, and `Left` or `Right` alone moves the caret to the start or end of the selected text. `Ctrl+A` (`Cmd+A` on macOS) selects the whole value. Typed characters go in at the caret, replacing the selected text. `Backspace` deletes the character before the caret and `Delete` the character after it, `Ctrl+Backspace` and `Ctrl+Delete` (`Option` on macOS) delete the word before or after the caret with the spaces and punctuation between, `Cmd+Backspace` on macOS deletes everything before the caret, and with text selected each deletes the selected text. `Ctrl+C` and `Ctrl+X` (`Cmd` on macOS) copy and cut the selected text, and `Ctrl+V` (`Cmd+V` on macOS) inserts the clipboard's text at the caret, replacing the selected text, as one line: each line break or tab becomes a space, a trailing line break is dropped, and other control characters are removed. A word is a run of letters and digits.
 - **Choose…** opens the system folder picker. When the picker cannot open, the path field opens for typing and the error shows in the window.

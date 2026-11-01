@@ -24,8 +24,8 @@
 //! (it owns the screen's `_NET_WM_CM_S<n>` selection, EWMH) and writes the
 //! root `_NET_SUPPORTED` list a window manager would. The states with a
 //! compositor are the controls for the pointer checks: in them a drag on
-//! the library's left strip resizes it and a click on the Settings
-//! window's close control closes it.
+//! the window's left strip resizes it and a click on its close control
+//! on the Settings page closes it.
 //!
 //! Not covered: a compositor that starts or exits while a window is open,
 //! whose frame stays as it opened; how a real window manager draws the
@@ -109,9 +109,9 @@ const SCREEN: &str = "1280x1024x24";
 const FRAMED: u32 = 1;
 const UNFRAMED: u32 = 0;
 
-/// The window whose close control a case clicks: the Settings window,
-/// whose toolbar has no trailing buttons, so that under the window
-/// manager's frame the click lands on empty toolbar.
+/// The page whose close control a case clicks: the Settings page, whose
+/// toolbar has no trailing buttons, so that under the window manager's
+/// frame the click lands on empty toolbar.
 const SETTINGS: (&str, &str) = ("--settings", "Settings - iris");
 
 /// The close control of a frame the window draws, from the window's

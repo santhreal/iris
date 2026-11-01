@@ -5,7 +5,7 @@
 use gpui::*;
 
 use super::layout::{Layout, Step};
-use super::{Library, Tool};
+use super::{Library, Page, Tool};
 use crate::widgets;
 
 /// The selection after an arrow key `step`: the new cursor, the new
@@ -67,6 +67,16 @@ impl Library {
         let ks = &ev.keystroke;
         let key = ks.key.as_str();
         let meta = ks.modifiers.control || ks.modifiers.platform;
+        // The settings page takes its own keys; the ones it passes on
+        // are the window's: Ctrl+W closes it, Esc returns to the grid.
+        if self.page == Page::Settings {
+            match key {
+                "w" if meta => self.close(window, cx),
+                "escape" => self.set_page(Page::Library, window, cx),
+                _ => {}
+            }
+            return;
+        }
         // An open menu takes the keyboard: no key acts on the grid
         // under it.
         if self.menu.is_some() {
@@ -78,7 +88,7 @@ impl Library {
         if self.help {
             match key {
                 "w" if meta => {
-                    window.remove_window();
+                    self.close(window, cx);
                     return;
                 }
                 "escape" | "?" | "/" => self.help = false,
@@ -93,14 +103,10 @@ impl Library {
                 "a" => self.select_all(),
                 "c" if !self.selected.is_empty() => self.copy_selection(cx),
                 "w" => {
-                    window.remove_window();
+                    self.close(window, cx);
                     return;
                 }
-                "," => {
-                    if let Err(e) = crate::settings::open(cx) {
-                        self.set_status(e, cx);
-                    }
-                }
+                "," => self.set_page(Page::Settings, window, cx),
                 _ => return,
             }
             cx.notify();
@@ -162,7 +168,7 @@ impl Library {
                 self.sel_dirty = true;
             }
             "escape" => {
-                window.remove_window();
+                self.close(window, cx);
                 return;
             }
             "enter" => {
@@ -234,11 +240,6 @@ impl Library {
                 self.sel_dirty = true;
             }
             Tool::Shortcuts => self.help = !self.help,
-            Tool::Settings => {
-                if let Err(e) = crate::settings::open(cx) {
-                    self.set_status(e, cx);
-                }
-            }
             Tool::Capture | Tool::Record => {}
         }
         cx.notify();

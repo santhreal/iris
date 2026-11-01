@@ -1,16 +1,16 @@
-//! Settings window: panes over config.toml in the macOS Settings
-//! register.
+//! Settings: panes over config.toml, the app window's settings page.
 //!
-//! The unified toolbar holds the pane tabs (General, Capture,
-//! Recording, Shortcuts, Updates), and the window takes the height of
-//! the selected pane. Every change applies at once: a toggle or a
-//! pop-up choice writes config.toml on the click, a text field on
-//! Return or when it loses focus, a shortcut field as soon as the
-//! combination is pressed, and the global hotkey grabs reload after a
-//! shortcut changes. A rejected value keeps its field open with the
+//! The window's sidebar lists the panes (General, Capture, Recording,
+//! Shortcuts, Updates) and the page shows the selected one, scrolling
+//! when it is taller than the window. Every change applies at once: a
+//! toggle or a pop-up choice writes config.toml on the click, a text
+//! field on Return or when it loses focus, a shortcut field as soon as
+//! the combination is pressed, and the global hotkey grabs reload after
+//! a shortcut changes. A rejected value keeps its field open with the
 //! reason beside it; Esc restores the stored value. Tab and Shift+Tab
 //! move a focus ring over the pane's controls, Space or Return runs the
-//! control under it, and Ctrl+Tab and Ctrl+Shift+Tab switch panes.
+//! control under it, Ctrl+Tab and Ctrl+Shift+Tab switch panes, and Esc
+//! with nothing open returns to the library.
 
 use gpui::*;
 use iris_lib::config::Config;
@@ -21,7 +21,8 @@ mod app;
 mod fields;
 mod panes;
 use app::Release;
-use panes::{Group, Pane, Row};
+pub(crate) use panes::Pane;
+use panes::{Group, Row};
 #[cfg(test)]
 mod tests;
 
@@ -127,9 +128,6 @@ pub struct Settings {
     pub(super) scroll: ScrollHandle,
     /// An update check started in this window is running.
     pub(super) checking: bool,
-    /// What a close from the close control or the window manager runs:
-    /// `close`. None outside a window.
-    pub(super) on_close: Option<widgets::OnClose>,
 }
 
 impl Settings {
@@ -154,14 +152,12 @@ impl Settings {
             focus,
             scroll: ScrollHandle::new(),
             checking: false,
-            on_close: None,
         }
     }
 
-    /// Show `pane` and fit the window to it. An edit that does not
-    /// commit keeps the current pane, so the rejected value stays in
-    /// view.
-    pub(super) fn select_pane(&mut self, pane: Pane, window: &mut Window) -> bool {
+    /// Show `pane`. An edit that does not commit keeps the current
+    /// pane, so the rejected value stays in view.
+    pub(crate) fn select_pane(&mut self, pane: Pane) -> bool {
         if !self.blur() {
             return false;
         }
@@ -170,95 +166,57 @@ impl Settings {
             self.pane = pane;
             self.ring = None;
             self.scroll = ScrollHandle::new();
-            window.resize(size(px(panes::WIDTH), px(pane.height())));
         }
         true
     }
 
-    /// Close the window, applying the edit that is open first, as a click
-    /// elsewhere would. A rejected value is dropped with the window.
-    pub(super) fn close(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
-        self.blur();
-        window.remove_window();
+    /// The pane shown.
+    pub(crate) fn pane(&self) -> Pane {
+        self.pane
     }
-}
 
-/// The settings window's minimum size: the shortest pane. Window
-/// managers hold a window at its minimum size hint, so the hint must
-/// let every pane's height through.
-fn min_size() -> Size<Pixels> {
-    let h = Pane::ALL
-        .iter()
-        .map(|p| p.height())
-        .fold(f32::INFINITY, f32::min);
-    size(px(panes::WIDTH), px(h))
-}
-
-/// Open the settings window, or raise the one already open: two
-/// windows would each write their own snapshot of the config over the
-/// other's changes.
-pub fn open(cx: &mut App) -> Result<(), String> {
-    if crate::widgets::raise_open::<Settings>(cx, |_| true) {
-        return Ok(());
+    /// The config as last written: the library reads its shortcuts
+    /// from it when the window returns to it.
+    pub(crate) fn config(&self) -> &Config {
+        &self.cfg
     }
-    let focus = cx.focus_handle();
-    let h = Pane::General.height();
-    let origin = crate::sys::window::centered_origin(cx, panes::WIDTH, h, (220.0, 140.0));
-    crate::widgets::open_window(
-        cx,
-        "Settings - iris",
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: point(px(origin.0), px(origin.1)),
-                size: size(px(panes::WIDTH), px(h)),
-            })),
-            titlebar: None,
-            focus: true,
-            show: true,
-            kind: WindowKind::Normal,
-            is_movable: true,
-            is_resizable: false,
-            is_minimizable: true,
-            display_id: None,
-            window_background: WindowBackgroundAppearance::Transparent,
-            window_min_size: Some(min_size()),
-            window_decorations: Some(WindowDecorations::Client),
-            tabbing_identifier: None,
-            ..Default::default()
-        },
-        |window, cx| {
+
+    /// Move the keyboard into the page.
+    pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
+        if let Some(focus) = &self.focus {
             focus.focus(window, cx);
-            cx.new(|cx| {
-                // An edit open when the window loses focus commits, as
-                // a field does when focus moves within the window.
-                cx.observe_window_activation(window, |this: &mut Settings, window, cx| {
-                    if !window.is_window_active()
-                        && (this.editing.is_some() || this.recording.is_some())
-                    {
-                        this.blur();
-                        cx.notify();
-                    }
-                })
-                .detach();
-                let mut settings = Settings::new(
-                    Config::load(),
-                    crate::sys::autostart::enabled(),
-                    app::offered_release(),
-                    Some(focus),
-                )
-                .with_last_checked();
-                settings.on_close = Some(widgets::close_route(window, cx, Settings::close));
-                settings
-            })
-        },
-    )
-    .map_err(|e| format!("open settings window: {e}"))?;
-    Ok(())
+        }
+    }
+}
+
+/// The settings page of the app window, created the first time the
+/// window shows it. The window holds one: two pages would each write
+/// their own snapshot of the config over the other's changes.
+pub fn page(window: &mut Window, cx: &mut App) -> Entity<Settings> {
+    let focus = cx.focus_handle();
+    cx.new(|cx| {
+        // An edit open when the window loses focus commits, as a field
+        // does when focus moves within the page.
+        cx.observe_window_activation(window, |this: &mut Settings, window, cx| {
+            if !window.is_window_active() && (this.editing.is_some() || this.recording.is_some()) {
+                this.blur();
+                cx.notify();
+            }
+        })
+        .detach();
+        Settings::new(
+            Config::load(),
+            crate::sys::autostart::enabled(),
+            app::offered_release(),
+            Some(focus),
+        )
+        .with_last_checked()
+    })
 }
 
 impl Settings {
     /// One group: an optional caption header over a card whose rows
-    /// are split by hairlines inset to the labels' leading edge.
+    /// are split by hairlines inset to the rows' padding on both sides.
     fn group(&self, group: &Group, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let mut card = div()
             .flex()
@@ -270,7 +228,7 @@ impl Settings {
                 card = card.child(
                     div()
                         .h(px(1.))
-                        .ml(px(theme::ROW_PAD_X))
+                        .mx(px(theme::ROW_PAD_X))
                         .bg(theme::SEPARATOR),
                 );
             }
@@ -322,14 +280,25 @@ impl Render for Settings {
             .flex()
             .flex_col()
             .gap(px(theme::GROUP_GAP))
+            .max_w(px(panes::FORM_MAX_W))
             .p(px(theme::INSET));
         for group in self.pane.groups() {
             form = form.child(self.group(group, window, cx));
         }
-        // A press on the window outside every control ends the open
-        // edit, as a click away from a text field does on macOS.
+        // A press on the page outside every control ends the open edit,
+        // as a click away from a text field does on macOS.
+        let scrolled = -f32::from(self.scroll.offset().y) > 0.5;
         let content = widgets::scroll_y(div().id("settings-scroll"), &self.scroll)
             .flex_1()
+            .min_h_0()
+            // A hairline under the toolbar once the pane scrolls under
+            // it, as the library's grid draws.
+            .border_t_1()
+            .border_color(if scrolled {
+                theme::HAIRLINE
+            } else {
+                theme::alpha(theme::HAIRLINE, 0.0)
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -341,24 +310,13 @@ impl Render for Settings {
             )
             .child(form);
 
-        let this = cx.entity().downgrade();
-        let tabs = widgets::segmented(
-            "settings-pane",
-            widgets::SegmentStyle::Tabs,
-            Pane::ALL
-                .iter()
-                .map(|p| widgets::Segment::icon(p.icon()).with_label(p.label()))
-                .collect(),
-            Some(self.pane.index()),
-            move |ix, window, cx| {
-                this.update(cx, |this, cx| {
-                    this.select_pane(Pane::ALL[ix], window);
-                    cx.notify();
-                })
-                .ok();
-            },
-        );
-        let mut root = div().size_full().font_family(theme::FONT);
+        let mut root = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .flex_col();
         if let Some(focus) = &self.focus {
             root = root.track_focus(focus);
         }
@@ -389,17 +347,7 @@ impl Render for Settings {
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| this.field_drag = false),
             )
-            .child(widgets::toolbar_frame(
-                window,
-                cx,
-                widgets::Toolbar {
-                    on_close: self.on_close.clone(),
-                    ..widgets::Toolbar::default()
-                }
-                .center(tabs),
-                false,
-                content,
-            ));
+            .child(content);
         if let Some(status) = &self.status {
             root = root.child(widgets::status_pill(status.clone(), 10.0));
         }

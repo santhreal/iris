@@ -20,6 +20,11 @@ const BLACK: Rgba = rgb(0.0, 0.0, 0.0);
 pub const BG: Rgba = rgb(0.118, 0.118, 0.118);
 /// Floating panels over the window: menus, popovers, sheets, pills.
 pub const BG_ELEV: Rgba = rgb(0.169, 0.169, 0.169);
+/// The app window's sidebar: a lighter band than the content beside
+/// it, as a source list reads over a dark window, and a selected
+/// row's fill in it.
+pub const SIDEBAR_BG: Rgba = rgb(0.149, 0.149, 0.149);
+pub const SIDEBAR_SELECTED: Rgba = alpha(WHITE, 0.10);
 pub const SURFACE: Rgba = alpha(WHITE, 0.05);
 /// Hover wash on ghost controls and rows.
 pub const SURFACE_HOVER: Rgba = alpha(WHITE, 0.06);
@@ -108,6 +113,9 @@ pub const RADIUS_CONTROL: f32 = 6.0;
 pub const CONTROL_H: f32 = 24.0;
 /// Control height in toolbars, and the minimum icon-only hit area.
 pub const TOOLBAR_CONTROL_H: f32 = 28.0;
+/// Width of a settings row's value control: a shortcut field, and the
+/// narrowest pop-up button, so a column of them shares one left edge.
+pub const FORM_CONTROL_W: f32 = 150.0;
 /// Glyph sizes: toolbar icons and row icons.
 pub const ICON_TOOLBAR: f32 = 16.0;
 pub const ICON_ROW: f32 = 14.0;
@@ -126,6 +134,14 @@ pub const GROUP_GAP: f32 = 20.0;
 pub const HEADER_GAP: f32 = 6.0;
 /// Unified toolbar (title bar) height.
 pub const TOOLBAR_H: f32 = 52.0;
+/// The app window's sidebar: its width, a row's height, the inset of
+/// its rows from its edges, a row's inner padding, and the space above
+/// a section header.
+pub const SIDEBAR_W: f32 = 200.0;
+pub const SIDEBAR_ROW_H: f32 = 28.0;
+pub const SIDEBAR_PAD: f32 = 10.0;
+pub const SIDEBAR_ROW_PAD: f32 = 8.0;
+pub const SIDEBAR_SECTION_GAP: f32 = 18.0;
 
 /// Type scale, logical px (weights in the doc of each).
 /// Title, SemiBold: pane and sheet titles.

@@ -11,8 +11,10 @@ use super::{CARD_H, CARD_W, GAP};
 /// A local calendar day, as days since 1970-01-01.
 pub(super) type Day = i64;
 
-/// Horizontal inset of the grid from the window edges, at least.
-pub(super) const PAD_X: f32 = 20.0;
+/// Horizontal inset of the grid from the page's edges, at least: the
+/// toolbar title's, so the title, the day titles, and the first column
+/// share one leading edge.
+pub(super) const PAD_X: f32 = crate::theme::INSET;
 /// A day header row: its title sits on the row's bottom, above the
 /// cards.
 pub(super) const HEADER_H: f32 = 44.0;
@@ -154,7 +156,7 @@ pub(super) enum Step {
 #[derive(Default)]
 pub(super) struct Layout {
     pub cols: usize,
-    /// Left edge of the first column; the grid is centered.
+    /// Left edge of the first column: PAD_X, under the toolbar's title.
     pub x0: f32,
     pub rows: Vec<Row>,
     pub tops: Vec<f32>,
@@ -167,8 +169,7 @@ pub(super) struct Layout {
 impl Layout {
     pub(super) fn new(sections: &[Section], width: f32) -> Layout {
         let cols = (((width - 2.0 * PAD_X + GAP) / (CARD_W + GAP)).floor() as usize).max(1);
-        let grid_w = cols as f32 * CARD_W + (cols - 1) as f32 * GAP;
-        let x0 = ((width - grid_w) / 2.0).max(0.0).round();
+        let x0 = PAD_X;
         let n = sections.last().map_or(0, |s| s.end);
         let mut layout = Layout {
             cols,

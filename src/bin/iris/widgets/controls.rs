@@ -111,14 +111,18 @@ impl RenderOnce for ToggleFace {
         if state.read(cx).since.is_some() {
             window.request_animation_frame();
         }
+        // A flex face: a block face would collapse a top margin on the
+        // knob through its own top edge and drop the accent fill with it.
         div()
             .size_full()
+            .flex()
+            .items_center()
             .rounded_full()
             .bg(theme::alpha(theme::ACCENT, pos))
             .child(
                 div()
                     .size(px(KNOB))
-                    .mt(px(KNOB_INSET))
+                    .flex_shrink_0()
                     .ml(px(KNOB_INSET + knob_travel() * pos))
                     .rounded_full()
                     .bg(gpui::white())
@@ -185,27 +189,16 @@ pub(super) fn styled_button(base: Stateful<Div>, style: ButtonStyle) -> Stateful
     }
 }
 
-/// One segment of a segmented control: a glyph, a label, or both, and
-/// an optional tooltip (label plus shortcut).
+/// One segment of a segmented control: a glyph and an optional tooltip
+/// (label plus shortcut).
 pub struct Segment {
-    icon: Option<Icon>,
-    label: Option<SharedString>,
+    icon: Icon,
     tip: Option<(SharedString, Option<SharedString>)>,
 }
 
 impl Segment {
     pub fn icon(icon: Icon) -> Self {
-        Self {
-            icon: Some(icon),
-            label: None,
-            tip: None,
-        }
-    }
-
-    /// Add a label beside (Toolbar) or under (Tabs) the glyph.
-    pub fn with_label(mut self, label: impl Into<SharedString>) -> Self {
-        self.label = Some(label.into());
-        self
+        Self { icon, tip: None }
     }
 
     /// The tooltip after the hover delay: `label`, then `shortcut` in
@@ -216,103 +209,45 @@ impl Segment {
     }
 }
 
-/// How a segmented control lays out and marks its selection.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SegmentStyle {
-    /// Toolbar tool picker: TOOLBAR_CONTROL_H segments in a quiet
-    /// track; the selected segment is accent-filled with white content.
-    Toolbar,
-    /// Window pane tabs: glyph over label, no track; the selected tab
-    /// has a soft fill and accent-tinted glyph and label.
-    Tabs,
-}
-
-/// Segment geometry per style: (height, glyph size).
-fn segment_metrics(style: SegmentStyle) -> (f32, f32) {
-    match style {
-        SegmentStyle::Toolbar => (theme::TOOLBAR_CONTROL_H, theme::ICON_TOOLBAR),
-        SegmentStyle::Tabs => (44.0, 18.0),
-    }
-}
-
-/// A segmented control: one choice among `segments`, `selected` marked.
-/// A click on a segment runs `on_select(index)`, including on the one
-/// already selected.
+/// A toolbar segmented control: one choice among `segments`, square
+/// TOOLBAR_CONTROL_H segments in a quiet track, the `selected` one
+/// accent-filled with white content. A click on a segment runs
+/// `on_select(index)`, including on the one already selected.
 pub fn segmented(
     id: &'static str,
-    style: SegmentStyle,
     segments: Vec<Segment>,
     selected: Option<usize>,
     on_select: impl Fn(usize, &mut Window, &mut App) + 'static,
 ) -> Div {
     let on_select = Rc::new(on_select);
-    let (h, glyph) = segment_metrics(style);
-    let mut row = div().flex().flex_shrink_0().items_center();
-    row = match style {
-        SegmentStyle::Toolbar => row
-            .p(px(2.))
-            .gap(px(2.))
-            .rounded(px(theme::RADIUS_CONTROL + 2.))
-            .bg(theme::alpha(theme::FG, 0.06)),
-        SegmentStyle::Tabs => row.gap(px(2.)),
-    };
+    let side = theme::TOOLBAR_CONTROL_H - 4.0;
+    let mut row = div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .p(px(2.))
+        .gap(px(2.))
+        .rounded(px(theme::RADIUS_CONTROL + 2.))
+        .bg(theme::alpha(theme::FG, 0.06));
     for (i, seg) in segments.into_iter().enumerate() {
         let on = selected == Some(i);
-        let ink = match (style, on) {
-            (SegmentStyle::Toolbar, true) => theme::ACCENT_INK,
-            (SegmentStyle::Tabs, true) => theme::ACCENT,
-            (_, false) => theme::FG_DIM,
-        };
-        let mut cell = div()
+        let cell = div()
             .id(ElementId::NamedInteger(id.into(), i as u64))
+            .size(px(side))
             .flex()
             .flex_shrink_0()
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .text_color(ink)
-            .whitespace_nowrap();
-        cell = match style {
-            SegmentStyle::Toolbar => {
-                let w = if seg.label.is_none() { h - 4.0 } else { 0.0 };
-                let c = cell
-                    .h(px(h - 4.0))
-                    .px(px(if seg.label.is_some() { 10. } else { 0. }))
-                    .gap(px(6.))
-                    .rounded(px(theme::RADIUS_CONTROL))
-                    .text_size(px(theme::TEXT_BODY));
-                let c = if w > 0.0 { c.w(px(w)) } else { c };
-                if on {
-                    c.bg(theme::ACCENT)
-                } else {
-                    c.hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
-                        .active(|s| s.bg(theme::SURFACE_PRESS))
-                }
-            }
-            SegmentStyle::Tabs => {
-                let c = cell
-                    .h(px(h))
-                    .min_w(px(64.))
-                    .px(px(8.))
-                    .flex_col()
-                    .gap(px(3.))
-                    .rounded(px(theme::RADIUS_CONTROL + 1.))
-                    .text_size(px(theme::TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM);
-                if on {
-                    c.bg(theme::alpha(theme::FG, 0.09))
-                } else {
-                    c.hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
-                        .active(|s| s.bg(theme::SURFACE_PRESS))
-                }
-            }
-        };
-        if let Some(icon) = seg.icon {
-            cell = cell.child(icons::icon_in_text_color(icon, glyph));
+            .rounded(px(theme::RADIUS_CONTROL))
+            .text_color(if on { theme::ACCENT_INK } else { theme::FG_DIM });
+        let mut cell = if on {
+            cell.bg(theme::ACCENT)
+        } else {
+            cell.hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
+                .active(|s| s.bg(theme::SURFACE_PRESS))
         }
-        if let Some(label) = seg.label {
-            cell = cell.child(label);
-        }
+        .child(icons::icon_in_text_color(seg.icon, theme::ICON_TOOLBAR));
         if let Some((label, shortcut)) = seg.tip {
             cell = cell.tooltip(tip(label, shortcut));
         }

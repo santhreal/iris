@@ -9,7 +9,7 @@ use super::action::{hex_rgba, Transform, COLORS, TOOLS};
 use super::Editor;
 use crate::icons::Icon;
 use crate::theme;
-use crate::widgets::{self, tip, MenuItem, MenuKey, Segment, SegmentStyle, Toolbar};
+use crate::widgets::{self, tip, MenuItem, MenuKey, Segment, Toolbar};
 
 /// The tool options bar's height, under the toolbar.
 pub(super) const OPTIONS_H: f32 = 40.0;
@@ -256,13 +256,12 @@ impl Editor {
             )
     }
 
-    /// The tools as one Toolbar segmented control; each tooltip shows
+    /// The tools as one toolbar segmented control; each tooltip shows
     /// the tool's name and the key that selects it.
     fn tool_buttons(&self, cx: &mut Context<Self>) -> Div {
         let this = cx.entity().downgrade();
         widgets::segmented(
             "editor-tools",
-            SegmentStyle::Toolbar,
             TOOLS
                 .iter()
                 .map(|&(_, glyph, label, key)| Segment::icon(glyph).tip(label, Some(key.into())))
@@ -420,9 +419,27 @@ impl Editor {
             .occlude()
     }
 
-    /// The tool options bar: stroke width, the fill toggle, and the
-    /// markup colors, for the next mark and the selected one.
+    /// The tool options bar: the stroke widths as one segmented control,
+    /// the fill toggle, and the markup colors, each set split by a
+    /// divider, for the next mark and the selected one.
     pub(super) fn render_options(&self, options: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        let divider = || div().w(px(1.)).h(px(20.)).mx(px(8.)).bg(theme::HAIRLINE);
+        let this = cx.entity().downgrade();
+        let strokes = widgets::segmented(
+            "stroke",
+            STROKES
+                .iter()
+                .map(|&(glyph, label, key)| Segment::icon(glyph).tip(label, Some(key.into())))
+                .collect(),
+            Some(usize::from(self.stroke)),
+            move |ix, _, cx| {
+                this.update(cx, |this, cx| {
+                    this.set_stroke(ix as u8);
+                    cx.notify();
+                })
+                .ok();
+            },
+        );
         let mut bar = div()
             .id("tool-options")
             .absolute()
@@ -440,22 +457,9 @@ impl Editor {
             .border_b_1()
             .border_color(theme::HAIRLINE)
             .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        for (i, (glyph, label, key)) in STROKES.into_iter().enumerate() {
-            bar = bar.child(
-                widgets::icon_button(
-                    ElementId::NamedInteger("stroke".into(), i as u64),
-                    glyph,
-                    self.stroke == i as u8,
-                    theme::TOOLBAR_CONTROL_H,
-                )
-                .tooltip(tip(label, Some(key.into())))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_stroke(i as u8);
-                    cx.notify();
-                })),
-            );
-        }
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(strokes)
+            .child(divider());
         bar = bar.child(
             widgets::icon_button(
                 "fill-toggle",
@@ -469,7 +473,7 @@ impl Editor {
                 cx.notify();
             })),
         );
-        bar = bar.child(div().w(px(1.)).h(px(20.)).mx(px(8.)).bg(theme::HAIRLINE));
+        bar = bar.child(divider());
         for (c, name) in COLORS {
             let active = c == self.color;
             bar = bar.child(

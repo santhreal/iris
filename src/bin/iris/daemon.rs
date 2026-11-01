@@ -17,7 +17,7 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::StreamExt;
 use gpui::*;
 
-use crate::{chip, library, overlay, settings, stage};
+use crate::{chip, library, overlay, stage};
 
 mod capture;
 mod recording;
@@ -272,8 +272,8 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
             crate::notice::countdown(cx, *secs);
             Ok(())
         }
-        Command::Library => library::open(cx),
-        Command::Settings => settings::open(cx),
+        Command::Library => library::open(cx, library::Page::Library),
+        Command::Settings => library::open(cx, library::Page::Settings),
         Command::Annotate(path) => crate::editor::open(cx, path, None, None),
         Command::Toast(path) => {
             stage::show_toast(cx, path, None);

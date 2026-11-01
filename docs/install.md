@@ -113,7 +113,7 @@ The uninstaller sends `--quit` to a running iris, waits for both executables in 
 
 Download `iris-<ver>-windows-<arch>-portable.zip`, unpack it to a folder your account can write, and run `iris\iris.exe`. The zip holds `iris.exe`, `ffmpeg.exe`, the iris license notices, and `licenses\ffmpeg` in the `iris` directory.
 
-The portable iris creates no shortcut, no autostart registry value, and no uninstall entry. It keeps settings, captures, and logs in the same directories as an installed iris ([paths](configuration.md#iris_home-directory-override)). To start it at login, turn on **Start iris at login** in the settings window ([Start at Login](configuration.md#start-at-login)). To remove it, turn off **Start iris at login**, quit iris (`iris.exe --quit`), and delete the folder.
+The portable iris creates no shortcut, no autostart registry value, and no uninstall entry. It keeps settings, captures, and logs in the same directories as an installed iris ([paths](configuration.md#iris_home-directory-override)). To start it at login, turn on **Start iris at login** on the settings page ([Start at Login](configuration.md#start-at-login)). To remove it, turn off **Start iris at login**, quit iris (`iris.exe --quit`), and delete the folder.
 
 An `iris.exe` with `uninstall.exe` beside it updates through the installer; any other `iris.exe` is portable and updates from the portable zip ([Updates](#updates)).
 
@@ -257,4 +257,4 @@ Install it with `sudo apt install tesseract-ocr` on Debian and Ubuntu, or `sudo 
 
 ## Updates
 
-iris checks for a newer release in the background and offers it in the tray menu, a notice, and the Updates pane of the settings window. `iris --update` installs it. The `stable` channel, the default, offers releases; the `beta` channel (`update_channel = "beta"`) also offers prereleases. iris installs an update only when the download matches its `.sha256` sidecar and its `.minisig` signature verifies. [Updates](updates.md) describes the background check, the channels, the checks, and how each kind of install is updated.
+iris checks for a newer release in the background and offers it in the tray menu, a notice, and the Updates pane of the settings page. `iris --update` installs it. The `stable` channel, the default, offers releases; the `beta` channel (`update_channel = "beta"`) also offers prereleases. iris installs an update only when the download matches its `.sha256` sidecar and its `.minisig` signature verifies. [Updates](updates.md) describes the background check, the channels, the checks, and how each kind of install is updated.

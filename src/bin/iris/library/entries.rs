@@ -339,7 +339,7 @@ impl Library {
         }
     }
 
-    /// Entry `index`'s thumbnail frame in screen coordinates, the rect
+    /// Entry `index`'s thumbnail image in screen coordinates, the rect
     /// the editor morphs out of; None before the grid is laid out.
     pub(super) fn card_screen_rect(
         &self,
@@ -348,7 +348,7 @@ impl Library {
     ) -> Option<(f32, f32, f32, f32)> {
         let (x, y, ..) = self.layout.card_rect(index)?;
         let entry = self.listing.entries().get(index)?;
-        let (dx, dy, w, h) = super::card::thumb_frame(entry.width, entry.height);
+        let (dx, dy, w, h) = super::card::thumb_rect(entry.width, entry.height);
         let view = self.scroll.bounds();
         if f32::from(view.size.height) <= 0.0 {
             return None;

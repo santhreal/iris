@@ -54,14 +54,10 @@ pub enum Icon {
     Alert,
     ChevronUpDown,
     Ellipsis,
-    Rotate,
-    FlipH,
-    FlipV,
-    File,
     Fill,
     Keyboard,
     Download,
-    Sliders,
+    Library,
     Timer,
     Minimize,
     Maximize,
@@ -123,7 +119,7 @@ fn paint_icon(kind: Icon, bounds: Bounds<Pixels>, color: Rgba, window: &mut Wind
 
 // WHY: the class closed here is "a glyph shrinks in a row with no room
 // left". A canvas in a flex row shrank like text, so a folder glyph
-// beside an overflowing path in the settings window painted a sliver.
+// beside an overflowing path on the settings page painted a sliver.
 // `glyph` is the one constructor every glyph goes through, and its box
 // neither grows nor shrinks. Not covered: a caller that wraps the glyph
 // in a box of its own that shrinks.

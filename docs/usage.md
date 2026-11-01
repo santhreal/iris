@@ -2,11 +2,11 @@
 
 ## Start iris
 
-Open iris from the application menu on Linux, the Start menu on Windows, or Applications on macOS, or run `iris`. iris starts, opens its library window, and adds a tray icon. Closing the window leaves iris running in the tray with its global hotkeys. Opening iris again while it runs opens the library window of the running iris; no second iris starts ([Process Model](cli.md#process-model-and-interprocess-communication)).
+Open iris from the application menu on Linux, the Start menu on Windows, or Applications on macOS, or run `iris`. iris starts, opens its app window on the library, and adds a tray icon. Closing the window leaves iris running in the tray with its global hotkeys. Opening iris again while it runs shows the library in the app window of the running iris; no second iris starts ([Process Model](cli.md#process-model-and-interprocess-communication)).
 
 `iris --background`, which the login autostart entries run, starts iris with no window.
 
-The library window shows past captures ([Capture Library](library.md)). Its toolbar ends with **Settings**, **Record Window** (**Record Screen** on Windows and macOS, which record the desktop), and **New Screenshot**; pointing at a button shows its name and global shortcut. With no captures, the library shows the capture shortcut and the **Record Window** and **New Screenshot** buttons. **New Screenshot** and **Record Window** close the library before the capture or the window pick starts, so the library is not in the picture. While a recording runs, **Record Window** stops it and the library stays open.
+The library shows past captures ([Capture Library](library.md)), and the app window's sidebar switches between it and the panes of the [settings page](configuration.md#settings-page). The library's toolbar ends with **Keyboard Shortcuts**, **Record Window** (**Record Screen** on Windows and macOS, which record the desktop), and **New Screenshot**; pointing at a button shows its name and global shortcut. With no captures, the library shows the capture shortcut and the **Record Window** and **New Screenshot** buttons. **New Screenshot** and **Record Window** close the library before the capture or the window pick starts, so the library is not in the picture. While a recording runs, **Record Window** stops it and the library stays open.
 
 The tray menu holds the same actions:
 
@@ -16,17 +16,17 @@ The tray menu holds the same actions:
 | **Record Window** (Linux), **Record Screen** (Windows and macOS) | Start a window recording on Linux and a desktop recording on Windows and macOS; shown while no recording runs |
 | **Stop Recording** | Stop the recording in progress; shown in place of **Record Window** or **Record Screen** while a recording runs |
 | **Library** | Open the capture library |
-| **Settings** | Open the settings window |
+| **Settings** | Open the settings page |
 | **Install iris** *version* | Download, verify, and install the update the last check found; shown only while one is available ([Updates](updates.md)) |
 | **Quit** | Quit iris |
 
 A primary or secondary click on the tray icon opens the tray menu.
 
-To start iris at login, turn on **Start iris at login** in the settings window ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
+To start iris at login, turn on **Start iris at login** on the settings page ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
 
 ### First start per platform
 
-- **Linux (X11)**: iris grabs the capture and record hotkeys itself. A key another program grabbed first is not bound. The **Shortcuts** pane of the settings window shows **In use by another app** for it; set another key there.
+- **Linux (X11)**: iris grabs the capture and record hotkeys itself. A key another program grabbed first is not bound. The **Shortcuts** pane of the settings page shows **In use by another app** for it; set another key there.
 - **Linux (Wayland)**: iris asks the desktop for the capture and record hotkeys through the GlobalShortcuts portal (`org.freedesktop.portal.GlobalShortcuts`). The desktop can show a dialog to confirm them on first use. A desktop with no GlobalShortcuts portal binds none; bind `iris --capture` and `iris --record-window` in the compositor's configuration instead ([Window Manager and Compositor Keybindings](cli.md#window-manager-and-compositor-keybindings)).
 - **macOS**: The first capture requests Screen Recording permission. Enable iris in System Settings > Privacy & Security > Screen Recording, then restart iris. The capture hotkey is `Cmd+Shift+2` and the record hotkey `Cmd+Option+Shift+2`: `Cmd+Shift+3` through `Cmd+Shift+6` are the system's screenshot shortcuts, and Mac keyboards have no `Print` key. Menus and tooltips show shortcuts as macOS symbols (`⇧⌘2`).
 - **Windows**: The tray icon is in the notification area, or in its overflow menu.
@@ -68,7 +68,7 @@ Open iris, click **Library** in the tray menu, or run `iris --library`. The libr
 
 ## Change Settings
 
-Click the gear in the library's toolbar, click **Settings** in the tray menu, or run `iris --settings`. The settings window has five tabs: **General** (Start at login, save folders, file names), **Capture** (capture feedback and the floating thumbnail), **Recording**, **Shortcuts**, and **Updates**. Each change writes `config.toml` at once, and a changed hotkey registers again in the running iris at once ([Settings Window](configuration.md#settings-window)).
+Click a pane under **Settings** in the app window's sidebar, press `Ctrl+,` (`Cmd+,` on macOS) in the library, click **Settings** in the tray menu, or run `iris --settings`. The settings page has five panes: **General** (Start at login, save folders, file names), **Capture** (capture feedback and the floating thumbnail), **Recording**, **Shortcuts**, and **Updates**. Each change writes `config.toml` at once, and a changed hotkey registers again in the running iris at once ([Settings Page](configuration.md#settings-page)).
 
 ## Quit
 

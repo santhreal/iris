@@ -288,16 +288,16 @@ fn a_pop_up_opens_with_its_selected_option_lit() {
     }
 }
 
-// WHY: closes "a setting has no row, or two rows" and "a pane does not
-// fit its window". Every switch, pop-up, and field must appear in
-// exactly one pane: a new member of any of the three enums fails here
-// until it is placed. A pane's window height is computed from its rows;
-// the window's minimum size must let the shortest pane through (a
-// window manager holds a window at its minimum size hint), and the
-// tallest pane must fit a 768-pixel-high screen. Not covered: the
-// rendered row heights matching Row::height, which docshots check.
+// WHY: closes "a setting has no row, or two rows" and "a pane scrolls
+// in a window at its minimum size". Every switch, pop-up, and field must
+// appear in exactly one pane: a new member of any of the three enums
+// fails here until it is placed. A pane's height is computed from its
+// rows, and every pane must show whole in the app window at its minimum
+// height, so a row added to a pane fails here before it hides under the
+// window's bottom edge. Not covered: the rendered row heights matching
+// Row::height, which docshots check.
 #[test]
-fn every_setting_has_exactly_one_row_and_every_pane_fits_its_window() {
+fn every_setting_has_exactly_one_row_and_every_pane_fits_the_window() {
     let rows: Vec<Row> = Pane::ALL.iter().flat_map(|p| p.rows()).collect();
     let count = |want: Row| rows.iter().filter(|&&r| r == want).count();
     for sw in Switch::ALL {
@@ -313,14 +313,10 @@ fn every_setting_has_exactly_one_row_and_every_pane_fits_its_window() {
     assert_eq!(count(Row::Version), 1);
     assert_eq!(count(Row::Restore), 1);
 
-    let min = min_size();
+    let min = crate::library::MIN_SIZE.height;
     for p in Pane::ALL {
         let h = p.height();
-        assert!(px(h) >= min.height, "{p:?}: {h} under the minimum");
-        assert!(
-            h <= 700.0,
-            "{p:?}: {h} is taller than a 768px screen allows"
-        );
+        assert!(px(h) <= min, "{p:?}: {h} scrolls at the minimum {min:?}");
         assert_eq!(Pane::ALL[p.index()], p);
     }
 }

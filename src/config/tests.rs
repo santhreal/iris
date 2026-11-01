@@ -124,11 +124,11 @@ fn tilde_dirs_expand_to_home() {
 
 /// WHY: the class closed here is "a directory in `~` form reaches a
 /// reader unexpanded". `store` cached the config as given, so after
-/// the settings window saved "~/shots" every `load` handed that to
+/// the settings page saved "~/shots" every `load` handed that to
 /// the capture pipeline, which wrote into a directory named "~"
 /// under the daemon's cwd. The file keeps the `~` form; readers get
 /// the expanded path. Not covered: a relative directory, which the
-/// settings window rejects before it gets here.
+/// settings page rejects before it gets here.
 #[test]
 #[serial_test::serial]
 fn a_stored_tilde_dir_reaches_readers_expanded_and_stays_tilde_on_disk() {

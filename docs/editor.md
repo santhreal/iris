@@ -7,7 +7,7 @@ The annotation editor provides vector markup tools, text entry, blur, and croppi
 Open the editor via:
 - Left-clicking a capture toast whose `toast_click_action` setting is set to `"markup"`.
 - Clicking **Markup** (pen icon) in the toast's hover actions or selecting **Markup** from the toast context menu.
-- Left-clicking a capture card in the Library window.
+- Left-clicking a capture card in the library.
 - Running `iris --annotate <path/to/file.png>` from the command line.
 
 One editor is open per file. Opening a file that an editor already shows raises and focuses that editor, unless the editor is closing after **Done** or **Discard**.
@@ -29,7 +29,7 @@ The toolbar holds, from left to right:
 
 `Shift+F10` or the Menu key opens the More menu. In an open Copy or More menu, `Up` and `Down` move the highlight, as the pointer does, and pass over a dimmed row; `Left` and `Right` open the other menu; `Return` or `Space` runs the highlighted row, and `Escape` closes the menu. Other keys do nothing while a menu is open.
 
-The tool options bar under the toolbar holds the three stroke widths, the fill toggle, and the color swatches (see [Tool Options](#tool-options)). The image sits under both bars, fit to the window with a 24-pixel margin on every side.
+The tool options bar under the toolbar holds the three stroke widths as one segmented control, the fill toggle, and the color swatches, with a divider between each group (see [Tool Options](#tool-options)). The image sits under both bars, fit to the window with a 24-pixel margin on every side.
 
 ## Tools and Hotkeys
 

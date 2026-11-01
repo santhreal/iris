@@ -13,10 +13,10 @@ use crate::sys::hotkeys::{self, Binding, Chord};
 use crate::theme;
 use crate::widgets::{self, MenuKey};
 
-/// Field widths: a path or file name template, a number, a shortcut.
+/// Field widths: a path or file name template, and a number. A shortcut
+/// field is `theme::FORM_CONTROL_W` wide.
 const TEXT_W: f32 = 200.0;
 const NUMBER_W: f32 = 64.0;
-const SHORTCUT_W: f32 = 150.0;
 const PATH_W: f32 = 240.0;
 
 /// A configured directory as its field shows it: `~` for the home
@@ -176,7 +176,7 @@ impl Settings {
     /// and stop a shortcut recording without a change. Returns false
     /// when the typed value was rejected: the edit stays open with the
     /// reason beside it.
-    pub(super) fn blur(&mut self) -> bool {
+    pub(crate) fn blur(&mut self) -> bool {
         if self.recording.take().is_some() {
             self.rejected = None;
         }
@@ -516,6 +516,9 @@ impl Settings {
         cx: &mut Context<Self>,
     ) {
         let ks = &ev.keystroke;
+        // The page takes every key but the window's own: Ctrl+W, and
+        // Esc with nothing open, go on to the window.
+        cx.stop_propagation();
         // Recording takes every combination, Esc included: Esc is the
         // default cancel key. A click away stops it.
         if let Some(field) = self.recording {
@@ -527,17 +530,17 @@ impl Settings {
         }
         let meta = ks.modifiers.control || ks.modifiers.platform;
         if meta && ks.key == "w" {
-            self.close(window, cx);
+            cx.propagate();
             return;
         }
         if let Some(pane) = Pane::for_key(&ks.key).filter(|_| meta) {
-            self.select_pane(pane, window);
+            self.select_pane(pane);
             cx.notify();
             return;
         }
         if ks.key == "tab" {
             if ks.modifiers.control {
-                self.select_pane(self.pane.step(!ks.modifiers.shift), window);
+                self.select_pane(self.pane.step(!ks.modifiers.shift));
             } else {
                 self.tab(!ks.modifiers.shift);
             }
@@ -588,7 +591,7 @@ impl Settings {
             return;
         }
         if ks.key == "escape" {
-            self.close(window, cx);
+            cx.propagate();
         }
     }
 
@@ -615,7 +618,7 @@ impl Settings {
         // menu open, its press-outside dismissal runs first, and the
         // button must not open it again.
         let button = widgets::ringed(
-            widgets::popup_button(p.id(), p.current(&self.cfg), open).on_mouse_down(
+            widgets::popup_button(p.id(), p.current(&self.cfg), p.options(), open).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
                     if open {
@@ -789,7 +792,7 @@ impl Settings {
                 .child(widgets::keycaps_in(&self.field_text(field), theme::FG))
         };
         let input = input
-            .w(px(SHORTCUT_W))
+            .w(px(theme::FORM_CONTROL_W))
             .flex_shrink_0()
             .justify_center()
             .font_features(theme::tabular())

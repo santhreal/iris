@@ -20,6 +20,10 @@
 
 #![cfg(target_os = "linux")]
 
+// The other test files use the rest of the layout.
+#[allow(dead_code)]
+#[path = "support/app_window.rs"]
+mod app_window;
 // The other test files use the rest of the harness.
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
@@ -46,11 +50,9 @@ const CONTROL: u32 = 0xffe3;
 const DOWN: u32 = 0xff54;
 const RETURN: u32 = 0xff0d;
 const SPACE: u32 = 0x20;
-/// The Settings window's width and the General and Capture panes'
-/// heights, logical px (see `settings::panes`).
-const WIDTH: f32 = 600.0;
-const GENERAL_H: f32 = 52.0 + 40.0 + 36.0 + 20.0 + 20.0 + 110.0 + 20.0 + 36.0;
-const CAPTURE_H: f32 = 463.0;
+/// The General and Capture panes' places in the sidebar.
+const GENERAL: usize = 0;
+const CAPTURE: usize = 1;
 /// Row centers on the Capture pane, logical px: Screen flash, the first
 /// row under the toolbar and the inset, and Dismiss after, two rows into
 /// the Floating Thumbnail card under the first card, the gap, and the
@@ -112,11 +114,11 @@ impl Rig {
         (w / 2..w).filter(|&x| accent(px[row * w + x])).count() >= (50.0 * self.scale) as usize
     }
 
-    /// Wait for the window to take the height of a pane `h` tall.
-    fn wait_for_pane(&self, what: &str, h: f32) {
+    /// Wait for the sidebar to show pane `pane` selected.
+    fn wait_for_pane(&self, what: &str, pane: usize) {
         self.daemon.until(what, || {
-            let (_, ch, _) = client(&self.conn, self.root, self.settings);
-            ((ch as f32 - h * self.scale).abs() < 1.0).then_some(())
+            let (w, _, px) = client(&self.conn, self.root, self.settings);
+            app_window::pane_shown(&px, w, self.scale, pane).then_some(())
         });
         self.daemon.settle();
     }
@@ -160,18 +162,21 @@ fn the_keyboard_reaches_and_runs_every_kind_of_control() {
         conn,
         root,
         settings,
-        scale: w as f32 / WIDTH,
+        scale: app_window::scale(w),
     };
-    // The keyboard follows the pointer: rest it in the window's left
-    // inset, clear of every control.
+    // The keyboard follows the pointer: rest it in the settings page's
+    // left inset, clear of every control.
     let (x0, y0, ..) = rect(&rig.conn, rig.root, rig.settings);
-    let blank = (x0 + 5, y0 + 100);
+    let blank = (
+        x0 + ((app_window::SIDEBAR_W + 5.0) * rig.scale) as i16,
+        y0 + 100,
+    );
     move_to(&rig.conn, rig.root, blank);
     rig.daemon.settle();
 
     // Ctrl+Tab shows the next pane, with no ring on it.
     chord(&rig.conn, rig.root, &[CONTROL, TAB]);
-    rig.wait_for_pane("Ctrl+Tab to show the Capture pane", CAPTURE_H);
+    rig.wait_for_pane("Ctrl+Tab to show the Capture pane", CAPTURE);
     assert!(
         !rig.ring_at(FLASH_Y, TOGGLE_HALF),
         "a ring shows before any Tab"
@@ -237,9 +242,9 @@ fn the_keyboard_reaches_and_runs_every_kind_of_control() {
 
     // Ctrl+Shift+Tab and Ctrl+Tab come back to the pane with no ring.
     chord(&rig.conn, rig.root, &[CONTROL, SHIFT, TAB]);
-    rig.wait_for_pane("Ctrl+Shift+Tab to show the General pane", GENERAL_H);
+    rig.wait_for_pane("Ctrl+Shift+Tab to show the General pane", GENERAL);
     chord(&rig.conn, rig.root, &[CONTROL, TAB]);
-    rig.wait_for_pane("Ctrl+Tab to show the Capture pane again", CAPTURE_H);
+    rig.wait_for_pane("Ctrl+Tab to show the Capture pane again", CAPTURE);
     assert!(
         !rig.ring_at(DISMISS_Y, BUTTON_HALF),
         "the ring survives a pane change"
@@ -255,6 +260,6 @@ fn the_keyboard_reaches_and_runs_every_kind_of_control() {
     assert_eq!(
         stored(dir.path()).map(|c| (c.flash_on_capture, c.toast_duration_ms)),
         Some((false, 8_000)),
-        "a press on the window's inset changed a setting"
+        "a press on the page's inset changed a setting"
     );
 }

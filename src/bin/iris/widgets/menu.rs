@@ -28,7 +28,8 @@ pub fn menu() -> Div {
 }
 
 /// Menu surface sized by the caller (a pop-up button's menu is as wide
-/// as its widest option, and at least MENU_W - 40).
+/// as its widest option, and at least its button's least width with the
+/// menu's overhang on each side).
 fn menu_panel() -> Div {
     div()
         .flex()
@@ -173,21 +174,31 @@ pub fn menu_separator() -> Div {
 }
 
 /// Pop-up button: the current value and an up/down chevron on a quiet
-/// fill, sized to its content (at least 110 wide), CONTROL_H tall. The
-/// caller has the open state and attaches `popup_menu` beside it when
-/// open. Toggle it on mouse down from the open state the frame drew: a
-/// press on the button while its menu is open runs the menu's
-/// press-outside dismissal first, and a toggle that read the state
-/// after that dismissal would open the menu again.
+/// fill, CONTROL_H tall and at least FORM_CONTROL_W wide. The label is as
+/// wide as the widest of `current` and `options`, so the button keeps one
+/// width through a change of value, as NSPopUpButton does. The caller
+/// has the open state and attaches `popup_menu` beside it when open.
+/// Toggle it on mouse down from the open state the frame drew: a press
+/// on the button while its menu is open runs the menu's press-outside
+/// dismissal first, and a toggle that read the state after that
+/// dismissal would open the menu again.
 pub fn popup_button(
     id: impl Into<ElementId>,
     current: impl Into<SharedString>,
+    options: &[&'static str],
     open: bool,
 ) -> Stateful<Div> {
+    // A column of the shown value over every option at zero height: the
+    // hidden rows take part in the width and paint nothing.
+    let label = div().flex().flex_col().child(current.into()).children(
+        options
+            .iter()
+            .map(|opt| div().h_0().overflow_hidden().child(*opt)),
+    );
     div()
         .id(id)
         .h(px(theme::CONTROL_H))
-        .min_w(px(110.))
+        .min_w(px(theme::FORM_CONTROL_W))
         .pl(px(9.))
         .pr(px(5.))
         .flex()
@@ -206,7 +217,7 @@ pub fn popup_button(
         .text_color(theme::FG)
         .whitespace_nowrap()
         .cursor_pointer()
-        .child(current.into())
+        .child(label)
         .child(icons::icon(Icon::ChevronUpDown, theme::FG_DIM, 12.0))
 }
 
@@ -233,7 +244,7 @@ pub fn popup_menu(
     let on_hover = Rc::new(on_hover);
     let mut panel = menu_panel()
         .id(id)
-        .min_w(px(MENU_W - 40.))
+        .min_w(px(theme::FORM_CONTROL_W + 2. * (MENU_PAD + 4.)))
         .on_mouse_down_out(move |_, window, cx| on_dismiss(window, cx));
     for (i, opt) in options.iter().enumerate() {
         let (on_select, on_hover) = (on_select.clone(), on_hover.clone());

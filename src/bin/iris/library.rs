@@ -1,14 +1,16 @@
-//! Library: the app window, which a launch, a reopen, and the tray
-//! open. A grid of captures, newest first, grouped by the local day
-//! each was taken.
+//! The app window, which a launch, a reopen, and the tray open: a
+//! sidebar of the library and the settings panes beside the page it
+//! selects. The library is a grid of captures, newest first, grouped by
+//! the local day each was taken.
 //!
 //! Click opens the canvas editor, Ctrl/Shift-click multi-selects, the
 //! arrow keys move the selection, Return opens and Space previews the
 //! selected capture, and hover reveals per-card copy/reveal/trash
-//! actions. The toolbar starts a region capture or a recording, or
-//! opens settings. The grid lists a capture this process saves at
-//! once, and a watch on the capture folders drops a capture another
-//! program deletes or moves away.
+//! actions. The toolbar starts a region capture or a recording; Ctrl+,
+//! shows the settings page and Esc on it returns to the grid. The grid
+//! lists a capture this process saves at once, and a watch on the
+//! capture folders drops a capture another program deletes or moves
+//! away.
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -23,6 +25,7 @@ mod layout;
 mod listing;
 mod preview;
 mod render;
+mod sidebar;
 #[cfg(test)]
 mod tests;
 
@@ -40,7 +43,7 @@ pub(super) const GAP: f32 = 16.0;
 pub(super) const REFRESH: Duration = Duration::from_millis(1500);
 /// Rows of thumbnail slack kept decoded beyond the rendered range:
 /// scroll-back inside the window hits warm tiles, outside it pays a
-/// re-decode. 8 rows at 4 cols is ~64 tiles of 432x264, ~29MB of atlas.
+/// re-decode. 8 rows at 4 cols is ~64 tiles of 400x232, ~24MB of atlas.
 pub(super) const THUMB_KEEP_ROWS: usize = 8;
 
 /// Decoded thumbnails, keyed by capture path.
@@ -68,7 +71,6 @@ pub(super) enum Tool {
     Trash,
     Done,
     Shortcuts,
-    Settings,
     Record,
     Capture,
 }
@@ -77,8 +79,7 @@ impl Tool {
     /// The buttons a selection shows, left to right.
     pub(super) const SELECTION: [Tool; 3] = [Tool::Copy, Tool::Trash, Tool::Done];
     /// The buttons the window shows with nothing selected.
-    pub(super) const WINDOW: [Tool; 4] =
-        [Tool::Shortcuts, Tool::Settings, Tool::Record, Tool::Capture];
+    pub(super) const WINDOW: [Tool; 3] = [Tool::Shortcuts, Tool::Record, Tool::Capture];
 
     /// The command a button that reads the screen runs, and its title,
     /// the tray row's that runs the same command; `None` for the
@@ -88,7 +89,24 @@ impl Tool {
         match self {
             Tool::Capture => Some((Command::Capture, "New Screenshot")),
             Tool::Record => Some((Command::RecordToggle, crate::sys::record::START_TITLE)),
-            Tool::Copy | Tool::Trash | Tool::Done | Tool::Shortcuts | Tool::Settings => None,
+            Tool::Copy | Tool::Trash | Tool::Done | Tool::Shortcuts => None,
+        }
+    }
+}
+
+/// What the app window shows beside its sidebar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Page {
+    Library,
+    Settings,
+}
+
+impl Page {
+    /// The window's title while it shows the page.
+    fn title(self) -> &'static str {
+        match self {
+            Page::Library => "Library - iris",
+            Page::Settings => "Settings - iris",
         }
     }
 }
@@ -172,22 +190,33 @@ pub struct Library {
     /// Set by New Screenshot: the window draws empty and closes before
     /// the capture reads the screen (`widgets::close_then_run`).
     pub(super) leaving: bool,
+    pub(super) page: Page,
+    /// The settings page, from the first time the window shows it.
+    pub(super) settings: Option<Entity<crate::settings::Settings>>,
+    /// What a close from the close control or the window manager runs:
+    /// `close`, which applies a settings edit first.
+    on_close: Option<crate::widgets::OnClose>,
 }
 
-/// The library window's minimum logical size, where its resize stops.
-pub(super) const MIN_SIZE: Size<Pixels> = size(px(640.), px(480.));
+/// The app window's minimum logical size, where its resize stops: two
+/// columns of cards, and a settings card a label and its control fit.
+pub(super) const MIN_SIZE: Size<Pixels> = size(px(760.), px(480.));
 
-/// The library window's logical size when it opens.
-const OPEN_SIZE: (f32, f32) = (960.0, 640.0);
+/// The app window's logical size when it opens: three columns of cards
+/// fill the page beside the sidebar with PAD_X on either side.
+const OPEN_SIZE: (f32, f32) = (
+    crate::theme::SIDEBAR_W + 2.0 * layout::PAD_X + 3.0 * CARD_W + 2.0 * GAP,
+    640.0,
+);
 /// How long an open waits for the listing and the first screen's
 /// thumbnails before it opens the window without them: a slow capture
 /// folder never holds the window back.
 const FIRST_SCREEN_WAIT: Duration = Duration::from_millis(100);
 
 thread_local! {
-    /// An open waiting on its first screen: a second open meanwhile
-    /// has its window coming.
-    static OPENING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The page an open waiting on its first screen shows: a second
+    /// open meanwhile has its window coming, and picks the page.
+    static OPENING: std::cell::Cell<Option<Page>> = const { std::cell::Cell::new(None) };
 }
 
 /// The listing a window opens with and the decoded thumbnails of the
@@ -197,15 +226,20 @@ type FirstScreen = (
     Vec<(PathBuf, std::sync::Arc<RenderImage>)>,
 );
 
-/// Open the library window, or raise the one already open. The window
-/// opens once the listing and the first screen's thumbnails are read,
-/// or after FIRST_SCREEN_WAIT, so its first frame draws the cards with
-/// their captures instead of blank ones.
-pub fn open(cx: &mut App) -> Result<(), String> {
-    if crate::widgets::raise_open::<Library>(cx, |l| !l.leaving) || OPENING.get() {
+/// Show `page` in the app window: open the window, or raise the one
+/// already open and switch it to `page`. The window opens once the
+/// listing and the first screen's thumbnails are read, or after
+/// FIRST_SCREEN_WAIT, so its first frame draws the cards with their
+/// captures instead of blank ones.
+pub fn open(cx: &mut App, page: Page) -> Result<(), String> {
+    if raise(cx, page) {
         return Ok(());
     }
-    OPENING.set(true);
+    if OPENING.get().is_some() {
+        OPENING.set(Some(page));
+        return Ok(());
+    }
+    OPENING.set(Some(page));
     let ex = cx.background_executor().clone();
     let wait = ex.timer(FIRST_SCREEN_WAIT);
     let first = first_screen(ex);
@@ -215,9 +249,12 @@ pub fn open(cx: &mut App) -> Result<(), String> {
             futures::future::Either::Right(_) => None,
         };
         cx.update(|cx| {
-            OPENING.set(false);
-            if let Err(e) = open_window(cx, ready) {
-                let cmd = crate::daemon::Command::Library;
+            let page = OPENING.take().unwrap_or(page);
+            if let Err(e) = open_window(cx, ready, page) {
+                let cmd = match page {
+                    Page::Library => crate::daemon::Command::Library,
+                    Page::Settings => crate::daemon::Command::Settings,
+                };
                 iris_lib::ilog!("iris: {cmd:?}: {e}");
                 crate::notice::failed(cx, cmd.failure_title(), &e);
             }
@@ -225,6 +262,23 @@ pub fn open(cx: &mut App) -> Result<(), String> {
     })
     .detach();
     Ok(())
+}
+
+/// Switch the open app window to `page`, raise and focus it, and return
+/// true; false when there is none, so the caller opens one.
+fn raise(cx: &mut App, page: Page) -> bool {
+    let found = cx
+        .windows()
+        .into_iter()
+        .filter_map(|w| w.downcast::<Library>())
+        .find(|w| w.read(cx).is_ok_and(|l| !l.leaving));
+    found.is_some_and(|w| {
+        w.update(cx, |this, window, cx| {
+            this.set_page(page, window, cx);
+            window.activate_window();
+        })
+        .is_ok()
+    })
 }
 
 /// Read the store and decode the thumbnails a window opening on it
@@ -236,7 +290,7 @@ async fn first_screen(ex: BackgroundExecutor) -> FirstScreen {
             let drawn = listing::first_screen(
                 &mut fresh,
                 layout::today(),
-                OPEN_SIZE.0,
+                OPEN_SIZE.0 - crate::theme::SIDEBAR_W,
                 OPEN_SIZE.1 - crate::theme::TOOLBAR_H,
             );
             (fresh, drawn)
@@ -246,10 +300,10 @@ async fn first_screen(ex: BackgroundExecutor) -> FirstScreen {
     (fresh, thumbs)
 }
 
-/// Open the window, with the listing and thumbnails of `ready` when the
-/// first screen was read in time.
-fn open_window(cx: &mut App, ready: Option<FirstScreen>) -> Result<(), String> {
-    if crate::widgets::raise_open::<Library>(cx, |l| !l.leaving) {
+/// Open the window on `page`, with the listing and thumbnails of
+/// `ready` when the first screen was read in time.
+fn open_window(cx: &mut App, ready: Option<FirstScreen>, page: Page) -> Result<(), String> {
+    if raise(cx, page) {
         return Ok(());
     }
     let focus = cx.focus_handle();
@@ -257,7 +311,7 @@ fn open_window(cx: &mut App, ready: Option<FirstScreen>) -> Result<(), String> {
     let origin = crate::sys::window::centered_origin(cx, win.0, win.1, (140.0, 90.0));
     let handle = crate::widgets::open_window(
         cx,
-        "Library - iris",
+        Page::Library.title(),
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(origin.0), px(origin.1)),
@@ -288,7 +342,7 @@ fn open_window(cx: &mut App, ready: Option<FirstScreen>) -> Result<(), String> {
                 let mut this = Library {
                     listing: listing::Listing::default(),
                     layout: layout::Layout::default(),
-                    layout_key: (u64::MAX, win.0),
+                    layout_key: (u64::MAX, win.0 - crate::theme::SIDEBAR_W),
                     viewport_h: win.1 - crate::theme::TOOLBAR_H,
                     sel_label: SharedString::from(""),
                     selected: Vec::new(),
@@ -319,7 +373,12 @@ fn open_window(cx: &mut App, ready: Option<FirstScreen>) -> Result<(), String> {
                     preview: None,
                     menu: None,
                     leaving: false,
+                    page: Page::Library,
+                    settings: None,
+                    on_close: None,
                 };
+                this.on_close = Some(crate::widgets::close_route(window, cx, Library::close));
+                this.set_page(page, window, cx);
                 if let Some((fresh, thumbs)) = ready {
                     this.thumb_cache.extend(thumbs);
                     this.show(fresh, cx);
@@ -332,7 +391,7 @@ fn open_window(cx: &mut App, ready: Option<FirstScreen>) -> Result<(), String> {
             })
         },
     )
-    .map_err(|e| format!("open library window: {e}"))?;
+    .map_err(|e| format!("open the app window: {e}"))?;
     // The thumbnail images sit in GPUI's app-global asset cache;
     // return them when the window dies, whichever way it closes.
     if let Ok(entity) = handle.entity(cx) {
@@ -360,6 +419,58 @@ pub fn store_changed(cx: &mut App) {
 }
 
 impl Library {
+    /// Show `page` beside the sidebar and move the keyboard into it.
+    /// The settings page keeps the window while a typed value it holds
+    /// is rejected, so the reason stays in view.
+    pub(super) fn set_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        match page {
+            Page::Settings => {
+                // The library's transient layers close with the page.
+                self.menu = None;
+                self.help = false;
+                self.band = None;
+                self.ring = None;
+                if self.preview.is_some() {
+                    self.close_preview(cx);
+                }
+                let settings = self
+                    .settings
+                    .get_or_insert_with(|| crate::settings::page(window, cx));
+                settings.update(cx, |s, cx| s.focus(window, cx));
+            }
+            Page::Library => {
+                if let Some(settings) = &self.settings {
+                    let left = settings.update(cx, |s, cx| {
+                        let left = s.blur();
+                        cx.notify();
+                        left
+                    });
+                    if !left {
+                        return;
+                    }
+                    // The shortcuts the toolbar and the sheet show.
+                    self.cfg = settings.read(cx).config().clone();
+                }
+                self.focus.focus(window, cx);
+            }
+        }
+        if page != self.page {
+            self.page = page;
+            window.set_window_title(page.title());
+        }
+        cx.notify();
+    }
+
+    /// Close the window, applying the settings page's open edit first,
+    /// as a click elsewhere would. A rejected value is dropped with the
+    /// window.
+    pub(super) fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(settings) = &self.settings {
+            settings.update(cx, |s, _| s.blur());
+        }
+        window.remove_window();
+    }
+
     /// Rewrite the day titles at each local midnight, for the life of
     /// the window: one timer a day, no per-frame clock read.
     fn arm_midnight(&mut self, cx: &mut Context<Self>) {

@@ -9,7 +9,7 @@ Security fixes ship in a new release. Only the latest release receives them; an 
 | Latest release on [GitHub Releases](https://github.com/santhreal/iris/releases/latest) | Yes |
 | Any earlier release or prerelease | No |
 
-Update with `iris --update`, the **Install iris** item of the tray menu, or the Updates pane of the settings window ([Updates](docs/updates.md)).
+Update with `iris --update`, the **Install iris** item of the tray menu, or the Updates pane of the settings page ([Updates](docs/updates.md)).
 
 ## Reporting a Vulnerability
 
@@ -41,4 +41,4 @@ minisign -Vm iris-0.2.0-linux-x86_64.deb -p minisign.pub
 
 `minisign` prints `Signature and comment signature verified` and the trusted comment `file:<asset file name> version:<version>`. Use the asset only when the file name and the version in the trusted comment are the ones you downloaded. A signature that does not verify, or a trusted comment that differs, means the file is not the one the release published.
 
-[Installation](docs/install.md#verifying-a-download) lists the commands for macOS and Windows. `iris --update`, the tray's **Install iris** item, and the settings window's install run the same two checks before they stop the running iris, and install nothing when either check fails.
+[Installation](docs/install.md#verifying-a-download) lists the commands for macOS and Windows. `iris --update`, the tray's **Install iris** item, and the settings page's install run the same two checks before they stop the running iris, and install nothing when either check fails.

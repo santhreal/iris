@@ -28,6 +28,10 @@
 
 #![cfg(target_os = "linux")]
 
+// The other test files use the rest of the layout.
+#[allow(dead_code)]
+#[path = "support/app_window.rs"]
+mod app_window;
 // The other test files use the rest of the harness.
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
@@ -157,19 +161,22 @@ fn new_screenshot_leaves_the_library_out_of_the_frozen_frame() {
     );
 }
 
-/// The empty library's New Screenshot button is its one accent fill,
-/// #0A84FF: the click lands on the centre of the accent pixels.
+/// The empty library's New Screenshot button is the page's one accent
+/// fill, #0A84FF, beside the sidebar, whose icons draw in the accent
+/// too: the click lands on the centre of the page's accent pixels.
 #[test]
 fn the_empty_librarys_new_screenshot_leaves_it_out_of_the_frozen_frame() {
     leaves_the_library_out(
         "the_empty_librarys_new_screenshot_leaves_it_out_of_the_frozen_frame",
         |w, _, px| {
+            let side = (app_window::SIDEBAR_W * app_window::scale(w)) as usize;
             let accent = |p: &[u8; 3]| p[2] < 30 && (120..=145).contains(&p[1]) && p[0] > 240;
             let hits: Vec<(usize, usize)> = px
                 .iter()
                 .enumerate()
                 .filter(|(_, p)| accent(p))
                 .map(|(i, _)| (i % w, i / w))
+                .filter(|&(x, _)| x >= side)
                 .collect();
             assert!(
                 hits.len() > 400,

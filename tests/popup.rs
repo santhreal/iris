@@ -24,6 +24,10 @@
 
 #![cfg(target_os = "linux")]
 
+// The other test files use the rest of the layout.
+#[allow(dead_code)]
+#[path = "support/app_window.rs"]
+mod app_window;
 // The other test files use the rest of the harness.
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
@@ -51,12 +55,8 @@ const UP: u32 = 0xff52;
 const DOWN: u32 = 0xff54;
 const RETURN: u32 = 0xff0d;
 const SPACE: u32 = 0x20;
-/// The Settings window's width and the Capture pane's height, logical
-/// px: the toolbar (52), the insets (2 x 20), a card of three rows (3 x
-/// 36 + 2 hairlines), the group gap (20), and the Floating Thumbnail
-/// header (20) over a card of six rows (6 x 36 + 5 hairlines).
-const WIDTH: f32 = 600.0;
-const CAPTURE_H: f32 = 463.0;
+/// The Capture pane's place in the sidebar.
+const CAPTURE: usize = 1;
 /// The center of the Dismiss after row, logical px: under the toolbar,
 /// the inset, the first card, the gap, the header, and two rows of the
 /// second card with their hairlines.
@@ -65,8 +65,10 @@ const DISMISS_Y: f32 = 52.0 + 20.0 + 110.0 + 20.0 + 20.0 + 74.0 + 18.0;
 const INSET: f32 = 20.0;
 /// A menu row's height, logical px.
 const ROW_H: f32 = 24.0;
-/// A pop-up button's least width, logical px.
-const BUTTON_W: f32 = 110.0;
+/// A pop-up button's least width, logical px (`theme::FORM_CONTROL_W`),
+/// which the Dismiss after button's widest option, "10 seconds", is
+/// narrower than.
+const BUTTON_W: f32 = 150.0;
 
 /// The toast's dismiss delay in `dir`'s config, ms, or `None` while the
 /// config cannot be read whole, as mid-write.
@@ -131,9 +133,9 @@ impl Rig {
         daemon.settle();
         chord(&conn, root, &[CONTROL, TWO]);
         let scale = daemon.until("the Capture pane to show", || {
-            let (w, h, _) = client(&conn, root, settings);
-            let scale = w as f32 / WIDTH;
-            ((h as f32 - CAPTURE_H * scale).abs() < 1.0).then_some(scale)
+            let (w, _, px) = client(&conn, root, settings);
+            let scale = app_window::scale(w);
+            app_window::pane_shown(&px, w, scale, CAPTURE).then_some(scale)
         });
         daemon.settle();
         // The button: the control left of the card's right padding on

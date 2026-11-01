@@ -7,12 +7,12 @@
 //! Settings field closed that way lost its typed value, where Ctrl+W
 //! saved the image and applied the value. Every close now runs one
 //! handler per window. The cases close an editor holding a rectangle,
-//! and Settings with a typed file name, each way, and read the saved
-//! file and the config. A stand-in compositing manager runs, so iris
-//! draws its own frame and close control.
+//! and the app window on its Settings page with a typed file name, each
+//! way, and read the saved file and the config. A stand-in compositing
+//! manager runs, so iris draws its own frame and close control.
 //!
-//! Not covered: the Library, which has nothing to finish and removes
-//! the window; an editor whose image never decoded, which closes
+//! Not covered: the Library page, which has nothing to finish and
+//! removes the window; an editor whose image never decoded, which closes
 //! without saving; the close button of a window manager that sends
 //! something other than `WM_DELETE_WINDOW`; Windows and macOS. The cases
 //! run only with `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without them
@@ -20,6 +20,10 @@
 
 #![cfg(target_os = "linux")]
 
+// The other test files use the rest of the layout.
+#[allow(dead_code)]
+#[path = "support/app_window.rs"]
+mod app_window;
 // The other test files use the rest of the harness.
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
@@ -54,10 +58,9 @@ const R: u32 = 0x72;
 const X: u32 = 0x78;
 /// The rectangle's corners, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
-/// The Settings window's width, the card's inset from its right edge,
-/// the File name row's center, and the file name field's width,
-/// logical px (see `settings_paste.rs`).
-const WIDTH: f32 = 600.0;
+/// The card's inset from the window's right edge, the File name row's
+/// center, and the file name field's width, logical px (see
+/// `settings_paste.rs`).
 const INSET: f32 = 20.0;
 const TEMPLATE_Y: f32 = 52.0 + 20.0 + 36.0 + 20.0 + 20.0 + 74.0 + 18.0;
 const FIELD_W: f32 = 200.0;
@@ -223,7 +226,7 @@ fn settings_applies(case: &str, how: Close) {
     // card's fill is read in the padding.
     let (scale, y, left, right) = daemon.until("the File name field to draw", || {
         let (w, _, px) = client(&conn, root, settings);
-        let scale = w as f32 / WIDTH;
+        let scale = app_window::scale(w);
         let y = (TEMPLATE_Y * scale) as usize;
         let row = &px[y * w..(y + 1) * w];
         let card = row[w - ((INSET + 6.0) * scale) as usize];

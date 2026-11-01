@@ -51,7 +51,7 @@
 //! loads the driver within those 2 s. The fourth starts a daemon on a
 //! headless sway with `DISPLAY` naming a socket that counts
 //! connections, requires its GPU context thread to enumerate the GPUs
-//! before any window opens, opens its settings window through a client,
+//! before any window opens, opens its settings page through a client,
 //! which takes that context, and requires no connection once the daemon
 //! is idle; sway renders with pixman, so the device selection layer finds
 //! no device through Wayland. Its loader also loads the test driver,

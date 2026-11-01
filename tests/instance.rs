@@ -14,8 +14,8 @@
 //! case starts four `iris --library` and a bare `iris` at once, over
 //! rounds, and requires one daemon and one library window. The second
 //! starts four `iris --settings` at once, then an `iris --background`
-//! beside the daemon, and requires one daemon, one settings window, and
-//! no library window; a bare `iris` after it opens the library in the
+//! beside the daemon, and requires one daemon and one window, on its
+//! Settings page; a bare `iris` after it shows the Library page in the
 //! same daemon. The third kills the daemon with SIGKILL, which
 //! leaves its socket file, and requires the next `iris --library` to
 //! start a daemon in its place.
@@ -72,7 +72,7 @@ const SETTLE: Duration = Duration::from_millis(1500);
 /// The library window's title.
 const LIBRARY: &str = "Library - iris";
 
-/// The settings window's title.
+/// The app window's title on its Settings page.
 const SETTINGS: &str = "Settings - iris";
 
 #[test]
@@ -147,12 +147,12 @@ fn a_start_that_finds_a_daemon_opens_no_window_of_its_own() {
     assert_eq!(
         windows_of(&conn, root, SETTINGS).len(),
         1,
-        "a second settings window opened"
+        "a second window opened on the Settings page"
     );
     assert_eq!(
         windows_of(&conn, root, LIBRARY).len(),
         0,
-        "a library window opened"
+        "iris --background showed the Library page"
     );
     assert_eq!(processes(dir), [daemon], "a second daemon started");
     // A bare `iris` beside the daemon opens the library in it and exits.

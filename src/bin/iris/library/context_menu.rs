@@ -134,8 +134,8 @@ impl Library {
     }
 
     /// Open the menu from the keyboard (`Shift+F10` or the Menu key) on
-    /// the card Return would open, scrolled into view, at its
-    /// thumbnail's center.
+    /// the card Return would open, scrolled into view, at its tile's
+    /// center.
     pub(super) fn open_menu_at_focus(&mut self, cx: &mut Context<Self>) {
         let Some(index) = self.focused() else {
             return;
@@ -144,16 +144,12 @@ impl Library {
         let Some((x, y, ..)) = self.layout.card_rect(index) else {
             return;
         };
-        let Some(entry) = self.listing.entries().get(index) else {
-            return;
-        };
-        let (dx, dy, w, h) = super::card::thumb_frame(entry.width, entry.height);
         // Document space starts at the scroll viewport's origin and moves
         // up by the scroll amount (the offset is <= 0).
         let view = self.scroll.bounds().origin;
         let at = point(
-            view.x + px(x + dx + w / 2.0),
-            view.y + self.scroll.offset().y + px(y + dy + h / 2.0),
+            view.x + px(x + super::CARD_W / 2.0),
+            view.y + self.scroll.offset().y + px(y + super::THUMB_H / 2.0),
         );
         self.open_menu(index, at, cx);
     }

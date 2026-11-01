@@ -6,8 +6,9 @@
 //! alpha below 1, every round cap, corner, and crossing drew brighter
 //! than the stroke it belonged to, so a bracket showed bright knots at
 //! its corners and a line its endpoints. The case opens the empty
-//! library, whose 40 px viewfinder glyph is four corner brackets in a
-//! faint white, and reads that the brightest ink is the stroke's own.
+//! library, whose 40 px viewfinder glyph is four rounded corner brackets
+//! around a dot in a faint white, and reads that the brightest ink is
+//! the stroke's own.
 //!
 //! Not covered: Windows and macOS, whose renderers paint the same
 //! sprite; a glyph in an opaque color, where overlaps do not show. The
@@ -16,6 +17,10 @@
 
 #![cfg(target_os = "linux")]
 
+// The other test files use the rest of the layout.
+#[allow(dead_code)]
+#[path = "support/app_window.rs"]
+mod app_window;
 // The other test files use the rest of the harness.
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
@@ -32,8 +37,8 @@ use x11::{client, windows_of};
 
 const LIBRARY: &str = "Library - iris";
 const SCREEN: &str = "1280x1024x24";
-/// Half the width of the column read around the window's centre: the
-/// 40 px glyph and none of the toolbar's side controls.
+/// Half the width of the column read around the page's centre: the
+/// 40 px glyph.
 const BAND: usize = 24;
 
 #[test]
@@ -69,11 +74,14 @@ fn a_glyph_in_a_translucent_color_draws_its_overlaps_once() {
 /// ink and its stroke's level above the background, and the
 /// background. `None` until the window draws the glyph.
 fn glyph_ink(&(w, h, ref px): &(usize, usize, Vec<[u8; 3]>)) -> Option<(i32, i32, [u8; 3])> {
-    // The empty state stacks the glyph over two lines of text in the
-    // window's centre, on the window's background.
+    // The empty state stacks the glyph over two lines of text and two
+    // buttons in the centre of the page beside the sidebar, on the
+    // window's background.
     let bg = px[(h - 4) * w + w / 2];
     let lift = |p: [u8; 3]| i32::from(p[1]) - i32::from(bg[1]);
-    let band = |y: usize| &px[y * w + w / 2 - BAND..y * w + w / 2 + BAND];
+    let side = (app_window::SIDEBAR_W * app_window::scale(w)) as usize;
+    let x = side + (w - side) / 2;
+    let band = |y: usize| &px[y * w + x - BAND..y * w + x + BAND];
     // Runs of inked rows. The gap between the glyph's top and bottom
     // brackets joins; the gap above a line of text does not. The glyph
     // is the lowest run taller than a line of text.
