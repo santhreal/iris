@@ -12,8 +12,9 @@ use crate::icons::Icon;
 use crate::theme;
 
 /// The form's widest: the content beside the sidebar of a window at its
-/// opening width (920 logical). A wider window leaves the extra width
-/// beside the form, so a label and its control stay within one glance.
+/// opening width (920 logical). A wider window centers the form and
+/// leaves the extra width on either side (`super::lead`), so a label and
+/// its control stay within one glance.
 pub(super) const FORM_MAX_W: f32 = 720.0;
 /// A group header: one caption line and the gap above its card.
 const HEADER_LINE: f32 = 14.0;

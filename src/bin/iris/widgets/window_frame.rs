@@ -44,7 +44,9 @@ pub fn close_route<V: 'static>(
 /// What a unified toolbar holds besides the window controls: a title
 /// with an optional caption line under it at the leading edge, an
 /// optional element centered in the window, a trailing cluster, and
-/// what the close control runs.
+/// what the close control runs. Beside a sidebar, `lead` is the title's
+/// inset from the page's leading edge, the page content's
+/// (`page_lead`); INSET when None.
 #[derive(Default)]
 pub struct Toolbar {
     pub title: SharedString,
@@ -52,6 +54,7 @@ pub struct Toolbar {
     pub center: Option<AnyElement>,
     pub trailing: Vec<AnyElement>,
     pub on_close: Option<OnClose>,
+    pub lead: Option<f32>,
 }
 
 impl Toolbar {
@@ -79,6 +82,11 @@ impl Toolbar {
 
     pub fn on_close(mut self, on_close: OnClose) -> Self {
         self.on_close = Some(on_close);
+        self
+    }
+
+    pub fn lead(mut self, lead: f32) -> Self {
+        self.lead = Some(lead);
         self
     }
 }
@@ -122,7 +130,7 @@ pub fn toolbar_bar(window: &Window, cx: &App, toolbar: Toolbar, resizable: bool)
 /// leading part of the title bar: macOS draws its traffic lights there,
 /// and a Linux desktop that puts window buttons on the leading side
 /// gets them there; elsewhere it is empty. The toolbar beside it starts
-/// at INSET and holds the trailing controls.
+/// its title at the toolbar's `lead` and holds the trailing controls.
 pub fn sidebar_frame(
     window: &Window,
     cx: &App,
@@ -186,8 +194,21 @@ pub fn sidebar_frame(
         .children(window_edge(window, 12., 1.0))
 }
 
+/// Where content `content` wide starts in a page `page` wide beside a
+/// sidebar, logical px: centered, with at least INSET on either side,
+/// on a whole pixel. The page's toolbar title starts there too
+/// (`Toolbar::lead`), so the title and the content share one leading
+/// edge at every width.
+pub fn page_lead(page: f32, content: f32) -> f32 {
+    theme::INSET
+        + ((page - 2.0 * theme::INSET - content) / 2.0)
+            .max(0.0)
+            .round()
+}
+
 /// The toolbar band: `lead_controls` false leaves the leading window
-/// controls to a sidebar's band and starts the title at INSET.
+/// controls to a sidebar's band and starts the title at the toolbar's
+/// `lead`.
 fn bar(
     window: &Window,
     cx: &App,
@@ -207,6 +228,7 @@ fn bar(
         center,
         trailing,
         on_close,
+        lead: title_lead,
     } = toolbar;
     // A platform frame has its own controls.
     let (lead, trail) = if framed {
@@ -220,7 +242,7 @@ fn bar(
         )
     };
     let pl = match (framed, REGISTER, lead.is_some()) {
-        _ if !lead_controls => theme::INSET,
+        _ if !lead_controls => title_lead.unwrap_or(theme::INSET),
         (false, Register::Mac, _) => window_controls::MAC_LEADING,
         (_, _, true) => window_controls::ROUND_EDGE,
         _ => theme::INSET,
@@ -277,7 +299,7 @@ fn bar(
         .gap(px(if REGISTER == Register::Windows {
             8.
         } else {
-            12.
+            window_controls::ROUND_LEAD
         }))
         .child(cluster)
         .children(trail);

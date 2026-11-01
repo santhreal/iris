@@ -56,7 +56,8 @@ pub use self::scroll::scroll_y;
 pub use self::tooltip::tip;
 pub use self::vanish::{clear_then_run, close_then_run};
 pub use self::window_frame::{
-    close_route, sidebar_frame, toolbar_bar, window_corner, window_edge, OnClose, Toolbar,
+    close_route, page_lead, sidebar_frame, toolbar_bar, window_corner, window_edge, OnClose,
+    Toolbar,
 };
 pub use self::window_move::{move_handle, Double};
 pub use self::window_open::open_window;

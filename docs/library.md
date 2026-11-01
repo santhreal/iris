@@ -31,7 +31,7 @@ A pointer that rests on a toolbar button for half a second shows a tooltip with 
 
 ## Grid
 
-The grid lists captures newest first under a title per local day: **Today**, **Yesterday**, then the weekday and date (`Tuesday, October 6`), with the year for a day in another year. The titles change at local midnight while the window is open. Each day starts a new row. The columns are 216 pixels wide with 16 pixels between them, as many as fit beside the sidebar with 20 pixels of margin on each side. The first column and the day titles start 20 pixels from the sidebar, under the toolbar's title. At the window's opening width of 920 pixels, three columns fill the page.
+The grid lists captures newest first under a title per local day: **Today**, **Yesterday**, then the weekday and date (`Tuesday, October 6`), with the year for a day in another year. The titles change at local midnight while the window is open. Each day starts a new row. The columns are 216 pixels wide with 16 pixels between them, as many as fit beside the sidebar with at least 20 pixels of margin on each side. The grid centers in the page, and the toolbar's title, the day titles, and the first column start at one leading edge. At the window's opening width of 920 pixels, three columns fill the page with 20 pixels of margin on each side.
 
 A capture saved from the editor keeps its place and the time it was taken, and its card shows the saved image.
 

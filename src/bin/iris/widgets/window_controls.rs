@@ -47,6 +47,13 @@ pub const MAC_LEADING: f32 = 88.0;
 pub const ROUND: f32 = 24.0;
 pub const ROUND_GAP: f32 = 8.0;
 pub const ROUND_EDGE: f32 = 12.0;
+/// Linux: the space between the toolbar's trailing cluster and the
+/// round buttons. A ghost control insets its 16px glyph 6px in its 28px
+/// box and the cluster spaces its controls 8px apart, so two ghost
+/// glyphs show 20px between them; 14 gives the last glyph the same 20px
+/// to the first round button, and a filled button (Done) the same 14 to
+/// it as to the glyph before it.
+pub const ROUND_LEAD: f32 = 14.0;
 /// Windows: a caption button's width; it spans the toolbar's height.
 pub const CAPTION_W: f32 = 46.0;
 

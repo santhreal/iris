@@ -11,9 +11,9 @@ use super::{CARD_H, CARD_W, GAP};
 /// A local calendar day, as days since 1970-01-01.
 pub(super) type Day = i64;
 
-/// Horizontal inset of the grid from the page's edges, at least: the
-/// toolbar title's, so the title, the day titles, and the first column
-/// share one leading edge.
+/// The grid's least inset from the page's edges: `widgets::page_lead`'s,
+/// which centers the grid and starts the toolbar's title over its first
+/// column.
 pub(super) const PAD_X: f32 = crate::theme::INSET;
 /// A day header row: its title sits on the row's bottom, above the
 /// cards.
@@ -156,7 +156,9 @@ pub(super) enum Step {
 #[derive(Default)]
 pub(super) struct Layout {
     pub cols: usize,
-    /// Left edge of the first column: PAD_X, under the toolbar's title.
+    /// Left edge of the first column: the grid centered in the page
+    /// with at least PAD_X on either side (`widgets::page_lead`). The
+    /// day titles and the toolbar's title start there.
     pub x0: f32,
     pub rows: Vec<Row>,
     pub tops: Vec<f32>,
@@ -169,7 +171,7 @@ pub(super) struct Layout {
 impl Layout {
     pub(super) fn new(sections: &[Section], width: f32) -> Layout {
         let cols = (((width - 2.0 * PAD_X + GAP) / (CARD_W + GAP)).floor() as usize).max(1);
-        let x0 = PAD_X;
+        let x0 = crate::widgets::page_lead(width, span(cols));
         let n = sections.last().map_or(0, |s| s.end);
         let mut layout = Layout {
             cols,
@@ -323,4 +325,9 @@ impl Layout {
             _ => (0, 0),
         }
     }
+}
+
+/// The width of `cols` columns of cards and the gaps between them.
+pub(super) fn span(cols: usize) -> f32 {
+    cols as f32 * CARD_W + cols.saturating_sub(1) as f32 * GAP
 }

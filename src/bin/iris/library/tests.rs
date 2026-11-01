@@ -107,11 +107,12 @@ fn sections_are_the_runs_of_one_day() {
 // Closed here: two cards drawn over each other, a card out of listing
 // order, a day whose first card does not start a row under its title, a
 // grid that leaves a column's room unused or passes the window's padding,
-// a first column off the toolbar title's leading edge, an opening width
-// whose columns leave the right margin wider than the left, and a
-// content height that clips the last row or scrolls past it. Every width
-// and section shape below is checked against these invariants.
-// Not covered: the paint of the rows.
+// a grid whose margins differ by more than a pixel at any width (the
+// leftover all on the right), a first column off a whole pixel or inside
+// the inset, and a content height that clips the last row or scrolls
+// past it. Every width and section shape below is checked against these
+// invariants. Not covered: the paint of the rows, and the toolbar title
+// standing at the x0 tested here.
 #[test]
 fn every_card_has_its_own_place_in_reading_order() {
     let shapes: [&[usize]; 7] = [
@@ -138,7 +139,17 @@ fn every_card_has_its_own_place_in_reading_order() {
             let (secs, l) = grid(sizes, width);
             let n: usize = sizes.iter().sum();
             assert!(l.cols >= 1);
-            assert_eq!(l.x0, PAD_X, "{width}: the first column under the title");
+            let right = width - (l.x0 + span(l.cols));
+            if right >= PAD_X {
+                assert!(
+                    l.x0 >= PAD_X && (l.x0 - right).abs() <= 1.0,
+                    "{width}: margins {} and {right}",
+                    l.x0
+                );
+            } else {
+                assert_eq!(l.x0, PAD_X, "{width}: a card wider than the page");
+            }
+            assert_eq!(l.x0, l.x0.round(), "{width}: on a whole pixel");
             if l.cols > 1 {
                 assert!(span(l.cols) + 2.0 * PAD_X <= width, "{width}: {}", l.cols);
             }

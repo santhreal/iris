@@ -171,7 +171,7 @@ Missing fields in an existing `config.toml` fall back to default values upon loa
 
 The settings are a page of the app window, beside the [library](library.md). Show it by running `iris --settings`, selecting **Settings** from the system tray menu, clicking a pane in the window's sidebar, or pressing `Ctrl+,` (`Cmd+,` on macOS) in the library. Each of these opens the app window when it is closed, and raises and focuses it when it is open.
 
-The sidebar lists **Library**, then the five panes under **Settings**, and fills the row of the pane shown. Click a pane, or press `Ctrl+1` through `Ctrl+5` (`Cmd+1` through `Cmd+5` on macOS), to show it. `Ctrl+Tab` shows the next pane and `Ctrl+Shift+Tab` the previous one. The toolbar shows the name of the pane.
+The sidebar lists **Library**, then the five panes under **Settings**, and fills the row of the pane shown. Click a pane, or press `Ctrl+1` through `Ctrl+5` (`Cmd+1` through `Cmd+5` on macOS), to show it. `Ctrl+Tab` shows the next pane and `Ctrl+Shift+Tab` the previous one. The toolbar shows the name of the pane. A pane is at most 680 pixels wide; in a wider window it centers in the page, and the toolbar's title starts at its leading edge.
 
 | Pane | Settings |
 | --- | --- |

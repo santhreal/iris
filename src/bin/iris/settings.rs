@@ -274,6 +274,14 @@ impl Settings {
     }
 }
 
+/// The leading edge of the pane's groups in the page beside the
+/// sidebar, logical px: the form centered at its widest
+/// (`widgets::page_lead`). The toolbar's title starts there.
+pub(crate) fn lead(window: &Window) -> f32 {
+    let page = f32::from(window.bounds().size.width) - theme::SIDEBAR_W;
+    widgets::page_lead(page, panes::FORM_MAX_W - 2.0 * theme::INSET)
+}
+
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut form = div()
@@ -281,7 +289,8 @@ impl Render for Settings {
             .flex_col()
             .gap(px(theme::GROUP_GAP))
             .max_w(px(panes::FORM_MAX_W))
-            .p(px(theme::INSET));
+            .p(px(theme::INSET))
+            .ml(px(lead(window) - theme::INSET));
         for group in self.pane.groups() {
             form = form.child(self.group(group, window, cx));
         }

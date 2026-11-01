@@ -13,7 +13,7 @@ use crate::sys::hotkeys::{self, Binding, Chord};
 use crate::theme;
 use crate::widgets::{self, tip, ButtonStyle, Toolbar};
 
-use super::layout::{Layout, Row, HEADER_H};
+use super::layout::{span, Layout, Row, HEADER_H};
 use super::{evict_thumbs, Library, Page, Tool, MIN_SIZE};
 
 /// Space between a day title's baseline row and the cards under it.
@@ -160,7 +160,7 @@ impl Library {
 
     /// A day's title row, `layout.x0` from the left.
     fn day_header(layout: &Layout, title: SharedString, top: f32) -> impl IntoElement {
-        let grid_w = layout.cols as f32 * super::CARD_W + (layout.cols - 1) as f32 * super::GAP;
+        let grid_w = span(layout.cols);
         div()
             .absolute()
             .left(px(layout.x0))
@@ -386,7 +386,8 @@ impl Render for Library {
             .filter(|_| self.page == Page::Settings);
         let (toolbar, page) = match settings {
             Some(settings) => {
-                let mut bar = Toolbar::new(settings.read(cx).pane().label());
+                let mut bar = Toolbar::new(settings.read(cx).pane().label())
+                    .lead(crate::settings::lead(window));
                 if let Some(on_close) = &self.on_close {
                     bar = bar.on_close(on_close.clone());
                 }
@@ -394,7 +395,13 @@ impl Render for Library {
             }
             None => {
                 let page = self.library_page(window, cx).into_any_element();
-                (self.toolbar(cx), page)
+                let mut bar = self.toolbar(cx);
+                // The title stands over the grid's first column; over
+                // the empty state it keeps the page's inset.
+                if !self.listing.entries().is_empty() {
+                    bar = bar.lead(self.layout.x0);
+                }
+                (bar, page)
             }
         };
         let mut root = div().size_full().font_family(theme::FONT);
