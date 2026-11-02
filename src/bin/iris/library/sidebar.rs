@@ -67,9 +67,10 @@ impl Library {
 }
 
 /// One sidebar row: the icon in the accent, the label, and the fill of
-/// the page shown.
+/// the page shown. Every other row washes under the pointer and takes
+/// the shown row's fill while pressed.
 fn row(id: impl Into<ElementId>, icon: Icon, label: &'static str, selected: bool) -> Stateful<Div> {
-    let mut row = div()
+    let row = div()
         .id(id)
         .h(px(theme::SIDEBAR_ROW_H))
         .flex_shrink_0()
@@ -87,7 +88,9 @@ fn row(id: impl Into<ElementId>, icon: Icon, label: &'static str, selected: bool
                 .child(label),
         );
     if selected {
-        row = row.bg(theme::SIDEBAR_SELECTED);
+        row.bg(theme::SIDEBAR_SELECTED)
+    } else {
+        row.hover(|s| s.bg(theme::SURFACE_HOVER))
+            .active(|s| s.bg(theme::SIDEBAR_SELECTED))
     }
-    row
 }

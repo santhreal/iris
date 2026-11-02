@@ -17,9 +17,10 @@ const SECTION_GAP: f32 = 18.0;
 /// A point on a sidebar row right of every label, where the selected
 /// row's fill shows.
 const FILL_X: f32 = 170.0;
-/// The green level between the sidebar (`theme::SIDEBAR_BG`, 38) and
-/// the selected row's fill over it (`theme::SIDEBAR_SELECTED`, 60).
-const LIT: u8 = 49;
+/// The green level between a hovered row's wash over the sidebar
+/// (`theme::SURFACE_HOVER` over `theme::SIDEBAR_BG`, 51) and the
+/// selected row's fill over it (`theme::SIDEBAR_SELECTED`, 60).
+const LIT: u8 = 55;
 
 /// The window's scale while it has its opening width `w`, device px.
 pub fn scale(w: usize) -> f32 {

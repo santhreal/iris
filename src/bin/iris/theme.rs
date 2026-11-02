@@ -88,7 +88,8 @@ pub const OVERLAY_CHIP_HOVER: Rgba = rgb(0.2, 0.2, 0.2);
 pub const OVERLAY_CHIP_PRESS: Rgba = rgb(0.231, 0.231, 0.231);
 
 /// Label tiers: primary text, secondary (metadata, captions, resting
-/// glyphs), tertiary (placeholders, shortcut columns), disabled.
+/// glyphs, placeholders, shortcut columns), tertiary (a decorative
+/// glyph with no label to read), disabled.
 pub const FG: Rgba = alpha(WHITE, 0.90);
 pub const FG_DIM: Rgba = alpha(WHITE, 0.55);
 pub const FG_FAINT: Rgba = alpha(WHITE, 0.30);

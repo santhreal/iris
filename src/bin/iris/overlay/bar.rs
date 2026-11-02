@@ -109,7 +109,8 @@ fn divider() -> Div {
 }
 
 /// A square bar button with `glyph`; `chosen` fills it as the selected
-/// capture.
+/// capture. Any other lights its glyph to primary ink under the
+/// pointer, as an icon button does.
 fn square(id: &'static str, glyph: Icon, chosen: bool) -> Stateful<Div> {
     let el = div()
         .id(id)
@@ -120,16 +121,13 @@ fn square(id: &'static str, glyph: Icon, chosen: bool) -> Stateful<Div> {
         .justify_center()
         .rounded(px(theme::RADIUS_SM));
     let el = if chosen {
-        el.bg(theme::CHOSEN)
+        el.bg(theme::CHOSEN).text_color(theme::FG)
     } else {
-        el.hover(|s| s.bg(theme::SURFACE_HOVER))
+        el.text_color(theme::FG_DIM)
+            .hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
             .active(|s| s.bg(theme::SURFACE_PRESS))
     };
-    el.child(icons::icon(
-        glyph,
-        if chosen { theme::FG } else { theme::FG_DIM },
-        20.0,
-    ))
+    el.child(icons::icon_in_text_color(glyph, 20.0))
 }
 
 impl Overlay {
