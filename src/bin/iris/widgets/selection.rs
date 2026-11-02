@@ -1,7 +1,8 @@
 //! The frame of a rectangle the pointer draws and reshapes: the capture
 //! overlay's selection and the editor's pending crop. A white line with
 //! a dark rim outside the rect, eight round handles centered on the
-//! line, each under a two-headed arrow, and readout tags.
+//! line, each under a two-headed arrow, and readout tags. The editor's
+//! selected mark takes the line and rim alone.
 
 use gpui::*;
 

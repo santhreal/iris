@@ -4,7 +4,7 @@ use std::{rc::Rc, sync::Arc};
 
 use gpui::*;
 
-use super::raster_shapes::arrow_wings;
+use super::raster_shapes::{arrow_shaft, arrow_wings};
 use super::Editor;
 use crate::icons::Icon;
 
@@ -200,6 +200,58 @@ pub(crate) struct Action {
     pub(crate) cached_path: std::cell::RefCell<Option<PathCache>>,
 }
 
+/// How far, image px, a stroked mark's box reaches past its stroke, so
+/// a press beside a thin line still selects it.
+const HIT_SLOP: f32 = 2.0;
+
+/// The box around `points`, `pad` past them on every side; `None` for
+/// no points.
+fn around(points: impl IntoIterator<Item = (f32, f32)>, pad: f32) -> Option<(f32, f32, f32, f32)> {
+    let (x0, y0, x1, y1) = points.into_iter().fold(
+        (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+        |(x0, y0, x1, y1), (x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+    );
+    (x0 <= x1).then_some((x0 - pad, y0 - pad, x1 - x0 + 2.0 * pad, y1 - y0 + 2.0 * pad))
+}
+
+impl Action {
+    /// The box the mark's ink covers, image px, as `raster::rasterize`
+    /// paints it: a stroke reaches half its width past its points, a
+    /// filled shape fills its corners' box, an arrow's head ends at its
+    /// tip and its wings, and a label takes the glyph span its caret
+    /// and selected text take. The selected mark's frame stands a gap
+    /// outside it.
+    pub(crate) fn ink_box(&self) -> Option<(f32, f32, f32, f32)> {
+        let half = self.width / 2.0;
+        // A line, a rectangle, an ellipse, and an arrow are drawn
+        // between their first and last points alone.
+        let ends = || Some([*self.points.first()?, *self.points.last()?]);
+        match self.tool {
+            Tool::Blur | Tool::Counter | Tool::Select | Tool::Crop => self.bbox,
+            Tool::Text => {
+                let (x, y, w, _) = self.bbox?;
+                let (offset, height) = super::raster::glyph_span(self.font_size);
+                Some((x, y + offset, w, height))
+            }
+            Tool::Pen | Tool::Highlight => around(self.points.iter().copied(), half),
+            Tool::Rect | Tool::Ellipse if self.filled => around(ends()?, 0.0),
+            Tool::Line | Tool::Rect | Tool::Ellipse => around(ends()?, half),
+            Tool::Arrow => {
+                let [a, b] = ends()?;
+                let corners = |(x, y, w, h): (f32, f32, f32, f32)| [(x, y), (x + w, y + h)];
+                let head = around(std::iter::once(b).chain(arrow_wings(a, b, self.width)), 0.0)?;
+                let shaft = arrow_shaft(a, b, self.width).and_then(|(a, e)| around([a, e], half));
+                around(
+                    corners(head)
+                        .into_iter()
+                        .chain(shaft.map(corners).into_iter().flatten()),
+                    0.0,
+                )
+            }
+        }
+    }
+}
+
 /// Cached paint geometry: (scale, point count, first point, last
 /// point, triangles at stage origin). The first four are the key.
 pub(crate) type PathCache = (f32, usize, (f32, f32), (f32, f32), Rc<Vec<[f32; 6]>>);
@@ -300,33 +352,16 @@ impl Editor {
                 Some((p.0 - r, p.1 - r, r * 2.0, r * 2.0))
             }
             _ => {
-                if action.points.is_empty() {
-                    return None;
-                }
                 // An arrowhead reaches past its points to each side.
                 let head = match (action.tool, action.points.first(), action.points.last()) {
                     (Tool::Arrow, Some(&a), Some(&b)) => Some(arrow_wings(a, b, action.width)),
                     _ => None,
                 };
-                let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                for (x, y) in action
-                    .points
-                    .iter()
-                    .copied()
-                    .chain(head.into_iter().flatten())
-                {
-                    x0 = x0.min(x);
-                    y0 = y0.min(y);
-                    x1 = x1.max(x);
-                    y1 = y1.max(y);
-                }
-                let pad = action.width / 2.0 + 2.0;
-                Some((
-                    x0 - pad,
-                    y0 - pad,
-                    (x1 - x0) + 2.0 * pad,
-                    (y1 - y0) + 2.0 * pad,
-                ))
+                let points = action.points.iter().copied();
+                around(
+                    points.chain(head.into_iter().flatten()),
+                    action.width / 2.0 + HIT_SLOP,
+                )
             }
         }
     }

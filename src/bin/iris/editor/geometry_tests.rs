@@ -1,5 +1,6 @@
-//! Where each tool's ink lands: in the saved file, on the canvas, and in
-//! the footprint a partial rebuild restores.
+//! Where each tool's ink lands: in the saved file, on the canvas, in
+//! the footprint a partial rebuild restores, and in the box the
+//! selected mark's frame stands outside.
 //!
 //! WHY: the class closed here is "the three views of a shape disagree".
 //! The saved file rasterizes an action in image pixels, the canvas
@@ -224,6 +225,52 @@ fn an_undone_or_moved_action_leaves_no_ink_behind() {
                 "{what} of {} leaves {stale} pixels of its old ink",
                 describe(&action)
             );
+        }
+    }
+}
+
+// WHY: the selected mark's frame stands a fixed gap outside the mark's
+// ink box. It stood outside the hit box instead, which pads a stroke by
+// the hit slop and a filled shape or an arrow's tip by half a stroke
+// they do not paint, so the gap grew with the width and the zoom. Every
+// tool's ink box is the file's ink to within the raster's pixel, and a
+// label's holds its glyphs. Not covered: the blur, whose box is its
+// patch's rect.
+#[test]
+fn the_ink_box_of_every_tool_is_the_ink_the_file_gets() {
+    for action in actions() {
+        let Some(ink) = raster_bounds(&action) else {
+            continue;
+        };
+        let (x, y, w, h) = action
+            .ink_box()
+            .unwrap_or_else(|| panic!("{} paints but has no ink box", describe(&action)));
+        let b = [x, y, x + w, y + h];
+        let holds = ink[0] >= b[0] - SLOP
+            && ink[1] >= b[1] - SLOP
+            && ink[2] <= b[2] + SLOP
+            && ink[3] <= b[3] + SLOP;
+        let hugs = ink.iter().zip(b).all(|(i, b)| (i - b).abs() <= SLOP);
+        match action.tool {
+            Tool::Text => assert!(
+                holds,
+                "{}: the ink box {b:?} does not hold the label's ink {ink:?}",
+                describe(&action)
+            ),
+            Tool::Pen
+            | Tool::Highlight
+            | Tool::Line
+            | Tool::Arrow
+            | Tool::Ellipse
+            | Tool::Rect
+            | Tool::Counter
+            | Tool::Blur
+            | Tool::Select
+            | Tool::Crop => assert!(
+                hugs,
+                "{}: the ink box {b:?} is not the file's ink {ink:?}",
+                describe(&action)
+            ),
         }
     }
 }

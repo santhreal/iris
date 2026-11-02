@@ -35,6 +35,10 @@ pub(super) fn caret_flip_in(elapsed: std::time::Duration) -> std::time::Duration
     std::time::Duration::from_millis((flip - at) as u64)
 }
 
+/// The space, logical px, between a selected mark's bounds and the
+/// white line of its frame.
+const MARK_FRAME_GAP: f32 = 3.0;
+
 impl Editor {
     pub(super) fn render_stage(
         &mut self,
@@ -213,19 +217,26 @@ impl Editor {
             }
         }
 
-        // Selection outline around the active action.
+        // The selected mark's frame: the crop's white line and dark rim,
+        // MARK_FRAME_GAP outside the mark's ink and on whole device
+        // pixels, so it reads on a light image and a dark one and clear
+        // of the stroke. It goes over the stage's frame, unclipped, as
+        // the crop's edge does.
+        let mut mark_frame = None;
         if let Some(i) = self.selected {
-            if let Some((x, y, w, h)) = self.actions.borrow().get(i).and_then(|a| a.bbox) {
-                stage = stage.child(
-                    div()
-                        .absolute()
-                        .left(px(x * scale))
-                        .top(px(y * scale))
-                        .w(px(w * scale))
-                        .h(px(h * scale))
-                        .border_1()
-                        .border_color(theme::alpha(theme::FG, 0.75)),
+            if let Some((x, y, w, h)) = self.actions.borrow().get(i).and_then(|a| a.ink_box()) {
+                let sf = window.scale_factor();
+                let snap = |v: f32| (v * sf).round() / sf;
+                let (l, t) = (
+                    snap(x * scale - MARK_FRAME_GAP),
+                    snap(y * scale - MARK_FRAME_GAP),
                 );
+                let (r, b) = (
+                    snap((x + w) * scale + MARK_FRAME_GAP),
+                    snap((y + h) * scale + MARK_FRAME_GAP),
+                );
+                let hair = selection::hairline(sf);
+                mark_frame = Some(selection::selection_edge(l, t, r - l, b - t, hair));
             }
         }
 
@@ -509,6 +520,7 @@ impl Editor {
                 },
             ])
             .child(stage)
+            .children(mark_frame)
             .children(crop_frame)
     }
 }
