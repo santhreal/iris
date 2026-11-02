@@ -1,21 +1,28 @@
-//! Where the editor draws the capture, read back from the screen.
+//! Where and how large the editor draws the capture, read back from the
+//! screen.
 //!
-//! WHY: the class closed here is "the editor shows the capture anywhere
-//! but the rect it maps image points to". The stage's hairline was a
-//! border of the element that clips the image, so the image was laid
-//! out inside it: a pixel in from each side of that rect and two pixels
-//! short of its size, while marks, the crop, and the pointer used the
-//! whole rect. The image's corners were rounded at rest too, hiding
-//! corner pixels the saved file keeps. The case opens a one-colour
-//! image, computes the rect the editor fits it to, and reads that the
-//! colour covers every pixel wholly inside the rect, the four corner
-//! pixels among them, and no pixel wholly outside it.
+//! WHY: the classes closed here:
+//!
+//! - "the editor shows the capture anywhere but the rect it maps image
+//!   points to". The stage's hairline was a border of the element that
+//!   clips the image, so the image was laid out inside it: a pixel in
+//!   from each side of that rect and two pixels short of its size, while
+//!   marks, the crop, and the pointer used the whole rect. The image's
+//!   corners were rounded at rest too, hiding corner pixels the saved
+//!   file keeps. A capture larger than the stage, fit at a scale that is
+//!   not a whole number, shows its colour over every pixel wholly inside
+//!   the rect, the four corner pixels among them, and over no pixel
+//!   wholly outside it.
+//! - "a small capture opens magnified". The fit grew a capture smaller
+//!   than the stage up to four times, filtered soft. A capture smaller
+//!   than the stage opens at one screen pixel per image pixel.
 //!
 //! Not covered: a zoomed or panned image, whose rect moves by the same
 //! view; the morph from the toast, whose rect `tests/morph.rs` does not
-//! read; Wayland, Windows, and macOS, which share the stage's layout.
-//! The case runs only with `IRIS_X11_TEST_DISPLAY` set and needs Xvfb;
-//! without them it prints that it did not run.
+//! read; a scale factor other than 1, which Xvfb does not have; Wayland,
+//! Windows, and macOS, which share the stage's layout. The cases run
+//! only with `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without them
+//! they print that they did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -38,25 +45,22 @@ use x11::{client, extent, windows_of};
 const SCREEN: &str = "1280x1024x24";
 /// The editor's title on `plain.png`.
 const EDITOR: &str = "plain.png - iris";
-/// The image's color, [r, g, b], and its size: a fit that is not a
-/// whole number, so the rect's edges fall between pixels.
+/// The image's color, [r, g, b].
 const IMAGE: [u8; 3] = [60, 140, 200];
-const IMAGE_W: u32 = 600;
-const IMAGE_H: u32 = 400;
 /// The editor's toolbar and tool options bar, which the stage sits
 /// under (`theme::TOOLBAR_H` plus `OPTIONS_H`), and the room the fit
 /// keeps clear on each side of the image (`STAGE_MARGIN`).
 const STAGE_TOP: f32 = 52.0 + 40.0;
 const MARGIN: f32 = 24.0;
 
-/// The image's rect in the client area, as the editor fits it at rest:
-/// left, top, right, bottom.
-fn fit(w: usize, h: usize) -> (f32, f32, f32, f32) {
-    let (w, h) = (w as f32, h as f32);
-    let (iw, ih) = (IMAGE_W as f32, IMAGE_H as f32);
+/// The rect, left, top, right, and bottom, of a `iw` x `ih` image in a
+/// `w` x `h` client area, as the editor fits it at rest on a screen of
+/// scale 1: inside the margins and at most one pixel per image pixel.
+fn fit((w, h): (usize, usize), (iw, ih): (u32, u32)) -> (f32, f32, f32, f32) {
+    let (w, h, iw, ih) = (w as f32, h as f32, iw as f32, ih as f32);
     let scale = ((w - 2.0 * MARGIN) / iw)
         .min((h - STAGE_TOP - 2.0 * MARGIN) / ih)
-        .min(4.0);
+        .min(1.0);
     let (left, top) = (
         (w - iw * scale) / 2.0,
         STAGE_TOP + (h - STAGE_TOP - ih * scale) / 2.0,
@@ -64,20 +68,18 @@ fn fit(w: usize, h: usize) -> (f32, f32, f32, f32) {
     (left, top, left + iw * scale, top + ih * scale)
 }
 
-#[test]
-fn the_editor_shows_every_pixel_of_the_capture_over_its_rect() {
-    let case = "the_editor_shows_every_pixel_of_the_capture_over_its_rect";
+/// The editor's client area, as `client` reads it, once it shows a
+/// `size` image of one colour; `None` when the case does not run.
+fn open(case: &str, size: (u32, u32)) -> Option<(usize, usize, Vec<[u8; 3]>)> {
     if !enabled() {
-        return;
+        return None;
     }
-    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
-        return;
-    };
+    let (_xvfb, display) = xvfb_sized(case, SCREEN)?;
     let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
     let root = conn.setup().roots[screen].root;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("plain.png");
-    image::RgbImage::from_pixel(IMAGE_W, IMAGE_H, image::Rgb(IMAGE))
+    image::RgbImage::from_pixel(size.0, size.1, image::Rgb(IMAGE))
         .save(&file)
         .unwrap();
     let daemon = Daemon::start(dir.path(), |cmd| {
@@ -89,13 +91,25 @@ fn the_editor_shows_every_pixel_of_the_capture_over_its_rect() {
     });
     daemon.until("the editor to draw the image", || {
         extent(&client(&conn, root, editor), IMAGE)
-            .filter(|&(left, top, right, bottom)| right - left >= 200 && bottom - top >= 100)
+            .filter(|&(left, top, right, bottom)| right - left >= 60 && bottom - top >= 40)
     });
     daemon.settle();
+    Some(client(&conn, root, editor))
+}
 
-    let shot = client(&conn, root, editor);
+#[test]
+fn the_editor_shows_every_pixel_of_the_capture_over_its_rect() {
+    // Larger than the stage on both axes, at a fit that is not a whole
+    // number, so the rect's edges fall between pixels.
+    let size = (1300, 900);
+    let Some(shot) = open(
+        "the_editor_shows_every_pixel_of_the_capture_over_its_rect",
+        size,
+    ) else {
+        return;
+    };
     let (w, h, px) = &shot;
-    let (left, top, right, bottom) = fit(*w, *h);
+    let (left, top, right, bottom) = fit((*w, *h), size);
     // The pixels wholly inside the rect, and those it touches at all.
     let inside = (
         left.ceil() as usize,
@@ -139,4 +153,30 @@ fn the_editor_shows_every_pixel_of_the_capture_over_its_rect() {
             (left, top, right, bottom)
         );
     }
+}
+
+#[test]
+fn a_capture_smaller_than_the_stage_opens_at_its_own_pixels() {
+    let size = (200, 120);
+    let Some(shot) = open(
+        "a_capture_smaller_than_the_stage_opens_at_its_own_pixels",
+        size,
+    ) else {
+        return;
+    };
+    let (left, top, right, bottom) = extent(&shot, IMAGE).expect("the image is on the stage");
+    let shown = (right + 1 - left, bottom + 1 - top);
+    assert_eq!(
+        shown,
+        (size.0 as usize, size.1 as usize),
+        "a {size:?} capture shows {shown:?} pixels, from ({left}, {top})"
+    );
+    let (want_left, want_top, ..) = fit((shot.0, shot.1), size);
+    assert_eq!(
+        (left, top),
+        (want_left.ceil() as usize, want_top.ceil() as usize),
+        "a {size:?} capture is not centered on the stage of a {}x{} client area",
+        shot.0,
+        shot.1
+    );
 }

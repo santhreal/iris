@@ -798,13 +798,16 @@ impl Editor {
     /// image -> window px.
     pub(crate) fn view(&self, window: &Window) -> (f32, f32, f32) {
         // The stage is the window under the toolbar and the options
-        // bar; the fit image keeps STAGE_MARGIN clear on every side.
+        // bar; the fit image keeps STAGE_MARGIN clear on every side. It
+        // is never larger than one device pixel per image pixel, so a
+        // capture smaller than the stage opens sharp, not magnified and
+        // filtered.
         let size = window.bounds().size;
         let usable_w = (f32::from(size.width) - 2.0 * STAGE_MARGIN).max(100.0);
         let usable_h = (f32::from(size.height) - STAGE_TOP - 2.0 * STAGE_MARGIN).max(100.0);
         let fit = (usable_w / self.base_dims.0 as f32)
             .min(usable_h / self.base_dims.1 as f32)
-            .min(4.0);
+            .min(1.0 / window.scale_factor());
         let scale = fit * self.zoom;
         let (fx, fy) = self.fit_origin(window, scale);
         (fx + self.pan.0, fy + self.pan.1, scale)

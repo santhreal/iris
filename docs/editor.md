@@ -29,7 +29,7 @@ The toolbar holds, from left to right:
 
 `Shift+F10` or the Menu key opens the More menu. In an open Copy or More menu, `Up` and `Down` move the highlight, as the pointer does, and pass over a dimmed row; `Left` and `Right` open the other menu; `Return` or `Space` runs the highlighted row, and `Escape` closes the menu. Other keys do nothing while a menu is open.
 
-The tool options bar under the toolbar holds the three stroke widths as one segmented control, the fill toggle, and the color swatches, with a divider between each group (see [Tool Options](#tool-options)). The image sits under both bars, fit to the window with a 24-pixel margin on every side.
+The tool options bar under the toolbar holds the three stroke widths as one segmented control, the fill toggle, and the color swatches, with a divider between each group (see [Tool Options](#tool-options)). The image sits under both bars, fit to the window with a 24-pixel margin on every side and never larger than one screen pixel per image pixel, so a capture smaller than the window opens at its own pixels.
 
 ## Tools and Hotkeys
 

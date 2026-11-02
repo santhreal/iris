@@ -1457,8 +1457,11 @@ fn undo_redo_and_copy_keys_run_with_a_label_open() {
         return;
     };
     let (conn, root) = (&session.conn, session.root);
-    // Past `end` by a letter: more than the caret after it reaches.
-    let past = |x: Option<usize>, end: Option<usize>| x > end.map(|x| x + 8);
+    // Past `end` by most of a letter: a letter of the 16 px label adds
+    // over 9 image pixels of ink, and the caret after the text reaches
+    // under 4 screen pixels past it.
+    let margin = (6.0 * session.scale) as usize;
+    let past = |x: Option<usize>, end: Option<usize>| x > end.map(|x| x + margin);
     session.label(&[A, B]);
     let ab = session.label_end();
     session.reopen(&[C]);
@@ -1489,9 +1492,9 @@ fn undo_redo_and_copy_keys_run_with_a_label_open() {
             let png = clipboard(conn, root, b"image/png")?;
             Some(image::load_from_memory(&png).ok()?.to_rgb8())
         });
-    // The copied label's end, in canvas pixels, is abcd's on screen:
-    // the composite's text ends 4 px short of the stage's here, and a
-    // copy of abc would end about 16 px short.
+    // The copied label's end, in canvas pixels, is abcd's on screen
+    // within 6: a copy of abc would end a letter, over 9 image pixels,
+    // short.
     let copied = label_columns(&copied)
         .last()
         .map(|&x| (session.screen_at((x as f32, LABEL.1)).0 - session.at.0) as usize);
