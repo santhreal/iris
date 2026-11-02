@@ -319,15 +319,30 @@ fn segment(seg: &str, mac: bool, out: &mut Vec<Piece>) {
     }
 }
 
+/// The space, logical px, between a word of a hint and a cap beside it,
+/// past the row's gap.
+const WORD_SPACE: f32 = 2.0;
+
+/// The space left and right of the word at `index` of a hint's `count`
+/// pieces: WORD_SPACE beside another piece and none at either end of
+/// the row, so a row that ends in a word ends where one that ends in a
+/// cap does.
+fn word_insets(index: usize, count: usize) -> (f32, f32) {
+    let space = |end: bool| if end { 0.0 } else { WORD_SPACE };
+    (space(index == 0), space(index + 1 == count))
+}
+
 /// A shortcut hint as a row of key caps and the words between them, in
 /// `ink`: the keys of a shortcuts sheet row. A comma sits against the
 /// key before it and a word's space from the key after it, as in prose.
 pub fn key_hint(hint: &str, ink: Rgba) -> Div {
+    let pieces = hint_pieces(hint);
+    let count = pieces.len();
     div()
         .flex()
         .items_center()
         .gap(px(3.))
-        .children(hint_pieces(hint).into_iter().map(|piece| {
+        .children(pieces.into_iter().enumerate().map(|(i, piece)| {
             let word = |word: SharedString| {
                 div()
                     .text_size(px(theme::TEXT_SMALL))
@@ -337,8 +352,13 @@ pub fn key_hint(hint: &str, ink: Rgba) -> Div {
             };
             match piece {
                 Piece::Cap(key) => cap(key, ink),
-                Piece::Word(comma) if comma == "," => word(comma).ml(px(-2.)).pr(px(2.)),
-                Piece::Word(other) => word(other).px(px(2.)),
+                Piece::Word(comma) if comma == "," => {
+                    word(comma).ml(px(-WORD_SPACE)).pr(px(WORD_SPACE))
+                }
+                Piece::Word(other) => {
+                    let (left, right) = word_insets(i, count);
+                    word(other).pl(px(left)).pr(px(right))
+                }
             }
         }))
 }
@@ -606,5 +626,45 @@ mod tests {
         ] {
             assert_eq!(split_at_key(text, key), want, "{text:?}");
         }
+    }
+
+    // WHY: the class closed here is "a hint's row ends short of the
+    // column it is aligned in". Every word kept WORD_SPACE on both
+    // sides, so a row ending in a word ("Shift+click", "Esc twice")
+    // ended 2 px left of the rows ending in a cap in the sheets'
+    // right-aligned column. The case reads each word's insets in real
+    // sheet hints: a word's space beside a cap, none at a row's end.
+    // Not covered: the rendered row, checked on docshots.
+    #[test]
+    fn a_hint_word_at_a_row_end_is_flush_with_it() {
+        let insets = |hint: &str| -> Vec<(String, (f32, f32))> {
+            let pieces = hint_pieces_for(hint, false);
+            let count = pieces.len();
+            pieces
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, piece)| match piece {
+                    Piece::Word(w) if w != "," => Some((w.to_string(), word_insets(i, count))),
+                    _ => None,
+                })
+                .collect()
+        };
+        let words = |pairs: &[(&str, (f32, f32))]| -> Vec<(String, (f32, f32))> {
+            pairs.iter().map(|&(w, s)| (w.to_string(), s)).collect()
+        };
+        assert_eq!(
+            insets("Shift+F10 or right-click"),
+            words(&[("or", (2.0, 2.0)), ("right-click", (2.0, 0.0))])
+        );
+        assert_eq!(
+            insets("Space + drag"),
+            words(&[("+", (2.0, 2.0)), ("drag", (2.0, 0.0))])
+        );
+        assert_eq!(insets("Esc twice"), words(&[("twice", (2.0, 0.0))]));
+        assert_eq!(
+            insets("Double-click"),
+            words(&[("Double-click", (0.0, 0.0))])
+        );
+        assert_eq!(insets("Tab, then Space"), words(&[("then", (2.0, 2.0))]));
     }
 }
