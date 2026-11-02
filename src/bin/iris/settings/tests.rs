@@ -225,6 +225,92 @@ fn a_recorded_shortcut_applies_unless_its_partner_holds_it() {
     assert_eq!(Config::load().confirm_keybind, "Ctrl+Shift+3");
 }
 
+// WHY: a global hotkey grab takes its key from every application, so
+// the recorder rejects a chord with no Ctrl, Alt, or platform key, and
+// Esc alone stops a global hotkey's recording instead of grabbing
+// Escape on the whole desktop. Print and the function keys stand alone
+// or with Shift; the overlay keys take any key, Esc included. Not
+// covered: a hand-edited config.toml, which the grab reads as written.
+#[test]
+#[serial_test::serial]
+fn a_global_hotkey_needs_a_modifier_and_esc_stops_its_recording() {
+    let _home = temp_home();
+    let mut s = settings(Release::None);
+    let reason = super::fields::modifier_reason(std::env::consts::OS).to_string();
+    let globals = [Field::CaptureHotkey, Field::RecordHotkey];
+    for field in globals {
+        let before = s.field_text(field);
+        for chord in [
+            "A",
+            "Shift+A",
+            "Space",
+            "Enter",
+            "Shift+Escape",
+            "Delete",
+            "F0",
+            "F25",
+        ] {
+            s.begin_recording(field);
+            s.record(field, chord.into());
+            assert_eq!(
+                s.recording,
+                Some(field),
+                "{field:?} keeps recording {chord}"
+            );
+            assert_eq!(
+                s.rejected,
+                Some((field, reason.clone())),
+                "{field:?} {chord}"
+            );
+            assert_eq!(s.field_text(field), before, "{field:?} keeps its chord");
+        }
+        s.record(field, "Escape".into());
+        assert_eq!((s.recording, s.rejected.clone()), (None, None), "{field:?}");
+        assert_eq!(s.field_text(field), before, "Esc keeps {field:?}'s chord");
+    }
+    let stands = [
+        (Field::CaptureHotkey, "Print"),
+        (Field::RecordHotkey, "Shift+Print"),
+        (Field::CaptureHotkey, "F1"),
+        (Field::RecordHotkey, "Shift+F24"),
+        (Field::CaptureHotkey, "Alt+A"),
+        (Field::RecordHotkey, "Ctrl+Escape"),
+        (Field::CaptureHotkey, "Super+Space"),
+        (Field::RecordHotkey, "Win+R"),
+        (Field::CaptureHotkey, "Cmd+Shift+4"),
+    ];
+    for (field, chord) in stands {
+        s.begin_recording(field);
+        s.record(field, chord.into());
+        assert_eq!((s.recording, s.rejected.clone()), (None, None), "{chord}");
+        let cfg = Config::load();
+        let stored = match field {
+            Field::CaptureHotkey => cfg.capture_hotkey,
+            _ => cfg.record_hotkey,
+        };
+        assert_eq!(stored, chord);
+    }
+    // The overlay keys take a bare key and Esc.
+    for (field, chord) in [
+        (Field::ConfirmKeybind, "Space"),
+        (Field::CancelKeybind, "Escape"),
+    ] {
+        s.begin_recording(field);
+        s.record(field, chord.into());
+        assert_eq!((s.recording, s.rejected.clone()), (None, None), "{chord}");
+        assert_eq!(s.field_text(field), chord);
+    }
+    let os = ["linux", "windows", "macos"];
+    assert_eq!(
+        os.map(super::fields::modifier_reason),
+        [
+            "Add Ctrl, Alt, or Super",
+            "Add Ctrl, Alt, or Win",
+            "Add Command, Option, or Control"
+        ]
+    );
+}
+
 #[test]
 #[serial_test::serial]
 fn a_chosen_folder_applies_and_a_picker_failure_opens_the_path_for_typing() {
@@ -636,13 +722,10 @@ fn format_keystroke_formats_keys_and_modifiers() {
         Some("Ctrl+Alt+S".into())
     );
     assert_eq!(
-        [
-            Settings::platform_modifier_name(false),
-            Settings::platform_modifier_name(true),
-        ],
-        ["Super", "Cmd"]
+        ["linux", "freebsd", "windows", "macos"].map(Settings::platform_modifier_name),
+        ["Super", "Super", "Win", "Cmd"]
     );
-    let platform = Settings::platform_modifier_name(cfg!(target_os = "macos"));
+    let platform = Settings::platform_modifier_name(std::env::consts::OS);
     assert_eq!(
         Settings::format_keystroke(&make_event("p", false, false, false, true)),
         Some(format!("{platform}+P"))

@@ -67,6 +67,34 @@ pub(super) fn conflict(cfg: &Config, field: Field, chord: &str) -> Option<Field>
         .then_some(other)
 }
 
+/// Whether `chord` is a global hotkey that would take its key from
+/// every application: one without Ctrl, Alt, or the platform key,
+/// except Print and the function keys, which stand alone or with Shift.
+fn bare_global(field: Field, chord: &str) -> bool {
+    if !matches!(field, Field::CaptureHotkey | Field::RecordHotkey) {
+        return false;
+    }
+    let mut keys = chord.split('+').map(|k| k.trim().to_ascii_lowercase());
+    let key = keys.next_back().unwrap_or_default();
+    let held = keys.any(|k| matches!(k.as_str(), "ctrl" | "alt" | "super" | "cmd" | "win"));
+    let alone = key == "print"
+        || key
+            .strip_prefix('f')
+            .and_then(|n| n.parse::<u8>().ok())
+            .is_some_and(|n| (1..=24).contains(&n));
+    !held && !alone
+}
+
+/// The reason beside a global hotkey field that `bare_global` rejects,
+/// in this platform's modifier names.
+pub(super) fn modifier_reason(os: &str) -> &'static str {
+    match os {
+        "macos" => "Add Command, Option, or Control",
+        "windows" => "Add Ctrl, Alt, or Win",
+        _ => "Add Ctrl, Alt, or Super",
+    }
+}
+
 /// One row: the label on the left, the control right-aligned.
 fn row_shell(label: &'static str, control: impl IntoElement) -> Div {
     div()
@@ -265,9 +293,22 @@ impl Settings {
     }
 
     /// Set shortcut `field` to `chord` and stop recording, unless the
-    /// shortcut active alongside it holds the same chord: then
-    /// recording continues with the reason beside the field.
+    /// shortcut active alongside it holds the same chord, or a global
+    /// hotkey has no modifier: then recording continues with the
+    /// reason beside the field. Esc alone stops a global hotkey's
+    /// recording and keeps its chord; the overlay keys take Esc, their
+    /// default cancel key.
     pub(super) fn record(&mut self, field: Field, chord: String) {
+        let global = matches!(field, Field::CaptureHotkey | Field::RecordHotkey);
+        if global && chord == "Escape" {
+            self.recording = None;
+            self.rejected = None;
+            return;
+        }
+        if bare_global(field, &chord) {
+            self.rejected = Some((field, modifier_reason(std::env::consts::OS).into()));
+            return;
+        }
         if let Some(other) = conflict(&self.cfg, field, &chord) {
             self.rejected = Some((field, format!("Used by {}", other.label())));
             return;
@@ -281,7 +322,7 @@ impl Settings {
             return;
         }
         *slot = chord;
-        self.persist(matches!(field, Field::CaptureHotkey | Field::RecordHotkey));
+        self.persist(global);
     }
 
     /// Set folder `field` to the directory the picker returned. A picker
@@ -374,12 +415,13 @@ impl Settings {
         self.persist(true);
     }
 
-    /// The platform modifier's name in a recorded global hotkey.
-    pub(super) fn platform_modifier_name(macos: bool) -> &'static str {
-        if macos {
-            "Cmd"
-        } else {
-            "Super"
+    /// The platform modifier's name in a recorded global hotkey, for
+    /// the operating system `os` as `std::env::consts::OS` names it.
+    pub(super) fn platform_modifier_name(os: &str) -> &'static str {
+        match os {
+            "macos" => "Cmd",
+            "windows" => "Win",
+            _ => "Super",
         }
     }
 
@@ -403,7 +445,7 @@ impl Settings {
             parts.push("Shift");
         }
         if m.platform && !m.control {
-            parts.push(Self::platform_modifier_name(cfg!(target_os = "macos")));
+            parts.push(Self::platform_modifier_name(std::env::consts::OS));
         }
         let named = match key {
             " " => "Space".to_string(),
@@ -520,7 +562,8 @@ impl Settings {
         // Esc with nothing open, go on to the window.
         cx.stop_propagation();
         // Recording takes every combination, Esc included: Esc is the
-        // default cancel key. A click away stops it.
+        // overlay's default cancel key, and stops a global hotkey's
+        // recording. A click away stops it.
         if let Some(field) = self.recording {
             if let Some(chord) = Self::format_keystroke(ev) {
                 self.record(field, chord);
