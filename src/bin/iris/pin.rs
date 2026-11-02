@@ -52,6 +52,9 @@ const UNPLACED: (f32, f32) = (80.0, 80.0);
 /// and right.
 const CASCADE: f32 = 24.0;
 
+/// The corner radius of a pin whose window the platform does not shape.
+const RADIUS: f32 = 8.0;
+
 /// Open a pinned window showing `path`'s image at native scale,
 /// centered on `over`. The PNG read + decode run on the background
 /// executor: a 4K decode on the UI thread stalls every other surface
@@ -272,17 +275,16 @@ impl Render for PinStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // No shadow: the window is the image's own size, so a shadow
         // would show only in the transparent rounded corners, as dark
-        // wedges that square them off.
+        // wedges that square them off. The toast card's outline gives the
+        // capture an edge over a desktop of its own color instead.
+        // The pin places itself, so DWM leaves its corners to it.
+        let framed = crate::sys::window::platform_frame(window);
+        let radius = if framed { 0.0 } else { RADIUS };
         div()
             .group("pin")
             .size_full()
             .font_family(theme::FONT)
-            // The pin places itself, so DWM leaves its corners to it.
-            .rounded(if crate::sys::window::platform_frame(window) {
-                px(0.)
-            } else {
-                px(8.)
-            })
+            .rounded(px(radius))
             .overflow_hidden()
             .bg(theme::BG_ELEV)
             .track_focus(&self.focus)
@@ -332,7 +334,9 @@ impl Render for PinStage {
                     .shadow(theme::shadow_float())
                     .opacity(0.)
                     .group_hover("pin", |s| s.opacity(1.))
-                    .hover(|s| s.bg(theme::BG_ELEV))
+                    // It occludes the pin, which then no longer counts as
+                    // hovered, so its own hover keeps it shown.
+                    .hover(|s| s.bg(theme::BG_ELEV).opacity(1.))
                     .occlude()
                     .tooltip(crate::widgets::tip("Close", Some("Esc".into())))
                     .on_click(|_, window, _| window.remove_window())
@@ -347,6 +351,7 @@ impl Render for PinStage {
                     .as_ref()
                     .map(|text| crate::widgets::status_pill(text.clone(), 10.0)),
             )
+            .children((!framed).then(|| crate::stage::edge(radius, 1.0).inset_0()))
     }
 }
 

@@ -290,13 +290,15 @@ fn ctrl_c_copies_a_pin_and_ctrl_w_closes_it() {
 
 /// WHY: a pin showed the pointing hand of a link over its whole surface,
 /// where a press moves the window as a title bar does, and then over its
-/// close control, where a native window's controls show the arrow. The
-/// case hovers the pin's surface, then its close control, and reads the
-/// arrow over both. Not covered: Wayland, where the compositor draws the
-/// cursor.
+/// close control, where a native window's controls show the arrow; and
+/// its close control, shown while the pointer is on the pin, went
+/// transparent once the pointer reached it. The case hovers the pin's
+/// surface, then its close control, and reads the arrow and the close
+/// control's fill over both. Not covered: Wayland, where the compositor
+/// draws the cursor.
 #[test]
-fn a_pin_and_its_close_control_show_the_arrow() {
-    let case = "a_pin_and_its_close_control_show_the_arrow";
+fn a_pin_shows_its_close_control_and_the_arrow_under_the_pointer() {
+    let case = "a_pin_shows_its_close_control_and_the_arrow_under_the_pointer";
     if !enabled() {
         return;
     }
@@ -319,7 +321,9 @@ fn a_pin_and_its_close_control_show_the_arrow() {
     daemon.settle();
     let (x, y, w, h) = rect(&conn, root, pin);
     // The surface, then the close control: 22 px, 8 px in from the
-    // top-left corner.
+    // top-left corner. Its fill shows 7 px above its centre, clear of
+    // the glyph: dark where the pin shows the desktop's blue.
+    let fill = (x + 8 + 11, y + 8 + 4);
     for (part, at) in [
         ("surface", (x + w as i16 / 2, y + h as i16 / 2)),
         ("close control", (x + 8 + 11, y + 8 + 11)),
@@ -329,6 +333,74 @@ fn a_pin_and_its_close_control_show_the_arrow() {
         assert!(
             x11::cursor(&conn) == arrow,
             "the pin's {part} at {at:?} shows another cursor than the arrow"
+        );
+        let shown = x11::pixel(&conn, root, fill);
+        assert!(
+            x11::channels(shown).iter().all(|&c| c < 80),
+            "with the pointer on the pin's {part}, its close control shows {shown:06x}, \
+             not its dark fill"
+        );
+    }
+}
+
+/// WHY: a pin drew no edge, so a capture pinned over a desktop of its own
+/// colour ran into it with no line between them. The case pins a capture
+/// of the desktop under a stand-in compositing manager, so the pin draws
+/// its own shape as on a desktop with one, and reads the pin's four
+/// edges, which differ from the desktop, and a point inside them, which
+/// matches it. Not covered: the edge over a dark capture; a window
+/// manager's frame, which an X11 pin opened with no compositor takes; and
+/// Windows 11, where the platform draws it.
+#[test]
+fn a_pin_keeps_an_edge_over_a_desktop_of_its_own_color() {
+    let case = "a_pin_keeps_an_edge_over_a_desktop_of_its_own_color";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    paint_root(&conn, root, DESKTOP);
+    let selection = conn
+        .intern_atom(false, format!("_NET_WM_CM_S{screen}").as_bytes())
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let _compositor = x11::Compositor::start(&conn, root, selection);
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    capture(&conn, root, &daemon, dir.path(), 1);
+    pin_from_toast(&conn, root, &daemon);
+    let pin = daemon.until("the pin to open", || {
+        windows_of(&conn, root, PIN).first().copied()
+    });
+    move_to(&conn, root, (0, 0));
+    daemon.settle();
+    let (x, y, w, h) = rect(&conn, root, pin);
+    let (w, h) = (w as i16, h as i16);
+    let inside = x11::pixel(&conn, root, (x + w / 2, y + h / 2 + 8));
+    assert_eq!(inside, DESKTOP, "the pin does not show the desktop it pins");
+    for (side, at) in [
+        ("left", (x, y + h / 2)),
+        ("right", (x + w - 1, y + h / 2)),
+        ("top", (x + w / 2, y)),
+        ("bottom", (x + w / 2, y + h - 1)),
+    ] {
+        let edge = x11::pixel(&conn, root, at);
+        let apart = x11::channels(edge)
+            .iter()
+            .zip(x11::channels(DESKTOP))
+            .map(|(&a, b)| a.abs_diff(b))
+            .max()
+            .unwrap();
+        assert!(
+            apart >= 5,
+            "the pin's {side} edge at {at:?} shows {edge:06x}, the desktop's {DESKTOP:06x}"
         );
     }
 }
