@@ -21,6 +21,9 @@ pub const MENU_RADIUS: f32 = theme::RADIUS_MENU;
 pub const MENU_PAD: f32 = 5.0;
 /// The leading column of a menu that marks its selected value.
 const CHECK_COL: f32 = 18.0;
+/// The group of a menu row, so its shortcut column turns with the row's
+/// hover wash.
+const MENU_ROW_GROUP: &str = "menu-row";
 
 /// Menu surface, MENU_W wide. Caller fills it with rows.
 pub fn menu() -> Div {
@@ -79,7 +82,8 @@ impl MenuItem {
         self
     }
 
-    /// The key combination shown right-aligned in tertiary color.
+    /// The key combination shown right-aligned in secondary color, as a
+    /// tooltip shows it, and in the label's color while the row is lit.
     pub fn shortcut(mut self, keys: impl Into<SharedString>) -> Self {
         self.shortcut = Some(keys.into());
         self
@@ -117,6 +121,11 @@ impl MenuItem {
         } else {
             theme::FG
         };
+        let keys_color = if self.disabled || lit {
+            color
+        } else {
+            theme::FG_DIM
+        };
         let mut row = div()
             .id(self.id)
             .h(px(MENU_ROW_H))
@@ -134,7 +143,9 @@ impl MenuItem {
             // toast card's drag tracking, the editor's toolbar buttons).
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         if !self.disabled {
-            row = row.hover(|s| s.bg(theme::ACCENT).text_color(theme::ACCENT_INK));
+            row = row
+                .group(MENU_ROW_GROUP)
+                .hover(|s| s.bg(theme::ACCENT).text_color(theme::ACCENT_INK));
         }
         if lit {
             row = row.bg(theme::ACCENT);
@@ -151,12 +162,12 @@ impl MenuItem {
         }
         row = row.child(div().flex_1().child(self.label));
         if let Some(keys) = self.shortcut {
-            row = row.child(
-                div()
-                    .pl(px(16.))
-                    .text_color(theme::FG_FAINT)
-                    .child(super::shortcut_text(&keys)),
-            );
+            let mut keys_col = div().pl(px(16.)).text_color(keys_color);
+            if !self.disabled {
+                keys_col =
+                    keys_col.group_hover(MENU_ROW_GROUP, |s| s.text_color(theme::ACCENT_INK));
+            }
+            row = row.child(keys_col.child(super::shortcut_text(&keys)));
         }
         row
     }
