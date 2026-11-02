@@ -65,11 +65,16 @@ const STROKES: [(Icon, &str, &str); 3] = [
     (Icon::Stroke3, "Thick Stroke", "3"),
 ];
 
-/// The toolbar's Copy menu: each row's copy variant and label.
-const COPY_ROWS: [(&str, &str); 3] = [
-    ("image", "Copy Image"),
-    ("file", "Copy File"),
-    ("path", "Copy Path"),
+/// The toolbar's Copy menu: each row's copy variant, label, and the
+/// shortcut that runs it, where one does.
+const COPY_ROWS: [(&str, &str, Option<&str>); 3] = [
+    (
+        "image",
+        "Copy Image",
+        Some(crate::widgets::meta_shortcut!("C")),
+    ),
+    ("file", "Copy File", None),
+    ("path", "Copy Path", None),
 ];
 
 /// A row of the toolbar's More menu.
@@ -346,15 +351,24 @@ impl Editor {
         // open, its press-outside dismissal runs first.
         let copy_open = self.copy_menu;
         let mut copy = div().relative().child(
-            widgets::button_with_icon("btn-copy", "Copy", Icon::ChevronDown, ButtonStyle::Ghost)
-                .tooltip(tip("Copy Image, File, or Path", None))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        this.open_toolbar_menu(true, !copy_open);
-                        cx.notify();
-                    }),
-                ),
+            widgets::button_with_icon(
+                "btn-copy",
+                "Copy",
+                Icon::ChevronDown,
+                if copy_open {
+                    ButtonStyle::Held
+                } else {
+                    ButtonStyle::Ghost
+                },
+            )
+            .tooltip(tip("Copy Image, File, or Path", None))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.open_toolbar_menu(true, !copy_open);
+                    cx.notify();
+                }),
+            ),
         );
         if copy_open {
             let mut panel = widgets::menu()
@@ -363,9 +377,12 @@ impl Editor {
                     this.copy_menu = false;
                     cx.notify();
                 }));
-            for (i, (variant, label)) in COPY_ROWS.into_iter().enumerate() {
-                let item = MenuItem::new(ElementId::Name(variant.into()), label)
+            for (i, (variant, label, keys)) in COPY_ROWS.into_iter().enumerate() {
+                let mut item = MenuItem::new(ElementId::Name(variant.into()), label)
                     .lit(self.menu_lit == Some(i));
+                if let Some(keys) = keys {
+                    item = item.shortcut(keys);
+                }
                 panel = panel.child(
                     item.into_row()
                         .on_hover(Self::menu_row_hover(cx.entity().downgrade(), i))
@@ -379,7 +396,7 @@ impl Editor {
 
         let more_open = self.more_menu;
         let mut more = div().relative().child(
-            widgets::icon_button(
+            widgets::menu_icon_button(
                 "btn-more",
                 Icon::Ellipsis,
                 more_open,

@@ -145,6 +145,10 @@ pub enum ButtonStyle {
     /// Destructive text with a hover wash and no fill: a toolbar's
     /// destructive action (Move to Trash).
     GhostDestructive,
+    /// A ghost button held down while the menu it opens is open, as a
+    /// pull-down button stays down: the press fill and primary text,
+    /// under the pointer too.
+    Held,
 }
 
 /// A form push button, CONTROL_H tall with a body label.
@@ -192,6 +196,7 @@ pub(super) fn styled_button(base: Stateful<Div>, style: ButtonStyle) -> Stateful
             .text_color(theme::DANGER)
             .hover(|s| s.bg(theme::SURFACE_HOVER))
             .active(|s| s.bg(theme::SURFACE_PRESS)),
+        ButtonStyle::Held => base.bg(theme::SURFACE_PRESS).text_color(theme::FG),
     }
 }
 

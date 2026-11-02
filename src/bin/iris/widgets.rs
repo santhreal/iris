@@ -108,7 +108,25 @@ pub fn icon_button(
     active: bool,
     size: f32,
 ) -> Stateful<Div> {
-    icon_button_inked(id, glyph, active, size, theme::FG_DIM)
+    icon_button_inked(id, glyph, IconFace::on(active), size, theme::FG_DIM)
+}
+
+/// An [`icon_button`] that opens a menu: held down while `open`, as a
+/// pull-down button stays down, with the press fill and its glyph in
+/// primary ink under the pointer too, rather than accent-filled as a
+/// toggle that is on.
+pub fn menu_icon_button(
+    id: impl Into<ElementId>,
+    glyph: Icon,
+    open: bool,
+    size: f32,
+) -> Stateful<Div> {
+    let face = if open {
+        IconFace::Held
+    } else {
+        IconFace::Ghost
+    };
+    icon_button_inked(id, glyph, face, size, theme::FG_DIM)
 }
 
 /// [`icon_button`] for a HUD that floats over any screen content, the
@@ -120,13 +138,35 @@ pub fn hud_icon_button(
     active: bool,
     size: f32,
 ) -> Stateful<Div> {
-    icon_button_inked(id, glyph, active, size, theme::FG)
+    icon_button_inked(id, glyph, IconFace::on(active), size, theme::FG)
+}
+
+/// The fill of an icon button.
+#[derive(Clone, Copy)]
+enum IconFace {
+    /// No fill: a hover wash, and the press fill while pressed.
+    Ghost,
+    /// The accent, with the glyph in accent ink: a toggle that is on.
+    On,
+    /// The press fill, with the glyph in primary ink: a menu button
+    /// whose menu is open.
+    Held,
+}
+
+impl IconFace {
+    fn on(active: bool) -> Self {
+        if active {
+            Self::On
+        } else {
+            Self::Ghost
+        }
+    }
 }
 
 fn icon_button_inked(
     id: impl Into<ElementId>,
     glyph: Icon,
-    active: bool,
+    face: IconFace,
     size: f32,
     ink: Rgba,
 ) -> Stateful<Div> {
@@ -139,17 +179,16 @@ fn icon_button_inked(
         .justify_center()
         .rounded(px(theme::RADIUS_CONTROL))
         .flex_shrink_0();
-    let el = if active {
-        el.bg(theme::ACCENT)
-    } else {
-        el.hover(|s| s.bg(theme::SURFACE_HOVER))
-            .active(|s| s.bg(theme::SURFACE_PRESS))
+    let (el, ink) = match face {
+        IconFace::Ghost => (
+            el.hover(|s| s.bg(theme::SURFACE_HOVER))
+                .active(|s| s.bg(theme::SURFACE_PRESS)),
+            ink,
+        ),
+        IconFace::On => (el.bg(theme::ACCENT), theme::ACCENT_INK),
+        IconFace::Held => (el.bg(theme::SURFACE_PRESS), theme::FG),
     };
-    el.child(icons::icon(
-        glyph,
-        if active { theme::ACCENT_INK } else { ink },
-        glyph_for(size),
-    ))
+    el.child(icons::icon(glyph, ink, glyph_for(size)))
 }
 
 /// The edge of a card overlay's icon button.
