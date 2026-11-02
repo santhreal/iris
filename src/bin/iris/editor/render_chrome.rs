@@ -122,7 +122,8 @@ fn chord_labels(macos: bool) -> (&'static str, &'static str) {
 }
 
 /// The editor help sheet's tool section: each tool's glyph over the
-/// key that selects it, read from TOOLS in toolbar order.
+/// key that selects it, a cap as in the rows under it, read from TOOLS
+/// in toolbar order.
 fn tool_strip() -> AnyElement {
     div()
         .flex_shrink_0()
@@ -152,13 +153,7 @@ fn tool_strip() -> AnyElement {
                         .items_center()
                         .gap(px(4.))
                         .child(crate::icons::icon(glyph, theme::FG_DIM, 16.0))
-                        .child(
-                            div()
-                                .text_size(px(theme::TEXT_SMALL))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(theme::FG)
-                                .child(key),
-                        )
+                        .child(crate::widgets::key_hint(key, theme::FG_DIM))
                 })),
         )
         .into_any_element()
