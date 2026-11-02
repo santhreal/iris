@@ -529,22 +529,28 @@ impl Editor {
         for (c, name) in COLORS {
             let active = c == self.color;
             let fill = hex_rgba(c);
+            let swatch = div()
+                .id(ElementId::Name(c.into()))
+                .w(px(24.))
+                .h(px(24.))
+                .flex_shrink_0()
+                .rounded_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_2();
+            // The chosen color's ring is the accent; any other swatch
+            // rings under the pointer, and in a faded accent while pressed.
+            let swatch = if active {
+                swatch.border_color(theme::ACCENT)
+            } else {
+                swatch
+                    .border_color(theme::alpha(theme::ACCENT, 0.0))
+                    .hover(|s| s.border_color(theme::SWATCH_HOVER))
+                    .active(|s| s.border_color(theme::alpha(theme::ACCENT, 0.6)))
+            };
             bar = bar.child(
-                div()
-                    .id(ElementId::Name(c.into()))
-                    .w(px(24.))
-                    .h(px(24.))
-                    .flex_shrink_0()
-                    .rounded_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .border_2()
-                    .border_color(if active {
-                        theme::ACCENT
-                    } else {
-                        theme::alpha(theme::ACCENT, 0.0)
-                    })
+                swatch
                     .tooltip(tip(name, None))
                     .child(
                         div()

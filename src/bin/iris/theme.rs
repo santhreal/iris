@@ -35,6 +35,9 @@ pub const HAIRLINE: Rgba = alpha(WHITE, 0.09);
 /// The rim of a markup swatch whose hairline would match the options
 /// bar: over any fill it lands at least 16 levels from `BG_ELEV`.
 pub const SWATCH_RIM: Rgba = alpha(WHITE, 0.25);
+/// The ring of a markup swatch under the pointer, other than the chosen
+/// color's accent ring.
+pub const SWATCH_HOVER: Rgba = alpha(WHITE, 0.30);
 /// The 1px rim of a client-drawn window: separates two dark windows
 /// stacked on each other, where no shadow is drawn.
 pub const WINDOW_EDGE: Rgba = alpha(WHITE, 0.10);
