@@ -100,8 +100,9 @@ pub fn glyph_for(size: f32) -> f32 {
 
 /// Icon-only button, `size`px square (28 in toolbars, the minimum hit
 /// area). `active` (a selected tool, a pressed toggle) fills it with
-/// the accent and draws the glyph white; otherwise ghost with a hover
-/// wash. Pair with `.tooltip(tip(label, shortcut))`.
+/// the accent and draws the glyph white; otherwise ghost: a hover wash
+/// that lights the glyph to primary ink, as a segmented cell and a text
+/// button light their labels. Pair with `.tooltip(tip(label, shortcut))`.
 pub fn icon_button(
     id: impl Into<ElementId>,
     glyph: Icon,
@@ -179,16 +180,15 @@ fn icon_button_inked(
         .justify_center()
         .rounded(px(theme::RADIUS_CONTROL))
         .flex_shrink_0();
-    let (el, ink) = match face {
-        IconFace::Ghost => (
-            el.hover(|s| s.bg(theme::SURFACE_HOVER))
-                .active(|s| s.bg(theme::SURFACE_PRESS)),
-            ink,
-        ),
-        IconFace::On => (el.bg(theme::ACCENT), theme::ACCENT_INK),
-        IconFace::Held => (el.bg(theme::SURFACE_PRESS), theme::FG),
+    let el = match face {
+        IconFace::Ghost => el
+            .text_color(ink)
+            .hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
+            .active(|s| s.bg(theme::SURFACE_PRESS)),
+        IconFace::On => el.bg(theme::ACCENT).text_color(theme::ACCENT_INK),
+        IconFace::Held => el.bg(theme::SURFACE_PRESS).text_color(theme::FG),
     };
-    el.child(icons::icon(glyph, ink, glyph_for(size)))
+    el.child(icons::icon_in_text_color(glyph, glyph_for(size)))
 }
 
 /// The edge of a card overlay's icon button.
