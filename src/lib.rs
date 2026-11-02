@@ -4,6 +4,7 @@
 pub mod capture;
 pub mod clipboard;
 pub mod config;
+pub mod density;
 pub mod dirs;
 pub mod frost;
 pub mod history;

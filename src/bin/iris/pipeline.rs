@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use image::ImageEncoder;
 
 use iris_lib::capture::Frame;
+use iris_lib::density::Density;
 use iris_lib::sys::{capture, dragcopy};
 use iris_lib::{clipboard, config::Config, library, ocr, output};
 
@@ -179,18 +180,20 @@ pub fn finalize_bgra(
     width: u32,
     height: u32,
     region: Region,
+    density: Option<Density>,
 ) -> Result<PathBuf, String> {
     let rgba = crop_bgra_to_rgba(bgra, width, height, region)?;
     let img = image::RgbaImage::from_raw(region.width, region.height, rgba)
         .ok_or_else(|| "crop buffer size mismatch".to_string())?;
-    finalize(img)
+    finalize(img, density)
 }
 
 /// Save an RGBA image to the screenshots dir, put it on the clipboard and
 /// register it in the library. The capture is durable and paste-able
 /// before any surface shows it; the library entry lands on a thread of
-/// its own while the toast opens.
-pub fn finalize(img: image::RgbaImage) -> Result<PathBuf, String> {
+/// its own while the toast opens. The file states `density`, the scale
+/// of the display the pixels came from, where the caller has it.
+pub fn finalize(img: image::RgbaImage, density: Option<Density>) -> Result<PathBuf, String> {
     let t_png = std::time::Instant::now();
     let cfg = Config::load();
     let img = std::sync::Arc::new(img);
@@ -232,8 +235,14 @@ pub fn finalize(img: image::RgbaImage) -> Result<PathBuf, String> {
         image::ExtendedColorType::Rgba8,
     )
     .map_err(|e| format!("encode screenshot: {e}"))?;
+    let mut png = png.into_inner();
+    if let Some(density) = density {
+        density
+            .insert(&mut png)
+            .map_err(|e| format!("encode screenshot: {e}"))?;
+    }
     let path = reserve_capture(&cfg)?
-        .write_all(&png.into_inner())
+        .write_all(&png)
         .map_err(|e| format!("save screenshot: {e}"))?;
     // Stash the decoded pixels only after the save succeeds: the
     // editor's annotate path skips re-decoding the PNG just written,

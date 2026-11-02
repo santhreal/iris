@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use gpui::*;
 use iris_lib::config::Config;
+use iris_lib::density::Density;
 
 use crate::{flash, notice, overlay, pipeline, stage};
 
@@ -109,6 +110,7 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
 /// off the main thread: a 4K frame would otherwise freeze the app for
 /// seconds.
 pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
+    let density = root_density(cx);
     let grab = cx.background_executor().spawn(async move {
         let frame = pipeline::grab_frame()?;
         let cfg = Config::load();
@@ -126,7 +128,7 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
                 // PNG encode overlaps the window's renderer setup.
                 let saved = cx
                     .background_executor()
-                    .spawn(async move { pipeline::finalize(img) });
+                    .spawn(async move { pipeline::finalize(img, density) });
                 if flash {
                     cx.update(|cx| {
                         if let Err(e) = flash::show(cx) {
@@ -148,7 +150,9 @@ pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
 /// screen, decorations included, on X11, Windows, and macOS. The
 /// Wayland portal cannot name a window, so there this returns an error.
 pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
-    fn grab_and_finish() -> Result<(PathBuf, iris_lib::capture::WinRect), String> {
+    fn grab_and_finish(
+        density: Option<Density>,
+    ) -> Result<(PathBuf, iris_lib::capture::WinRect), String> {
         let rect = iris_lib::sys::capture::active_window_rect()?;
         // Grab only the window's rect off the root: the whole-screen
         // grab + crop this replaced moved up to 200MB for a window
@@ -157,12 +161,13 @@ pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
         pipeline::play_shutter_sound(&Config::load());
         let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
             .ok_or("frame buffer size mismatch")?;
-        Ok((pipeline::finalize(img)?, rect))
+        Ok((pipeline::finalize(img, density)?, rect))
     }
+    let density = root_density(cx);
     cx.spawn(async move |cx| {
         let done = cx
             .background_executor()
-            .spawn(async move { grab_and_finish() })
+            .spawn(async move { grab_and_finish(density) })
             .await;
         cx.update(|cx| match done {
             Ok((shot, rect)) => {
@@ -180,6 +185,17 @@ pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
     })
     .detach();
     Ok(())
+}
+
+/// The density of a frame grabbed off the root: root pixels per
+/// logical pixel. A Wayland portal frame is in a scale iris does not
+/// read, so it states none.
+fn root_density(cx: &App) -> Option<Density> {
+    #[cfg(target_os = "linux")]
+    if iris_lib::sys::session::wayland() {
+        return None;
+    }
+    Density::of_scale(crate::sys::window::root_scale(cx))
 }
 
 /// A capture with no overlay finished: its toast, or why it failed.

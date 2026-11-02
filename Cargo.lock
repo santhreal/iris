@@ -2882,6 +2882,7 @@ dependencies = [
  "arboard",
  "ashpd",
  "blocking",
+ "crc32fast",
  "directories",
  "embed-resource",
  "enumflags2",

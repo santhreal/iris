@@ -14,6 +14,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - `--capture-fullscreen`, `--capture-window`, and `--delay <secs>` capture the whole display, the focused window, or the display after a delay.
 - A delayed capture counts down on a corner card whose close button cancels it, and the card leaves the screen before the capture.
 - A capture is saved as a PNG, copied to the clipboard, and shown in a thumbnail toast.
+- A saved capture states its display's scale as the PNG's pixel density, and an edit keeps it, so a document places a HiDPI capture at its on-screen size.
 - The Settings file name field shows the name a screenshot taken at that moment is saved under.
 - The toast drags out as a file, copies the image or the file, shows the file in its folder, opens the editor, pins the capture in an always-on-top window, and copies the text in the image through OCR (Vision on macOS, Windows.Media.Ocr on Windows, Tesseract on Linux).
 - The scroll wheel, a pinch, `+`, and `-` zoom a pinned capture, and `0` returns it to native scale.

@@ -34,6 +34,9 @@ serde_json = "1"
 toml = "1.1"
 directories = "6"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# The CRC of the pHYs chunk that states a capture's pixel density.
+# Already in the tree through png.
+crc32fast = "1"
 # Glyph rasterization for the editor's text tool (draw_text).
 ab_glyph = "0.2"
 # mpsc channels + StreamExt drive the daemon command pump and the IPC

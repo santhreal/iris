@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use gpui::*;
 use iris_lib::capture::WinRect;
+use iris_lib::density::Density;
 
 use super::{
     drag_region,
@@ -256,10 +257,13 @@ impl Overlay {
         let show_toast = self.cfg.show_toast_after_capture;
         // The toast lands on this window's display, at its scale.
         let sf = window.scale_factor();
+        // The file states the frame pixels per logical pixel of this
+        // window, the scale the selection showed at.
+        let density = Density::of_scale(sf * Self::scale(window, self.view).0);
         let frame_for_finalize = frame_img.clone();
         let finalize = cx.background_executor().spawn(async move {
             let bgra = frame_for_finalize.as_bytes(0).unwrap_or(&[]);
-            let path = pipeline::finalize_bgra(bgra, fw, fh, region)?;
+            let path = pipeline::finalize_bgra(bgra, fw, fh, region, density)?;
             // The toast's pixels scale from finalize's stash while the
             // card is still in flight: the landing opens it at once.
             let thumb = show_toast.then(|| stage::prepare_thumb(&path, sf));

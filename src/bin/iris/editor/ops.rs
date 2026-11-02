@@ -3,6 +3,7 @@
 use std::{rc::Rc, sync::Arc, time::Instant};
 
 use gpui::*;
+use iris_lib::density::Density;
 use iris_lib::history::{self, Edit};
 
 use super::action::{
@@ -502,9 +503,17 @@ impl Editor {
             let result = cx
                 .background_executor()
                 .spawn(async move {
+                    // The edit keeps the density the file states, read
+                    // before the rename replaces it.
+                    let density = std::fs::File::open(&path)
+                        .ok()
+                        .and_then(|mut f| Density::read(&mut f));
                     // A rename: a full disk or an exit midway leaves the
                     // capture as it was, not cut short.
-                    let saved = png_bytes(&img).and_then(|png| {
+                    let saved = png_bytes(&img).and_then(|mut png| {
+                        if let Some(density) = density {
+                            density.insert(&mut png)?;
+                        }
                         iris_lib::output::replace(&path, &png)
                             .map_err(|e| format!("write {}: {e}", path.display()))
                     });

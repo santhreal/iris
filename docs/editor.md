@@ -107,7 +107,7 @@ Clicking a committed label with the Text tool, or double-clicking it with the Se
 
 - **Save and close** (`Ctrl+S`, `Cmd+S`, `Ctrl+W`, `Cmd+W`, `Enter` without an active crop or an open menu, **Done**, the close control, or the window manager's close):
   1. Commits any active text entry and in-progress drawing action.
-  2. Encodes the composite RGBA image to PNG bytes on a background thread.
+  2. Encodes the composite RGBA image to PNG bytes on a background thread, with the pixel density (`pHYs` chunk) the original file states.
   3. Replaces the original image file at its path on disk: the PNG goes to a hidden file beside it, which one rename moves over the original. A failed write, such as on a full disk, leaves the original as it was and reports **Save failed**. A symbolic link keeps pointing at its file, which is replaced, and the file keeps its permissions.
   4. Generates a fresh thumbnail and updates the file's entry in `library.json`. The entry keeps its place and its capture time. A file the library does not list is added as a new capture.
   5. Copies the composite image pixels to the system clipboard.
