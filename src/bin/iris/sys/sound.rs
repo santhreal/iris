@@ -2,7 +2,7 @@
 //! its own way; `shutter` returns at once and never fails, so a machine
 //! with no audio output stays silent.
 
-#[cfg(any(windows, test))]
+#[cfg(any(target_os = "linux", windows, test))]
 mod click;
 #[cfg(target_os = "linux")]
 mod linux;

@@ -242,7 +242,7 @@ impl Overlay {
                 return;
             }
         };
-        pipeline::play_shutter_sound();
+        pipeline::play_shutter_sound(&self.cfg);
         // Every other monitor's overlay leaves with the commit; only
         // this window stays for the flight.
         close_other_overlays(cx, Some(window.window_handle()));

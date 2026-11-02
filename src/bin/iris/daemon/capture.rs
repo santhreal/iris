@@ -111,21 +111,23 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
 pub(super) fn capture_fullscreen(cx: &mut App) -> Result<(), String> {
     let grab = cx.background_executor().spawn(async move {
         let frame = pipeline::grab_frame()?;
-        pipeline::play_shutter_sound();
+        let cfg = Config::load();
+        pipeline::play_shutter_sound(&cfg);
         // The region is the whole frame by construction; crop would
         // copy up to 200MB for nothing.
-        image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
-            .ok_or_else(|| "frame buffer size mismatch".to_string())
+        let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+            .ok_or_else(|| "frame buffer size mismatch".to_string())?;
+        Ok((img, cfg.flash_on_capture))
     });
     cx.spawn(async move |cx| {
         let done = match grab.await {
-            Ok(img) => {
+            Ok((img, flash)) => {
                 // The save starts before the flash window opens, so the
                 // PNG encode overlaps the window's renderer setup.
                 let saved = cx
                     .background_executor()
                     .spawn(async move { pipeline::finalize(img) });
-                if Config::load().flash_on_capture {
+                if flash {
                     cx.update(|cx| {
                         if let Err(e) = flash::show(cx) {
                             iris_lib::ilog!("iris: capture flash: {e}");
@@ -152,7 +154,7 @@ pub(super) fn capture_active_window(cx: &mut App) -> Result<(), String> {
         // grab + crop this replaced moved up to 200MB for a window
         // that may be a megabyte. Root pixels keep the decorations.
         let frame = iris_lib::sys::capture::grab_rect(rect)?;
-        pipeline::play_shutter_sound();
+        pipeline::play_shutter_sound(&Config::load());
         let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
             .ok_or("frame buffer size mismatch")?;
         Ok((pipeline::finalize(img)?, rect))

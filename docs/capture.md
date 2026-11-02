@@ -73,9 +73,9 @@ A card in the corner set by `toast_position` ([configuration.md#toast](configura
 
 When a capture commits, iris executes the following pipeline in order:
 1. **Shutter Sound**: If `sound_on_capture` is true in [configuration.md#capture](configuration.md#capture) (default: `true`), plays audio at the grab moment:
-   - **Linux**: Plays `/usr/share/sounds/freedesktop/stereo/camera-shutter.oga` through `pw-play`, falling back to `paplay`, then `canberra-gtk-play -i camera-shutter`.
+   - **Linux**: Plays a synthesized shutter, two clicks 48 ms apart and 110 ms in all, through a PipeWire playback stream with the `Notification` media role. When PipeWire is not running or has no audio sink, plays it through `paplay`, falling back to `aplay`.
    - **macOS**: Plays `/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif` (fallback `Grab.aif`) through `/usr/bin/afplay`.
-   - **Windows**: Synthesizes a shutter click waveform in memory and plays it via `PlaySoundW` on the system-sounds volume channel.
+   - **Windows**: Plays the synthesized shutter through `PlaySoundW` on the system-sounds volume channel.
    - Absence of audio utilities or files produces silence without error.
 2. **Clipboard Copy**: If `copy_to_clipboard` is true in [configuration.md#capture](configuration.md#capture) (default: `true`), starts copying the RGBA pixels to the system clipboard on a dedicated background thread named `iris-clipboard`. The copy runs alongside the steps that follow.
 3. **Directory Creation**: Creates `screenshots_dir` (default: `~/Pictures/iris`, see [configuration.md#storage](configuration.md#storage)) if the directory does not exist.

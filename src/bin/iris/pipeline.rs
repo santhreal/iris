@@ -47,8 +47,8 @@ pub fn peek_decoded(path: &Path) -> Option<std::sync::Arc<image::RgbaImage>> {
 }
 
 /// Camera shutter at the grab moment, when the config asks for one.
-pub fn play_shutter_sound() {
-    if Config::load().sound_on_capture {
+pub fn play_shutter_sound(cfg: &Config) {
+    if cfg.sound_on_capture {
         crate::sys::sound::shutter();
     }
 }
