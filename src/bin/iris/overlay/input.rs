@@ -552,20 +552,20 @@ impl Overlay {
 
 /// `rect` in logical px to frame pixels at scale factor `sf` and the
 /// window-to-frame `scale`, intersected with a frame of size `view`.
+/// Each edge rounds to the nearest pixel, a half toward zero, as gpui
+/// snaps the edges it draws: the crop is the pixels the selection
+/// shows, and the selection's size readout states it.
 pub(super) fn frame_rect(
     sf: f32,
     scale: (f32, f32),
     view: (u32, u32),
     rect: (f32, f32, f32, f32),
 ) -> Region {
-    let fx0 = rect.0 * sf * scale.0;
-    let fy0 = rect.1 * sf * scale.1;
-    let fx1 = fx0 + rect.2 * sf * scale.0;
-    let fy1 = fy0 + rect.3 * sf * scale.1;
-    let x0 = fx0.clamp(0.0, view.0 as f32);
-    let y0 = fy0.clamp(0.0, view.1 as f32);
-    let x1 = fx1.clamp(0.0, view.0 as f32);
-    let y1 = fy1.clamp(0.0, view.1 as f32);
+    let snap = |v: f32, max: u32| ((v.abs() - 0.5).ceil().copysign(v)).clamp(0.0, max as f32);
+    let x0 = snap(rect.0 * sf * scale.0, view.0);
+    let y0 = snap(rect.1 * sf * scale.1, view.1);
+    let x1 = snap((rect.0 + rect.2) * sf * scale.0, view.0);
+    let y1 = snap((rect.1 + rect.3) * sf * scale.1, view.1);
     Region {
         x: x0 as u32,
         y: y0 as u32,

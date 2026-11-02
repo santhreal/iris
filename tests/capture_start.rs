@@ -17,12 +17,18 @@
 //! undimmed under the pick tint. It then commits a selection beside the
 //! window and moves the pointer back over it: a press there clears the
 //! selection and does not capture the window, so the window shows
-//! dimmed, not picked, and a click captures nothing.
+//! dimmed, not picked, and a click captures nothing. "The snap is the
+//! window as it shows": the snap took the X client window, which leaves
+//! out a window manager's title bar and borders and takes in a
+//! client-side decorated window's transparent shadow. The third case
+//! sets `_NET_FRAME_EXTENTS` on one window and `_GTK_FRAME_EXTENTS` on
+//! another, and reads the frame revealed and the shadow dimmed.
 //!
 //! Not covered: Wayland, where the pointer is unknown until it moves;
 //! a window manager's frame or close animation; Windows and macOS; the
 //! Record button, whose window pick reads the screen the same way
-//! through the same close. The cases run only with
+//! through the same close; `--capture-window`, which reads the same
+//! properties through its own requests. The cases run only with
 //! `IRIS_X11_TEST_DISPLAY` set and need Xvfb, and the first needs
 //! picom; without them they print that they did not run.
 
@@ -42,9 +48,11 @@ mod daemon;
 mod x11;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{self, ConnectionExt as _, CreateWindowAux, WindowClass};
-use x11rb::protocol::xtest::ConnectionExt as _;
+use x11rb::protocol::xproto::{
+    AtomEnum, ConnectionExt as _, CreateWindowAux, PropMode, WindowClass,
+};
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 use daemon::{enabled, fading_compositor, xvfb_sized, Daemon};
 use x11::{click, client, paint_root, pixel, rect, windows_of};
@@ -72,6 +80,41 @@ const TARGET_RGB: u32 = 0x0033_66cc;
 const PICKED_RGB: u32 = 0x002c_6bd5;
 /// `TARGET_RGB` under the overlay's dim: #1E1E1E at 32%.
 const DIMMED_RGB: u32 = 0x002c_4f94;
+/// `WHITE` under the pick tint.
+const PICKED_WHITE: u32 = 0x00d3_e9ff;
+
+/// Map a top-level window of colour `rgb` at x, y, width, height.
+fn solid_window(conn: &RustConnection, root: u32, at: (i16, i16, u16, u16), rgb: u32) -> u32 {
+    let window = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        at.0,
+        at.1,
+        at.2,
+        at.3,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new().background_pixel(rgb),
+    )
+    .unwrap();
+    conn.map_window(window).unwrap();
+    window
+}
+
+/// Set `name` on `window` to `values`, of `kind`.
+fn set_property(conn: &RustConnection, window: u32, name: &str, kind: AtomEnum, values: &[u32]) {
+    let atom = conn
+        .intern_atom(false, name.as_bytes())
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    conn.change_property32(PropMode::REPLACE, window, atom, kind, values)
+        .unwrap();
+}
 
 /// The largest difference between two 0xRRGGBB colours in one channel.
 fn channel_gap(a: u32, b: u32) -> u32 {
@@ -204,37 +247,12 @@ fn the_overlay_snaps_to_the_window_under_the_pointer_until_a_selection_is_commit
     let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
     let root = conn.setup().roots[screen].root;
     paint_root(&conn, root, WHITE);
-    let target = conn.generate_id().unwrap();
     let (left, top, width, height) = TARGET;
-    conn.create_window(
-        x11rb::COPY_DEPTH_FROM_PARENT,
-        target,
-        root,
-        left,
-        top,
-        width,
-        height,
-        0,
-        WindowClass::INPUT_OUTPUT,
-        x11rb::COPY_FROM_PARENT,
-        &CreateWindowAux::new().background_pixel(TARGET_RGB),
-    )
-    .unwrap();
-    conn.map_window(target).unwrap();
+    solid_window(&conn, root, TARGET, TARGET_RGB);
     // Rest the pointer on the window's centre before the overlay opens;
     // nothing moves it afterwards.
     let centre = (left + width as i16 / 2, top + height as i16 / 2);
-    conn.xtest_fake_input(
-        xproto::MOTION_NOTIFY_EVENT,
-        0,
-        x11rb::CURRENT_TIME,
-        root,
-        centre.0,
-        centre.1,
-        0,
-    )
-    .unwrap();
-    conn.flush().unwrap();
+    x11::move_to(&conn, root, centre);
 
     let dir = tempfile::tempdir().unwrap();
     let daemon = Daemon::start(dir.path(), |cmd| {
@@ -277,4 +295,148 @@ fn the_overlay_snaps_to_the_window_under_the_pointer_until_a_selection_is_commit
     daemon.until("the window to show picked again", || {
         (channel_gap(pixel(&conn, root, inside), PICKED_RGB) <= 6).then_some(())
     });
+}
+
+#[test]
+fn the_snap_holds_a_window_managers_frame_and_leaves_out_a_client_shadow() {
+    let case = "the_snap_holds_a_window_managers_frame_and_leaves_out_a_client_shadow";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    paint_root(&conn, root, WHITE);
+    // A client whose window manager frame is 8 pixels on the sides and
+    // bottom and a 30 pixel title bar: the frame shows the root.
+    let (left, top, width, height) = TARGET;
+    let framed = solid_window(&conn, root, TARGET, TARGET_RGB);
+    set_property(
+        &conn,
+        framed,
+        "_NET_FRAME_EXTENTS",
+        AtomEnum::CARDINAL,
+        &[8, 8, 30, 8],
+    );
+    // A client-side decorated window padded by a 20 pixel shadow on
+    // every side.
+    let shadowed_at = (700, 200, 360, 280);
+    let shadowed = solid_window(&conn, root, shadowed_at, TARGET_RGB);
+    set_property(
+        &conn,
+        shadowed,
+        "_GTK_FRAME_EXTENTS",
+        AtomEnum::CARDINAL,
+        &[20, 20, 20, 20],
+    );
+    set_property(
+        &conn,
+        root,
+        "_NET_CLIENT_LIST_STACKING",
+        AtomEnum::WINDOW,
+        &[framed, shadowed],
+    );
+    let centre = (left + width as i16 / 2, top + height as i16 / 2);
+    x11::move_to(&conn, root, centre);
+
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&["--capture"]);
+    overlay_up(&conn, root, &daemon);
+    let title_bar = (centre.0, top - 15);
+    let side = (left - 4, centre.1);
+    daemon.until("the framed window to show picked", || {
+        (channel_gap(pixel(&conn, root, centre), PICKED_RGB) <= 6).then_some(())
+    });
+    for (part, at) in [("title bar", title_bar), ("left border", side)] {
+        let p = pixel(&conn, root, at);
+        assert!(
+            channel_gap(p, PICKED_WHITE) <= 6,
+            "the frame's {part} shows {p:06x}, not picked {PICKED_WHITE:06x}"
+        );
+    }
+    let past = pixel(&conn, root, (left - 12, centre.1));
+    assert!(
+        channel_gap(past, PICKED_WHITE) > 6,
+        "the root past the frame shows picked {past:06x}"
+    );
+
+    let (x, y, w, h) = shadowed_at;
+    x11::move_to(&conn, root, (x + w as i16 / 2, y + h as i16 / 2));
+    let content = (x + 24, y + h as i16 / 2);
+    daemon.until("the shadowed window to show picked", || {
+        (channel_gap(pixel(&conn, root, content), PICKED_RGB) <= 6).then_some(())
+    });
+    for (part, at) in [
+        ("left", (x + 16, y + h as i16 / 2)),
+        ("top", (x + w as i16 / 2, y + 16)),
+        ("right", (x + w as i16 - 17, y + h as i16 / 2)),
+        ("bottom", (x + w as i16 / 2, y + h as i16 - 17)),
+    ] {
+        let p = pixel(&conn, root, at);
+        assert!(
+            channel_gap(p, DIMMED_RGB) <= 6,
+            "the {part} shadow shows {p:06x}, not dimmed {DIMMED_RGB:06x}"
+        );
+    }
+}
+
+#[test]
+fn the_selection_edge_lies_outside_the_pixels_it_captures() {
+    let case = "the_selection_edge_lies_outside_the_pixels_it_captures";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    paint_root(&conn, root, TARGET_RGB);
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&["--capture"]);
+    overlay_up(&conn, root, &daemon);
+    // Columns 300 to 499 and rows 300 to 399, at scale 1. The reads sit
+    // between the handles: on rows 325 and columns 350.
+    x11::drag(&conn, root, (300, 300), (500, 400), 20);
+    daemon.settle();
+    daemon.until("the selection to show undimmed", || {
+        (channel_gap(pixel(&conn, root, (350, 325)), TARGET_RGB) <= 3).then_some(())
+    });
+    let sides = [
+        ("left", (300, 325), (299, 325), (298, 325)),
+        ("right", (499, 325), (500, 325), (501, 325)),
+        ("top", (350, 300), (350, 299), (350, 298)),
+        ("bottom", (350, 399), (350, 400), (350, 401)),
+    ];
+    for (side, inner, line, rim) in sides {
+        let (i, l, r) = (
+            pixel(&conn, root, inner),
+            pixel(&conn, root, line),
+            pixel(&conn, root, rim),
+        );
+        assert!(
+            channel_gap(i, TARGET_RGB) <= 3,
+            "the selection's {side} pixel at {inner:?} shows {i:06x}, not the captured \
+             {TARGET_RGB:06x}"
+        );
+        assert!(
+            channel_gap(l, WHITE) <= 0x18,
+            "the {side} edge at {line:?} shows {l:06x}, not a white line"
+        );
+        let darker = [16, 8, 0]
+            .into_iter()
+            .all(|s| (r >> s) & 0xff < ((DIMMED_RGB >> s) & 0xff).saturating_sub(8));
+        assert!(
+            darker,
+            "the {side} rim at {rim:?} shows {r:06x}, not darker than the dim {DIMMED_RGB:06x}"
+        );
+    }
 }

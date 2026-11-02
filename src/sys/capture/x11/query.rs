@@ -144,13 +144,14 @@ fn list_top_level_windows_on(
 ) -> Result<Vec<WinRect>, String> {
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
-    // Cached atoms: the same four names resolve on every capture.
+    // Cached atoms: the same names resolve on every capture.
     let stacking = atom_cached(conn, b"_NET_CLIENT_LIST_STACKING")
         .ok_or("intern _NET_CLIENT_LIST_STACKING failed")?;
     let wm_pid = atom_cached(conn, b"_NET_WM_PID").ok_or("intern _NET_WM_PID failed")?;
     let wm_state = atom_cached(conn, b"_NET_WM_STATE").ok_or("intern _NET_WM_STATE failed")?;
     let state_hidden =
         atom_cached(conn, b"_NET_WM_STATE_HIDDEN").ok_or("intern _NET_WM_STATE_HIDDEN failed")?;
+    let (frame, margin) = extent_atoms(conn)?;
 
     let list = conn
         .get_property(false, root, stacking, AtomEnum::WINDOW, 0, u32::MAX)
@@ -189,12 +190,15 @@ fn list_top_level_windows_on(
     }
 
     let own_pid = std::process::id();
-    // Issue every per-window request before reading any reply: ~4
+    // Issue every per-window request before reading any reply: six
     // round trips per window serialized is a visible slice of the
     // overlay's open latency on a busy desktop.
+    type Prop<'a, C> = x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::GetPropertyReply>;
     struct Probe<'a, C: Connection> {
-        pid: Option<x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::GetPropertyReply>>,
-        state: Option<x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::GetPropertyReply>>,
+        pid: Option<Prop<'a, C>>,
+        state: Option<Prop<'a, C>>,
+        frame: Option<Prop<'a, C>>,
+        margin: Option<Prop<'a, C>>,
         geom: Option<x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::GetGeometryReply>>,
         trans: Option<
             x11rb::cookie::Cookie<'a, C, x11rb::protocol::xproto::TranslateCoordinatesReply>,
@@ -208,6 +212,12 @@ fn list_top_level_windows_on(
                 .ok(),
             state: conn
                 .get_property(false, win, wm_state, AtomEnum::ATOM, 0, 32)
+                .ok(),
+            frame: conn
+                .get_property(false, win, frame, AtomEnum::CARDINAL, 0, 4)
+                .ok(),
+            margin: conn
+                .get_property(false, win, margin, AtomEnum::CARDINAL, 0, 4)
                 .ok(),
             geom: conn.get_geometry(win).ok(),
             trans: conn.translate_coordinates(win, root, 0, 0).ok(),
@@ -245,25 +255,26 @@ fn list_top_level_windows_on(
         if geom.width == 0 || geom.height == 0 {
             continue;
         }
-        rects.push(WinRect {
-            x: i32::from(origin.dst_x) - i32::from(geom.border_width),
-            y: i32::from(origin.dst_y) - i32::from(geom.border_width),
-            width: u32::from(geom.width) + 2 * u32::from(geom.border_width),
-            height: u32::from(geom.height) + 2 * u32::from(geom.border_width),
-        });
+        rects.push(shown_rect(
+            client_rect(&geom, &origin),
+            extents(probe.frame),
+            extents(probe.margin),
+        ));
     }
     Ok(rects)
 }
 
 /// The focused top-level window's rect in root (frame) pixels, from
 /// EWMH _NET_ACTIVE_WINDOW. Used by --capture-window: the shot is the
-/// window's pixels, borders included, with no overlay round trip.
+/// window as it shows on screen, frame included, with no overlay round
+/// trip.
 pub fn active_window_rect() -> Result<WinRect, String> {
     let (conn, screen_num) = shared_conn()?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
     let atom =
         atom_cached(conn, b"_NET_ACTIVE_WINDOW").ok_or("intern _NET_ACTIVE_WINDOW failed")?;
+    let (frame, margin) = extent_atoms(conn)?;
     let reply = conn
         .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
         .map_err(|e| format!("query active window: {e}"))?
@@ -274,24 +285,149 @@ pub fn active_window_rect() -> Result<WinRect, String> {
         .and_then(|mut v| v.next())
         .filter(|w| *w != x11rb::NONE)
         .ok_or("no active window")?;
-    // The geometry and the root-space origin are independent: send
-    // both before awaiting either, halving the round trips.
+    // The geometry, the root-space origin, and the frame extents are
+    // independent: send every request before awaiting any.
     let geom_cookie = conn
         .get_geometry(win)
         .map_err(|e| format!("get_geometry: {e}"))?;
     let trans_cookie = conn
         .translate_coordinates(win, root, 0, 0)
         .map_err(|e| format!("translate_coordinates: {e}"))?;
+    let frame = conn
+        .get_property(false, win, frame, AtomEnum::CARDINAL, 0, 4)
+        .ok();
+    let margin = conn
+        .get_property(false, win, margin, AtomEnum::CARDINAL, 0, 4)
+        .ok();
     let geom = geom_cookie
         .reply()
         .map_err(|e| format!("get_geometry reply: {e}"))?;
     let origin = trans_cookie
         .reply()
         .map_err(|e| format!("translate_coordinates reply: {e}"))?;
-    Ok(WinRect {
-        x: i32::from(origin.dst_x) - i32::from(geom.border_width),
-        y: i32::from(origin.dst_y) - i32::from(geom.border_width),
+    Ok(shown_rect(
+        client_rect(&geom, &origin),
+        extents(frame),
+        extents(margin),
+    ))
+}
+
+/// `_NET_FRAME_EXTENTS` and `_GTK_FRAME_EXTENTS`, in that order.
+fn extent_atoms(conn: &impl Connection) -> Result<(u32, u32), String> {
+    let frame =
+        atom_cached(conn, b"_NET_FRAME_EXTENTS").ok_or("intern _NET_FRAME_EXTENTS failed")?;
+    let margin =
+        atom_cached(conn, b"_GTK_FRAME_EXTENTS").ok_or("intern _GTK_FRAME_EXTENTS failed")?;
+    Ok((frame, margin))
+}
+
+/// An X window's rect in root pixels, its border included.
+fn client_rect(
+    geom: &x11rb::protocol::xproto::GetGeometryReply,
+    origin: &x11rb::protocol::xproto::TranslateCoordinatesReply,
+) -> WinRect {
+    let border = i32::from(geom.border_width);
+    WinRect {
+        x: i32::from(origin.dst_x) - border,
+        y: i32::from(origin.dst_y) - border,
         width: u32::from(geom.width) + 2 * u32::from(geom.border_width),
         height: u32::from(geom.height) + 2 * u32::from(geom.border_width),
-    })
+    }
+}
+
+/// A four-CARDINAL extents property (left, right, top, bottom), or
+/// zeros when the window does not set it.
+fn extents<C: Connection>(
+    cookie: Option<x11rb::cookie::Cookie<'_, C, x11rb::protocol::xproto::GetPropertyReply>>,
+) -> [u32; 4] {
+    cookie
+        .and_then(|c| c.reply().ok())
+        .and_then(|reply| {
+            let mut v = reply.value32()?;
+            Some([v.next()?, v.next()?, v.next()?, v.next()?])
+        })
+        .unwrap_or_default()
+}
+
+/// A window's rect as it shows on screen, from `client`, the X window
+/// with its border. A reparenting window manager draws a frame (title
+/// bar and borders) around the client and sets its size in
+/// `_NET_FRAME_EXTENTS`: `frame` grows the rect. A client-side
+/// decorated window pads itself with a transparent shadow and sets its
+/// size in `_GTK_FRAME_EXTENTS`: `margin` shrinks the rect. Both are
+/// left, right, top, bottom. A result with no area, or outside the
+/// coordinate range, is `client`.
+fn shown_rect(client: WinRect, frame: [u32; 4], margin: [u32; 4]) -> WinRect {
+    let [fl, fr, ft, fb] = frame.map(i64::from);
+    let [ml, mr, mt, mb] = margin.map(i64::from);
+    let x = i64::from(client.x) - fl + ml;
+    let y = i64::from(client.y) - ft + mt;
+    let width = i64::from(client.width) + fl + fr - ml - mr;
+    let height = i64::from(client.height) + ft + fb - mt - mb;
+    if width <= 0 || height <= 0 {
+        return client;
+    }
+    match (
+        i32::try_from(x),
+        i32::try_from(y),
+        u32::try_from(width),
+        u32::try_from(height),
+    ) {
+        (Ok(x), Ok(y), Ok(width), Ok(height)) => WinRect {
+            x,
+            y,
+            width,
+            height,
+        },
+        _ => client,
+    }
+}
+
+// WHY: the class closed here is "a window capture is not the window as
+// it shows": the hover snap and --capture-window used the client
+// window, which leaves out a window manager's title bar and borders,
+// and takes in a client-side decorated window's transparent shadow,
+// the desktop behind it. Not covered: reading the properties, which
+// the X11 snap test in tests/capture_start.rs drives.
+#[cfg(test)]
+mod tests {
+    use super::shown_rect;
+    use crate::capture::WinRect;
+
+    const CLIENT: WinRect = WinRect {
+        x: 100,
+        y: 200,
+        width: 400,
+        height: 300,
+    };
+
+    fn shown(frame: [u32; 4], margin: [u32; 4]) -> (i32, i32, u32, u32) {
+        let r = shown_rect(CLIENT, frame, margin);
+        (r.x, r.y, r.width, r.height)
+    }
+
+    #[test]
+    fn a_window_managers_frame_grows_the_rect_on_each_side() {
+        assert_eq!(shown([0; 4], [0; 4]), (100, 200, 400, 300));
+        // Left 1, right 2, top 30, bottom 4: every side apart.
+        assert_eq!(shown([1, 2, 30, 4], [0; 4]), (99, 170, 403, 334));
+    }
+
+    #[test]
+    fn a_client_side_shadow_shrinks_the_rect_on_each_side() {
+        assert_eq!(shown([0; 4], [10, 20, 5, 40]), (110, 205, 370, 255));
+        // Both set: the frame grows and the shadow shrinks.
+        assert_eq!(shown([1, 2, 30, 4], [10, 20, 5, 40]), (109, 175, 373, 289));
+    }
+
+    #[test]
+    fn a_rect_with_no_area_or_out_of_range_is_the_client() {
+        let client = (100, 200, 400, 300);
+        assert_eq!(shown([0; 4], [200, 200, 0, 0]), client);
+        assert_eq!(shown([0; 4], [0, 0, 300, 1]), client);
+        assert_eq!(shown([u32::MAX, 0, 0, 0], [0; 4]), client);
+        assert_eq!(shown([0, 0, 0, u32::MAX], [0; 4]), client);
+        // One pixel left: still a window.
+        assert_eq!(shown([0; 4], [199, 200, 0, 0]), (299, 200, 1, 300));
+    }
 }

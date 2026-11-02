@@ -1,10 +1,19 @@
 use gpui::*;
 
-use super::{loupe::LOUPE_PX, shell::reveal, Overlay, Scope, HANDLE_PX, HOVER_FADE};
+use super::{
+    input::frame_rect, loupe::LOUPE_PX, shell::reveal, Overlay, Scope, HANDLE_PX, HOVER_FADE,
+};
 use crate::theme;
 
 /// The drawn diameter of a resize handle; its hit square is HANDLE_PX.
 const HANDLE_DOT: f32 = 9.0;
+/// A readout's line height; with its padding the tag is 18 px tall.
+const READOUT_LINE: f32 = 14.0;
+const READOUT_H: f32 = READOUT_LINE + 4.0;
+/// The space between the selection's top edge and the bottom of its
+/// size readout above it, or the readout's top and left inside it: the
+/// NW handle's dot reaches 4.5 px past the corner either way.
+const READOUT_GAP: f32 = 10.0;
 
 /// One overlay readout: coordinates, the selection's size, or the
 /// loupe's pixel. A small dark tag with no border, as the size readouts
@@ -18,6 +27,7 @@ fn readout(text: SharedString, color: Rgba) -> Div {
         .rounded(px(5.))
         .bg(theme::READOUT_FILL)
         .text_size(px(theme::TEXT_SMALL))
+        .line_height(px(READOUT_LINE))
         .font_weight(FontWeight::MEDIUM)
         .font_features(theme::tabular())
         .whitespace_nowrap()
@@ -25,15 +35,24 @@ fn readout(text: SharedString, color: Rgba) -> Div {
         .child(text)
 }
 
-/// The selection's edge around a logical rect: a 1 px white line on the
-/// rect's border and a 1 px dark rim just outside it.
-fn selection_edge(x: f32, y: f32, w: f32, h: f32) -> Div {
+/// One device pixel at scale factor `sf`, or the nearest whole number
+/// of them to a logical pixel, in logical px: gpui draws a 1 px border
+/// that many device pixels wide.
+fn hairline(sf: f32) -> f32 {
+    (sf - 0.5).ceil().max(1.0) / sf
+}
+
+/// The selection's edge around a logical rect, outside it: a white
+/// `hair` line against the rect and a dark `hair` rim outside the line.
+/// The pixels inside the rect are the ones the capture holds, so the
+/// edge covers none of them.
+fn selection_edge(x: f32, y: f32, w: f32, h: f32, hair: f32) -> Div {
     div()
         .absolute()
-        .left(px(x - 1.0))
-        .top(px(y - 1.0))
-        .w(px(w + 2.0))
-        .h(px(h + 2.0))
+        .left(px(x - 2.0 * hair))
+        .top(px(y - 2.0 * hair))
+        .w(px(w + 4.0 * hair))
+        .h(px(h + 4.0 * hair))
         .border_1()
         .border_color(theme::SELECTION_RIM)
         .child(
@@ -192,7 +211,8 @@ impl Overlay {
     ) -> Stateful<Div> {
         if let Some((x, y, w, h)) = self.current {
             let sf = window.scale_factor();
-            let phys = ((w * sf * sx).round() as u32, (h * sf * sy).round() as u32);
+            let crop = frame_rect(sf, (sx, sy), self.view, (x, y, w, h));
+            let phys = (crop.width, crop.height);
             if self.size_at != Some(phys) {
                 self.size_at = Some(phys);
                 self.size_label = SharedString::from(format!("{} × {}", phys.0, phys.1));
@@ -205,18 +225,28 @@ impl Overlay {
             if self.scope == Scope::Screen {
                 return root;
             }
-            root = root.child(selection_edge(x, y, w, h));
+            let hair = hairline(sf);
+            root = root.child(selection_edge(x, y, w, h, hair));
             let size_label = self.size_label.clone();
+            // Aligned with the white line's outer edge, above the
+            // selection, or inside it where no room is above.
+            let (tag_x, tag_y) = if y - hair >= READOUT_H + READOUT_GAP {
+                (x - hair, y - hair - READOUT_GAP - READOUT_H)
+            } else {
+                (x + READOUT_GAP, y + READOUT_GAP)
+            };
             root = root.child(
                 readout(size_label, theme::FG)
                     .absolute()
-                    .left(px(x))
-                    .top(px(if y < 28.0 { y + 6.0 } else { y - 24.0 })),
+                    .left(px(tag_x))
+                    .top(px(tag_y)),
             );
             // Resize handles on a committed selection: 8 grab points
-            // the cursor can pull to reshape the rect before capture.
+            // the cursor can pull to reshape the rect before capture,
+            // each centered on the white line.
             if !self.dragging {
-                for (hx, hy) in Self::handles(x, y, w, h) {
+                let (ex, ey) = (x - hair / 2.0, y - hair / 2.0);
+                for (hx, hy) in Self::handles(ex, ey, w + hair, h + hair) {
                     root = root.child(
                         div()
                             .absolute()

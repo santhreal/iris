@@ -271,3 +271,41 @@ fn a_monitor_maps_onto_its_own_frame_pixels_at_every_origin() {
         }
     }
 }
+
+// WHY: the class closed here is "the crop is not the pixels the
+// selection shows". gpui snaps each edge it draws to the nearest device
+// pixel, a half toward zero; the crop truncated its origin and its
+// width apart, so at a fractional position or scale it began a pixel
+// left of the drawn edge or ended a pixel short of it, and the size
+// readout, rounded from the logical width, stated a third size. Every
+// edge of every rect here, at every scale, crops where it is drawn.
+// Not covered: gpui's snapping itself, which the gpui crate tests, and
+// a window whose physical size is not its frame's (`scale` other than
+// 1).
+#[test]
+fn the_crop_edges_are_the_drawn_edges_at_every_scale() {
+    let crop = |sf: f32, rect| {
+        let r = frame_rect(sf, (1.0, 1.0), (4000, 3000), rect);
+        (r.x, r.y, r.x + r.width, r.y + r.height)
+    };
+    // Device edges 10.6 and 20.4: drawn at 11 and 20.
+    assert_eq!(crop(1.25, (8.48, 8.48, 7.84, 7.84)), (11, 11, 20, 20));
+    // Device edges 10.4 and 20.6: drawn at 10 and 21.
+    assert_eq!(crop(1.0, (10.4, 10.4, 10.2, 10.2)), (10, 10, 21, 21));
+    // A half rounds toward zero, as gpui draws it.
+    assert_eq!(crop(1.0, (10.5, 2.5, 5.0, 5.0)), (10, 2, 15, 7));
+    assert_eq!(crop(2.0, (5.25, 0.75, 2.5, 2.5)), (10, 1, 15, 6));
+    // Past the frame's edges: clamped to it.
+    assert_eq!(crop(1.0, (-3.6, 2990.0, 20.0, 40.0)), (0, 2990, 16, 3000));
+    let drawn = |v: f32| ((v.abs() - 0.5).ceil().copysign(v)) as u32;
+    for sf in [1.0f32, 1.25, 1.5, 1.75, 2.0, 2.25, 3.0] {
+        for i in 0..400u16 {
+            let x = 3.0 + f32::from(i) * 0.1;
+            let w = 17.0 + f32::from(i) * 0.37;
+            let got = crop(sf, (x, x, w, w));
+            let want = (drawn(x * sf), drawn((x + w) * sf));
+            assert_eq!((got.0, got.2), want, "x {x} width {w} at scale {sf}");
+            assert_eq!((got.1, got.3), want, "y {x} height {w} at scale {sf}");
+        }
+    }
+}
