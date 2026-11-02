@@ -109,6 +109,18 @@ impl Editor {
         history::apply_inverse(&mut self.actions.borrow_mut(), edit);
     }
 
+    /// Whether Undo would change anything: a step to undo, or an open
+    /// label, which it settles first.
+    pub(crate) fn can_undo(&self) -> bool {
+        !self.undos.is_empty() || self.text_entry.is_some()
+    }
+
+    /// Whether Redo would change anything: a step to redo, or an open
+    /// label, which it settles first.
+    pub(crate) fn can_redo(&self) -> bool {
+        !self.redos.is_empty() || self.text_entry.is_some()
+    }
+
     /// Undo the last step. An open text entry settles first: a label
     /// being typed, or a change to a reopened one, is the step undone,
     /// and no step shifts the mark a reopened entry stands for.

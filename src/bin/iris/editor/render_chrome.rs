@@ -320,12 +320,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        // Undo and Redo each dim, as a disabled toolbar item does, while
+        // it has no step to run and no label is open to settle.
         let history = |id: &'static str,
                        glyph: Icon,
                        label: &'static str,
                        keys: &'static str,
+                       enabled: bool,
                        run: fn(&mut Self, &mut Context<Self>)| {
-            widgets::icon_button(id, glyph, false, theme::TOOLBAR_CONTROL_H)
+            let size = theme::TOOLBAR_CONTROL_H;
+            if !enabled {
+                return widgets::disabled_icon_button(id, glyph, size)
+                    .tooltip(tip(label, Some(keys.into())));
+            }
+            widgets::icon_button(id, glyph, false, size)
                 .tooltip(tip(label, Some(keys.into())))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     run(this, cx);
@@ -337,6 +345,7 @@ impl Editor {
             Icon::Undo,
             "Undo",
             crate::widgets::meta_shortcut!("Z"),
+            self.can_undo(),
             Self::undo,
         );
         let redo = history(
@@ -344,6 +353,7 @@ impl Editor {
             Icon::Redo,
             "Redo",
             crate::widgets::meta_shortcut!("Shift+Z"),
+            self.can_redo(),
             Self::redo,
         );
 

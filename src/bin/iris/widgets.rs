@@ -130,6 +130,13 @@ pub fn menu_icon_button(
     icon_button_inked(id, glyph, face, size, theme::FG_DIM)
 }
 
+/// An [`icon_button`] that cannot run: its glyph in disabled ink, with
+/// no hover wash or press fill. The caller attaches no click and may
+/// keep the tooltip.
+pub fn disabled_icon_button(id: impl Into<ElementId>, glyph: Icon, size: f32) -> Stateful<Div> {
+    icon_button_inked(id, glyph, IconFace::Disabled, size, theme::FG_DISABLED)
+}
+
 /// [`icon_button`] for a HUD that floats over any screen content, the
 /// recording chip: the glyph is primary text,
 /// not secondary, so it reads over a busy image as a HUD control does.
@@ -152,6 +159,9 @@ enum IconFace {
     /// The press fill, with the glyph in primary ink: a menu button
     /// whose menu is open.
     Held,
+    /// No fill and no hover or press, with the glyph in the ink given:
+    /// a button that cannot run.
+    Disabled,
 }
 
 impl IconFace {
@@ -187,6 +197,7 @@ fn icon_button_inked(
             .active(|s| s.bg(theme::SURFACE_PRESS)),
         IconFace::On => el.bg(theme::ACCENT).text_color(theme::ACCENT_INK),
         IconFace::Held => el.bg(theme::SURFACE_PRESS).text_color(theme::FG),
+        IconFace::Disabled => el.text_color(ink),
     };
     el.child(icons::icon_in_text_color(glyph, glyph_for(size)))
 }
