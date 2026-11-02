@@ -4,15 +4,16 @@
 //! Resume, Mute or Unmute), the record hotkey only beside Stop, and the
 //! clock again once the pointer leaves; a late leave event from the
 //! previous control does not clear the next one's name. Every control
-//! in every state names an action that fits the slot at its narrowest,
-//! so a name never clips and the slot never grows under the pointer.
+//! in every state names an action that fits the slot, so a name never
+//! clips and the slot never grows under the pointer, and the clock fits
+//! it up to 999:59.
 //! Not covered: GPUI's delivery of hover events to an unfocused popup.
 
 use std::time::Instant;
 
 use gpui::SharedString;
 
-use super::{slot_w, Chip, Control, Slot};
+use super::{Chip, Control, Slot, SLOT_W};
 use crate::theme;
 
 /// Every control. The match fails to compile when a control is added,
@@ -80,25 +81,18 @@ fn leaving_restores_the_clock_and_a_late_leave_changes_nothing() {
 }
 
 #[test]
-fn every_name_and_the_widest_clock_fit_the_narrowest_slot() {
+fn every_name_and_the_widest_clock_fit_the_slot() {
     // The Regular face's advances, 10% over for the Medium weight the
-    // slot draws and for Inter's kerning, which mostly tightens.
-    let fits = |text: &str| theme::advance_sum(text, theme::TEXT_BODY) * 1.1 <= slot_w(true);
-    assert!(fits("88:88"), "the clock in {}px", slot_w(true));
+    // slot draws, for the tabular digits, which are wider than most, and
+    // for Inter's kerning, which mostly tightens.
+    let fits = |text: &str| theme::advance_sum(text, theme::TEXT_BODY) * 1.1 <= SLOT_W;
+    assert!(fits("999:59"), "the clock in {SLOT_W}px");
     for control in all() {
         for paused in [false, true] {
             for mic in [None, Some(false), Some(true)] {
                 let label = control.label(paused, mic);
-                assert!(
-                    fits(label),
-                    "{control:?} as {label:?} in {}px",
-                    slot_w(true)
-                );
+                assert!(fits(label), "{control:?} as {label:?} in {SLOT_W}px");
             }
         }
     }
-    assert!(
-        slot_w(false) > slot_w(true),
-        "no mic button leaves more room"
-    );
 }

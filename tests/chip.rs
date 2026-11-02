@@ -40,10 +40,11 @@ use x11::{click, windows_of};
 
 /// The chip window's title.
 const CHIP: &str = "Recording - iris";
-/// The chip window's transparent margin around the pill, and the pill's
-/// size, in pixels at scale 1 (chip.rs).
+/// The chip window's transparent margin around the pill, and the size of
+/// an mp4 recording's pill, with its mic button, in pixels at scale 1
+/// (chip.rs).
 const BLEED: i16 = 16;
-const PILL: (i16, i16) = (208, 36);
+const PILL: (i16, i16) = (171, 36);
 
 /// The chip's centre row, read from its window.
 struct Row {

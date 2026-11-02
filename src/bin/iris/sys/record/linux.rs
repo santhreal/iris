@@ -44,6 +44,7 @@ pub(super) fn start_window(cx: &mut App, p: Params) -> Result<ActiveRecording, S
     let (picked, landed) = oneshot::channel();
     let follower = XcbChip::new(
         0,
+        chip::window_size(p.chip_mic()),
         monitors.clone(),
         crate::sys::window::root_scale(cx),
         Some(picked),
@@ -118,7 +119,13 @@ pub(super) fn start_region(
     };
     let monitors = crate::sys::window::work_areas(cx);
     let xid = chip::open(cx, p.chip_mic(), Some(rect), &monitors)?;
-    let follower = XcbChip::new(xid, monitors, crate::sys::window::root_scale(cx), None);
+    let follower = XcbChip::new(
+        xid,
+        chip::window_size(p.chip_mic()),
+        monitors,
+        crate::sys::window::root_scale(cx),
+        None,
+    );
     p.spawn(move |spec| record::x11::record_region(spec, follower, root))
 }
 
@@ -131,6 +138,8 @@ pub(super) fn start_region(
 struct XcbChip {
     xid: AtomicU32,
     conn: Option<&'static x11rb::rust_connection::RustConnection>,
+    /// The chip window's logical size (`chip::window_size`).
+    size: (f32, f32),
     monitors: Vec<WinRect>,
     /// Root pixels per logical pixel (`sys::window::root_scale`).
     scale: f32,
@@ -142,6 +151,7 @@ struct XcbChip {
 impl XcbChip {
     fn new(
         xid: u32,
+        size: (f32, f32),
         monitors: Vec<WinRect>,
         scale: f32,
         pick: Option<oneshot::Sender<WinRect>>,
@@ -151,6 +161,7 @@ impl XcbChip {
             conn: iris_lib::sys::capture::x11::shared_conn()
                 .ok()
                 .map(|(c, _)| c),
+            size,
             monitors,
             scale,
             pick: parking_lot::Mutex::new(pick),
@@ -178,7 +189,7 @@ impl record::x11::ChipFollow for XcbChip {
         use x11rb::connection::Connection;
         use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt};
         let s = self.scale;
-        let (x, y) = chip::origin(Some(rect), &self.monitors, s);
+        let (x, y) = chip::origin(Some(rect), &self.monitors, s, self.size);
         let (x, y) = ((x * s).round() as i32, (y * s).round() as i32);
         let _ = conn.configure_window(xid, &ConfigureWindowAux::new().x(x).y(y));
         let _ = conn.flush();

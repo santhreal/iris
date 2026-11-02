@@ -8,7 +8,12 @@
 
 use iris_lib::capture::WinRect;
 
-use super::{origin, WIN_H, WIN_W};
+use super::{origin, window_size};
+
+/// The window of a chip with a mic button, the widest.
+const WIN: (f32, f32) = window_size(Some(true));
+const WIN_W: f32 = WIN.0;
+const WIN_H: f32 = WIN.1;
 
 const fn rect(x: i32, y: i32, width: u32, height: u32) -> WinRect {
     WinRect {
@@ -27,7 +32,7 @@ const MONITORS: [WinRect; 2] = [rect(0, 0, 1000, 1000), rect(1000, 300, 600, 700
 #[test]
 fn above_the_rect_when_its_monitor_has_room() {
     assert_eq!(
-        origin(Some(rect(300, 300, 500, 400)), &MONITORS, 1.0),
+        origin(Some(rect(300, 300, 500, 400)), &MONITORS, 1.0, WIN),
         (800.0 - WIN_W, 300.0 - WIN_H)
     );
 }
@@ -36,12 +41,12 @@ fn above_the_rect_when_its_monitor_has_room() {
 fn room_above_is_exact_at_the_boundary() {
     let top = WIN_H as i32;
     assert_eq!(
-        origin(Some(rect(300, top, 500, 400)), &MONITORS, 1.0),
+        origin(Some(rect(300, top, 500, 400)), &MONITORS, 1.0, WIN),
         (800.0 - WIN_W, 0.0)
     );
     // One pixel less and the chip no longer fits above: it goes below.
     assert_eq!(
-        origin(Some(rect(300, top - 1, 500, 400)), &MONITORS, 1.0),
+        origin(Some(rect(300, top - 1, 500, 400)), &MONITORS, 1.0, WIN),
         (800.0 - WIN_W, (top - 1 + 400) as f32)
     );
 }
@@ -49,7 +54,7 @@ fn room_above_is_exact_at_the_boundary() {
 #[test]
 fn below_the_rect_at_the_top_edge() {
     assert_eq!(
-        origin(Some(rect(300, 0, 500, 400)), &MONITORS, 1.0),
+        origin(Some(rect(300, 0, 500, 400)), &MONITORS, 1.0, WIN),
         (800.0 - WIN_W, 400.0)
     );
 }
@@ -58,12 +63,12 @@ fn below_the_rect_at_the_top_edge() {
 fn room_below_is_exact_at_the_boundary() {
     let bottom = 1000 - WIN_H as u32;
     assert_eq!(
-        origin(Some(rect(300, 0, 500, bottom)), &MONITORS, 1.0),
+        origin(Some(rect(300, 0, 500, bottom)), &MONITORS, 1.0, WIN),
         (800.0 - WIN_W, bottom as f32)
     );
     // One pixel taller and neither side fits: inside the top edge.
     assert_eq!(
-        origin(Some(rect(300, 0, 500, bottom + 1)), &MONITORS, 1.0),
+        origin(Some(rect(300, 0, 500, bottom + 1)), &MONITORS, 1.0, WIN),
         (800.0 - WIN_W, 0.0)
     );
 }
@@ -71,7 +76,7 @@ fn room_below_is_exact_at_the_boundary() {
 #[test]
 fn inside_the_top_edge_when_neither_side_fits() {
     assert_eq!(
-        origin(Some(rect(100, 0, 800, 1000)), &MONITORS, 1.0),
+        origin(Some(rect(100, 0, 800, 1000)), &MONITORS, 1.0, WIN),
         (900.0 - WIN_W, 0.0)
     );
 }
@@ -79,7 +84,7 @@ fn inside_the_top_edge_when_neither_side_fits() {
 #[test]
 fn a_rect_past_its_monitor_top_keeps_the_chip_on_the_monitor() {
     assert_eq!(
-        origin(Some(rect(100, -50, 800, 1100)), &MONITORS, 1.0),
+        origin(Some(rect(100, -50, 800, 1100)), &MONITORS, 1.0, WIN),
         (900.0 - WIN_W, 0.0)
     );
 }
@@ -89,11 +94,14 @@ fn stays_on_the_monitor_horizontally() {
     // Narrower than the chip at the right edge: the chip shifts left
     // instead of spilling onto the next monitor.
     assert_eq!(
-        origin(Some(rect(900, 400, 90, 200)), &MONITORS, 1.0).0,
+        origin(Some(rect(900, 400, 90, 200)), &MONITORS, 1.0, WIN).0,
         1000.0 - WIN_W
     );
     // Narrower than the chip at the left edge: the chip starts at it.
-    assert_eq!(origin(Some(rect(0, 400, 90, 200)), &MONITORS, 1.0).0, 0.0);
+    assert_eq!(
+        origin(Some(rect(0, 400, 90, 200)), &MONITORS, 1.0, WIN).0,
+        0.0
+    );
 }
 
 #[test]
@@ -103,7 +111,7 @@ fn a_monitor_narrower_than_the_chip_pins_it_to_its_left_edge() {
     let monitors = [rect(0, 0, 1000, 1000), rect(1000, 0, 100, 1000)];
     const { assert!(WIN_W > 100.0) };
     assert_eq!(
-        origin(Some(rect(1010, 400, 50, 200)), &monitors, 1.0).0,
+        origin(Some(rect(1010, 400, 50, 200)), &monitors, 1.0, WIN).0,
         1000.0
     );
 }
@@ -113,7 +121,7 @@ fn the_rect_monitor_bounds_the_chip_not_the_primary() {
     // Root space has room above this rect, but on no monitor: the chip
     // goes below it, on the right monitor.
     assert_eq!(
-        origin(Some(rect(1100, 300, 400, 300)), &MONITORS, 1.0),
+        origin(Some(rect(1100, 300, 400, 300)), &MONITORS, 1.0, WIN),
         (1500.0 - WIN_W, 600.0)
     );
 }
@@ -121,21 +129,21 @@ fn the_rect_monitor_bounds_the_chip_not_the_primary() {
 #[test]
 fn a_rect_centered_on_no_monitor_uses_the_primary() {
     assert_eq!(
-        origin(Some(rect(1100, 0, 400, 200)), &MONITORS, 1.0),
+        origin(Some(rect(1100, 0, 400, 200)), &MONITORS, 1.0, WIN),
         (1000.0 - WIN_W, 200.0)
     );
 }
 
 #[test]
 fn no_rect_puts_the_chip_inside_the_primary_top_right() {
-    assert_eq!(origin(None, &MONITORS, 1.0), (1000.0 - WIN_W, 0.0));
+    assert_eq!(origin(None, &MONITORS, 1.0, WIN), (1000.0 - WIN_W, 0.0));
 }
 
 #[test]
 fn scale_maps_root_pixels_to_logical() {
     let monitors = [rect(0, 0, 2000, 2000)];
     assert_eq!(
-        origin(Some(rect(600, 600, 1000, 800)), &monitors, 2.0),
+        origin(Some(rect(600, 600, 1000, 800)), &monitors, 2.0, WIN),
         (800.0 - WIN_W, 300.0 - WIN_H)
     );
 }
@@ -143,10 +151,21 @@ fn scale_maps_root_pixels_to_logical() {
 #[test]
 fn without_monitors_the_rect_bounds_the_chip() {
     assert_eq!(
-        origin(Some(rect(300, 300, 500, 400)), &[], 1.0),
+        origin(Some(rect(300, 300, 500, 400)), &[], 1.0, WIN),
         (800.0 - WIN_W, 300.0)
     );
-    assert_eq!(origin(None, &[], 1.0), (0.0, 0.0));
+    assert_eq!(origin(None, &[], 1.0, WIN), (0.0, 0.0));
+}
+
+#[test]
+fn a_chip_without_a_mic_button_is_narrower_and_ends_where_the_rect_does() {
+    let narrow = window_size(None);
+    assert!(narrow.0 < WIN_W, "{narrow:?} against {WIN:?}");
+    assert_eq!(narrow.1, WIN_H);
+    assert_eq!(
+        origin(Some(rect(300, 300, 500, 400)), &MONITORS, 1.0, narrow),
+        (800.0 - narrow.0, 300.0 - narrow.1)
+    );
 }
 
 /// WHY: a shadow that reaches past the chip window's bleed is cut off at

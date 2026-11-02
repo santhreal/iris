@@ -18,23 +18,42 @@ use iris_lib::capture::WinRect;
 
 use crate::{icons::Icon, theme};
 
-const CHIP_W: f32 = 208.0;
 const CHIP_H: f32 = 36.0;
 /// Transparent margin around the pill so its shadow is not clipped
 /// by the window bounds.
 const CHIP_BLEED: f32 = 16.0;
-/// The chip window: the pill plus its bleed on every side.
-const WIN_W: f32 = CHIP_W + 2.0 * CHIP_BLEED;
-const WIN_H: f32 = CHIP_H + 2.0 * CHIP_BLEED;
+
+/// The chip window's logical size for a chip whose mic button state is
+/// `mic` (`None`: no mic button): the pill plus its bleed on every side.
+pub(crate) const fn window_size(mic: Option<bool>) -> (f32, f32) {
+    (pill_w(mic) + 2.0 * CHIP_BLEED, CHIP_H + 2.0 * CHIP_BLEED)
+}
+
+/// The pill's width: its padding, the dot, the slot, and the controls.
+/// A format without audio has no mic button, and its pill is one button
+/// and gap narrower.
+const fn pill_w(mic: Option<bool>) -> f32 {
+    let controls = if mic.is_some() { 3.0 } else { 2.0 };
+    PAD_LEAD
+        + DOT
+        + DOT_GAP
+        + SLOT_W
+        + controls * BUTTON
+        + (controls - 1.0) * BUTTON_GAP
+        + PAD_TRAIL
+}
+
 /// The pill in the chip window, where a screen that does not blend the
 /// window shows it (`sys::window::Cutout`).
-const PILL: crate::sys::window::Rounded = crate::sys::window::Rounded {
-    x: CHIP_BLEED,
-    y: CHIP_BLEED,
-    w: CHIP_W,
-    h: CHIP_H,
-    r: CHIP_H / 2.0,
-};
+const fn pill(mic: Option<bool>) -> crate::sys::window::Rounded {
+    crate::sys::window::Rounded {
+        x: CHIP_BLEED,
+        y: CHIP_BLEED,
+        w: pill_w(mic),
+        h: CHIP_H,
+        r: CHIP_H / 2.0,
+    }
+}
 
 /// The open chip window, for the state setters and `close`.
 static CHIP: parking_lot::Mutex<Option<WindowHandle<Chip>>> = parking_lot::Mutex::new(None);
@@ -79,7 +98,7 @@ pub struct Chip {
     text: SharedString,
     /// The frame at the clock's next second; None while paused.
     tick: Option<Task<()>>,
-    /// The control under the pointer, named in the timer slot.
+    /// The control under the pointer, named in the slot.
     hovered: Option<Control>,
     /// The record hotkey, trimmed: empty when none is set.
     record_hotkey: SharedString,
@@ -134,14 +153,15 @@ pub fn open(
     monitors: &[WinRect],
 ) -> Result<u32, String> {
     close(cx);
-    let origin = origin(anchor, monitors, crate::sys::window::root_scale(cx));
+    let win = window_size(mic);
+    let origin = origin(anchor, monitors, crate::sys::window::root_scale(cx), win);
     let handle = crate::widgets::open_window(
         cx,
         "Recording - iris",
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(origin.0), px(origin.1)),
-                size: size(px(WIN_W), px(WIN_H)),
+                size: size(px(win.0), px(win.1)),
             })),
             titlebar: None,
             focus: false,
@@ -158,7 +178,7 @@ pub fn open(
             ..Default::default()
         },
         |window, cx| {
-            crate::sys::window::Cutout::default().set(window, &[PILL]);
+            crate::sys::window::Cutout::default().set(window, &[pill(mic)]);
             let mut chip = Chip::new(mic, Instant::now());
             let keys = iris_lib::config::Config::load().record_hotkey;
             chip.record_hotkey =
@@ -179,8 +199,15 @@ pub fn open(
 /// and inside the rect's top edge when neither side fits: it stays on
 /// the rect's monitor and out of the rect whenever the monitor allows.
 /// `monitors` are root pixels, primary first; with none, the rect
-/// bounds the chip. `scale` is root pixels per logical pixel.
-pub(crate) fn origin(rect: Option<WinRect>, monitors: &[WinRect], scale: f32) -> (f32, f32) {
+/// bounds the chip. `scale` is root pixels per logical pixel, and `win`
+/// the chip window's logical size (`window_size`).
+pub(crate) fn origin(
+    rect: Option<WinRect>,
+    monitors: &[WinRect],
+    scale: f32,
+    win: (f32, f32),
+) -> (f32, f32) {
+    let (win_w, win_h) = win;
     let logical = |r: &WinRect| {
         let f = |v: f32| v / scale;
         (
@@ -203,13 +230,13 @@ pub(crate) fn origin(rect: Option<WinRect>, monitors: &[WinRect], scale: f32) ->
     // Right-aligned to the rect, never left of it, then kept on the
     // monitor: min before max, so a monitor narrower than the chip
     // pins it to the monitor's left edge.
-    let left = (x + w - WIN_W).max(x).min(mx + mw - WIN_W).max(mx);
-    let top = if y - WIN_H >= my {
-        y - WIN_H
-    } else if y + h + WIN_H <= my + mh {
+    let left = (x + w - win_w).max(x).min(mx + mw - win_w).max(mx);
+    let top = if y - win_h >= my {
+        y - win_h
+    } else if y + h + win_h <= my + mh {
         y + h
     } else {
-        y.min(my + mh - WIN_H).max(my)
+        y.min(my + mh - win_h).max(my)
     };
     (left, top)
 }
@@ -240,32 +267,32 @@ fn pill_shadow() -> Vec<gpui::BoxShadow> {
 const BUTTON: f32 = 24.0;
 /// The record dot's diameter.
 const DOT: f32 = 9.0;
-/// Space between the pill's items.
-const GAP: f32 = 6.0;
+/// Space between the dot and the slot.
+const DOT_GAP: f32 = 6.0;
+/// The slot between the dot and the controls: the clock, or a hovered
+/// control's name. Its width is fixed, so a name that replaces the clock
+/// never moves a control from under the pointer. It holds the widest
+/// name, Resume, with as much space between it and the hovered button's
+/// wash as the dot leaves before it. The clock, 37.6 px in tabular
+/// digits, leaves a space after it that, with the pause glyph's inset in
+/// its button, sits a little wider than the space between glyphs.
+const SLOT_W: f32 = 56.0;
+/// Space between controls.
+const BUTTON_GAP: f32 = 4.0;
 /// The pill's inner padding: wider before the dot, so the dot sits
 /// inside the pill's round end; narrow after the last control, whose
-/// hover wash fills the end.
+/// glyph inset in its button brings the glyph as far from the end.
 const PAD_LEAD: f32 = 14.0;
 const PAD_TRAIL: f32 = 6.0;
 /// Space between a control's name and its shortcut in the slot.
 const KEYS_GAP: f32 = 6.0;
-
-/// Width of the slot between the dot and the controls, which holds the
-/// timer or a hovered control's name. It is fixed for the recording, so
-/// a name that replaces the timer never moves a control from under the
-/// pointer.
-fn slot_w(has_mic: bool) -> f32 {
-    let controls = 2 + usize::from(has_mic);
-    CHIP_W - PAD_LEAD - PAD_TRAIL - DOT - controls as f32 * BUTTON - (1 + controls) as f32 * GAP
-}
 
 /// One chip control: the HUD icon button with a hover wash.
 fn control(id: &'static str, glyph: Icon) -> Stateful<Div> {
     crate::widgets::hud_icon_button(id, glyph, false, BUTTON)
 }
 
-/// A chip control, named in the timer slot while the pointer rests on
-/// it.
+/// A chip control, named in the slot while the pointer rests on it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Control {
     Pause,
@@ -286,7 +313,7 @@ impl Control {
     }
 }
 
-/// What the timer slot shows.
+/// What the slot between the dot and the controls shows.
 #[derive(Clone, Debug, PartialEq)]
 enum Slot {
     Clock,
@@ -367,8 +394,10 @@ impl Render for Chip {
         }
         let mic = self.mic;
         let slot = match self.slot() {
+            // A paused clock is the paused dot's gray.
             Slot::Clock => div()
                 .font_features(theme::tabular())
+                .text_color(if paused { theme::FG_DIM } else { theme::FG })
                 .child(self.text.clone()),
             Slot::Control { label, keys } => {
                 // The shortcut shows when it fits beside the name; the
@@ -377,7 +406,7 @@ impl Render for Chip {
                     shaped_w(window, label, theme::TEXT_BODY, FontWeight::MEDIUM)
                         + KEYS_GAP
                         + shaped_w(window, keys, theme::TEXT_SMALL, FontWeight::NORMAL)
-                        <= slot_w(mic.is_some())
+                        <= SLOT_W
                 });
                 div()
                     .flex()
@@ -399,49 +428,10 @@ impl Render for Chip {
                 cx.notify();
             })
         };
-
-        // The pill inside a window-filling root: taffy places the root
-        // element at the window origin whatever its insets, so a bare
-        // absolute pill sat in the top-left corner with no bleed on
-        // those two sides and its shadow cut off there.
-        let pill = div()
-            .absolute()
-            .left(px(CHIP_BLEED))
-            .top(px(CHIP_BLEED))
-            .w(px(CHIP_W))
-            .h(px(CHIP_H))
-            .pl(px(PAD_LEAD))
-            .pr(px(PAD_TRAIL))
-            .rounded_full()
-            .font_family(theme::FONT)
-            .bg(theme::alpha(theme::BG_ELEV, 0.92))
-            .shadow(pill_shadow())
+        let controls = div()
             .flex()
             .items_center()
-            .gap(px(GAP))
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(DOT))
-                    .rounded_full()
-                    .bg(if paused {
-                        theme::FG_FAINT
-                    } else {
-                        theme::DANGER
-                    })
-                    .opacity(if paused { 0.35 } else { 1.0 }),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_size(px(theme::TEXT_BODY))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme::FG)
-                    .child(slot),
-            )
+            .gap(px(BUTTON_GAP))
             .child(
                 control("chip-pause", if paused { Icon::Play } else { Icon::Pause })
                     .on_hover(hover(Control::Pause))
@@ -463,6 +453,44 @@ impl Render for Chip {
                         crate::daemon::run(cx, &crate::daemon::Command::RecordMic);
                     }))
             }));
+
+        // The pill inside a window-filling root: taffy places the root
+        // element at the window origin whatever its insets, so a bare
+        // absolute pill sat in the top-left corner with no bleed on
+        // those two sides and its shadow cut off there.
+        let pill = div()
+            .absolute()
+            .left(px(CHIP_BLEED))
+            .top(px(CHIP_BLEED))
+            .w(px(pill_w(mic)))
+            .h(px(CHIP_H))
+            .pl(px(PAD_LEAD))
+            .pr(px(PAD_TRAIL))
+            .rounded_full()
+            .font_family(theme::FONT)
+            .bg(theme::alpha(theme::BG_ELEV, 0.92))
+            .shadow(pill_shadow())
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(DOT))
+                    .rounded_full()
+                    .bg(if paused { theme::FG_DIM } else { theme::DANGER }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(SLOT_W))
+                    .ml(px(DOT_GAP))
+                    .whitespace_nowrap()
+                    .text_size(px(theme::TEXT_BODY))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme::FG)
+                    .child(slot),
+            )
+            .child(controls);
         div().size_full().child(pill)
     }
 }
