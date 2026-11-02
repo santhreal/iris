@@ -595,7 +595,16 @@ impl Editor {
             .child(divider())
             .child(applies(subject.fillable(), fill_toggle.into_any_element()))
             .child(divider())
-            .child(applies(subject.colored(), swatches.into_any_element()))
+            // A swatch's ring box reaches 4 px past its color on each
+            // side: the margin takes that back, so the divider stands as
+            // far from the first color as from the tracks' edges, and the
+            // bar centers on the colors it shows. The disabled layer
+            // still covers every ring box.
+            .child(
+                div()
+                    .mx(px(-4.))
+                    .child(applies(subject.colored(), swatches.into_any_element())),
+            )
     }
 
     pub(super) fn render_menus_and_overlays(

@@ -92,6 +92,108 @@ fn first_cell(px: &[[u8; 3]], w: usize) -> Option<usize> {
     None
 }
 
+/// The tool options bar's center row: the 52 px toolbar, then the 40 px
+/// bar (`editor::render_chrome::OPTIONS_H`).
+const OPTIONS_ROW: usize = 52 + 40 / 2;
+/// The toolbar's and the options bar's ground, `theme::BG_ELEV`.
+const GROUND: [u8; 3] = [43, 43, 43];
+
+/// The runs of `row` unlike GROUND from `from` to `to`: each its first
+/// and last x, and whether it is a ring, the 2 px of accent, whole or
+/// blended with the ground at a fractional edge, that circle the chosen
+/// color.
+fn controls(row: &[[u8; 3]], from: usize, to: usize) -> Vec<(usize, usize, bool)> {
+    let mut out = Vec::new();
+    let mut x = from;
+    for run in row[from..to].chunk_by(|a, b| (*a == GROUND) == (*b == GROUND)) {
+        if run[0] != GROUND {
+            let ring = run.len() <= 3 && run.iter().any(|&[b, _, r]| b > r.saturating_add(40));
+            out.push((x, x + run.len() - 1, ring));
+        }
+        x += run.len();
+    }
+    out
+}
+
+/// WHY: the class closed here is "chrome that a layout centers on its
+/// box instead of on what it shows". The toolbar centered the tools
+/// between its unequal side paddings, 4 px right of the window's center
+/// here and 38 px on macOS, so they stood off the options bar under
+/// them; and each color's ring box, transparent 4 px past its color,
+/// set the first color 16 px from its divider where every other control
+/// stands 12 px from its neighbor, and moved the bar 2 px left of what
+/// it shows. The case reads the tools' span against the window's center,
+/// and the options bar's center row for even spaces and equal ends.
+///
+/// Not covered: the macOS and Windows paddings, which this build does
+/// not lay out, and a window too narrow for the tools to center, where
+/// they move toward the title.
+#[test]
+fn the_tools_and_their_options_center_and_space_evenly() {
+    let case = "the_tools_and_their_options_center_and_space_evenly";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plain.png");
+    image::RgbImage::from_pixel(SIZE.0, SIZE.1, image::Rgb(IMAGE))
+        .save(&file)
+        .unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&[OsStr::new("--annotate"), file.as_os_str()]);
+    let editor = daemon.until("the editor to open", || {
+        windows_of(&conn, root, EDITOR).first().copied()
+    });
+    daemon.until("the editor to draw the image", || {
+        extent(&client(&conn, root, editor), IMAGE).map(|_| ())
+    });
+    let (x0, y0, ..) = rect(&conn, root, editor);
+    move_to(&conn, root, (x0 + 10, y0 + 300));
+    daemon.settle();
+
+    let (w, _, px) = client(&conn, root, editor);
+    let first = first_cell(&px, w).expect("the selected Pen segment's fill is on the toolbar");
+    let tools = first + (COUNTER * PITCH + CELL) / 2;
+    assert!(
+        (2 * tools).abs_diff(w) <= 2,
+        "the tools center {tools} px into a {w} px window"
+    );
+
+    let row = &px[OPTIONS_ROW * w..(OPTIONS_ROW + 1) * w];
+    let runs = controls(row, 8, w - 8);
+    let shown: Vec<_> = runs.iter().filter(|r| !r.2).collect();
+    // The stroke widths, a divider, the fill toggle, a divider, and the
+    // 11 colors.
+    assert_eq!(
+        shown.len(),
+        15,
+        "the options bar's center row reads {runs:?}"
+    );
+    let gaps: Vec<usize> = runs
+        .windows(2)
+        .filter(|p| !p[0].2 && !p[1].2)
+        .map(|p| p[1].0 - p[0].1 - 1)
+        .collect();
+    let (lo, hi) = (gaps.iter().min().unwrap(), gaps.iter().max().unwrap());
+    assert!(
+        hi - lo <= 1,
+        "the options bar's controls stand {gaps:?} px apart, not evenly"
+    );
+    let (left, right) = (shown[0].0, w - 1 - shown[14].1);
+    assert!(
+        left.abs_diff(right) <= 1,
+        "the options bar shows its controls {left} px from the window's left edge \
+         and {right} px from its right"
+    );
+}
+
 #[test]
 fn a_segment_lights_only_under_the_pointer() {
     let case = "a_segment_lights_only_under_the_pointer";

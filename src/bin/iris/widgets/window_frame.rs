@@ -282,8 +282,15 @@ fn bar(
                 .text_ellipsis()
                 .child(c)
         }));
+    // A center element centers in the window, not between the bar's
+    // paddings: the side with the smaller padding starts its flex basis
+    // at the difference, so both sides reach equally far from the center
+    // while their content fits. A side at its content's width lays out
+    // as it would without the basis.
+    let skew = if center.is_some() { pl - pr } else { 0. };
     let leading = div()
         .flex_1()
+        .flex_basis(px((-skew).max(0.)))
         .min_w_0()
         .flex()
         .items_center()
@@ -292,6 +299,7 @@ fn bar(
         .child(titles);
     let trailing = div()
         .flex_1()
+        .flex_basis(px(skew.max(0.)))
         .h_full()
         .flex()
         .items_center()
