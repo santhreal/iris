@@ -518,12 +518,15 @@ impl Notice {
     }
 
     /// The saved recording's first frame under a play disc, faded in by
-    /// `shown`; until it arrives, the dark slot and the disc. A click
-    /// opens the recording in the system's player.
+    /// `shown`; until it arrives, the dark slot and the disc. The disc
+    /// deepens under the pointer and more while pressed. A click opens
+    /// the recording in the system's player.
     fn poster_slot(&self, path: PathBuf, shown: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        const POSTER_GROUP: &str = "notice-poster";
         let radius = px(theme::RADIUS_CONTROL);
         div()
             .id("notice-poster")
+            .group(POSTER_GROUP)
             .flex_none()
             .relative()
             .w(px(POSTER_W))
@@ -546,9 +549,12 @@ impl Notice {
             }))
             .child(
                 div()
+                    .id("notice-play")
                     .size(px(PLAY))
                     .rounded_full()
                     .bg(theme::PLAY_DISC)
+                    .group_hover(POSTER_GROUP, |s| s.bg(theme::PLAY_DISC_HOVER))
+                    .group_active(POSTER_GROUP, |s| s.bg(theme::PLAY_DISC_PRESS))
                     .flex()
                     .items_center()
                     .justify_center()

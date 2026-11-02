@@ -46,8 +46,8 @@ futures = "0.3"
 # the application for the current OS (X11 and Wayland on Linux, AppKit
 # on macOS, Win32 on Windows). Pinned to a rev so a later push to
 # santh-gpui cannot move the dependency under the build.
-gpui = { git = "https://github.com/santhreal/santh-gpui.git", rev = "28ff01404befe3410ab6ee7652debc607c8b6293" }
-gpui_platform = { git = "https://github.com/santhreal/santh-gpui.git", rev = "28ff01404befe3410ab6ee7652debc607c8b6293", features = ["font-kit", "wayland", "x11"] }
+gpui = { git = "https://github.com/santhreal/santh-gpui.git", rev = "07ef848296039af8d2217aa520d734bc7d1a6092" }
+gpui_platform = { git = "https://github.com/santhreal/santh-gpui.git", rev = "07ef848296039af8d2217aa520d734bc7d1a6092", features = ["font-kit", "wayland", "x11"] }
 libc = "0.2"
 # Auto-update: HTTPS GET of the release manifest + asset download.
 # rustls (no system OpenSSL), blocking API — the updater runs on its own

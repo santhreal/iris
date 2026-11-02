@@ -45,8 +45,13 @@ pub const SEPARATOR: Rgba = alpha(WHITE, 0.08);
 /// Text field fill and its 1px inner border.
 pub const FIELD_BG: Rgba = alpha(BLACK, 0.20);
 pub const FIELD_BORDER: Rgba = alpha(WHITE, 0.10);
-/// Pop-up button and secondary push button fill.
+/// Pop-up button and secondary push button fill, under the pointer,
+/// and pressed or held open.
 pub const CONTROL_BG: Rgba = alpha(WHITE, 0.10);
+pub const CONTROL_HOVER: Rgba = alpha(WHITE, 0.14);
+pub const CONTROL_PRESS: Rgba = alpha(WHITE, 0.20);
+/// A switch's knob while the switch is pressed: the white knob grayed.
+pub const KNOB_PRESS: Rgba = rgb(0.85, 0.85, 0.85);
 /// The fill of the chosen item of a HUD's group of choices: the capture
 /// bar's capture.
 pub const CHOSEN: Rgba = alpha(WHITE, 0.16);
@@ -62,8 +67,10 @@ pub const WINDOW_PICK: Rgba = alpha(ACCENT, 0.18);
 pub const READOUT_FILL: Rgba = rgb(0.1, 0.1, 0.1);
 /// The disc under a recording poster's play glyph: dark at 62%, so the
 /// poster reads through it; the glyph is a solid triangle, legible over
-/// any poster.
+/// any poster. Deeper under the pointer and more while pressed.
 pub const PLAY_DISC: Rgba = alpha(BLACK, 0.62);
+pub const PLAY_DISC_HOVER: Rgba = alpha(BLACK, 0.74);
+pub const PLAY_DISC_PRESS: Rgba = alpha(BLACK, 0.84);
 /// The toast's hover actions: a scrim over the capture, and opaque
 /// light buttons on it with dark labels and glyphs, so no part of the
 /// capture shows through a label. The status line uses the buttons'

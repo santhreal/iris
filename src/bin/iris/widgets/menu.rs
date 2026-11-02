@@ -204,7 +204,7 @@ pub fn popup_button(
             .iter()
             .map(|opt| div().h_0().overflow_hidden().child(*opt)),
     );
-    div()
+    let button = div()
         .id(id)
         .h(px(theme::CONTROL_H))
         .min_w(px(theme::FORM_CONTROL_W))
@@ -216,15 +216,20 @@ pub fn popup_button(
         .justify_between()
         .gap(px(8.))
         .rounded(px(theme::RADIUS_CONTROL))
-        .bg(if open {
-            theme::SURFACE_PRESS
-        } else {
-            theme::CONTROL_BG
-        })
-        .hover(|s| s.bg(theme::alpha(theme::FG, 0.14)))
         .text_size(px(theme::TEXT_BODY))
         .text_color(theme::FG)
-        .whitespace_nowrap()
+        .whitespace_nowrap();
+    // Held at the press fill while its menu is open, as a push button
+    // is while pressed.
+    let button = if open {
+        button.bg(theme::CONTROL_PRESS)
+    } else {
+        button
+            .bg(theme::CONTROL_BG)
+            .hover(|s| s.bg(theme::CONTROL_HOVER))
+            .active(|s| s.bg(theme::CONTROL_PRESS))
+    };
+    button
         .child(label)
         .child(icons::icon(Icon::ChevronUpDown, theme::FG_DIM, 12.0))
 }

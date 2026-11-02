@@ -17,14 +17,18 @@ const KNOB: f32 = 16.0;
 const KNOB_INSET: f32 = 2.0;
 /// The knob's slide between its two rests.
 const SLIDE: Duration = Duration::from_millis(150);
+/// The group a toggle's knob reads its press from.
+const TOGGLE_GROUP: &str = "toggle";
 
 /// macOS-style switch: the track is white at 16% when off and accent
 /// when on; the white knob slides between its rests over SLIDE (at once
-/// under reduced motion), and the track crossfades with it. The caller
-/// attaches `on_click`.
+/// under reduced motion), and the track crossfades with it. The knob
+/// grays while the switch is pressed, before the release flips it. The
+/// caller attaches `on_click`.
 pub fn toggle(id: &'static str, on: bool) -> Stateful<Div> {
     div()
         .id(ElementId::Name(id.into()))
+        .group(TOGGLE_GROUP)
         .w(px(TOGGLE_W))
         .h(px(TOGGLE_H))
         .flex_shrink_0()
@@ -120,11 +124,13 @@ impl RenderOnce for ToggleFace {
             .bg(theme::alpha(theme::ACCENT, pos))
             .child(
                 div()
+                    .id("knob")
                     .size(px(KNOB))
                     .flex_shrink_0()
                     .ml(px(KNOB_INSET + knob_travel() * pos))
                     .rounded_full()
                     .bg(gpui::white())
+                    .group_active(TOGGLE_GROUP, |s| s.bg(theme::KNOB_PRESS))
                     .shadow(theme::shadow_knob()),
             )
     }
@@ -175,8 +181,8 @@ pub(super) fn styled_button(base: Stateful<Div>, style: ButtonStyle) -> Stateful
         ButtonStyle::Bordered => base
             .bg(theme::CONTROL_BG)
             .text_color(theme::FG)
-            .hover(|s| s.bg(theme::alpha(theme::FG, 0.14)))
-            .active(|s| s.bg(theme::alpha(theme::FG, 0.20))),
+            .hover(|s| s.bg(theme::CONTROL_HOVER))
+            .active(|s| s.bg(theme::CONTROL_PRESS)),
         ButtonStyle::Ghost => base
             .text_color(theme::FG_DIM)
             .hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
@@ -190,8 +196,8 @@ pub(super) fn styled_button(base: Stateful<Div>, style: ButtonStyle) -> Stateful
         ButtonStyle::Destructive => base
             .bg(theme::CONTROL_BG)
             .text_color(theme::DANGER)
-            .hover(|s| s.bg(theme::alpha(theme::FG, 0.14)))
-            .active(|s| s.bg(theme::alpha(theme::FG, 0.20))),
+            .hover(|s| s.bg(theme::CONTROL_HOVER))
+            .active(|s| s.bg(theme::CONTROL_PRESS)),
         ButtonStyle::GhostDestructive => base
             .text_color(theme::DANGER)
             .hover(|s| s.bg(theme::SURFACE_HOVER))
