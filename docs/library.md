@@ -13,14 +13,13 @@ One app window is open at a time. Opening the library while it is open shows the
 
 ## Toolbar
 
-The window's title bar is the 52-pixel band across the top: the sidebar's part holds the window controls on a desktop that puts them on the leading side; the toolbar beside it holds the title **Library**, under it the capture count (for example, `42 captures`) once `library.json` is read, and the trailing buttons. The trailing buttons depend on the selection:
+The window's title bar is the 52-pixel band across the top: the sidebar's part holds the window controls on a desktop that puts them on the leading side; the toolbar beside it holds the title **Library**, under it the capture count (for example, `42 captures`) once `library.json` is read, or while cards are selected the selection count (for example, `3 selected`), and the trailing buttons. The trailing buttons depend on the selection:
 
 - **No selection**:
   - **Keyboard Shortcuts** (keyboard icon): toggles the shortcut reference sheet.
   - **Record Window** (**Record Screen** on Windows and macOS; record icon): closes the library, then starts a recording, as `iris --record-window` does. The recording does not contain the library. While a recording runs, the button is highlighted, its tooltip reads **Stop Recording**, and a click stops the recording and leaves the library open.
   - **New Screenshot** (viewfinder icon): closes the library, then starts a region capture, as `iris --capture` does. The capture does not contain the library.
 - **One or more cards selected**:
-  - The selection count (for example, `3 selected`).
   - **Copy**: copies the selection to the clipboard. One capture copies its decoded pixels; several copy their file paths in the platform file-list format.
   - **Move to Trash**: moves the selected captures to the system trash ([Move to Trash](#move-to-trash)).
   - **Done**: clears the selection.

@@ -80,8 +80,16 @@ impl Library {
         if let Some(on_close) = &self.on_close {
             bar = bar.on_close(on_close.clone());
         }
-        if !self.listing.count().is_empty() {
-            bar = bar.caption(self.listing.count().clone());
+        // Under the title: the selection's count while cards are
+        // selected, else the library's. The count stays out of the
+        // trailing buttons, whose ghost ink it would share.
+        let caption = if self.selected.is_empty() {
+            self.listing.count()
+        } else {
+            &self.sel_label
+        };
+        if !caption.is_empty() {
+            bar = bar.caption(caption.clone());
         }
         // Every button draws the keyboard ring while Tab is on it, and a
         // click runs it as Space on it does.
@@ -96,13 +104,6 @@ impl Library {
         };
         if !self.selected.is_empty() {
             return bar
-                .trailing(
-                    div()
-                        .text_size(px(theme::TEXT_BODY))
-                        .text_color(theme::FG_DIM)
-                        .font_features(theme::tabular())
-                        .child(self.sel_label.clone()),
-                )
                 .trailing(ring(
                     Tool::Copy,
                     widgets::button("sel-copy", "Copy", ButtonStyle::Ghost).tooltip(tip(
