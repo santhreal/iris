@@ -70,7 +70,7 @@ documents! {
     ChevronUpDown => r##"<path d="M6.2 7L9 4.2L11.8 7"/><path d="M6.2 11L9 13.8L11.8 11"/>"##,
     Ellipsis => r##"<circle cx="4" cy="9" r="1.45" fill="#fff" stroke="none"/><circle cx="9" cy="9" r="1.45" fill="#fff" stroke="none"/><circle cx="14" cy="9" r="1.45" fill="#fff" stroke="none"/>"##,
     Fill => r##"<rect x="3.6" y="5" width="10.8" height="8" rx="1.4"/><path d="M9 5H5A1.4 1.4 0 0 0 3.6 6.4V11.6A1.4 1.4 0 0 0 5 13H9Z" fill="#fff" stroke="none"/>"##,
-    Keyboard => r##"<rect x="2.2" y="4.6" width="13.6" height="8.8" rx="2"/><circle cx="5.4" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="8" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="10.6" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="13.2" cy="7.6" r="0.85" fill="#fff" stroke="none"/><path d="M6.4 10.6L11.6 10.6"/>"##,
+    Keyboard => r##"<rect x="2.2" y="4.6" width="13.6" height="8.8" rx="2"/><circle cx="5.1" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="7.7" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="10.3" cy="7.6" r="0.85" fill="#fff" stroke="none"/><circle cx="12.9" cy="7.6" r="0.85" fill="#fff" stroke="none"/><path d="M6.4 10.6L11.6 10.6"/>"##,
     Download => r##"<circle cx="9" cy="9" r="6.4"/><path d="M9 5.4L9 12.2"/><path d="M6.4 9.8L9 12.4L11.6 9.8"/>"##,
     Library => r##"<rect x="3" y="3" width="4.8" height="4.8" rx="1.3"/><rect x="10.2" y="3" width="4.8" height="4.8" rx="1.3"/><rect x="3" y="10.2" width="4.8" height="4.8" rx="1.3"/><rect x="10.2" y="10.2" width="4.8" height="4.8" rx="1.3"/>"##,
     Timer => r##"<circle cx="9" cy="10" r="5.6"/><path d="M7.2 2.6L10.8 2.6"/><path d="M9 2.6L9 4.4"/><path d="M9 10L9 7.2"/><path d="M13.2 4.8L14.2 5.8"/>"##,
@@ -83,9 +83,9 @@ documents! {
     CaptionRestore => r##"<rect x="4.5" y="6.5" width="7" height="7" rx="1" stroke-width="1"/><path d="M6.5 4.5L12.5 4.5A1 1 0 0 1 13.5 5.5L13.5 11.5" stroke-width="1"/>"##,
     CaptionClose => r##"<path d="M4.5 4.5L13.5 13.5" stroke-width="1"/><path d="M13.5 4.5L4.5 13.5" stroke-width="1"/>"##,
     Screen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><rect x="6" y="7" width="6" height="4" rx="0.7" fill="#fff" stroke="none"/>"##,
-    Selection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/>"##,
+    Selection => r##"<path d="M5 3.6L3.8 3.6A1.2 1.2 0 0 0 2.6 4.8L2.6 5.3"/><path d="M13 3.6L14.2 3.6A1.2 1.2 0 0 1 15.4 4.8L15.4 5.3"/><path d="M2.6 12.7L2.6 13.2A1.2 1.2 0 0 0 3.8 14.4L5 14.4"/><path d="M15.4 12.7L15.4 13.2A1.2 1.2 0 0 1 14.2 14.4L13 14.4"/><path d="M7.8 3.6L10.2 3.6"/><path d="M7.8 14.4L10.2 14.4"/><path d="M2.6 8.1L2.6 9.9"/><path d="M15.4 8.1L15.4 9.9"/>"##,
     RecordScreen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
-    RecordSelection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
+    RecordSelection => r##"<path d="M5 3.6L3.8 3.6A1.2 1.2 0 0 0 2.6 4.8L2.6 5.3"/><path d="M13 3.6L14.2 3.6A1.2 1.2 0 0 1 15.4 4.8L15.4 5.3"/><path d="M2.6 12.7L2.6 13.2A1.2 1.2 0 0 0 3.8 14.4L5 14.4"/><path d="M15.4 12.7L15.4 13.2A1.2 1.2 0 0 1 14.2 14.4L13 14.4"/><path d="M7.8 3.6L10.2 3.6"/><path d="M7.8 14.4L10.2 14.4"/><path d="M2.6 8.1L2.6 9.9"/><path d="M15.4 8.1L15.4 9.9"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
 }
 
 /// The alpha of each pixel of `kind` rasterized at `scale`, in rows of
