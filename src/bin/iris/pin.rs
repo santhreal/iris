@@ -334,7 +334,6 @@ impl Render for PinStage {
                     .group_hover("pin", |s| s.opacity(1.))
                     .hover(|s| s.bg(theme::BG_ELEV))
                     .occlude()
-                    .cursor_pointer()
                     .tooltip(crate::widgets::tip("Close", Some("Esc".into())))
                     .on_click(|_, window, _| window.remove_window())
                     .child(crate::icons::icon(

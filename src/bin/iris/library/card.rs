@@ -246,7 +246,6 @@ impl Library {
             .w(px(CARD_W))
             .flex()
             .flex_col()
-            .cursor_pointer()
             .on_hover(cx.listener(move |this, hovering: &bool, _, cx| {
                 if *hovering {
                     this.hovered = Some(index);

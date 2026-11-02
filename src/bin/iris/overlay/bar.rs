@@ -116,8 +116,7 @@ fn square(id: &'static str, glyph: Icon, chosen: bool) -> Stateful<Div> {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(theme::RADIUS_SM))
-        .cursor_pointer();
+        .rounded(px(theme::RADIUS_SM));
     let el = if chosen {
         el.bg(theme::CHOSEN)
     } else {
@@ -304,7 +303,6 @@ impl Overlay {
             .text_size(px(theme::TEXT_BODY))
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme::FG)
-            .cursor_default()
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                 this.over_bar = *hovered;
                 if *hovered {
@@ -356,8 +354,7 @@ impl Overlay {
             .child(self.mode.verb())
             .tooltip(tip(self.mode.verb(), Some(confirm_keys)));
         let run = if runnable {
-            run.cursor_pointer()
-                .hover(|s| s.bg(theme::alpha(theme::ACCENT, 0.88)))
+            run.hover(|s| s.bg(theme::alpha(theme::ACCENT, 0.88)))
                 .active(|s| s.bg(theme::alpha(theme::ACCENT, 0.74)))
                 .on_click(cx.listener(|this, _, window, cx| this.finish(window, cx)))
         } else {

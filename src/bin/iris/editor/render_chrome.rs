@@ -492,7 +492,6 @@ impl Editor {
                     } else {
                         theme::alpha(theme::ACCENT, 0.0)
                     })
-                    .cursor_pointer()
                     .tooltip(tip(name, None))
                     .child(
                         div()

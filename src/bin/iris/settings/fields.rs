@@ -796,7 +796,6 @@ impl Settings {
             .flex_shrink_0()
             .justify_center()
             .font_features(theme::tabular())
-            .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.begin_recording(field);
                 cx.notify();

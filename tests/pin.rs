@@ -289,15 +289,14 @@ fn ctrl_c_copies_a_pin_and_ctrl_w_closes_it() {
 }
 
 /// WHY: a pin showed the pointing hand of a link over its whole surface,
-/// where a press moves the window as a title bar does, so the surface
-/// and its close control looked alike. The case hovers the pin's
-/// surface, then its close control, and waits for the cursor that X
-/// shows to change. Not covered: which cursor the surface shows, past
-/// differing from the close control's; Wayland, where the compositor
-/// draws the cursor.
+/// where a press moves the window as a title bar does, and then over its
+/// close control, where a native window's controls show the arrow. The
+/// case hovers the pin's surface, then its close control, and reads the
+/// arrow over both. Not covered: Wayland, where the compositor draws the
+/// cursor.
 #[test]
-fn a_pins_surface_shows_another_cursor_than_its_close_control() {
-    let case = "a_pins_surface_shows_another_cursor_than_its_close_control";
+fn a_pin_and_its_close_control_show_the_arrow() {
+    let case = "a_pin_and_its_close_control_show_the_arrow";
     if !enabled() {
         return;
     }
@@ -307,6 +306,7 @@ fn a_pins_surface_shows_another_cursor_than_its_close_control() {
     let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
     let root = conn.setup().roots[screen].root;
     paint_root(&conn, root, DESKTOP);
+    let arrow = x11::arrow(&conn, screen, (0, 0));
     let dir = tempfile::tempdir().unwrap();
     let daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
@@ -318,14 +318,19 @@ fn a_pins_surface_shows_another_cursor_than_its_close_control() {
     });
     daemon.settle();
     let (x, y, w, h) = rect(&conn, root, pin);
-    move_to(&conn, root, (x + w as i16 / 2, y + h as i16 / 2));
-    daemon.settle();
-    let surface = cursor(&conn);
-    // The close control: 22 px, 8 px in from the top-left corner.
-    move_to(&conn, root, (x + 8 + 11, y + 8 + 11));
-    daemon.until("the close control to show another cursor", || {
-        (cursor(&conn) != surface).then_some(())
-    });
+    // The surface, then the close control: 22 px, 8 px in from the
+    // top-left corner.
+    for (part, at) in [
+        ("surface", (x + w as i16 / 2, y + h as i16 / 2)),
+        ("close control", (x + 8 + 11, y + 8 + 11)),
+    ] {
+        move_to(&conn, root, at);
+        daemon.settle();
+        assert!(
+            x11::cursor(&conn) == arrow,
+            "the pin's {part} at {at:?} shows another cursor than the arrow"
+        );
+    }
 }
 
 /// WHY: a pin kept the size it opened at, so a capture scaled down to
@@ -408,20 +413,6 @@ fn the_wheel_and_keys_zoom_a_pin_from_its_corner() {
         ((x, y), true, (x, y), (x, y), (x, y), (x, y), (x, y, 64, 48)),
         "the pin wheeled in to {gw}x{gh} at ({gx}, {gy}) from 320x240 at ({x}, {y})"
     );
-}
-
-/// The cursor X shows: its size, hotspot, and ARGB pixels.
-fn cursor(conn: &RustConnection) -> (u16, u16, u16, u16, Vec<u32>) {
-    use x11rb::protocol::xfixes::ConnectionExt as _;
-    conn.xfixes_query_version(5, 0).unwrap().reply().unwrap();
-    let image = conn.xfixes_get_cursor_image().unwrap().reply().unwrap();
-    (
-        image.width,
-        image.height,
-        image.xhot,
-        image.yhot,
-        image.cursor_image,
-    )
 }
 
 /// The pixels of a pin's bottom edge, where its status pill shows,

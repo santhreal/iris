@@ -534,7 +534,6 @@ impl Notice {
             .flex()
             .items_center()
             .justify_center()
-            .cursor_pointer()
             .children(self.poster.as_ref().map(|(frame, _)| {
                 img(ImageSource::Render(frame.clone()))
                     .absolute()

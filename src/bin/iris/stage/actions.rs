@@ -586,7 +586,6 @@ fn pill(id: &'static str, label: &'static str) -> Stateful<Div> {
         .hover(|s| s.bg(theme::THUMB_BUTTON_HOVER))
         .active(|s| s.bg(theme::THUMB_BUTTON_PRESS))
         .shadow(theme::shadow_tight())
-        .cursor_pointer()
         .text_size(px(12.))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme::THUMB_INK)
@@ -609,8 +608,7 @@ fn disc(id: &'static str, glyph: Icon, active: bool) -> Stateful<Div> {
         .justify_center()
         .rounded_full()
         .bg(fill)
-        .shadow(theme::shadow_tight())
-        .cursor_pointer();
+        .shadow(theme::shadow_tight());
     let el = if active {
         el
     } else {

@@ -120,6 +120,63 @@ pub fn pixel(conn: &impl Connection, root: u32, spot: (i16, i16)) -> u32 {
     u32::from_le_bytes(image.data[..4].try_into().unwrap()) & 0xff_ffff
 }
 
+/// The cursor X shows: its width, height, hotspot, and ARGB pixels.
+pub type CursorImage = (u16, u16, u16, u16, Vec<u32>);
+
+/// The cursor X shows now.
+pub fn cursor(conn: &impl Connection) -> CursorImage {
+    use x11rb::protocol::xfixes::ConnectionExt as _;
+    conn.xfixes_query_version(5, 0).unwrap().reply().unwrap();
+    let image = conn.xfixes_get_cursor_image().unwrap().reply().unwrap();
+    (
+        image.width,
+        image.height,
+        image.xhot,
+        image.yhot,
+        image.cursor_image,
+    )
+}
+
+/// The arrow a control shows: the `left_ptr` cursor, loaded from the
+/// cursor theme as GPUI loads a cursor, read back over a 40 px window of
+/// the case's own at `at`, which then closes. Call it before a full-screen
+/// iris window covers `at`.
+pub fn arrow(conn: &impl Connection, screen: usize, at: (i16, i16)) -> CursorImage {
+    let root = conn.setup().roots[screen].root;
+    let database = x11rb::resource_manager::new_from_default(conn).unwrap();
+    let handle = x11rb::cursor::Handle::new(conn, screen, &database)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let left_ptr = handle.load_cursor(conn, "left_ptr").unwrap();
+    let window = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        at.0,
+        at.1,
+        40,
+        40,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new()
+            .override_redirect(1)
+            .background_pixel(0)
+            .cursor(left_ptr),
+    )
+    .unwrap();
+    conn.map_window(window).unwrap();
+    conn.sync().unwrap();
+    move_to(conn, root, (at.0 + 20, at.1 + 20));
+    conn.sync().unwrap();
+    let shown = cursor(conn);
+    conn.destroy_window(window).unwrap();
+    conn.sync().unwrap();
+    shown
+}
+
 /// The red, green, and blue of `rgb`, 0xRRGGBB.
 pub fn channels(rgb: u32) -> [u32; 3] {
     [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff]

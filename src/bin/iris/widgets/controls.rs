@@ -30,7 +30,6 @@ pub fn toggle(id: &'static str, on: bool) -> Stateful<Div> {
         .flex_shrink_0()
         .rounded_full()
         .bg(theme::alpha(theme::FG, 0.16))
-        .cursor_pointer()
         .child(ToggleFace { on })
 }
 
@@ -167,8 +166,7 @@ pub(super) fn styled_button(base: Stateful<Div>, style: ButtonStyle) -> Stateful
         .gap(px(6.))
         .rounded(px(theme::RADIUS_CONTROL))
         .text_size(px(theme::TEXT_BODY))
-        .whitespace_nowrap()
-        .cursor_pointer();
+        .whitespace_nowrap();
     match style {
         ButtonStyle::Bordered => base
             .bg(theme::CONTROL_BG)
@@ -246,7 +244,6 @@ pub fn segmented(
             .flex_shrink_0()
             .items_center()
             .justify_center()
-            .cursor_pointer()
             .rounded(px(theme::RADIUS_CONTROL))
             .text_color(if on { theme::ACCENT_INK } else { theme::FG_DIM });
         let mut cell = if on {

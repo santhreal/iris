@@ -138,7 +138,6 @@ fn icon_button_inked(
         .items_center()
         .justify_center()
         .rounded(px(theme::RADIUS_CONTROL))
-        .cursor_pointer()
         .flex_shrink_0();
     let el = if active {
         el.bg(theme::ACCENT)
@@ -167,7 +166,6 @@ pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Di
         .flex()
         .items_center()
         .justify_center()
-        .cursor_pointer()
         .hover(|s| s.bg(theme::BG_ELEV))
         .active(|s| s.bg(theme::OVERLAY_CHIP_PRESS))
         .child(icons::icon(glyph, theme::FG, theme::ICON_ROW))

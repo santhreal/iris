@@ -134,9 +134,7 @@ impl MenuItem {
             // toast card's drag tracking, the editor's toolbar buttons).
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         if !self.disabled {
-            row = row
-                .cursor_pointer()
-                .hover(|s| s.bg(theme::ACCENT).text_color(theme::ACCENT_INK));
+            row = row.hover(|s| s.bg(theme::ACCENT).text_color(theme::ACCENT_INK));
         }
         if lit {
             row = row.bg(theme::ACCENT);
@@ -216,7 +214,6 @@ pub fn popup_button(
         .text_size(px(theme::TEXT_BODY))
         .text_color(theme::FG)
         .whitespace_nowrap()
-        .cursor_pointer()
         .child(label)
         .child(icons::icon(Icon::ChevronUpDown, theme::FG_DIM, 12.0))
 }
