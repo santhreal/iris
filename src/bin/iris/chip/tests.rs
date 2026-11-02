@@ -1,19 +1,25 @@
-//! WHY: the class closed here is "the chip lands where it hides or gets
-//! recorded": inside a rect it could clear (on X11 a region recording
-//! then contains the chip), on a monitor the rect is not on, past the
-//! edge of its monitor, or over a strip no monitor shows. The chip's
-//! open and the X11 follower both place through `origin`, so these
-//! cases hold for every placement. Not covered: a window manager moving
-//! the chip after placement, and monitors that change mid-recording.
+//! WHY: the class closed here is "the chip lands where it hides, gets
+//! recorded, or stands off the rect's edge": inside a rect it could
+//! clear (on X11 a region recording then contains the chip), on a
+//! monitor the rect is not on, past the edge of its monitor, over a strip
+//! no monitor shows, or with its pill in from the right edge of the rect
+//! it sits above or below, where the window's bleed put it. The chip's
+//! open and the X11 follower both place through `origin`, so these cases
+//! hold for every placement. Not covered: a window manager moving the
+//! chip after placement, and monitors that change mid-recording.
 
 use iris_lib::capture::WinRect;
 
-use super::{origin, window_size};
+use super::{origin, window_size, CHIP_BLEED as B};
 
 /// The window of a chip with a mic button, the widest.
 const WIN: (f32, f32) = window_size(Some(true));
 const WIN_W: f32 = WIN.0;
 const WIN_H: f32 = WIN.1;
+/// The window's left edge when its pill's right edge is at `right`.
+const fn flush(right: f32) -> f32 {
+    right - WIN_W + B
+}
 
 const fn rect(x: i32, y: i32, width: u32, height: u32) -> WinRect {
     WinRect {
@@ -33,7 +39,7 @@ const MONITORS: [WinRect; 2] = [rect(0, 0, 1000, 1000), rect(1000, 300, 600, 700
 fn above_the_rect_when_its_monitor_has_room() {
     assert_eq!(
         origin(Some(rect(300, 300, 500, 400)), &MONITORS, 1.0, WIN),
-        (800.0 - WIN_W, 300.0 - WIN_H)
+        (flush(800.0), 300.0 - WIN_H)
     );
 }
 
@@ -42,12 +48,12 @@ fn room_above_is_exact_at_the_boundary() {
     let top = WIN_H as i32;
     assert_eq!(
         origin(Some(rect(300, top, 500, 400)), &MONITORS, 1.0, WIN),
-        (800.0 - WIN_W, 0.0)
+        (flush(800.0), 0.0)
     );
     // One pixel less and the chip no longer fits above: it goes below.
     assert_eq!(
         origin(Some(rect(300, top - 1, 500, 400)), &MONITORS, 1.0, WIN),
-        (800.0 - WIN_W, (top - 1 + 400) as f32)
+        (flush(800.0), (top - 1 + 400) as f32)
     );
 }
 
@@ -55,7 +61,7 @@ fn room_above_is_exact_at_the_boundary() {
 fn below_the_rect_at_the_top_edge() {
     assert_eq!(
         origin(Some(rect(300, 0, 500, 400)), &MONITORS, 1.0, WIN),
-        (800.0 - WIN_W, 400.0)
+        (flush(800.0), 400.0)
     );
 }
 
@@ -64,9 +70,10 @@ fn room_below_is_exact_at_the_boundary() {
     let bottom = 1000 - WIN_H as u32;
     assert_eq!(
         origin(Some(rect(300, 0, 500, bottom)), &MONITORS, 1.0, WIN),
-        (800.0 - WIN_W, bottom as f32)
+        (flush(800.0), bottom as f32)
     );
-    // One pixel taller and neither side fits: inside the top edge.
+    // One pixel taller and neither side fits: inside the top edge, the
+    // pill CHIP_BLEED in from the rect's right edge.
     assert_eq!(
         origin(Some(rect(300, 0, 500, bottom + 1)), &MONITORS, 1.0, WIN),
         (800.0 - WIN_W, 0.0)
@@ -91,28 +98,39 @@ fn a_rect_past_its_monitor_top_keeps_the_chip_on_the_monitor() {
 
 #[test]
 fn stays_on_the_monitor_horizontally() {
-    // Narrower than the chip at the right edge: the chip shifts left
-    // instead of spilling onto the next monitor.
+    // Narrower than the chip at the right edge: the pill shifts left to
+    // end at the monitor's edge instead of spilling onto the next
+    // monitor; only the transparent bleed reaches past it.
     assert_eq!(
         origin(Some(rect(900, 400, 90, 200)), &MONITORS, 1.0, WIN).0,
-        1000.0 - WIN_W
+        flush(1000.0)
     );
-    // Narrower than the chip at the left edge: the chip starts at it.
+    // Narrower than the chip at the left edge: the pill starts at it.
     assert_eq!(
         origin(Some(rect(0, 400, 90, 200)), &MONITORS, 1.0, WIN).0,
-        0.0
+        -B
+    );
+}
+
+#[test]
+fn a_rect_narrower_than_the_pill_starts_it_at_the_rect_left_edge() {
+    // Clear of the monitor's edges: the pill starts where the rect does
+    // and overhangs its right edge, not its left.
+    assert_eq!(
+        origin(Some(rect(300, 400, 90, 200)), &MONITORS, 1.0, WIN).0,
+        300.0 - B
     );
 }
 
 #[test]
 fn a_monitor_narrower_than_the_chip_pins_it_to_its_left_edge() {
-    // A 100px-wide monitor right of the primary: the chip overhangs its
+    // A 100px-wide monitor right of the primary: the pill overhangs its
     // right edge instead of spilling left onto the primary.
     let monitors = [rect(0, 0, 1000, 1000), rect(1000, 0, 100, 1000)];
-    const { assert!(WIN_W > 100.0) };
+    const { assert!(WIN_W - 2.0 * B > 100.0) };
     assert_eq!(
         origin(Some(rect(1010, 400, 50, 200)), &monitors, 1.0, WIN).0,
-        1000.0
+        1000.0 - B
     );
 }
 
@@ -122,7 +140,7 @@ fn the_rect_monitor_bounds_the_chip_not_the_primary() {
     // goes below it, on the right monitor.
     assert_eq!(
         origin(Some(rect(1100, 300, 400, 300)), &MONITORS, 1.0, WIN),
-        (1500.0 - WIN_W, 600.0)
+        (flush(1500.0), 600.0)
     );
 }
 
@@ -130,7 +148,7 @@ fn the_rect_monitor_bounds_the_chip_not_the_primary() {
 fn a_rect_centered_on_no_monitor_uses_the_primary() {
     assert_eq!(
         origin(Some(rect(1100, 0, 400, 200)), &MONITORS, 1.0, WIN),
-        (1000.0 - WIN_W, 200.0)
+        (flush(1000.0), 200.0)
     );
 }
 
@@ -144,7 +162,7 @@ fn scale_maps_root_pixels_to_logical() {
     let monitors = [rect(0, 0, 2000, 2000)];
     assert_eq!(
         origin(Some(rect(600, 600, 1000, 800)), &monitors, 2.0, WIN),
-        (800.0 - WIN_W, 300.0 - WIN_H)
+        (flush(800.0), 300.0 - WIN_H)
     );
 }
 
@@ -164,7 +182,7 @@ fn a_chip_without_a_mic_button_is_narrower_and_ends_where_the_rect_does() {
     assert_eq!(narrow.1, WIN_H);
     assert_eq!(
         origin(Some(rect(300, 300, 500, 400)), &MONITORS, 1.0, narrow),
-        (800.0 - narrow.0, 300.0 - narrow.1)
+        (800.0 - narrow.0 + B, 300.0 - narrow.1)
     );
 }
 

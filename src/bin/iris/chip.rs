@@ -1,4 +1,4 @@
-//! Recording chip: the frosted badge pinned above the recorded area.
+//! Recording chip: the badge pinned above the recorded area.
 //!
 //! A small transparent popup with the record dot, a tabular elapsed
 //! timer, the pause and stop buttons, and the mic button when the
@@ -194,10 +194,11 @@ pub fn open(
 }
 
 /// Logical origin of the chip window for a recording of `rect` (root
-/// pixels; `None`: the primary monitor). The pill sits above the rect's
-/// top-right corner, below the rect when its monitor has no room above,
-/// and inside the rect's top edge when neither side fits: it stays on
-/// the rect's monitor and out of the rect whenever the monitor allows.
+/// pixels; `None`: the primary monitor). The pill sits CHIP_BLEED above
+/// the rect with its right edge on the rect's, CHIP_BLEED below it when
+/// its monitor has no room above, and inside the rect's top-right corner,
+/// CHIP_BLEED in from its edges, when neither side fits: it stays on the
+/// rect's monitor and out of the rect whenever the monitor allows.
 /// `monitors` are root pixels, primary first; with none, the rect
 /// bounds the chip. `scale` is root pixels per logical pixel, and `win`
 /// the chip window's logical size (`window_size`).
@@ -227,18 +228,27 @@ pub(crate) fn origin(
         });
     let (x, y, w, h) = logical(&rect);
     let (mx, my, mw, mh) = logical(rect.host(monitors).unwrap_or(&rect));
-    // Right-aligned to the rect, never left of it, then kept on the
-    // monitor: min before max, so a monitor narrower than the chip
-    // pins it to the monitor's left edge.
-    let left = (x + w - win_w).max(x).min(mx + mw - win_w).max(mx);
     let top = if y - win_h >= my {
-        y - win_h
+        Some(y - win_h)
     } else if y + h + win_h <= my + mh {
-        y + h
+        Some(y + h)
     } else {
-        y.min(my + mh - win_h).max(my)
+        None
     };
-    (left, top)
+    // The pill, not the window, holds to the rect and the monitor: past
+    // the pill the window is transparent but for the shadow's tail.
+    // Right-aligned to the rect, never left of it, then kept on the
+    // monitor: min before max, so a monitor narrower than the pill pins
+    // it to the monitor's left edge. Inside the rect, the pill keeps
+    // CHIP_BLEED from the rect's edges and the monitor's.
+    let inset = if top.is_some() { 0.0 } else { CHIP_BLEED };
+    let pill_w = win_w - 2.0 * CHIP_BLEED;
+    let pill_left = (x + w - inset - pill_w)
+        .max(x + inset)
+        .min(mx + mw - inset - pill_w)
+        .max(mx + inset);
+    let top = top.unwrap_or_else(|| y.min(my + mh - win_h).max(my));
+    (pill_left - CHIP_BLEED, top)
 }
 
 /// Close the chip window, if open, once the current effect cycle ends:
