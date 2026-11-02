@@ -118,18 +118,29 @@ impl Overlay {
         if f.card.letterboxed() {
             card = card.bg(theme::alpha(theme::BG_ELEV, e.clamp(0.0, 1.0)));
         }
-        div().size_full().opacity(opacity).child(card).child(
-            // The image rounds itself: a parent's rounded overflow clip
-            // is a rectangle.
-            img(ImageSource::Render(f.img.clone()))
-                .absolute()
-                .left(px(ix))
-                .top(px(iy))
-                .w(px(iw.max(1.0)))
-                .h(px(ih.max(1.0)))
-                .object_fit(ObjectFit::Fill)
-                .rounded(px(f.card.image_radius() * e)),
-        )
+        div()
+            .size_full()
+            .opacity(opacity)
+            .child(card)
+            .child(
+                // The image rounds itself: a parent's rounded overflow
+                // clip is a rectangle.
+                img(ImageSource::Render(f.img.clone()))
+                    .absolute()
+                    .left(px(ix))
+                    .top(px(iy))
+                    .w(px(iw.max(1.0)))
+                    .h(px(ih.max(1.0)))
+                    .object_fit(ObjectFit::Fill)
+                    .rounded(px(f.card.image_radius() * e)),
+            )
+            .child(
+                stage::edge(stage::RADIUS * e, e)
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(w.max(1.0)))
+                    .h(px(h.max(1.0))),
+            )
     }
 
     /// Open the landed toast and park this window once the toast is on

@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{click, move_to, paint_root, pixel, rect, windows_of};
+use x11::{channels, click, move_to, paint_root, pixel, rect, windows_of};
 
 /// The root window's colour, 0xRRGGBB.
 const DESKTOP: u32 = 0x5b7fa6;
@@ -94,10 +94,6 @@ fn session(case: &str) -> Option<Session> {
 
 fn at(origin: (i16, i16), spot: (i16, i16)) -> (i16, i16) {
     (origin.0 + spot.0, origin.1 + spot.1)
-}
-
-fn channels(rgb: u32) -> [u32; 3] {
-    [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff]
 }
 
 /// Capture the screen with the pointer off the toast's corner, and

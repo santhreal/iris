@@ -56,15 +56,20 @@ pub const SELECTION_RIM: Rgba = alpha(BLACK, 0.35);
 pub const WINDOW_PICK: Rgba = alpha(ACCENT, 0.18);
 /// The fill of an overlay readout's tag.
 pub const READOUT_FILL: Rgba = alpha(BLACK, 0.62);
-/// The toast's hover actions: a scrim over the capture, and light
-/// buttons on it with dark labels and glyphs. The status line shares
-/// the buttons' register.
+/// The toast's hover actions: a scrim over the capture, and opaque
+/// light buttons on it with dark labels and glyphs, so no part of the
+/// capture shows through a label. The status line uses the buttons'
+/// fill.
 pub const THUMB_SCRIM: Rgba = alpha(BLACK, 0.30);
-pub const THUMB_BUTTON: Rgba = alpha(WHITE, 0.90);
+pub const THUMB_BUTTON: Rgba = rgb(0.95, 0.95, 0.96);
 pub const THUMB_BUTTON_HOVER: Rgba = WHITE;
-pub const THUMB_BUTTON_PRESS: Rgba = alpha(WHITE, 0.72);
+pub const THUMB_BUTTON_PRESS: Rgba = rgb(0.84, 0.84, 0.86);
 pub const THUMB_INK: Rgba = rgb(0.11, 0.11, 0.12);
-pub const THUMB_STATUS: Rgba = alpha(WHITE, 0.92);
+/// The toast card's outline, one device pixel inside its edge: mid-gray
+/// at 24%, which darkens a light capture as black at 12% would and
+/// lightens a dark one as white at 10% would, so the card keeps an edge
+/// over a desktop of its own color.
+pub const CARD_EDGE: Rgba = alpha(rgb(0.5, 0.5, 0.5), 0.24);
 
 /// The library card's hover actions: dark chips over the capture,
 /// opaque BG_ELEV under the pointer and this lighter gray on a press,

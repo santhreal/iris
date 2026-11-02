@@ -553,7 +553,7 @@ impl Notice {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(icon(Icon::Play, theme::THUMB_STATUS, PLAY_GLYPH)),
+                    .child(icon(Icon::Play, theme::FG, PLAY_GLYPH)),
             )
             .child(
                 div()

@@ -20,6 +20,7 @@ Dimensions and styling:
 - The thumbnail scales aspect-true to fit within 200×140 logical pixels. Its pixels are box-filtered from the full capture to the thumbnail's size in device pixels: on a 2x display the card holds up to 400×280 pixels of the capture.
 - The card is at least 154×88 logical pixels, the room its hover actions need. A thumbnail narrower or shorter than that is centered on the card's fill. The capture flight lands the thumbnail on its place on the card while the fill grows around it.
 - Corner radius is 12.0 logical pixels.
+- A one device pixel outline of mid-gray at 24% opacity runs inside the card's edge. It darkens a light capture and lightens a dark one, so the card keeps an edge over a desktop of the same color. The capture flight draws the same outline, fading in with the card's travel.
 - Edge margin is 12.0 logical pixels from the work area's edges.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.
 - Entrance: Slides in from beyond the work area's edge over 280 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
@@ -78,14 +79,14 @@ A 22 logical pixel round button with a 12 pixel glyph sits 6 logical pixels in f
 - Bottom left, **Show in Folder** (folder glyph; **Show in Finder** on macOS, **Show in File Explorer** on Windows): Reveals the file in the desktop file manager.
 - Bottom right, **Move to Trash** (trash glyph): Moves the PNG file to the system trash, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast ([library.md#move-to-trash](library.md#move-to-trash)).
 
-The buttons are white at 90% opacity with dark labels and glyphs.
+The buttons are opaque light gray (#F2F2F5), white under the pointer, with dark labels and glyphs.
 
 A pinned card shows its accent **Keep Open** button while the other actions are hidden.
 
 ## Status Line
 
 When an action produces feedback, a status line takes the place of the hover actions, centered over the card's lower edge:
-- Renders 11 pixel medium-weight dark text, centered, on a white pill at 92% opacity.
+- Renders 11 pixel medium-weight dark text, centered, on a pill of the buttons' light gray.
 - Shows while the pointer is off the card, while OCR runs, and for 1.6 seconds after it was set; after that, the pointer over the card brings the hover actions back.
 - Re-arms the auto-dismiss timer for `toast_duration_ms` so the message remains readable.
 - Displays completion feedback (such as `"Copied image"` or `"Copied file"`) or error descriptions (such as `"Could not move <file> to the Trash: <reason>"`).

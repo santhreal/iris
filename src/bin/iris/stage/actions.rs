@@ -655,7 +655,7 @@ pub(super) fn status_band(text: SharedString) -> Div {
                 .px(px(10.))
                 .py(px(5.))
                 .rounded(px(theme::RADIUS_CONTROL + 2.0))
-                .bg(theme::THUMB_STATUS)
+                .bg(theme::THUMB_BUTTON)
                 .shadow(theme::shadow_tight())
                 .text_size(px(theme::TEXT_SMALL))
                 .font_weight(FontWeight::MEDIUM)

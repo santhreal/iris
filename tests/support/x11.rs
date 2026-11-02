@@ -120,6 +120,11 @@ pub fn pixel(conn: &impl Connection, root: u32, spot: (i16, i16)) -> u32 {
     u32::from_le_bytes(image.data[..4].try_into().unwrap()) & 0xff_ffff
 }
 
+/// The red, green, and blue of `rgb`, 0xRRGGBB.
+pub fn channels(rgb: u32) -> [u32; 3] {
+    [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff]
+}
+
 /// Paint the root `rgb`, behind every window, as a desktop does: a root
 /// pixmap of that colour, named in `_XROOTPMAP_ID`. A compositing
 /// manager such as picom paints the root from that pixmap, and paints

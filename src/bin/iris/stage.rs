@@ -156,6 +156,24 @@ impl Card {
 /// The card's least size: the room its hover actions need.
 pub(super) const CARD_MIN: (f32, f32) = actions::ACTIONS_MIN;
 
+/// The card's outline with corners of `radius`, its color scaled by
+/// `visibility` as the card's shadow is. The caller places it over the
+/// card's rect. Its border is half a logical pixel, which gpui draws one
+/// device pixel wide at every scale.
+pub(super) fn edge(radius: f32, visibility: f32) -> Div {
+    let mut ring = div()
+        .absolute()
+        .rounded(px(radius))
+        .border_color(theme::alpha(
+            theme::CARD_EDGE,
+            theme::CARD_EDGE.a * visibility.clamp(0.0, 1.0),
+        ));
+    let width = Some(AbsoluteLength::from(px(0.5)));
+    let widths = &mut ring.style().border_widths;
+    (widths.top, widths.right, widths.bottom, widths.left) = (width, width, width, width);
+    ring
+}
+
 pub struct ToastStage {
     pub(super) path: PathBuf,
     pub(super) thumb: Thumb,
@@ -506,6 +524,7 @@ impl Render for ToastStage {
                                 .rounded(px(fit.image_radius())),
                         ),
                 );
+                card = card.child(edge(RADIUS, 1.0).inset_0());
 
                 let status_age = self.status_at.elapsed();
                 let status = self
