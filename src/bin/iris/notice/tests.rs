@@ -90,26 +90,26 @@ fn an_error_becomes_one_paragraph() {
     assert!(!p.contains(['\n', '\r', '\t']));
 }
 
+/// WHY: the card is as tall as its text and buttons and no taller,
+/// with the tail under a detail that gives its baseline the room the
+/// title's caps have above. The class closed is "a card's text sits low
+/// in it, or the card leaves slack under it". Not covered: where a
+/// platform's rasterizer puts the caps.
 #[test]
 fn card_holds_its_text_and_buttons_with_no_slack() {
-    let mut last = 0.0;
-    for lines in 0..=MAX_LINES {
-        let inner = card_height(lines) - 2.0 * (BORDER + PAD);
-        let text = match lines {
-            0 => TITLE_LINE,
-            n => TITLE_LINE + TITLE_GAP + n as f32 * DETAIL_LINE,
-        };
-        assert_eq!(inner, text.max(BUTTON), "{lines} lines");
-        assert!(card_height(lines) > last, "height grows with {lines} lines");
-        last = card_height(lines);
+    for (lines, want) in [(0, 50.0), (1, 68.0), (2, 83.0), (3, 98.0)] {
+        assert_eq!(card_height(lines), want, "{lines} lines");
     }
+    assert_eq!(MAX_LINES, 3, "a fourth line needs its height here");
 }
 
 /// WHY: a saved recording's card leads with its first frame, not the
 /// badge. The class closed is "the poster pushes the card out of the
 /// size it was measured for": the name must fit the column beside the
-/// poster and both buttons, and the poster must fit the one-line card,
-/// so the card is no taller than the text it holds.
+/// poster and both buttons, and the poster must fill the one-line
+/// card's height, so the card is no taller than the text it holds and
+/// the title's cap top stands as far inside the frame as the detail's
+/// baseline.
 #[test]
 fn detail_column_fits_a_recording_name_beside_its_poster_and_both_buttons() {
     // The longest name reserve_recording_path makes, but the millis
@@ -122,9 +122,11 @@ fn detail_column_fits_a_recording_name_beside_its_poster_and_both_buttons() {
         "the reveal button narrows the column"
     );
     assert_eq!(lead(Kind::Saved, true), POSTER_W);
-    assert!(
-        POSTER_H <= card_height(1) - 2.0 * (BORDER + PAD),
-        "a {POSTER_H}px poster in a one-line card"
+    assert_eq!((POSTER_W, POSTER_H), (67.0, 42.0));
+    assert_eq!(
+        POSTER_H,
+        card_height(1) - 2.0 * (BORDER + PAD),
+        "a one-line card"
     );
 }
 

@@ -54,9 +54,10 @@ const GLYPH: f32 = 14.0;
 const BADGE: f32 = TITLE_LINE;
 const BADGE_FILL: f32 = 0.18;
 /// A saved recording's first frame, in the badge's place: as tall as
-/// the title and one detail line, at 16:10.
-const POSTER_H: f32 = TITLE_LINE + DETAIL_LINE;
-const POSTER_W: f32 = 62.0;
+/// the title, one detail line, and the tail under it, at 16:10, so the
+/// text's cap top and baseline stand equally far inside it.
+const POSTER_H: f32 = TITLE_LINE + DETAIL_LINE + DETAIL_TAIL;
+const POSTER_W: f32 = 67.0;
 /// The play disc centred on the poster, and its glyph.
 const PLAY: f32 = 20.0;
 const PLAY_GLYPH: f32 = 10.0;
@@ -71,6 +72,11 @@ const GAP: f32 = 10.0;
 const TITLE_LINE: f32 = BUTTON;
 const TITLE_GAP: f32 = 0.0;
 const DETAIL_LINE: f32 = 15.0;
+/// Room under the last detail line. The 13px title's cap top sits
+/// 6.5px into its 24px line and the 11px detail's baseline 3.5px above
+/// the bottom of its 15px line, so 3px more under the detail gives the
+/// text as much room below its baseline as above its caps.
+const DETAIL_TAIL: f32 = 3.0;
 /// A longer detail ends in an ellipsis on its last line.
 const MAX_LINES: usize = 3;
 /// A failure stays at least this long: it is read, not glanced at.
@@ -327,12 +333,12 @@ fn buttons(kind: Kind, file: bool) -> usize {
     usize::from(file) + usize::from(kind == Kind::Update) + usize::from(kind != Kind::Guide)
 }
 
-/// Card height for `lines` detail lines.
+/// Card height for `lines` detail lines, with the tail under the last.
 fn card_height(lines: usize) -> f32 {
     let text = if lines == 0 {
         TITLE_LINE
     } else {
-        TITLE_LINE + TITLE_GAP + lines as f32 * DETAIL_LINE
+        TITLE_LINE + TITLE_GAP + lines as f32 * DETAIL_LINE + DETAIL_TAIL
     };
     2.0 * (BORDER + PAD) + text.max(BUTTON)
 }
