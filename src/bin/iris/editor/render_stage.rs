@@ -23,42 +23,13 @@ impl Editor {
     ) -> impl IntoElement {
         let (sx, sy, sw, sh) = stage_rect;
 
-        // Stage: the image and everything drawn on it.
-        let mut stage = div()
-            .id("stage")
-            .absolute()
-            .left(px(sx))
-            .top(px(sy))
-            .w(px(sw))
-            .h(px(sh))
-            .rounded(px(morph_radius))
-            .overflow_hidden()
-            .border_1()
-            // The toast has no border and one shadow; the stage's
-            // hairline and contact shadow fade in with the chrome so
-            // the flying card never gains edges mid-flight.
-            .border_color(theme::alpha(theme::HAIRLINE, 0.09 * chrome))
-            .shadow(vec![
-                BoxShadow {
-                    color: hsla(0.0, 0.0, 0.0, 0.35),
-                    offset: point(px(0.), px(10.)),
-                    blur_radius: px(24.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
-                BoxShadow {
-                    color: hsla(0.0, 0.0, 0.0, 0.22 * chrome),
-                    offset: point(px(0.), px(2.)),
-                    blur_radius: px(6.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
-            ])
-            .child(
-                img(ImageSource::Render(self.base_img.clone()))
-                    .size_full()
-                    .rounded(px(morph_radius)),
-            );
+        // Stage: the image and everything drawn on it, filling the rect
+        // the view maps the image to.
+        let mut stage = div().id("stage").size_full().overflow_hidden().child(
+            img(ImageSource::Render(self.base_img.clone()))
+                .size_full()
+                .rounded(px(morph_radius)),
+        );
 
         // Committed vector actions + blur patches + text.
         let actions = Rc::clone(&self.actions);
@@ -493,6 +464,36 @@ impl Editor {
                 }),
             );
 
-        stage
+        // The frame: the hairline ring and the shadow, a pixel outside
+        // the stage, so no captured pixel lies under the ring and the
+        // image is not squeezed by it. The toast has no border and one
+        // shadow; the hairline and contact shadow fade in with the
+        // chrome so the flying card never gains edges mid-flight.
+        div()
+            .absolute()
+            .left(px(sx - 1.0))
+            .top(px(sy - 1.0))
+            .w(px(sw + 2.0))
+            .h(px(sh + 2.0))
+            .rounded(px(morph_radius + 1.0))
+            .border_1()
+            .border_color(theme::alpha(theme::HAIRLINE, 0.09 * chrome))
+            .shadow(vec![
+                BoxShadow {
+                    color: hsla(0.0, 0.0, 0.0, 0.35),
+                    offset: point(px(0.), px(10.)),
+                    blur_radius: px(24.),
+                    spread_radius: px(0.),
+                    inset: false,
+                },
+                BoxShadow {
+                    color: hsla(0.0, 0.0, 0.0, 0.22 * chrome),
+                    offset: point(px(0.), px(2.)),
+                    blur_radius: px(6.),
+                    spread_radius: px(0.),
+                    inset: false,
+                },
+            ])
+            .child(stage)
     }
 }

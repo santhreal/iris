@@ -499,7 +499,9 @@ impl Render for Editor {
         let mut chrome = 1.0f32;
         let mut topbar = 1.0f32;
         let mut options = 1.0f32;
-        let mut morph_radius = 6.0f32;
+        // At rest the image is square: every pixel of the capture shows,
+        // as the saved file has them.
+        let mut morph_radius = 0.0f32;
         if let Some(from) = self.morph {
             // The morph holds at its start, the window clear around the
             // source rect, until there is a capture to grow out of it.
@@ -526,7 +528,7 @@ impl Render for Editor {
             chrome = (t * 2.2).min(1.0);
             topbar = ((t - 0.08) * 2.2).clamp(0.0, 1.0);
             options = ((t - 0.18) * 2.2).clamp(0.0, 1.0);
-            morph_radius = 12.0 - 6.0 * e;
+            morph_radius = (12.0 * (1.0 - e)).max(0.0);
             if t >= 1.0 {
                 self.morph = None;
                 self.morph_started = None;
