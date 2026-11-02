@@ -49,17 +49,17 @@ documents! {
     ChevronDown => r##"<path d="M5.4 7L9 10.6L12.6 7"/>"##,
     Check => r##"<path d="M4.4 9.6L7.8 13L13.6 5.2"/>"##,
     Copy => r##"<rect x="6.8" y="3.6" width="7.6" height="7.6" rx="1.6"/><path d="M11.2 14.4L5.2 14.4A1.6 1.6 0 0 1 3.6 12.8L3.6 6.8"/>"##,
-    Close => r##"<path d="M5.2 5.2L12.8 12.8"/><path d="M12.8 5.2L5.2 12.8"/>"##,
+    Close => r##"<path d="M4.6 4.6L13.4 13.4"/><path d="M13.4 4.6L4.6 13.4"/>"##,
     Mic => r##"<g transform="matrix(0.9 0 0 0.9 0.9 0.9)" stroke-width="1.78"><rect x="6.4" y="2.4" width="5.2" height="8.6" rx="2.6" fill="#fff" stroke="none"/><path d="M4.4 9A4.6 4.6 0 0 0 13.6 9"/><path d="M9 13.6L9 15.6"/></g>"##,
     Stroke1 => r##"<path d="M3.8 9L14.2 9" stroke-width="1.4"/>"##,
     Stroke2 => r##"<path d="M4.4 9L13.6 9" stroke-width="2.6"/>"##,
     Stroke3 => r##"<path d="M5.2 9L12.8 9" stroke-width="4.2"/>"##,
-    Cursor => r##"<path d="M5 3L5 15L8.4 11.6L10.6 15.8L12.4 14.8L10.2 10.6L14.2 10.2Z" fill="#fff" stroke="none"/>"##,
+    Cursor => r##"<path d="M4.4 2.6L4.4 14.6L7.8 11.2L10 15.4L11.8 14.4L9.6 10.2L13.6 9.8Z" fill="#fff" stroke="none"/>"##,
     Crop => r##"<path d="M5.6 3.2L5.6 12.4L14.8 12.4"/><path d="M3.2 5.6L12.4 5.6L12.4 14.8"/>"##,
     Viewfinder => r##"<path d="M2.8 7L2.8 4.8A2 2 0 0 1 4.8 2.8L7 2.8"/><path d="M11 2.8L13.2 2.8A2 2 0 0 1 15.2 4.8L15.2 7"/><path d="M2.8 11L2.8 13.2A2 2 0 0 0 4.8 15.2L7 15.2"/><path d="M15.2 11L15.2 13.2A2 2 0 0 1 13.2 15.2L11 15.2"/><circle cx="9" cy="9" r="2.4" fill="#fff" stroke="none"/>"##,
     Gear => r##"<path d="M7.28 4.73L7.67 2.74A6.4 6.4 0 0 1 10.33 2.74L10.72 4.73A4.6 4.6 0 0 1 11.83 5.38L13.76 4.72A6.4 6.4 0 0 1 15.09 7.02L13.56 8.36A4.6 4.6 0 0 1 13.56 9.64L15.09 10.98A6.4 6.4 0 0 1 13.76 13.28L11.83 12.62A4.6 4.6 0 0 1 10.72 13.27L10.33 15.26A6.4 6.4 0 0 1 7.67 15.26L7.28 13.27A4.6 4.6 0 0 1 6.17 12.62L4.24 13.28A6.4 6.4 0 0 1 2.91 10.98L4.44 9.64A4.6 4.6 0 0 1 4.44 8.36L2.91 7.02A6.4 6.4 0 0 1 4.24 4.72L6.17 5.38A4.6 4.6 0 0 1 7.28 4.73Z"/><circle cx="9" cy="9" r="2"/>"##,
-    Folder => r##"<path d="M3.2 5.2L7.2 5.2L8.8 7.2L14.8 7.2L14.8 14L3.2 14Z"/>"##,
-    Pin => r##"<path d="M8.5 9.5L3.5 14.5"/><path d="M6 7L11 12" stroke-width="1.8"/><path d="M8.5 9.5L13 5" stroke-width="3"/><path d="M11.5 2.5L15.5 6.5"/>"##,
+    Folder => r##"<path d="M3.2 4.6L7.2 4.6L8.8 6.6L14.8 6.6L14.8 13.4L3.2 13.4Z"/>"##,
+    Pin => r##"<path d="M8 10L3 15"/><path d="M5.5 7.5L10.5 12.5" stroke-width="1.8"/><path d="M8 10L12.5 5.5" stroke-width="3"/><path d="M11 3L15 7"/>"##,
     Pause => r##"<path d="M6.2 4.9L6.2 13.1" stroke-width="3"/><path d="M11.8 4.9L11.8 13.1" stroke-width="3"/>"##,
     MicOff => r##"<g transform="matrix(0.9 0 0 0.9 0.9 0.9)" stroke-width="1.78"><mask id="m"><rect width="18" height="18" fill="#fff" stroke="none"/><path d="M3.4 3.4L14.6 14.6" stroke="#000" stroke-width="4.9"/></mask><g mask="url(#m)"><rect x="6.4" y="2.4" width="5.2" height="8.6" rx="2.6" fill="#fff" stroke="none"/><path d="M4.4 9A4.6 4.6 0 0 0 13.6 9"/><path d="M9 13.6L9 15.6"/></g><path d="M3.4 3.4L14.6 14.6"/></g>"##,
     Counter => r##"<circle cx="9" cy="9" r="6.4"/><path d="M7.6 7.2L9.2 5.9V12.2" stroke-width="1.6"/>"##,
@@ -81,16 +81,17 @@ documents! {
     CaptionMaximize => r##"<rect x="4.5" y="4.5" width="9" height="9" rx="1" stroke-width="1"/>"##,
     CaptionRestore => r##"<rect x="4.5" y="6.5" width="7" height="7" rx="1" stroke-width="1"/><path d="M6.5 4.5L12.5 4.5A1 1 0 0 1 13.5 5.5L13.5 11.5" stroke-width="1"/>"##,
     CaptionClose => r##"<path d="M4.5 4.5L13.5 13.5" stroke-width="1"/><path d="M13.5 4.5L4.5 13.5" stroke-width="1"/>"##,
-    Screen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><rect x="5" y="6" width="8" height="6" rx="0.6" fill="#fff" stroke="none"/>"##,
+    Screen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><rect x="6" y="7" width="6" height="4" rx="0.7" fill="#fff" stroke="none"/>"##,
     Selection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/>"##,
     RecordScreen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
     RecordSelection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
 }
 
-// WHY: the class closed here is "an icon draws outside its box or not
-// at all": every variant's document parses, draws ink, and leaves the
-// box's edge clear, so no stroke is cut off. Not covered: how a glyph
-// reads, which the screenshots show (`tests/glyphs.rs` reads overlaps
-// on screen).
+// WHY: the classes closed here are "an icon draws outside its box or
+// not at all": every variant's document parses, draws ink, and leaves
+// the box's edge clear, so no stroke is cut off; and "a glyph sits off
+// its box's centre", which a button centres by its box. Not covered:
+// how a glyph reads, which the screenshots show (`tests/glyphs.rs`
+// reads overlaps on screen).
 #[cfg(test)]
 mod tests;

@@ -41,7 +41,9 @@ pub(super) const DIVIDER_W: f32 = 9.0;
 pub(super) const BAR_H: f32 = BUTTON + 2.0 * PAD + 2.0;
 /// The distance from the monitor's bottom edge to the bar's.
 pub(super) const BAR_LIFT: f32 = 64.0;
-pub(super) const BAR_RADIUS: f32 = 14.0;
+/// Concentric with the buttons' `RADIUS_SM` 7 px in: the padding and
+/// the border.
+pub(super) const BAR_RADIUS: f32 = theme::RADIUS_SM + PAD + 1.0;
 /// The bar's glass: the frozen frame under it averaged into cells this
 /// many logical px across, blurred this many cells each way, under a
 /// tint dark enough for the bar's white glyphs over a white page. The
