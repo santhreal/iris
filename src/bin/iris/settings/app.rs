@@ -21,6 +21,12 @@ pub(crate) enum Release {
     Installing,
 }
 
+/// The version row's state line after a check that got no answer, and
+/// after a download or hand-off that failed. The error is written to
+/// iris.log: a URL and a transport error do not fit the line.
+const CHECK_FAILED: &str = "Update check failed";
+const INSTALL_FAILED: &str = "Install failed";
+
 /// The release the last check offered for the configured channel, as
 /// the window opens with it.
 pub(super) fn offered_release() -> Release {
@@ -94,6 +100,9 @@ impl Settings {
                 .spawn(async move { (crate::update::check(), crate::update::last_checked()) })
                 .await;
             this.update(cx, |this, cx| {
+                if let Err(e) = &result {
+                    iris_lib::ilog!("iris: {e}");
+                }
                 this.checking = false;
                 this.last_checked = at;
                 this.checked(result);
@@ -104,8 +113,9 @@ impl Settings {
         .detach();
     }
 
-    /// Show a check's `result`. A newer release shows Install. While
-    /// Install runs, a check that finishes changes nothing.
+    /// Show a check's `result`. A newer release shows Install, and a
+    /// failed check shows `CHECK_FAILED`; iris.log holds the reason.
+    /// While Install runs, a check that finishes changes nothing.
     pub(super) fn checked(&mut self, result: Result<Option<UpdateInfo>, String>) {
         if matches!(self.release, Release::Installing) {
             return;
@@ -116,7 +126,7 @@ impl Settings {
                 Release::Found(info),
             ),
             Ok(None) => ("iris is up to date".to_string(), Release::None),
-            Err(e) => (e, Release::None),
+            Err(_) => (CHECK_FAILED.to_string(), Release::None),
         };
         self.update_note = Some(note);
         self.release = release;
@@ -139,6 +149,9 @@ impl Settings {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                if let Err(e) = &result {
+                    iris_lib::ilog!("iris: {e}");
+                }
                 this.installed(info, result);
                 cx.notify();
             })
@@ -162,14 +175,15 @@ impl Settings {
         }
     }
 
-    /// Show how the download of `info` ended. A failed one shows its
-    /// error and offers Install again.
+    /// Show how the download of `info` ended. A failed one shows
+    /// `INSTALL_FAILED`, with the reason in iris.log, and offers
+    /// Install again.
     pub(super) fn installed(&mut self, info: UpdateInfo, result: Result<(), String>) {
         self.update_note = Some(match result {
             Ok(()) => format!("Installing {}; iris restarts when it is done", info.version),
-            Err(e) => {
+            Err(_) => {
                 self.release = Release::Found(info);
-                e
+                INSTALL_FAILED.to_string()
             }
         });
     }

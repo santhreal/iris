@@ -779,7 +779,7 @@ fn a_check_offers_install_only_for_a_newer_release() {
         (Ok(None), "iris is up to date", "none"),
         (
             Err("update: GET x: dns".into()),
-            "update: GET x: dns",
+            "Update check failed",
             "none",
         ),
     ];
@@ -810,10 +810,7 @@ fn install_runs_once_and_offers_itself_again_when_it_fails() {
     assert_eq!(s.update_note.as_deref(), Some("Downloading 9.9.1\u{2026}"));
 
     s.installed(info, Err("update: GET x: status code 404".into()));
-    assert_eq!(
-        s.update_note.as_deref(),
-        Some("update: GET x: status code 404")
-    );
+    assert_eq!(s.update_note.as_deref(), Some("Install failed"));
     assert_eq!(offered(&s.release), "9.9.1");
 
     let info = s.start_install().expect("offered again");

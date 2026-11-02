@@ -320,21 +320,25 @@ fn segment(seg: &str, mac: bool, out: &mut Vec<Piece>) {
 }
 
 /// A shortcut hint as a row of key caps and the words between them, in
-/// `ink`: the keys of a shortcuts sheet row.
+/// `ink`: the keys of a shortcuts sheet row. A comma sits against the
+/// key before it and a word's space from the key after it, as in prose.
 pub fn key_hint(hint: &str, ink: Rgba) -> Div {
     div()
         .flex()
         .items_center()
         .gap(px(3.))
         .children(hint_pieces(hint).into_iter().map(|piece| {
-            match piece {
-                Piece::Cap(key) => cap(key, ink),
-                Piece::Word(word) => div()
-                    .px(px(2.))
+            let word = |word: SharedString| {
+                div()
                     .text_size(px(theme::TEXT_SMALL))
                     .text_color(ink)
                     .whitespace_nowrap()
-                    .child(word),
+                    .child(word)
+            };
+            match piece {
+                Piece::Cap(key) => cap(key, ink),
+                Piece::Word(comma) if comma == "," => word(comma).ml(px(-2.)).pr(px(2.)),
+                Piece::Word(other) => word(other).px(px(2.)),
             }
         }))
 }
