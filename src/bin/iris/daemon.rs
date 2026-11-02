@@ -365,6 +365,10 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
     // and Windows when the last window closes, and a parked stand-in
     // window would keep a renderer and its frame timer live.
     cx.set_quit_mode(QuitMode::Explicit);
+    // A key that types into no field runs a command at the pointer: a
+    // tool key or Space held to pan keeps the cursor where it acts. A
+    // field hides it as it takes a key (`widgets::edit_line`'s callers).
+    cx.set_cursor_hide_mode(CursorHideMode::Never);
     cx.on_app_quit(quit).detach();
     let (tx, rx) = unbounded::<Command>();
     let _ = COMMAND_TX.set(tx.clone());

@@ -387,13 +387,21 @@ fn color_keys_walk_the_swatches_in_order_and_wrap() {
 // WHY: an editor open that failed showed "read <full path> header:
 // failed to fill whole buffer" in its notice. The class and its other
 // members are in `iris_lib::reason::tests`; these are the editor's own
-// reads: a file gone, one shorter than a PNG header, text, a JPEG named
-// .png, and a PNG, whose header gives its size.
+// reads: a file gone, one shorter than the PNG signature, text, a JPEG
+// named .png, a PNG cut off inside its header and one whose first chunk
+// is not IHDR, which are damaged images rather than other formats, and
+// a PNG, whose header gives its size.
 #[test]
 fn the_editor_states_a_file_it_cannot_open_by_name_and_cause() {
     let dir = tempfile::tempdir().unwrap();
     let at = |name: &str| dir.path().join(name);
     std::fs::write(at("short.png"), b"\x89PNG").unwrap();
+    std::fs::write(at("cut.png"), b"\x89PNG\r\n\x1a\nnot an image").unwrap();
+    std::fs::write(
+        at("headless.png"),
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIDAT\x00\x00\x00\x1e\x00\x00\x00\x14",
+    )
+    .unwrap();
     std::fs::write(
         at("text.png"),
         b"not an image, and longer than a PNG header",
@@ -410,6 +418,8 @@ fn the_editor_states_a_file_it_cannot_open_by_name_and_cause() {
         ("short.png", "short.png is not a PNG image."),
         ("text.png", "text.png is not a PNG image."),
         ("photo.png", "photo.png is not a PNG image."),
+        ("cut.png", "cut.png is not a readable image."),
+        ("headless.png", "headless.png is not a readable image."),
     ] {
         assert_eq!(
             super::png_header(&at(name)),
@@ -418,4 +428,43 @@ fn the_editor_states_a_file_it_cannot_open_by_name_and_cause() {
         );
     }
     assert_eq!(super::png_header(&at("plain.png")), Ok((30, 20)));
+}
+
+/// WHY: the caret's timer wakes at the flips of its blink, not at a
+/// fixed rate: an 8 Hz timer redrew the editor 8 times a second for a
+/// caret that changes twice in 1.06 s. The cases pin the blink's phases
+/// and check, at every millisecond of three cycles, that the wait lands
+/// in the next phase and that no flip falls inside it. Not covered: the
+/// timer's wiring, which `tests/idle.rs` measures.
+#[test]
+fn the_caret_timer_waits_for_the_next_flip_of_the_blink() {
+    use super::render_stage::{caret_flip_in, caret_shown};
+    use std::time::Duration;
+
+    let ms = Duration::from_millis;
+    for (at, shown, flip_in) in [
+        (0, true, 580),
+        (1, true, 579),
+        (579, true, 1),
+        (580, false, 480),
+        (1059, false, 1),
+        (1060, true, 580),
+        (2700, false, 480),
+    ] {
+        assert_eq!(caret_shown(ms(at)), shown, "shown at {at} ms");
+        assert_eq!(caret_flip_in(ms(at)), ms(flip_in), "flip after {at} ms");
+    }
+    for at in 0..3 * 1060 {
+        let now = caret_shown(ms(at));
+        let wait = caret_flip_in(ms(at)).as_millis() as u64;
+        assert!(
+            (1..wait).all(|d| caret_shown(ms(at + d)) == now),
+            "the caret flips inside the wait after {at} ms"
+        );
+        assert_ne!(
+            caret_shown(ms(at + wait)),
+            now,
+            "the wait after {at} ms ends short of the flip"
+        );
+    }
 }

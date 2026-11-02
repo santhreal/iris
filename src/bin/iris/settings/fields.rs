@@ -615,10 +615,12 @@ impl Settings {
                     let paste = || cx.read_from_clipboard().and_then(|item| item.text());
                     let copy =
                         |text: &str| cx.write_to_clipboard(ClipboardItem::new_string(text.into()));
-                    if widgets::edit_line(&mut edit.line, ks, paste, copy)
-                        == widgets::LineKey::Edited
-                    {
+                    let key = widgets::edit_line(&mut edit.line, ks, paste, copy);
+                    if key == widgets::LineKey::Edited {
                         self.rejected = None;
+                    }
+                    if key != widgets::LineKey::Ignored {
+                        cx.hide_cursor_until_mouse_moves();
                     }
                 }
             }

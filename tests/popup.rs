@@ -43,6 +43,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
+use app_window::INSET;
 use daemon::{enabled, xvfb_sized, Daemon, Server};
 use x11::{chord, click, client, control_left_of, move_to, tap, windows_of};
 
@@ -61,8 +62,6 @@ const CAPTURE: usize = 1;
 /// the inset, the first card, the gap, the header, and two rows of the
 /// second card with their hairlines.
 const DISMISS_Y: f32 = 52.0 + 20.0 + 110.0 + 20.0 + 20.0 + 74.0 + 18.0;
-/// The card's inset from the window's right edge, logical px.
-const INSET: f32 = 20.0;
 /// A menu row's height, logical px.
 const ROW_H: f32 = 24.0;
 /// A pop-up button's least width, logical px (`theme::FORM_CONTROL_W`),

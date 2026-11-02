@@ -112,6 +112,24 @@ impl Tool {
             | Tool::Counter => false,
         }
     }
+
+    /// The pointer over the stage: the arrow where a press selects,
+    /// the I-beam where it types, and the crosshair where it draws.
+    pub(crate) fn cursor(self) -> gpui::CursorStyle {
+        match self {
+            Tool::Select => gpui::CursorStyle::Arrow,
+            Tool::Text => gpui::CursorStyle::IBeam,
+            Tool::Pen
+            | Tool::Line
+            | Tool::Arrow
+            | Tool::Ellipse
+            | Tool::Rect
+            | Tool::Highlight
+            | Tool::Blur
+            | Tool::Crop
+            | Tool::Counter => gpui::CursorStyle::Crosshair,
+        }
+    }
 }
 
 /// Each tool: its value, toolbar glyph, name, and the single key that

@@ -574,8 +574,9 @@ pub enum LineKey {
 /// replaces the selection. Ctrl+C or Cmd+C passes the selection to
 /// `copy`, and Ctrl+X or Cmd+X passes it and removes it.
 ///
-/// The caller restarts its caret on a move or edit, and clears a
-/// rejection on an edit.
+/// The caller restarts its caret on a move or edit, clears a
+/// rejection on an edit, and hides the pointer until it moves on any
+/// key but an ignored one, as a native text field does.
 pub fn edit_line(
     line: &mut Line,
     keystroke: &Keystroke,

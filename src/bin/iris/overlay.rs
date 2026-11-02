@@ -237,11 +237,8 @@ impl Render for Overlay {
             .size_full()
             .font_family(theme::FONT)
             // A resize keeps its handle's arrow after the pointer leaves
-            // the handle.
-            .cursor(match self.resize {
-                Some((h, _)) => crate::widgets::selection::handle_cursor(h),
-                None => CursorStyle::Crosshair,
-            })
+            // the handle, and a move its closed hand.
+            .cursor(self.grab().unwrap_or(CursorStyle::Crosshair))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 this.handle_key_down(ev, window, cx);

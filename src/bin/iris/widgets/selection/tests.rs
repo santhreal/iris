@@ -158,3 +158,45 @@ fn a_handle_shows_the_arrow_of_its_drag() {
         assert_eq!(handle_cursor(h), want, "handle {h}");
     }
 }
+
+// WHY: the class closed here is "a drag shows another cursor than the
+// one it runs". A pan, the crop's move, and a committed selection's
+// move showed the tool's crosshair, which promises a fresh drawing,
+// and Space held to pan showed it too. Every state of a resize, a move,
+// and a wait: a resize shows its handle's arrow over a move or a wait,
+// a move the closed hand over a wait, a wait the open hand, and none of
+// them no cursor of its own. Not covered: which element shows the
+// cursor; `tests/cursor.rs` reads it on screen.
+#[test]
+fn a_drag_shows_its_own_cursor_and_a_resize_wins() {
+    for resizing in [
+        None,
+        Some(0),
+        Some(1),
+        Some(2),
+        Some(3),
+        Some(4),
+        Some(5),
+        Some(6),
+        Some(7),
+    ] {
+        for moving in [false, true] {
+            for waiting in [false, true] {
+                let want = match (resizing, moving, waiting) {
+                    (Some(0 | 3), ..) => Some(CursorStyle::ResizeUpLeftDownRight),
+                    (Some(1 | 2), ..) => Some(CursorStyle::ResizeUpRightDownLeft),
+                    (Some(4 | 5), ..) => Some(CursorStyle::ResizeUpDown),
+                    (Some(_), ..) => Some(CursorStyle::ResizeLeftRight),
+                    (None, true, _) => Some(CursorStyle::ClosedHand),
+                    (None, false, true) => Some(CursorStyle::OpenHand),
+                    (None, false, false) => None,
+                };
+                assert_eq!(
+                    grab_cursor(resizing, moving, waiting),
+                    want,
+                    "resizing {resizing:?}, moving {moving}, waiting {waiting}"
+                );
+            }
+        }
+    }
+}

@@ -25,6 +25,10 @@
 //!   daemon is watched in back-to-back spans of `WATCH` from the map
 //!   until a span is within the allowance, for at most `DEADLINE`; a
 //!   timer wakes the main thread in every span.
+//! - A timer that runs faster than what it redraws. An open editor
+//!   label's caret shows and hides twice in each 1.06 s, and an 8 Hz
+//!   timer redrew the window 8 times a second for it. The case opens a
+//!   label and allows the main thread the wakeups of the caret's flips.
 //!
 //! Not covered: a timer with a period longer than the watch, work that
 //! stops within `DEADLINE` of the map (an entrance animation), a timer
@@ -48,6 +52,34 @@ mod options;
 #[allow(dead_code)]
 #[path = "support/x11.rs"]
 mod x11;
+
+/// How long each span of a watch lasts.
+#[cfg(target_os = "linux")]
+const WATCH: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long after the map a window has to reach a span of `WATCH`
+/// within its allowance.
+#[cfg(target_os = "linux")]
+const DEADLINE: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// Watch `daemon` in back-to-back spans of `WATCH` from `mapped` until
+/// its main thread wakes at most `allowed` times in one, for at most
+/// `DEADLINE`: the main thread's wakeups in the last span, and every
+/// thread's.
+#[cfg(target_os = "linux")]
+fn watch(
+    daemon: &daemon::Daemon,
+    mapped: std::time::Instant,
+    allowed: u64,
+) -> (u64, std::collections::BTreeMap<u32, (String, u64)>) {
+    loop {
+        let threads = daemon.wakeups(WATCH);
+        let main = threads.get(&daemon.pid()).map_or(0, |t| t.1);
+        if main <= allowed || mapped.elapsed() >= DEADLINE {
+            return (main, threads);
+        }
+    }
+}
 
 #[cfg(target_os = "linux")]
 #[test]
@@ -84,19 +116,12 @@ fn an_idle_blocking_pool_thread_exits() {
 #[cfg(target_os = "linux")]
 #[test]
 fn an_idle_window_does_not_wake_the_main_thread() {
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use daemon::{enabled, store, xvfb, Daemon};
     use options::{open_args, single_png, Kind, EDITOR, OPTIONS};
     use x11::windows_of;
     use x11rb::connection::Connection as _;
-
-    /// How long each span of the watch lasts.
-    const WATCH: Duration = Duration::from_secs(2);
-
-    /// How long after the map a window has to reach a span of `WATCH`
-    /// within its allowance.
-    const DEADLINE: Duration = Duration::from_secs(12);
 
     /// The main-thread wakeups each window is allowed in `WATCH` at idle,
     /// by title. A frame timer at the display refresh rate makes 120.
@@ -133,13 +158,7 @@ fn an_idle_window_does_not_wake_the_main_thread() {
             || (windows_of(&conn, root, title).len() == 1).then_some(()),
         );
         let mapped = Instant::now();
-        let (main, threads) = loop {
-            let threads = daemon.wakeups(WATCH);
-            let main = threads.get(&daemon.pid()).map_or(0, |t| t.1);
-            if main <= allowed || mapped.elapsed() >= DEADLINE {
-                break (main, threads);
-            }
-        };
+        let (main, threads) = watch(&daemon, mapped, allowed);
         let woke: Vec<_> = threads.iter().filter(|(_, t)| t.1 > 0).collect();
         assert!(
             main <= allowed,
@@ -150,4 +169,85 @@ fn an_idle_window_does_not_wake_the_main_thread() {
             daemon.log()
         );
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_open_label_wakes_the_main_thread_only_at_its_caret_flips() {
+    use std::time::Instant;
+
+    use daemon::{enabled, xvfb_sized, Daemon};
+    use x11::{click, client, extent, move_to, tap, windows_of};
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+
+    /// The main-thread wakeups allowed in `WATCH` with a label open:
+    /// twice the 14 a debug build makes while the caret flips 3 or 4
+    /// times. The 8 Hz timer made 81. A release build makes 4 or 5, and
+    /// made 19.
+    const ALLOWED: u64 = 28;
+    /// The image: one colour, which the stage shows it by.
+    const IMAGE: [u8; 3] = [60, 140, 200];
+    /// The keysym of `t`, which picks the Text tool.
+    const TEXT: u32 = 0x74;
+
+    if !enabled() {
+        return;
+    }
+    let case = "an_open_label_wakes_the_main_thread_only_at_its_caret_flips";
+    // The editor's window fits on the screen, which a capture of it needs.
+    let Some((_xvfb, display)) = xvfb_sized(case, "1280x1024x24") else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    let file = dir.path().join("plain.png");
+    image::RgbImage::from_pixel(600, 400, image::Rgb(IMAGE))
+        .save(&file)
+        .unwrap();
+    daemon.send(&[std::ffi::OsStr::new("--annotate"), file.as_os_str()]);
+    let editor = daemon.until("the editor to open", || {
+        windows_of(&conn, root, "plain.png - iris").first().copied()
+    });
+    let (left, top, right, bottom) = daemon.until("the editor to draw the image", || {
+        extent(&client(&conn, root, editor), IMAGE)
+            .filter(|&(left, top, right, bottom)| right - left >= 200 && bottom - top >= 100)
+    });
+    daemon.settle();
+    let at = conn
+        .translate_coordinates(editor, root, 0, 0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let center = (
+        at.dst_x + ((left + right) / 2) as i16,
+        at.dst_y + ((top + bottom) / 2) as i16,
+    );
+    move_to(&conn, root, center);
+    tap(&conn, root, TEXT);
+    click(&conn, root, center);
+    // The caret draws on the image: the label is open.
+    let ground = [IMAGE[2], IMAGE[1], IMAGE[0]];
+    daemon.until("the label's caret to show", || {
+        let (w, _, px) = client(&conn, root, editor);
+        (top..=bottom)
+            .flat_map(|y| (left..=right).map(move |x| y * w + x))
+            .any(|i| px[i] != ground)
+            .then_some(())
+    });
+    let opened = Instant::now();
+    let (main, threads) = watch(&daemon, opened, ALLOWED);
+    let woke: Vec<_> = threads.iter().filter(|(_, t)| t.1 > 0).collect();
+    assert!(
+        main <= ALLOWED,
+        "with a label open, the daemon's main thread woke more than the {ALLOWED} allowed in \
+         every {WATCH:?} for {:?} after the label opened, {main} times in the last; the \
+         threads that woke in the last: {woke:?}\n{}",
+        opened.elapsed(),
+        daemon.log()
+    );
 }

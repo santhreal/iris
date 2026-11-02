@@ -102,8 +102,8 @@ pub struct Editor {
     pub(crate) text_entry: Option<TextEntry>,
     pub(crate) caret_started: Instant,
     /// One-shot flag for the caret blink timer: the timer notifies at
-    /// 8Hz while an entry lives instead of request_animation_frame
-    /// repainting the whole window at vsync for a 1Hz blink.
+    /// each flip of the blink while an entry lives, instead of
+    /// request_animation_frame repainting the whole window at vsync.
     pub(crate) caret_timer: bool,
     /// A press on the open entry's text that a drag extends into a
     /// selection, until the first button is released.
@@ -419,6 +419,15 @@ fn open_window(
                     space_pan: false,
                     fill: false,
                 };
+                // Space let go in another window never reaches this one:
+                // the pan it waits on ends when the window loses focus.
+                cx.observe_window_activation(window, |this: &mut Editor, window, cx| {
+                    if !window.is_window_active() && this.space_pan {
+                        this.space_pan = false;
+                        cx.notify();
+                    }
+                })
+                .detach();
                 if let Some(decoded) = decoded {
                     this.land_base(decoded, cx);
                 }

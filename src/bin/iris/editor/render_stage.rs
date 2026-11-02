@@ -13,6 +13,28 @@ use super::Editor;
 use crate::theme;
 use crate::widgets::selection;
 
+/// The caret's blink: shown for the first 580 ms of each 1060 ms from
+/// the entry's open or its last key, hidden for the rest.
+const CARET_SHOWN_MS: u128 = 580;
+const CARET_CYCLE_MS: u128 = 1060;
+
+/// Whether the caret shows `elapsed` into its blink.
+pub(super) fn caret_shown(elapsed: std::time::Duration) -> bool {
+    elapsed.as_millis() % CARET_CYCLE_MS < CARET_SHOWN_MS
+}
+
+/// How long after `elapsed` into its blink the caret next shows or
+/// hides: a wait that long, or longer, lands in the next phase.
+pub(super) fn caret_flip_in(elapsed: std::time::Duration) -> std::time::Duration {
+    let at = elapsed.as_millis() % CARET_CYCLE_MS;
+    let flip = if at < CARET_SHOWN_MS {
+        CARET_SHOWN_MS
+    } else {
+        CARET_CYCLE_MS
+    };
+    std::time::Duration::from_millis((flip - at) as u64)
+}
+
 impl Editor {
     pub(super) fn render_stage(
         &mut self,
@@ -108,32 +130,38 @@ impl Editor {
             }
         }
 
-        // Active text entry with a blinking caret. The blink is a
-        // 1.06s cycle; an 8Hz timer repaints it instead of pinning the
-        // whole window to vsync for the entry's lifetime.
+        // Active text entry with a blinking caret. A timer repaints it at
+        // each flip of the blink instead of pinning the whole window to
+        // vsync for the entry's lifetime.
         if let Some(entry) = &self.text_entry {
             if !self.caret_timer {
                 self.caret_timer = true;
-                cx.spawn(async move |this, cx| loop {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(125))
-                        .await;
-                    let alive = this.update(cx, |this, cx| {
-                        if this.text_entry.is_some() {
-                            cx.notify();
-                            true
-                        } else {
-                            this.caret_timer = false;
-                            false
+                let first = caret_flip_in(self.caret_started.elapsed());
+                cx.spawn(async move |this, cx| {
+                    let mut wait = first;
+                    loop {
+                        cx.background_executor().timer(wait).await;
+                        // A key restarts the blink: a wake for the flip
+                        // before it lands short of the new one, and
+                        // waits again.
+                        let next = this.update(cx, |this, cx| {
+                            if this.text_entry.is_some() {
+                                cx.notify();
+                                Some(caret_flip_in(this.caret_started.elapsed()))
+                            } else {
+                                this.caret_timer = false;
+                                None
+                            }
+                        });
+                        match next {
+                            Ok(Some(next)) => wait = next,
+                            Ok(None) | Err(_) => break,
                         }
-                    });
-                    if matches!(alive, Ok(false) | Err(_)) {
-                        break;
                     }
                 })
                 .detach();
             }
-            let blink_on = (self.caret_started.elapsed().as_millis() % 1060) < 580;
+            let blink_on = caret_shown(self.caret_started.elapsed());
             let p = entry.point;
             let size = text_size(base_w);
             let top = p.1 - size;
@@ -201,6 +229,16 @@ impl Editor {
             }
         }
 
+        // A drag that runs or waits on a press shows its own cursor
+        // over the tool's: a crop handle's arrow while it resizes, the
+        // closed hand while a pan or the crop's move runs, and the open
+        // hand while Space waits to pan.
+        let grab = selection::grab_cursor(
+            self.crop_resize.map(|(h, _)| h),
+            self.pan_drag.is_some() || self.crop_move.is_some(),
+            self.space_pan,
+        );
+
         // Pending crop: dim everything outside the rect. Its edge,
         // handles, and size readout go over the stage's frame, which
         // does not clip them, so a crop against the image's edge keeps
@@ -255,38 +293,46 @@ impl Editor {
             // overlap on a small crop a corner takes the press, as
             // `selection::handle_at` picks.
             if self.crop_anchor.is_none() {
+                // Inside the crop a press moves it: the open hand, under
+                // the handles, which show their arrows.
+                if self.tool == Tool::Crop && grab.is_none() {
+                    frame = frame.child(
+                        div()
+                            .absolute()
+                            .left(px(rx))
+                            .top(px(ry))
+                            .w(px(rw))
+                            .h(px(rh))
+                            .cursor(CursorStyle::OpenHand),
+                    );
+                }
                 let (ex, ey) = (rx - hair / 2.0, ry - hair / 2.0);
                 for (i, (hx, hy)) in selection::shown_handles(ex, ey, rw + hair, rh + hair).rev() {
-                    frame = frame.child(
-                        selection::handle(("crop-handle", i), i, hx, hy).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                                cx.stop_propagation();
-                                if this.space_pan {
-                                    this.pan_drag =
-                                        Some((ev.position.x.into(), ev.position.y.into()));
-                                } else if let Some(rect) = this.crop_rect {
-                                    this.commit_text(true);
-                                    this.crop_resize = Some((i, rect));
-                                }
-                                cx.notify();
-                            }),
-                        ),
-                    );
+                    let mut handle = selection::handle(("crop-handle", i), i, hx, hy);
+                    if let Some(cursor) = grab {
+                        handle = handle.cursor(cursor);
+                    }
+                    frame = frame.child(handle.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            if this.space_pan {
+                                this.pan_drag = Some((ev.position.x.into(), ev.position.y.into()));
+                            } else if let Some(rect) = this.crop_rect {
+                                this.commit_text(true);
+                                this.crop_resize = Some((i, rect));
+                            }
+                            cx.notify();
+                        }),
+                    ));
                 }
             }
             crop_frame = Some(frame);
         }
 
-        // The cursor follows the active tool: I-beam over text,
-        // crosshair for everything drawable, arrow for Select. A crop's
-        // resize keeps its handle's arrow.
-        stage = match (self.crop_resize, self.tool) {
-            (Some((h, _)), _) => stage.cursor(selection::handle_cursor(h)),
-            (None, Tool::Text) => stage.cursor_text(),
-            (None, Tool::Select) => stage,
-            (None, _) => stage.cursor_crosshair(),
-        };
+        // The cursor follows the active tool (`Tool::cursor`), or the
+        // drag that runs or waits.
+        stage = stage.cursor(grab.unwrap_or(self.tool.cursor()));
 
         // Stage input.
         stage = stage

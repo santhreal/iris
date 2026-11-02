@@ -137,18 +137,33 @@ pub fn cursor(conn: &impl Connection) -> CursorImage {
     )
 }
 
-/// The arrow a control shows: the `left_ptr` cursor, loaded from the
-/// cursor theme as GPUI loads a cursor, read back over a 40 px window of
-/// the case's own at `at`, which then closes. Call it before a full-screen
-/// iris window covers `at`.
+/// The arrow a control shows: the `left_ptr` cursor, read as `themed`
+/// reads one.
 pub fn arrow(conn: &impl Connection, screen: usize, at: (i16, i16)) -> CursorImage {
+    themed(conn, screen, &["left_ptr"], at)
+}
+
+/// The cursor the theme draws for the first of `names` it has, loaded
+/// as GPUI loads a cursor, read back over a 40 px window of the case's
+/// own at `at`, which then closes. Call it before a full-screen iris
+/// window covers `at`.
+pub fn themed(
+    conn: &impl Connection,
+    screen: usize,
+    names: &[&str],
+    at: (i16, i16),
+) -> CursorImage {
     let root = conn.setup().roots[screen].root;
     let database = x11rb::resource_manager::new_from_default(conn).unwrap();
     let handle = x11rb::cursor::Handle::new(conn, screen, &database)
         .unwrap()
         .reply()
         .unwrap();
-    let left_ptr = handle.load_cursor(conn, "left_ptr").unwrap();
+    let loaded = names
+        .iter()
+        .filter_map(|name| handle.load_cursor(conn, name).ok())
+        .find(|&c| c != x11rb::NONE)
+        .unwrap_or_else(|| panic!("the cursor theme has none of {names:?}"));
     let window = conn.generate_id().unwrap();
     conn.create_window(
         x11rb::COPY_DEPTH_FROM_PARENT,
@@ -164,7 +179,7 @@ pub fn arrow(conn: &impl Connection, screen: usize, at: (i16, i16)) -> CursorIma
         &CreateWindowAux::new()
             .override_redirect(1)
             .background_pixel(0)
-            .cursor(left_ptr),
+            .cursor(loaded),
     )
     .unwrap();
     conn.map_window(window).unwrap();

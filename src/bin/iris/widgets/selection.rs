@@ -174,6 +174,20 @@ pub fn handle_cursor(handle: usize) -> CursorStyle {
     }
 }
 
+/// The pointer while a drag of a selection, or of the view under it,
+/// runs or waits on a press: the dragged handle's arrow while a resize
+/// runs, a closed hand while a move or a pan runs, and an open hand
+/// while one waits. None while none does, and the surface's own cursor
+/// shows.
+pub fn grab_cursor(resizing: Option<usize>, moving: bool, waiting: bool) -> Option<CursorStyle> {
+    match (resizing, moving, waiting) {
+        (Some(handle), ..) => Some(handle_cursor(handle)),
+        (None, true, _) => Some(CursorStyle::ClosedHand),
+        (None, false, true) => Some(CursorStyle::OpenHand),
+        (None, false, false) => None,
+    }
+}
+
 /// Resize handle `handle` centered on `(hx, hy)`: a white dot with a
 /// dark rim and a contact shadow in a HANDLE_PX hit square that shows
 /// the handle's cursor. The caller attaches any press.

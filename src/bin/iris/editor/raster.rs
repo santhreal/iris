@@ -7,19 +7,22 @@ pub(crate) const BLUR_BLOCK: u32 = 12;
 
 /// Width and height from the PNG IHDR of the file at `path`, without
 /// decoding it. The full decode runs in the background; the window
-/// opens on these dims. A file shorter than the header, or one that
-/// does not start with the PNG signature, is not a PNG.
+/// opens on these dims. A file that does not start with the PNG
+/// signature is not a PNG; one that does but ends before the IHDR
+/// chunk's size, or holds another chunk first, is a damaged image.
 pub(crate) fn png_header(path: &std::path::Path) -> Result<(u32, u32), String> {
     use std::io::Read;
-    let mut header = [0u8; 24];
+    let mut header = Vec::with_capacity(24);
     std::fs::File::open(path)
-        .and_then(|mut f| f.read_exact(&mut header))
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => iris_lib::reason::not_png(path),
-            _ => iris_lib::reason::unreadable(path, &e),
-        })?;
+        .and_then(|f| f.take(24).read_to_end(&mut header))
+        .map_err(|e| iris_lib::reason::unreadable(path, &e))?;
     if !header.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err(iris_lib::reason::not_png(path));
+    }
+    // The signature, then the IHDR chunk's length and type, then the
+    // width and height.
+    if header.len() < 24 || header[12..16] != *b"IHDR" {
+        return Err(iris_lib::reason::undecodable(path));
     }
     let be = |at: usize| {
         u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])

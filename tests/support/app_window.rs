@@ -8,6 +8,15 @@
 pub const OPEN_W: f32 = 920.0;
 /// The sidebar's width (`theme::SIDEBAR_W`).
 pub const SIDEBAR_W: f32 = 200.0;
+/// The settings cards' inset from the window's right edge.
+pub const INSET: f32 = 20.0;
+/// The center line of the General pane's File name row: under the
+/// toolbar (52), the inset (20), the login card (36), the group gap
+/// (20), the Storage header (20), and two rows of the storage card with
+/// their hairlines (2 x 36 + 2), half a row down.
+pub const TEMPLATE_Y: f32 = 52.0 + 20.0 + 36.0 + 20.0 + 20.0 + 74.0 + 18.0;
+/// The file name field's width.
+pub const FIELD_W: f32 = 200.0;
 /// The toolbar band over the sidebar (`theme::TOOLBAR_H`), a sidebar
 /// row (`theme::SIDEBAR_ROW_H`), and the gap over the Settings header
 /// (`theme::SIDEBAR_SECTION_GAP`).

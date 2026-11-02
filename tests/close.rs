@@ -40,6 +40,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
+use app_window::{FIELD_W, INSET, TEMPLATE_Y};
 use daemon::{enabled, xvfb_sized, Daemon};
 use x11::{click, client, drag, extent, field_left_of, tap, windows_of, wm_close, Compositor};
 
@@ -58,12 +59,6 @@ const R: u32 = 0x72;
 const X: u32 = 0x78;
 /// The rectangle's corners, in image pixels.
 const RECT: [(f32, f32); 2] = [(100.0, 100.0), (200.0, 180.0)];
-/// The card's inset from the window's right edge, the File name row's
-/// center, and the file name field's width, logical px (see
-/// `settings_paste.rs`).
-const INSET: f32 = 20.0;
-const TEMPLATE_Y: f32 = 52.0 + 20.0 + 36.0 + 20.0 + 20.0 + 74.0 + 18.0;
-const FIELD_W: f32 = 200.0;
 /// The template before and after the typed `x`.
 const BEFORE: &str = "{date}_{time}";
 const AFTER: &str = "{date}_{time}x";

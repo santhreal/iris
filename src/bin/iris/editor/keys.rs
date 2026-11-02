@@ -72,6 +72,7 @@ impl Editor {
                         }
                         if key != widgets::LineKey::Ignored {
                             self.caret_started = Instant::now();
+                            cx.hide_cursor_until_mouse_moves();
                         }
                     }
                 }

@@ -46,7 +46,7 @@ Select a tool in the toolbar or press its key without a modifier:
 | `T` | Text | Click on the canvas to place an inline text entry box with a blinking caret. |
 | `H` | Highlight | Semi-transparent horizontal or freehand highlighter stroke. |
 | `B` | Blur | Pixelated rectangular area sampled from the composite image below the blur action. |
-| `C` | Crop | Drag to define a rectangular crop region, with its size in image pixels above it. Drag inside the box to reposition it, or drag a handle to move that corner or edge; the handles are the selection handles of [capture](capture.md). A drag that leaves the image stops at its edge. Commit with `Enter` or discard with `Escape`. |
+| `C` | Crop | Drag to define a rectangular crop region, with its size in image pixels above it. Drag inside the box to reposition it, or drag a handle to move that corner or edge; the handles are the selection handles of [capture](capture.md). The pointer is an open hand inside the box and a closed hand while the box moves. A drag that leaves the image stops at its edge. Commit with `Enter` or discard with `Escape`. |
 | `N` | Counter | Click to place circular numbered badges containing an integer that increments from 1. |
 
 Switching tools settles any active text entry, committing non-empty text to the canvas.
@@ -71,6 +71,7 @@ Clicking the canvas while the Text tool is active sets an insertion point and di
 - `Ctrl+C` or `Cmd+C` with text selected copies the text instead of the image, and `Ctrl+X` or `Cmd+X` cuts it.
 - `Backspace` deletes the character before the caret and `Delete` the character after it. `Ctrl+Backspace` and `Ctrl+Delete` (`Option` on macOS) delete the word before or after the caret, a run of letters and digits, with the spaces and punctuation between it and the caret, and `Cmd+Backspace` on macOS deletes everything before the caret. With text selected, each deletes the selected text.
 - `Enter` commits the text to the canvas.
+- A key the label takes hides the pointer until the pointer moves. Tool keys and `Space` leave the pointer shown.
 - `Escape` cancels text entry and discards uncommitted buffer text.
 - Clicking the backdrop outside the canvas commits non-empty text.
 - Clicking the label's text moves the caret to the character boundary nearest the click and keeps the label open. `Shift`-clicking selects the text from the caret to the click, and dragging across the text selects what the pointer passes over. Double-clicking selects the word, run of spaces, or run of punctuation under the pointer, and triple-clicking selects the whole label.
@@ -87,7 +88,7 @@ Clicking a committed label with the Text tool, or double-clicking it with the Se
 - **Zoom out (`-`)**: Divides zoom by 1.25, clamped to a minimum factor of 0.1x. The image point at the center of the stage stays in place.
 - **Wheel and touchpad zoom**: Each wheel notch multiplies or divides zoom by 1.12. A touchpad scroll zooms in proportion to the distance scrolled, so a short scroll zooms less than a notch. One scroll event zooms by at most three notches. Zoom stays between 0.1x and 16.0x. The image point under the pointer stays in place.
 - **Pinch zoom**: A touchpad pinch scales zoom by the pinch amount, about the pinch center.
-- **Pan canvas**: Drag with the middle mouse button, or hold `Space` and drag with the left mouse button. Releasing `Space` or the mouse button ends panning.
+- **Pan canvas**: Drag with the middle mouse button, or hold `Space` and drag with the left mouse button. The pointer is an open hand while `Space` is held and a closed hand while the canvas pans. Releasing `Space` or the mouse button ends panning, and so does the editor window losing the focus.
 
 ## Edit Operations
 

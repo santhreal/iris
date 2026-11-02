@@ -57,6 +57,7 @@ use std::path::Path;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
+use app_window::{FIELD_W, INSET, TEMPLATE_Y};
 use daemon::{enabled, xvfb_sized, Daemon};
 use x11::{
     chord, click, client, clipboard_text, field_left_of, hold, let_go, press_and_move, release,
@@ -81,15 +82,6 @@ const RETURN: u32 = 0xff0d;
 const ESCAPE: u32 = 0xff1b;
 const CONTROL: u32 = 0xffe3;
 const SHIFT: u32 = 0xffe1;
-/// The center of the File name row on the General pane, logical px:
-/// under the toolbar (52), the inset (20), the login card (36), the
-/// group gap (20), the Storage header (20), and two rows of the storage
-/// card with their hairlines (2 x 36 + 2), half a row down.
-const TEMPLATE_Y: f32 = 52.0 + 20.0 + 36.0 + 20.0 + 20.0 + 74.0 + 18.0;
-/// The card's inset from the window's right edge, logical px.
-const INSET: f32 = 20.0;
-/// The file name field's width, logical px.
-const FIELD_W: f32 = 200.0;
 /// The clipboard: a tab and two lines, the second ending in a line
 /// break; and the template the field holds before and after the edit.
 const CLIPBOARD: &str = "\tteam\nnotes\n";

@@ -164,13 +164,37 @@ impl Overlay {
             // the edges, so the arrow over overlapping squares is the
             // one of the handle `handle_at` picks.
             if !self.dragging {
+                let grab = self.grab();
+                // Inside the rect a press moves it: the open hand, under
+                // the handles, which show their arrows.
+                if grab.is_none() {
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(px(x))
+                            .top(px(y))
+                            .w(px(w))
+                            .h(px(h))
+                            .cursor(CursorStyle::OpenHand),
+                    );
+                }
                 let (ex, ey) = (x - hair / 2.0, y - hair / 2.0);
                 for (i, (hx, hy)) in selection::shown_handles(ex, ey, w + hair, h + hair).rev() {
-                    root = root.child(selection::handle(("selection-handle", i), i, hx, hy));
+                    let mut handle = selection::handle(("selection-handle", i), i, hx, hy);
+                    if let Some(cursor) = grab {
+                        handle = handle.cursor(cursor);
+                    }
+                    root = root.child(handle);
                 }
             }
         }
         root
+    }
+
+    /// The cursor of the selection's drag that runs: the dragged
+    /// handle's arrow, or the closed hand of a move.
+    pub(super) fn grab(&self) -> Option<CursorStyle> {
+        selection::grab_cursor(self.resize.map(|(h, _)| h), self.moving.is_some(), false)
     }
 
     // Loupe while dragging or resizing: the window-snap highlight
