@@ -52,6 +52,10 @@ pub(crate) type MoveDrag = (usize, (f32, f32), Action, (f32, f32, f32, f32));
 /// A crop-rect move drag: the pointer and the rect at drag start.
 pub(crate) type CropMove = ((f32, f32), (f32, f32, f32, f32));
 
+/// A crop-rect resize drag: the handle of `widgets::selection::handles`
+/// and the rect at drag start.
+pub(crate) type CropResize = (usize, (f32, f32, f32, f32));
+
 pub struct Editor {
     pub(crate) path: PathBuf,
     /// The toolbar title: the path's file name, computed once at open
@@ -113,6 +117,10 @@ pub struct Editor {
     pub(crate) crop_rect: Option<(f32, f32, f32, f32)>,
     pub(crate) crop_anchor: Option<(f32, f32)>,
     pub(crate) crop_move: Option<CropMove>,
+    pub(crate) crop_resize: Option<CropResize>,
+    /// The pending crop's size readout, "W × H", and the size it states:
+    /// rebuilt only when the size changes.
+    pub(crate) crop_label: ((u32, u32), SharedString),
     pub(crate) copy_menu: bool,
     /// The toolbar's More menu: Copy Text, Rotate, Flip, Clear,
     /// shortcuts, Discard.
@@ -397,6 +405,8 @@ fn open_window(
                     crop_rect: None,
                     crop_anchor: None,
                     crop_move: None,
+                    crop_resize: None,
+                    crop_label: ((0, 0), SharedString::default()),
                     copy_menu: false,
                     more_menu: false,
                     menu_lit: None,

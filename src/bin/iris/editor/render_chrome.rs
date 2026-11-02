@@ -483,8 +483,21 @@ impl Editor {
 
     /// The tool options bar: the stroke widths as one segmented control,
     /// the fill toggle, and the markup colors, each set split by a
-    /// divider, for the next mark and the selected one.
+    /// divider, for the next mark and the selected one. A set the
+    /// selected mark, or the tool's next mark, does not take shows
+    /// disabled, its value still drawn.
     pub(super) fn render_options(&self, options: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        let subject = self
+            .selected
+            .and_then(|i| self.actions.borrow().get(i).map(|a| a.tool))
+            .unwrap_or(self.tool);
+        let applies = |takes: bool, el: AnyElement| {
+            if takes {
+                el
+            } else {
+                widgets::disabled(el).into_any_element()
+            }
+        };
         let divider = || div().w(px(1.)).h(px(20.)).mx(px(8.)).bg(theme::HAIRLINE);
         let this = cx.entity().downgrade();
         let strokes = widgets::segmented(
@@ -502,40 +515,18 @@ impl Editor {
                 .ok();
             },
         );
-        let mut bar = div()
-            .id("tool-options")
-            .absolute()
-            .top(px(theme::TOOLBAR_H))
-            .left_0()
-            .right_0()
-            .h(px(OPTIONS_H))
-            .opacity(options)
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(4.))
-            .bg(theme::BG_ELEV)
-            .border_t_1()
-            .border_b_1()
-            .border_color(theme::HAIRLINE)
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(strokes)
-            .child(divider());
-        bar = bar.child(
-            widgets::icon_button(
-                "fill-toggle",
-                Icon::Fill,
-                self.fill,
-                theme::TOOLBAR_CONTROL_H,
-            )
-            .tooltip(tip("Fill Shapes", Some("F".into())))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.toggle_fill();
-                cx.notify();
-            })),
-        );
-        bar = bar.child(divider());
+        let fill_toggle = widgets::icon_button(
+            "fill-toggle",
+            Icon::Fill,
+            self.fill,
+            theme::TOOLBAR_CONTROL_H,
+        )
+        .tooltip(tip("Fill Shapes", Some("F".into())))
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.toggle_fill();
+            cx.notify();
+        }));
+        let mut swatches = div().flex().items_center().gap(px(4.));
         for (c, name) in COLORS {
             let active = c == self.color;
             let fill = hex_rgba(c);
@@ -559,7 +550,7 @@ impl Editor {
                     .hover(|s| s.border_color(theme::SWATCH_HOVER))
                     .active(|s| s.border_color(theme::alpha(theme::ACCENT, 0.6)))
             };
-            bar = bar.child(
+            swatches = swatches.child(
                 swatch
                     .tooltip(tip(name, None))
                     .child(
@@ -577,7 +568,29 @@ impl Editor {
                     })),
             );
         }
-        bar
+        div()
+            .id("tool-options")
+            .absolute()
+            .top(px(theme::TOOLBAR_H))
+            .left_0()
+            .right_0()
+            .h(px(OPTIONS_H))
+            .opacity(options)
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(4.))
+            .bg(theme::BG_ELEV)
+            .border_t_1()
+            .border_b_1()
+            .border_color(theme::HAIRLINE)
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(applies(subject.stroked(), strokes.into_any_element()))
+            .child(divider())
+            .child(applies(subject.fillable(), fill_toggle.into_any_element()))
+            .child(divider())
+            .child(applies(subject.colored(), swatches.into_any_element()))
     }
 
     pub(super) fn render_menus_and_overlays(

@@ -1,92 +1,14 @@
 use gpui::*;
 
-use super::{
-    input::frame_rect, loupe::LOUPE_PX, shell::reveal, Overlay, Scope, HANDLE_PX, HOVER_FADE,
-};
+use super::{input::frame_rect, loupe::LOUPE_PX, shell::reveal, Overlay, Scope, HOVER_FADE};
 use crate::theme;
-
-/// The drawn diameter of a resize handle; its hit square is HANDLE_PX.
-const HANDLE_DOT: f32 = 9.0;
-/// A readout's line height; with its padding the tag is 18 px tall.
-const READOUT_LINE: f32 = 14.0;
-const READOUT_H: f32 = READOUT_LINE + 4.0;
-/// The space between the selection's top edge and the bottom of its
-/// size readout above it, or the readout's top and left inside it: the
-/// NW handle's dot reaches 4.5 px past the corner either way.
-const READOUT_GAP: f32 = 10.0;
-
-/// One overlay readout: coordinates, the selection's size, or the
-/// loupe's pixel. A small dark tag with no border, as the size readouts
-/// of the macOS document apps are, reads over a white page and a dark
-/// desktop alike. Digits are tabular so a number that changes under the
-/// pointer keeps its width.
-fn readout(text: SharedString, color: Rgba) -> Div {
-    div()
-        .px(px(6.))
-        .py(px(2.))
-        .rounded(px(5.))
-        .bg(theme::READOUT_FILL)
-        .text_size(px(theme::TEXT_SMALL))
-        .line_height(px(READOUT_LINE))
-        .font_weight(FontWeight::MEDIUM)
-        .font_features(theme::tabular())
-        .whitespace_nowrap()
-        .text_color(color)
-        .child(text)
-}
-
-/// One device pixel at scale factor `sf`, or the nearest whole number
-/// of them to a logical pixel, in logical px: gpui draws a 1 px border
-/// that many device pixels wide.
-fn hairline(sf: f32) -> f32 {
-    (sf - 0.5).ceil().max(1.0) / sf
-}
-
-/// The selection's edge around a logical rect, outside it: a white
-/// `hair` line against the rect and a dark `hair` rim outside the line.
-/// The pixels inside the rect are the ones the capture holds, so the
-/// edge covers none of them.
-fn selection_edge(x: f32, y: f32, w: f32, h: f32, hair: f32) -> Div {
-    div()
-        .absolute()
-        .left(px(x - 2.0 * hair))
-        .top(px(y - 2.0 * hair))
-        .w(px(w + 4.0 * hair))
-        .h(px(h + 4.0 * hair))
-        .border_1()
-        .border_color(theme::SELECTION_RIM)
-        .child(
-            div()
-                .size_full()
-                .border_1()
-                .border_color(theme::SELECTION_EDGE),
-        )
-}
+use crate::widgets::selection::{self, hairline, readout, selection_edge, HANDLE_PX};
 
 impl Overlay {
-    /// The 8 resize handles of a committed selection, in logical px:
-    /// 4 corners (NW, NE, SW, SE) then 4 edges (N, S, W, E). Each is a
-    /// HANDLE_PX square centered on the point it drags.
-    pub(super) fn handles(x: f32, y: f32, w: f32, h: f32) -> [(f32, f32); 8] {
-        [
-            (x, y),
-            (x + w, y),
-            (x, y + h),
-            (x + w, y + h),
-            (x + w / 2.0, y),
-            (x + w / 2.0, y + h),
-            (x, y + h / 2.0),
-            (x + w, y + h / 2.0),
-        ]
-    }
-
-    /// Which resize handle, if any, the logical point `p` is inside.
+    /// Which resize handle of the committed selection, if any, the
+    /// logical point `p` is inside.
     pub(super) fn handle_at(&self, p: (f32, f32)) -> Option<usize> {
-        let (x, y, w, h) = self.current?;
-        let half = HANDLE_PX / 2.0;
-        Self::handles(x, y, w, h).iter().position(|(hx, hy)| {
-            p.0 >= hx - half && p.0 <= hx + half && p.1 >= hy - half && p.1 <= hy + half
-        })
+        selection::handle_at(self.current?, p, HANDLE_PX / 2.0)
     }
 
     // Idle crosshair coordinates, like macOS region capture:
@@ -228,13 +150,7 @@ impl Overlay {
             let hair = hairline(sf);
             root = root.child(selection_edge(x, y, w, h, hair));
             let size_label = self.size_label.clone();
-            // Aligned with the white line's outer edge, above the
-            // selection, or inside it where no room is above.
-            let (tag_x, tag_y) = if y - hair >= READOUT_H + READOUT_GAP {
-                (x - hair, y - hair - READOUT_GAP - READOUT_H)
-            } else {
-                (x + READOUT_GAP, y + READOUT_GAP)
-            };
+            let (tag_x, tag_y) = selection::size_readout_at(x, y, hair, 0.0);
             root = root.child(
                 readout(size_label, theme::FG)
                     .absolute()
@@ -243,22 +159,14 @@ impl Overlay {
             );
             // Resize handles on a committed selection: 8 grab points
             // the cursor can pull to reshape the rect before capture,
-            // each centered on the white line.
+            // each centered on the white line. The press is the
+            // overlay's, from `handle_at`; the corners go on last, over
+            // the edges, so the arrow over overlapping squares is the
+            // one of the handle `handle_at` picks.
             if !self.dragging {
                 let (ex, ey) = (x - hair / 2.0, y - hair / 2.0);
-                for (hx, hy) in Self::handles(ex, ey, w + hair, h + hair) {
-                    root = root.child(
-                        div()
-                            .absolute()
-                            .left(px(hx - HANDLE_DOT / 2.0))
-                            .top(px(hy - HANDLE_DOT / 2.0))
-                            .size(px(HANDLE_DOT))
-                            .rounded_full()
-                            .bg(theme::SELECTION_EDGE)
-                            .border_1()
-                            .border_color(theme::SELECTION_RIM)
-                            .shadow(theme::shadow_knob()),
-                    );
+                for (i, (hx, hy)) in selection::shown_handles(ex, ey, w + hair, h + hair).rev() {
+                    root = root.child(selection::handle(("selection-handle", i), i, hx, hy));
                 }
             }
         }

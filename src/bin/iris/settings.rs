@@ -263,14 +263,9 @@ impl Settings {
         if self.enabled(row) {
             return el;
         }
-        // A disabled row draws dimmed, and a layer over it takes the
-        // pointer so its control neither hovers nor presses.
-        div()
-            .relative()
-            .opacity(theme::DISABLED_OPACITY)
-            .child(el)
-            .child(div().absolute().inset_0().occlude())
-            .into_any_element()
+        // A disabled row draws dimmed, and its control neither hovers
+        // nor presses.
+        widgets::disabled(el).into_any_element()
     }
 }
 

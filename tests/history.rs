@@ -14,6 +14,13 @@
 //! Clear run from the More menu, placed from the menu's geometry, so a
 //! menu drawn away from its button fails the cases.
 //!
+//! One case closes "a pending crop takes no reshape, and its drag
+//! ends only over the image": the crop had no resize handles, a press
+//! on its corner moved it, and a drag released off the image kept the
+//! crop under the pointer. It drags the SE corner out and the W edge
+//! past the image's left edge, releases there, moves back over the
+//! image, and reads the saved crop's size.
+//!
 //! The last case closes "an open toolbar menu takes no keys": with the
 //! More or Copy menu open, Return saved and closed the editor and the
 //! arrows did nothing. It runs Rotate Right from the More menu with Up
@@ -621,6 +628,56 @@ fn redo_cuts_the_image_again_with_the_marks_in_it() {
     session.keys(&[CONTROL, Z]);
     session.keys(&[CONTROL, SHIFT, Z]);
     assert_cropped(&session.save(), "the file saved after redoing the crop");
+}
+
+/// The crop after its handles reshape it: the SE corner dragged out,
+/// then the W edge dragged past the image's left edge, in image pixels.
+const RESHAPED: [(f32, f32); 2] = [(0.0, 50.0), (400.0, 320.0)];
+
+#[test]
+fn a_crop_handle_reshapes_the_crop_and_its_drag_ends_off_the_image() {
+    let Some(session) =
+        Session::open("a_crop_handle_reshapes_the_crop_and_its_drag_ends_off_the_image")
+    else {
+        return;
+    };
+    session.draw(C, CROP);
+    let (conn, root) = (&session.conn, session.root);
+    drag(
+        conn,
+        root,
+        session.screen_at(CROP[1]),
+        session.screen_at(RESHAPED[1]),
+        6,
+    );
+    session.daemon.settle();
+    // The W edge's handle sits halfway down the reshaped crop's side.
+    let mid = (CROP[0].1 + RESHAPED[1].1) / 2.0;
+    drag(
+        conn,
+        root,
+        session.screen_at((CROP[0].0, mid)),
+        session.screen_at((-20.0, mid)),
+        6,
+    );
+    session.daemon.settle();
+    // The release off the image ended the drag: the crop stays put
+    // under a pointer back over the image.
+    move_to(conn, root, session.screen_at((200.0, 200.0)));
+    session.daemon.settle();
+    session.keys(&[RETURN]);
+    let img = session.save();
+    let want = (
+        (RESHAPED[1].0 - RESHAPED[0].0) as u32,
+        (RESHAPED[1].1 - RESHAPED[0].1) as u32,
+    );
+    let (w, h) = img.dimensions();
+    assert!(
+        w.abs_diff(want.0) <= 2 && h.abs_diff(want.1) <= 2,
+        "the crop reshaped by its handles saves {w}x{h}, not about {}x{}",
+        want.0,
+        want.1
+    );
 }
 
 /// Assert that `img` is the crop with the rectangle in it.

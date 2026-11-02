@@ -46,7 +46,7 @@ Select a tool in the toolbar or press its key without a modifier:
 | `T` | Text | Click on the canvas to place an inline text entry box with a blinking caret. |
 | `H` | Highlight | Semi-transparent horizontal or freehand highlighter stroke. |
 | `B` | Blur | Pixelated rectangular area sampled from the composite image below the blur action. |
-| `C` | Crop | Drag to define a rectangular crop region. Drag inside the box to reposition. Commit with `Enter` or discard with `Escape`. |
+| `C` | Crop | Drag to define a rectangular crop region, with its size in image pixels above it. Drag inside the box to reposition it, or drag a handle to move that corner or edge; the handles are the selection handles of [capture](capture.md). A drag that leaves the image stops at its edge. Commit with `Enter` or discard with `Escape`. |
 | `N` | Counter | Click to place circular numbered badges containing an integer that increments from 1. |
 
 Switching tools settles any active text entry, committing non-empty text to the canvas.
@@ -58,6 +58,8 @@ Switching tools settles any active text entry, committing non-empty text to the 
 - **Color palette (`[`, `]`)**: Eleven color swatches in the tool options bar, in order: White `#f5f5f7`, Light Gray `#9c9ca2`, Gray `#6b6b71`, Dark Gray `#3a3a3f`, Black `#141416`, Red `#ff453a` (default), Orange `#ff9f0a`, Yellow `#ffd60a`, Green `#30d158`, Blue `#0a84ff`, and Purple `#bf5af2`. A blue ring marks the selected color, and a swatch's tooltip shows its name. Clicking a swatch selects that color for subsequent vector shapes, text, and counter badges. `]` selects the next color and `[` the previous one, wrapping at either end.
 
 Selecting an annotation with the Select tool shows its color, stroke width, and fill in the tool options bar, and the next annotation is drawn with them. Each change in the bar also applies to the selected annotation, as one undo step: a color to every annotation but a blur, a stroke width to pen strokes, lines, arrows, rectangles, and ellipses, and fill to rectangles and ellipses. Choosing another tool clears the selection.
+
+A group in the bar that the selected annotation, or the current tool when nothing is selected, does not take is dimmed and takes no click: the stroke widths with Text, Highlight, and Counter, the fill toggle with every tool but Rectangle and Ellipse, and all three groups with Blur, Crop, and Select while nothing is selected. The keys still set each value for the next annotation.
 
 ## Text Tool
 

@@ -38,8 +38,6 @@ pub(super) const MIN_SIZE: f32 = 3.0;
 pub(super) const DIM: f32 = 0.32;
 /// Window-snap reveal fades both ways, like macOS's highlight.
 pub(super) const HOVER_FADE: Duration = Duration::from_millis(90);
-/// Edge of a selection resize handle's hit square, in logical px.
-pub(super) const HANDLE_PX: f32 = 16.0;
 
 /// What a committed selection does. Capture crops and saves; RecordPick
 /// reports the rect to the daemon and starts a region recording.
@@ -238,7 +236,12 @@ impl Render for Overlay {
             .id("overlay")
             .size_full()
             .font_family(theme::FONT)
-            .cursor_crosshair()
+            // A resize keeps its handle's arrow after the pointer leaves
+            // the handle.
+            .cursor(match self.resize {
+                Some((h, _)) => crate::widgets::selection::handle_cursor(h),
+                None => CursorStyle::Crosshair,
+            })
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 this.handle_key_down(ev, window, cx);
@@ -313,52 +316,13 @@ impl Render for Overlay {
                     return;
                 }
                 if let Some((h, r0)) = this.resize {
-                    let (mut x0, mut y0, mut x1, mut y1) = (r0.0, r0.1, r0.0 + r0.2, r0.1 + r0.3);
-                    match h {
-                        0 => {
-                            x0 = mx;
-                            y0 = my;
-                        }
-                        1 => {
-                            x1 = mx;
-                            y0 = my;
-                        }
-                        2 => {
-                            x0 = mx;
-                            y1 = my;
-                        }
-                        3 => {
-                            x1 = mx;
-                            y1 = my;
-                        }
-                        4 => {
-                            y0 = my;
-                        }
-                        5 => {
-                            y1 = my;
-                        }
-                        6 => {
-                            x0 = mx;
-                        }
-                        _ => {
-                            x1 = mx;
-                        }
-                    }
                     let size = window.bounds().size;
-                    // Clamp BOTH edges before subtracting: using the
-                    // raw far edge grows the rect past the window when
-                    // the handle is dragged outside it.
-                    let (nx, nw) = {
-                        let lo = x0.min(x1).clamp(0.0, f32::from(size.width));
-                        let hi = x0.max(x1).clamp(0.0, f32::from(size.width));
-                        (lo, hi - lo)
-                    };
-                    let (ny, nh) = {
-                        let lo = y0.min(y1).clamp(0.0, f32::from(size.height));
-                        let hi = y0.max(y1).clamp(0.0, f32::from(size.height));
-                        (lo, hi - lo)
-                    };
-                    this.current = Some((nx, ny, nw, nh));
+                    this.current = Some(crate::widgets::selection::reshape(
+                        h,
+                        r0,
+                        (mx, my),
+                        (f32::from(size.width), f32::from(size.height)),
+                    ));
                     // The loupe tracks the edge being dragged so a
                     // resize lands on the exact pixel, same as the
                     // initial drag.

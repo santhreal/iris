@@ -8,8 +8,10 @@ use iris_lib::history::Edit;
 use super::action::{hex_rgba, text_size, Tool};
 use super::paint::paint_action;
 use super::raster::{counter_label_at, glyph_span, text_advance, TEXT_LINE};
+use super::render_chrome::STAGE_TOP;
 use super::Editor;
 use crate::theme;
+use crate::widgets::selection;
 
 impl Editor {
     pub(super) fn render_stage(
@@ -18,7 +20,7 @@ impl Editor {
         morph_radius: f32,
         chrome: f32,
         scale: f32,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let (sx, sy, sw, sh) = stage_rect;
@@ -199,8 +201,11 @@ impl Editor {
             }
         }
 
-        // Pending crop: dim everything outside the rect, hairline and
-        // corner handles on it.
+        // Pending crop: dim everything outside the rect. Its edge,
+        // handles, and size readout go over the stage's frame, which
+        // does not clip them, so a crop against the image's edge keeps
+        // them whole.
+        let mut crop_frame = None;
         if let Some((x, y, w, h)) = self.crop_rect {
             let (rx, ry, rw, rh) = (x * scale, y * scale, w * scale, h * scale);
             let dim = hsla(0.0, 0.0, 0.0, 0.45);
@@ -222,36 +227,65 @@ impl Editor {
                     );
                 }
             }
-            stage = stage.child(
-                div()
-                    .absolute()
-                    .left(px(rx))
-                    .top(px(ry))
-                    .w(px(rw))
-                    .h(px(rh))
-                    .border_1()
-                    .border_color(theme::FG),
-            );
-            for (hx, hy) in [(rx, ry), (rx + rw, ry), (rx, ry + rh), (rx + rw, ry + rh)] {
-                stage = stage.child(
-                    div()
-                        .absolute()
-                        .left(px(hx - 3.5))
-                        .top(px(hy - 3.5))
-                        .w(px(7.))
-                        .h(px(7.))
-                        .rounded(px(2.))
-                        .bg(theme::FG),
-                );
+            // The readout states the pixels the crop keeps.
+            let size = (w as u32, h as u32);
+            if self.crop_label.0 != size || self.crop_label.1.is_empty() {
+                self.crop_label = (size, SharedString::from(format!("{} × {}", size.0, size.1)));
             }
+            let hair = selection::hairline(window.scale_factor());
+            // Above the crop where the options bar leaves room.
+            let (tag_x, tag_y) = selection::size_readout_at(rx, ry, hair, STAGE_TOP - sy);
+            let mut frame = div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .w(px(sw))
+                .h(px(sh))
+                .child(selection::selection_edge(rx, ry, rw, rh, hair))
+                .child(
+                    selection::readout(self.crop_label.1.clone(), theme::FG)
+                        .absolute()
+                        .left(px(tag_x))
+                        .top(px(tag_y)),
+                );
+            // The handles, centered on the white line, once the crop is
+            // drawn. A handle takes its own press: most of a corner's
+            // square lies off an image the crop reaches the edge of.
+            // The corners go on last, over the edges, so where squares
+            // overlap on a small crop a corner takes the press, as
+            // `selection::handle_at` picks.
+            if self.crop_anchor.is_none() {
+                let (ex, ey) = (rx - hair / 2.0, ry - hair / 2.0);
+                for (i, (hx, hy)) in selection::shown_handles(ex, ey, rw + hair, rh + hair).rev() {
+                    frame = frame.child(
+                        selection::handle(("crop-handle", i), i, hx, hy).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                if this.space_pan {
+                                    this.pan_drag =
+                                        Some((ev.position.x.into(), ev.position.y.into()));
+                                } else if let Some(rect) = this.crop_rect {
+                                    this.commit_text(true);
+                                    this.crop_resize = Some((i, rect));
+                                }
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+            }
+            crop_frame = Some(frame);
         }
 
         // The cursor follows the active tool: I-beam over text,
-        // crosshair for everything drawable, arrow for Select.
-        stage = match self.tool {
-            Tool::Text => stage.cursor_text(),
-            Tool::Select => stage,
-            _ => stage.cursor_crosshair(),
+        // crosshair for everything drawable, arrow for Select. A crop's
+        // resize keeps its handle's arrow.
+        stage = match (self.crop_resize, self.tool) {
+            (Some((h, _)), _) => stage.cursor(selection::handle_cursor(h)),
+            (None, Tool::Text) => stage.cursor_text(),
+            (None, Tool::Select) => stage,
+            (None, _) => stage.cursor_crosshair(),
         };
 
         // Stage input.
@@ -337,8 +371,8 @@ impl Editor {
                         }
                     } else if this.tool == Tool::Crop {
                         this.commit_text(true);
-                        // Hit-test handles first; inside rect starts a
-                        // move drag; outside starts a fresh crop.
+                        // Inside the rect a press moves it; outside it
+                        // starts a fresh crop. A handle takes its own.
                         let inside = this
                             .crop_rect
                             .map(|(x, y, w, h)| {
@@ -358,111 +392,45 @@ impl Editor {
                     }
                     cx.notify();
                 }),
-            )
-            .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
-                let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
-                if let Some(last) = this.pan_drag {
-                    this.pan.0 += mx - last.0;
-                    this.pan.1 += my - last.1;
-                    this.pan_drag = Some((mx, my));
-                    cx.notify();
-                    return;
-                }
-                let p = this.to_image(ev.position, window);
-                if this.entry_drag {
-                    if ev.pressed_button == Some(MouseButton::Left) && this.drag_entry(p) {
-                        cx.notify();
-                        return;
-                    }
-                    this.entry_drag = false;
-                }
-                if let Some((i, last, _, start_bbox)) = this.move_drag {
-                    let d = (p.0 - last.0, p.1 - last.1);
-                    let (dx, dy) = this.move_action(i, d, start_bbox);
-                    this.move_drag = Some((
-                        i,
-                        (last.0 + dx, last.1 + dy),
-                        this.move_drag.as_ref().unwrap().2.clone(),
-                        start_bbox,
-                    ));
-                    cx.notify();
-                } else if let Some(anchor) = this.crop_anchor {
-                    let (x0, y0) = (anchor.0.min(p.0), anchor.1.min(p.1));
-                    let (w, h) = ((p.0 - anchor.0).abs(), (p.1 - anchor.1).abs());
-                    this.crop_rect = Some((x0, y0, w, h));
-                    cx.notify();
-                } else if let Some((last, (x, y, w, h))) = this.crop_move {
-                    let d = (p.0 - last.0, p.1 - last.1);
-                    let iw = this.base.width() as f32;
-                    let ih = this.base.height() as f32;
-                    let nx = (x + d.0).clamp(0.0, (iw - w).max(0.0));
-                    let ny = (y + d.1).clamp(0.0, (ih - h).max(0.0));
-                    this.crop_rect = Some((nx, ny, w, h));
-                    cx.notify();
-                } else if let Some(rc) = &this.current {
-                    let mut action = rc.borrow_mut();
-                    match action.tool {
-                        Tool::Pen | Tool::Highlight => {
-                            let points = Rc::make_mut(&mut action.points);
-                            let last = points.last().copied().unwrap_or(p);
-                            if (last.0 - p.0).hypot(last.1 - p.1) > 2.0 {
-                                points.push(p);
-                            }
-                        }
-                        Tool::Line | Tool::Arrow => {
-                            let points = Rc::make_mut(&mut action.points);
-                            if points.len() < 2 {
-                                points.push(p);
-                            } else {
-                                points[1] = p;
-                            }
-                        }
-                        Tool::Ellipse | Tool::Rect | Tool::Blur => {
-                            let points = Rc::make_mut(&mut action.points);
-                            if points.len() < 2 {
-                                points.push(p);
-                            } else {
-                                points[1] = p;
-                            }
-                        }
-                        Tool::Select | Tool::Text | Tool::Crop | Tool::Counter => {}
-                    }
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Middle,
-                cx.listener(|this, _ev: &MouseUpEvent, _, cx| {
-                    this.pan_drag = None;
-                    cx.notify();
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _ev: &MouseUpEvent, _, cx| {
-                    this.entry_drag = false;
-                    if this.pan_drag.is_some() {
-                        this.pan_drag = None;
-                        cx.notify();
-                        return;
-                    }
-                    // A press that selects a mark without moving it is no
-                    // edit: it adds no undo step.
-                    if let Some((i, _, old_action, start_bbox)) = this.move_drag.take() {
-                        let new_action = this.actions.borrow().get(i).cloned();
-                        if let Some(new_action) = new_action.filter(|a| a.bbox != Some(start_bbox))
-                        {
-                            let edit = Edit::Move(i, old_action, new_action);
-                            this.rebuild_for_edit(&edit);
-                            this.push_edit(edit);
-                        }
-                    }
-                    this.crop_anchor = None;
-                    this.crop_move = None;
-                    this.commit_current();
-                    cx.notify();
-                }),
             );
+
+        // The stage's drags (a mark drawn or moved, a crop drawn, moved,
+        // or resized, a text selection, a pan) follow the pointer past
+        // the image's edge and out of the window, and end at the release
+        // wherever it is: the listeners run in the capture phase, for
+        // every move and release in the window, not under the stage.
+        let this = cx.entity().downgrade();
+        stage = stage.child(
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    let moved = this.clone();
+                    window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Capture {
+                            let _ = moved.update(cx, |this, cx| {
+                                if this.stage_drag(ev, window) {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    });
+                    let released = this.clone();
+                    window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
+                        if phase == DispatchPhase::Capture {
+                            let _ = released.update(cx, |this, cx| {
+                                if this.stage_release(ev.button) {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        );
 
         // The frame: the hairline ring and the shadow, a pixel outside
         // the stage, so no captured pixel lies under the ring and the
@@ -495,5 +463,124 @@ impl Editor {
                 },
             ])
             .child(stage)
+            .children(crop_frame)
+    }
+}
+
+impl Editor {
+    /// A pointer move, anywhere: it carries on the stage drag in
+    /// progress, if any. Returns whether the editor needs a redraw.
+    fn stage_drag(&mut self, ev: &MouseMoveEvent, window: &Window) -> bool {
+        let (mx, my): (f32, f32) = (ev.position.x.into(), ev.position.y.into());
+        if let Some(last) = self.pan_drag {
+            self.pan.0 += mx - last.0;
+            self.pan.1 += my - last.1;
+            self.pan_drag = Some((mx, my));
+            return true;
+        }
+        let p = self.to_image(ev.position, window);
+        if self.entry_drag {
+            if ev.pressed_button == Some(MouseButton::Left) && self.drag_entry(p) {
+                return true;
+            }
+            self.entry_drag = false;
+        }
+        if let Some((i, last, _, start_bbox)) = self.move_drag {
+            let d = (p.0 - last.0, p.1 - last.1);
+            let (dx, dy) = self.move_action(i, d, start_bbox);
+            if let Some(drag) = &mut self.move_drag {
+                drag.1 = (last.0 + dx, last.1 + dy);
+            }
+            return true;
+        }
+        // A crop dropped mid-drag, by Escape, Return, or Undo, ends the
+        // drag rather than coming back under the pointer.
+        if self.crop_rect.is_none() {
+            self.crop_anchor = None;
+            self.crop_move = None;
+            self.crop_resize = None;
+        }
+        // A crop stays on the image: drawn, moved, or reshaped by a
+        // pointer past its edge, its side stops at the edge. Drawing
+        // one is dragging the SE corner of the rect at its anchor.
+        let bounds = (self.base_dims.0 as f32, self.base_dims.1 as f32);
+        if let Some(anchor) = self.crop_anchor {
+            self.crop_rect = Some(selection::reshape(
+                3,
+                (anchor.0, anchor.1, 0.0, 0.0),
+                p,
+                bounds,
+            ));
+            return true;
+        }
+        if let Some((last, (x, y, w, h))) = self.crop_move {
+            let d = (p.0 - last.0, p.1 - last.1);
+            let nx = (x + d.0).clamp(0.0, (bounds.0 - w).max(0.0));
+            let ny = (y + d.1).clamp(0.0, (bounds.1 - h).max(0.0));
+            self.crop_rect = Some((nx, ny, w, h));
+            return true;
+        }
+        if let Some((handle, start)) = self.crop_resize {
+            self.crop_rect = Some(selection::reshape(handle, start, p, bounds));
+            return true;
+        }
+        let Some(rc) = &self.current else {
+            return false;
+        };
+        let mut action = rc.borrow_mut();
+        match action.tool {
+            Tool::Pen | Tool::Highlight => {
+                let points = Rc::make_mut(&mut action.points);
+                let last = points.last().copied().unwrap_or(p);
+                if (last.0 - p.0).hypot(last.1 - p.1) > 2.0 {
+                    points.push(p);
+                }
+            }
+            Tool::Line | Tool::Arrow | Tool::Ellipse | Tool::Rect | Tool::Blur => {
+                let points = Rc::make_mut(&mut action.points);
+                if points.len() < 2 {
+                    points.push(p);
+                } else {
+                    points[1] = p;
+                }
+            }
+            Tool::Select | Tool::Text | Tool::Crop | Tool::Counter => {}
+        }
+        true
+    }
+
+    /// A button's release, anywhere: it ends the stage drag that button
+    /// holds. Returns whether the editor needs a redraw.
+    fn stage_release(&mut self, button: MouseButton) -> bool {
+        match button {
+            MouseButton::Middle => self.pan_drag.take().is_some(),
+            MouseButton::Left => {
+                self.entry_drag = false;
+                if self.pan_drag.take().is_some() {
+                    return true;
+                }
+                let held = self.move_drag.is_some()
+                    || self.crop_anchor.is_some()
+                    || self.crop_move.is_some()
+                    || self.crop_resize.is_some()
+                    || self.current.is_some();
+                // A press that selects a mark without moving it is no
+                // edit: it adds no undo step.
+                if let Some((i, _, old_action, start_bbox)) = self.move_drag.take() {
+                    let new_action = self.actions.borrow().get(i).cloned();
+                    if let Some(new_action) = new_action.filter(|a| a.bbox != Some(start_bbox)) {
+                        let edit = Edit::Move(i, old_action, new_action);
+                        self.rebuild_for_edit(&edit);
+                        self.push_edit(edit);
+                    }
+                }
+                self.crop_anchor = None;
+                self.crop_move = None;
+                self.crop_resize = None;
+                self.commit_current();
+                held
+            }
+            _ => false,
+        }
     }
 }

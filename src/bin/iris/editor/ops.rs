@@ -288,7 +288,11 @@ impl Editor {
     /// undo step. A key during a pointer drag does nothing, so the
     /// drag's one step stays whole.
     pub(crate) fn nudge(&mut self, d: (f32, f32)) {
-        if self.move_drag.is_some() || self.crop_anchor.is_some() || self.crop_move.is_some() {
+        if self.move_drag.is_some()
+            || self.crop_anchor.is_some()
+            || self.crop_move.is_some()
+            || self.crop_resize.is_some()
+        {
             return;
         }
         if let Some((x, y, w, h)) = self.crop_rect {

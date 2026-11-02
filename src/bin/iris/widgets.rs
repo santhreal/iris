@@ -11,6 +11,7 @@ mod keycaps;
 mod menu;
 mod resize;
 mod scroll;
+pub mod selection;
 mod tooltip;
 mod vanish;
 mod window_controls;
@@ -135,6 +136,17 @@ pub fn menu_icon_button(
 /// keep the tooltip.
 pub fn disabled_icon_button(id: impl Into<ElementId>, glyph: Icon, size: f32) -> Stateful<Div> {
     icon_button_inked(id, glyph, IconFace::Disabled, size, theme::FG_DISABLED)
+}
+
+/// `el` drawn disabled with its value still shown: dimmed to
+/// `theme::DISABLED_OPACITY`, under a layer that takes the pointer, so
+/// its controls neither hover, press, nor show a tooltip.
+pub fn disabled(el: impl IntoElement) -> Div {
+    div()
+        .relative()
+        .opacity(theme::DISABLED_OPACITY)
+        .child(el)
+        .child(div().absolute().inset_0().occlude())
 }
 
 /// [`icon_button`] for a HUD that floats over any screen content, the
