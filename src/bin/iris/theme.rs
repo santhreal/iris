@@ -57,10 +57,13 @@ pub const CHOSEN: Rgba = alpha(WHITE, 0.16);
 pub const SELECTION_EDGE: Rgba = alpha(WHITE, 0.92);
 pub const SELECTION_RIM: Rgba = alpha(BLACK, 0.35);
 pub const WINDOW_PICK: Rgba = alpha(ACCENT, 0.18);
-/// The fill of an overlay readout's tag and of a poster's play disc:
-/// opaque, so no edge of the screen or the poster under it shows
-/// through the text or the glyph.
+/// The fill of an overlay readout's tag: opaque, so no edge of the
+/// screen under it shows through the text.
 pub const READOUT_FILL: Rgba = rgb(0.1, 0.1, 0.1);
+/// The disc under a recording poster's play glyph: dark at 62%, so the
+/// poster reads through it; the glyph is a solid triangle, legible over
+/// any poster.
+pub const PLAY_DISC: Rgba = alpha(BLACK, 0.62);
 /// The toast's hover actions: a scrim over the capture, and opaque
 /// light buttons on it with dark labels and glyphs, so no part of the
 /// capture shows through a label. The status line uses the buttons'

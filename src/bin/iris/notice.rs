@@ -548,7 +548,7 @@ impl Notice {
                 div()
                     .size(px(PLAY))
                     .rounded_full()
-                    .bg(theme::READOUT_FILL)
+                    .bg(theme::PLAY_DISC)
                     .flex()
                     .items_center()
                     .justify_center()

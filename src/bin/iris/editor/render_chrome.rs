@@ -18,6 +18,20 @@ pub(super) const STAGE_TOP: f32 = theme::TOOLBAR_H + OPTIONS_H;
 /// The clear space between the fit image and each stage edge.
 pub(super) const STAGE_MARGIN: f32 = 24.0;
 
+/// The status line's distance from the window's bottom edge when
+/// `below` px of stage lie under the image: STATUS_GAP where that room
+/// holds the line with STATUS_GAP on each side, else STATUS_GAP above
+/// the image's bottom edge, over the image, so the line never lies
+/// across that edge.
+fn status_bottom(below: f32) -> f32 {
+    let gap = widgets::STATUS_GAP;
+    if below > 0.0 && below < widgets::STATUS_H + 2.0 * gap {
+        below + gap
+    } else {
+        gap
+    }
+}
+
 /// The least channel difference, of 1, between a swatch's rim and the
 /// options bar under it.
 pub(super) const SWATCH_APART: f32 = 16.0 / 255.0;
@@ -537,7 +551,7 @@ impl Editor {
         &mut self,
         mut root: Stateful<Div>,
         topbar: f32,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         // Transient status line (copy results, OCR counts, save errors,
@@ -564,7 +578,12 @@ impl Editor {
                 }
                 // The discard prompt draws the key it names as a cap.
                 let text = widgets::text_with_key(text, "Esc", theme::FG);
-                root = root.child(widgets::status_pill(text, STAGE_MARGIN));
+                let (_, oy, scale) = self.view(window);
+                let below =
+                    f32::from(window.bounds().size.height) - oy - self.base_dims.1 as f32 * scale;
+                root = root.child(
+                    widgets::status_pill(text, STAGE_MARGIN).bottom(px(status_bottom(below))),
+                );
             }
         }
 
@@ -612,5 +631,43 @@ mod shortcut_tests {
     #[test]
     fn every_help_row_reads_as_key_caps() {
         crate::widgets::assert_hints_read_as_keys(&super::help_rows());
+    }
+}
+
+// WHY: the class closed here is "the status line lies across the
+// image's bottom edge", half over the image and half over the stage,
+// where the stage under a height-fit image is narrower than the line.
+// For every room under the image the line sits clear of the edge: in
+// the room with STATUS_GAP on each side, or STATUS_GAP above the edge,
+// over the image. Not covered: a line wrapped to more than one row, and
+// an image narrower than the line.
+#[cfg(test)]
+mod status_tests {
+    use crate::widgets::{STATUS_GAP, STATUS_H};
+
+    #[test]
+    fn the_status_line_never_lies_across_the_image_bottom_edge() {
+        for step in -200..=400 {
+            let below = step as f32 * 0.25;
+            let bottom = super::status_bottom(below);
+            let top = bottom + STATUS_H;
+            let in_room = bottom >= STATUS_GAP && top + STATUS_GAP <= below;
+            let on_image = bottom >= below.max(0.0) + STATUS_GAP;
+            assert!(
+                in_room || on_image,
+                "with {below} px of stage under the image the line spans {bottom}..{top}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_status_line_sits_over_the_stage_edge_where_the_room_holds_it() {
+        assert_eq!(
+            super::status_bottom(STATUS_H + 2.0 * STATUS_GAP),
+            STATUS_GAP
+        );
+        assert_eq!(super::status_bottom(200.0), STATUS_GAP);
+        // The image past the window's bottom edge: the line over it.
+        assert_eq!(super::status_bottom(-40.0), STATUS_GAP);
     }
 }

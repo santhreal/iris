@@ -173,15 +173,24 @@ pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Di
 
 /// How long a transient status message stays up.
 pub const STATUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
+/// The space between the status line and the edge it sits over.
+pub const STATUS_GAP: f32 = 10.0;
+/// The status line's text line: a key cap's height, so a message with a
+/// cap in it is as tall as one without.
+const STATUS_LINE: f32 = keycaps::CAP_H;
+const STATUS_PAD_Y: f32 = 5.0;
+/// A one-line status line's height: its line, padding, and border.
+pub const STATUS_H: f32 = STATUS_LINE + 2.0 * STATUS_PAD_Y + 2.0;
 
-/// Transient status line: a HUD capsule centered over the window's
-/// bottom edge, as the overlay's readouts are, and at least `inset` px
-/// from either side so a long message wraps inside the window. A line
-/// of text keeps capsule ends; wrapped lines keep the same corners.
+/// Transient status line: a HUD capsule STATUS_GAP over the window's
+/// bottom edge, centered as the overlay's readouts are, and at least
+/// `inset` px from either side so a long message wraps inside the
+/// window. A line of text keeps capsule ends; wrapped lines keep the
+/// same corners. A caller that sets `bottom` moves it up.
 pub fn status_pill(content: impl IntoElement, inset: f32) -> Div {
     div()
         .absolute()
-        .bottom(px(10.))
+        .bottom(px(STATUS_GAP))
         .left_0()
         .right_0()
         .px(px(inset))
@@ -190,13 +199,14 @@ pub fn status_pill(content: impl IntoElement, inset: f32) -> Div {
         .child(
             div()
                 .px(px(12.))
-                .py(px(5.))
-                .rounded(px(12.))
+                .py(px(STATUS_PAD_Y))
+                .rounded(px(STATUS_H / 2.0))
                 .bg(theme::BG_ELEV)
                 .border_1()
                 .border_color(theme::HAIRLINE)
                 .shadow(theme::shadow_float())
                 .text_size(px(theme::TEXT_SMALL))
+                .line_height(px(STATUS_LINE))
                 .text_color(theme::FG)
                 .text_center()
                 .child(content),

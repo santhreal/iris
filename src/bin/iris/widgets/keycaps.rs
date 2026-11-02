@@ -6,7 +6,7 @@ use gpui::*;
 use crate::theme;
 
 /// Cap height and corner radius, logical px.
-const CAP_H: f32 = 18.0;
+pub(super) const CAP_H: f32 = 18.0;
 const CAP_RADIUS: f32 = 4.0;
 
 /// Whether shortcuts read as macOS writes them: modifiers and named keys
