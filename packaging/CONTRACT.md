@@ -29,6 +29,8 @@ deviate without updating this file and every consumer.
 - `iris-{16,24,32,48,64,128,256,512,1024}.png`: Linux hicolor icons,
   installed by the deb, the rpm and the AppImage at every size
 - `tray-{16,22,24,32,48}.png`: the Linux tray glyph, embedded in the binary
+- `tray-symbolic.svg`: the Linux tray glyph as a symbolic icon, embedded
+  in the binary and written to the cache for the panel to recolor
 - `tray-template.png`: the macOS menu bar template glyph, embedded in the binary
 - Regenerate with `python3 packaging/gen_icons.py`
 

@@ -244,3 +244,192 @@ fn every_tray_pixmap_is_a_white_antialiased_argb_glyph() {
         assert!(solid > 0 && edge > 0, "{n} px: {solid} solid, {edge} edge");
     }
 }
+
+// WHY: the class closed here is "the tray glyph sits off center". The
+// glyph has sixfold symmetry about its center, so a centered raster
+// equals its own half turn. The rasters were drawn with an ellipse that
+// rounds an integer box out by a pixel to the right and bottom, which
+// set the 16, 24, and 48 px glyphs and the menu bar template 1/20 px
+// right of and below center. Every `tray-*.png` in packaging/icons is
+// held, so a raster added there is covered. Not covered: the app icon,
+// whose shading is not symmetric.
+#[test]
+fn every_tray_glyph_raster_is_centered() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/icons");
+    let mut held = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !(name.starts_with("tray-") && name.ends_with(".png")) {
+            continue;
+        }
+        let img = image::open(&path).unwrap().into_rgba8();
+        let (w, h) = img.dimensions();
+        for (x, y, p) in img.enumerate_pixels() {
+            let turned = img.get_pixel(w - 1 - x, h - 1 - y);
+            assert!(
+                p[3].abs_diff(turned[3]) <= 1,
+                "{name}: ({x}, {y}) has coverage {} and its half turn {}",
+                p[3],
+                turned[3]
+            );
+        }
+        held.push(name);
+    }
+    held.sort();
+    assert_eq!(
+        held,
+        [
+            "tray-16.png",
+            "tray-22.png",
+            "tray-24.png",
+            "tray-32.png",
+            "tray-48.png",
+            "tray-template.png"
+        ]
+    );
+}
+
+// WHY: the class closed here is "the tray glyph vanishes on a light
+// panel". The pixmaps are white, which reads only on a dark panel, so
+// the item also names a symbolic glyph for the panel to fill with its
+// own foreground color. GTK panels and GNOME Shell fill every `rect`,
+// `circle`, and `path` of a `-symbolic` icon through a stylesheet, and
+// Plasma replaces the icon's `current-color-scheme` stylesheet. A part
+// drawn as a stroke, as an element that stylesheet does not select, or
+// in a literal color stays white on a light panel. The cases render the
+// shipped SVG under both recolorings and hold every covered pixel to
+// the panel's color, hold its shape to the 16 px pixmap's, and hold the
+// file to the place the item points the panel at. Not covered: a
+// panel's own lookup; tests/tray.rs reads the name and path the live
+// item serves.
+#[cfg(target_os = "linux")]
+mod symbolic {
+    use std::path::Path;
+
+    const SVG: &str = include_str!("../../../../../packaging/icons/tray-symbolic.svg");
+
+    /// `svg` at `size` px, as premultiplied RGBA.
+    fn render(svg: &str, size: u32) -> Vec<[u8; 4]> {
+        use resvg::{tiny_skia, usvg};
+        let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).expect("the SVG parses");
+        let mut pixmap = tiny_skia::Pixmap::new(size, size).unwrap();
+        let scale = size as f32 / tree.size().width();
+        resvg::render(
+            &tree,
+            tiny_skia::Transform::from_scale(scale, scale),
+            &mut pixmap.as_mut(),
+        );
+        pixmap
+            .pixels()
+            .iter()
+            .map(|p| [p.red(), p.green(), p.blue(), p.alpha()])
+            .collect()
+    }
+
+    /// The glyph as Plasma draws it: the `current-color-scheme`
+    /// stylesheet's text replaced with one that sets `ColorScheme-Text`
+    /// to `color`.
+    fn plasma(color: &str) -> String {
+        let open = SVG
+            .find("<style id=\"current-color-scheme\"")
+            .expect("the glyph has no current-color-scheme stylesheet for Plasma to replace");
+        let body = open + SVG[open..].find('>').unwrap() + 1;
+        let close = body + SVG[body..].find("</style>").unwrap();
+        format!(
+            "{}.ColorScheme-Text {{ color:{color}; }}{}",
+            &SVG[..body],
+            &SVG[close..]
+        )
+    }
+
+    /// The glyph as a GTK panel or GNOME Shell draws it: under a
+    /// stylesheet that fills every `rect`, `circle`, and `path` with
+    /// `color`.
+    fn gtk(color: &str) -> String {
+        let root = SVG.find("<svg").unwrap();
+        let body = root + SVG[root..].find('>').unwrap() + 1;
+        format!(
+            "{}<style type=\"text/css\">rect,circle,path {{ fill: {color} !important; }}</style>{}",
+            &SVG[..body],
+            &SVG[body..]
+        )
+    }
+
+    /// Every pixel the glyph covers holds `want` at its coverage, at the
+    /// sizes panels draw tray icons at, within the renderer's rounding
+    /// of 2. A part in another color differs by more than that at any
+    /// coverage of 16 or more: white over `#232629` by 14.
+    fn assert_drawn_in(svg: &str, want: [u8; 3], host: &str) {
+        for size in [16, 22, 24, 32] {
+            let px = render(svg, size);
+            let covered: Vec<&[u8; 4]> = px.iter().filter(|p| p[3] >= 16).collect();
+            assert!(
+                covered.len() > 20,
+                "{host} {size} px: {} pixels drawn",
+                covered.len()
+            );
+            for p in covered {
+                let a = u32::from(p[3]);
+                let off = (0..3)
+                    .map(|i| u32::from(p[i]).abs_diff((u32::from(want[i]) * a + 127) / 255))
+                    .max()
+                    .unwrap();
+                assert!(
+                    off <= 2,
+                    "{host} {size} px: a pixel reads {p:?} premultiplied, not {want:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_symbolic_glyph_takes_the_panel_color_under_gtk_and_plasma() {
+        assert_drawn_in(
+            &plasma("#232629"),
+            [0x23, 0x26, 0x29],
+            "Plasma, light panel",
+        );
+        assert_drawn_in(&plasma("#fcfcfc"), [0xfc, 0xfc, 0xfc], "Plasma, dark panel");
+        assert_drawn_in(&gtk("#2e3436"), [0x2e, 0x34, 0x36], "GTK, light panel");
+        assert_drawn_in(&gtk("#eeeeec"), [0xee, 0xee, 0xec], "GTK, dark panel");
+        // A panel that recolors nothing draws it as the pixmaps.
+        assert_drawn_in(SVG, [255, 255, 255], "no recoloring");
+    }
+
+    #[test]
+    fn the_symbolic_glyph_has_the_16_px_pixmap_shape() {
+        let drawn = render(SVG, 16);
+        let icons = super::super::linux::pixmaps();
+        let pixmap = icons.iter().find(|icon| icon.width == 16).unwrap();
+        let (argb, _) = pixmap.data.as_chunks::<4>();
+        let diffs: Vec<u32> = drawn
+            .iter()
+            .zip(argb)
+            .map(|(p, q)| u32::from(p[3].abs_diff(q[0])))
+            .collect();
+        let max = diffs.iter().max().unwrap();
+        let mean = diffs.iter().sum::<u32>() as f64 / diffs.len() as f64;
+        assert!(
+            *max <= 32 && mean <= 4.0,
+            "the symbolic glyph and the 16 px pixmap differ by up to {max} in coverage, \
+             {mean:.2} on average"
+        );
+    }
+
+    #[test]
+    fn the_symbolic_glyph_is_written_where_the_item_points_the_panel() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("cache/tray");
+        let theme = super::super::linux::symbolic_theme(&dir).unwrap();
+        assert_eq!(Path::new(&theme), dir, "IconThemePath");
+        let file = dir.join("iris-tray-symbolic.svg");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), SVG);
+        assert_eq!(super::super::linux::SYMBOLIC_NAME, "iris-tray-symbolic");
+
+        // A glyph an earlier version wrote is replaced.
+        std::fs::write(&file, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>").unwrap();
+        super::super::linux::symbolic_theme(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), SVG);
+    }
+}

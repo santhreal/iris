@@ -29,7 +29,7 @@ Setting the environment variable `IRIS_HOME` to a non-empty path overrides direc
 | --- | --- | --- |
 | Config | `$IRIS_HOME/config/config.toml` | Configuration file |
 | Data | `$IRIS_HOME/data` | Persistent data directory (stores `library.json`) |
-| Cache | `$IRIS_HOME/cache` | Cache directory (stores thumbnails and frozen frames) |
+| Cache | `$IRIS_HOME/cache` | Cache directory (stores thumbnails, frozen frames, update downloads, and the Linux tray glyph) |
 | Log | `$IRIS_HOME/state/iris.log` | Application log file |
 
 When `IRIS_HOME` is unset, default persistent directories resolve as follows:

@@ -2900,6 +2900,7 @@ dependencies = [
  "parking_lot",
  "pipewire",
  "raw-window-handle",
+ "resvg",
  "ring",
  "semver",
  "serde",

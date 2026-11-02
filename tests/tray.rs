@@ -13,7 +13,9 @@
 //! answers from the item. "The panel draws a jagged or miscolored
 //! glyph": the item served one 22 px raster with its bytes in RGBA
 //! order; the same case reads `IconPixmap` and holds every raster to
-//! ARGB32 white at its own size.
+//! ARGB32 white at its own size. "The glyph vanishes on a light panel":
+//! the same case reads `IconName` and `IconThemePath` and holds the file
+//! they name to the symbolic glyph a panel recolors.
 //! "The tray menu does not follow the recording": the menu offered
 //! **Record Window** while a recording ran, and that row stopped it.
 //! The second case starts a window recording, reads **Stop Recording**
@@ -43,6 +45,7 @@ mod recording;
 mod x11;
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use daemon::{enabled, session_bus, xvfb, Daemon};
 use recording::Recording;
@@ -221,6 +224,35 @@ fn a_primary_click_on_the_tray_icon_opens_its_menu() {
         sizes.push((*w, *h));
     }
     assert_eq!(sizes, [(16, 16), (22, 22), (24, 24), (32, 32), (48, 48)]);
+
+    // A panel that finds IconName in IconThemePath draws that glyph in
+    // its own foreground color instead.
+    let property = |name: &str| {
+        let reply = zbus::block_on(bus.call_method(
+            Some(item.as_str()),
+            PATH,
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &(ITEM, name),
+        ))
+        .unwrap();
+        String::try_from(reply.body().deserialize::<OwnedValue>().unwrap()).unwrap()
+    };
+    let name = property("IconName");
+    let theme = property("IconThemePath");
+    assert_eq!(name, "iris-tray-symbolic");
+    assert!(
+        Path::new(&theme).starts_with(dir.path()),
+        "IconThemePath {theme} is outside IRIS_HOME {}",
+        dir.path().display()
+    );
+    let glyph = std::fs::read_to_string(Path::new(&theme).join(format!("{name}.svg")))
+        .unwrap_or_else(|e| panic!("a panel finds no {name}.svg in {theme}: {e}"));
+    assert_eq!(
+        glyph,
+        include_str!("../packaging/icons/tray-symbolic.svg"),
+        "the glyph in IconThemePath"
+    );
 }
 
 #[test]

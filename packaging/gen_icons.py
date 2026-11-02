@@ -15,6 +15,8 @@ Outputs into packaging/icons/:
   iris.icns                                   macOS, with the macOS
                                               icon grid's margin and shadow
   tray-{16,22,24,32,48}.png                   Linux tray, white
+  tray-symbolic.svg                           Linux tray, symbolic: the
+                                              panel's foreground color
   tray-template.png                           macOS menu bar template,
                                               36 px for 18 pt at 2x
 """
@@ -192,27 +194,76 @@ def tile(size, body, shadow):
 
 def glyph(size, rgb, pad, stroke):
     """The tray glyph at size px: the aperture as strokes of width stroke
-    px in rgb, inset pad px from the edge."""
+    px in rgb, inset pad px from the edge. Each supersample is tested
+    against the exact shapes at its center, so the glyph sits centered
+    to the subpixel at every size; PIL's ellipse rounds an integer box
+    out by one pixel to the right and bottom."""
     f = ss(size)
     s = size * f
     c = s / 2
-    w = stroke * f
-    r = c - pad * f - w / 2
+    h = stroke * f / 2
+    r = c - pad * f - h
     corners, rims = aperture(c, c, r)
-
-    def draw(d):
-        d.ellipse([c - r - w / 2, c - r - w / 2, c + r + w / 2, c + r + w / 2], fill=255)
-        d.ellipse([c - r + w / 2, c - r + w / 2, c + r - w / 2, c + r - w / 2], fill=0)
-        for k in range(6):
-            (ax, ay), (bx, by) = corners[k - 1], rims[k]
-            # A stroke from just inside the opening's corner to the ring.
-            d.line([(ax, ay), (bx, by)], fill=255, width=int(round(w)))
-            d.ellipse([ax - w / 2, ay - w / 2, ax + w / 2, ay + w / 2], fill=255)
-
-    cov = mask(s, draw).resize((size, size), Image.BOX)
+    y, x = np.mgrid[0:s, 0:s].astype(np.float64) + 0.5
+    ink = np.abs(np.hypot(x - c, y - c) - r) <= h
+    for k in range(6):
+        (ax, ay), (bx, by) = corners[k - 1], rims[k]
+        n = math.hypot(bx - ax, by - ay)
+        ux, uy = (bx - ax) / n, (by - ay) / n
+        # A stroke from the opening's corner to the ring. The corner is
+        # on the previous blade's line, so that blade covers this end.
+        along = (x - ax) * ux + (y - ay) * uy
+        across = np.abs((y - ay) * ux - (x - ax) * uy)
+        ink |= (along >= 0) & (along <= n) & (across <= h)
+    cov = Image.fromarray(ink.astype(np.uint8) * 255, "L").resize((size, size), Image.BOX)
     img = Image.new("RGBA", (size, size), rgb + (0,))
     img.putalpha(cov)
     return img
+
+
+def symbolic(size, pad, stroke):
+    """The tray glyph as a symbolic SVG of side size: the shapes glyph()
+    draws, as filled outlines. GTK panels and GNOME Shell fill every
+    path of a -symbolic icon with the panel's foreground color, and
+    Plasma sets the ColorScheme-Text color, so the glyph reads on a
+    light panel and on a dark one. A panel that recolors nothing draws
+    it white, as the tray PNGs."""
+    c = size / 2
+    h = stroke / 2
+    r = c - pad - h
+    corners, rims = aperture(c, c, r)
+
+    def num(v):
+        return f"{v:.3f}".rstrip("0").rstrip(".")
+
+    def pt(x, y):
+        return f"{num(x)} {num(y)}"
+
+    # The ring: two circles, the inner one a hole under evenodd.
+    ring = "".join(
+        f"M{pt(c + q, c)}A{num(q)} {num(q)} 0 1 0 {pt(c - q, c)}"
+        f"A{num(q)} {num(q)} 0 1 0 {pt(c + q, c)}Z"
+        for q in (r + h, r - h))
+    blades = []
+    for k in range(6):
+        (ax, ay), (bx, by) = corners[k - 1], rims[k]
+        dx, dy = bx - ax, by - ay
+        n = math.hypot(dx, dy)
+        nx, ny = -dy / n * h, dx / n * h
+        # The stroke glyph() draws.
+        blades.append(
+            f"M{pt(ax + nx, ay + ny)}L{pt(bx + nx, by + ny)}"
+            f"L{pt(bx - nx, by - ny)}L{pt(ax - nx, ay - ny)}Z")
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}"'
+        f' viewBox="0 0 {size} {size}">\n'
+        '<style id="current-color-scheme" type="text/css">'
+        '.ColorScheme-Text{color:#ffffff}</style>\n'
+        '<g class="ColorScheme-Text" fill="currentColor">\n'
+        f'<path fill-rule="evenodd" d="{ring}"/>\n'
+        f'<path d="{"".join(blades)}"/>\n'
+        '</g>\n'
+        '</svg>\n')
 
 
 def write_icns(path):
@@ -245,6 +296,8 @@ def main():
     for n in (16, 22, 24, 32, 48):
         glyph(n, (255, 255, 255), n / 16, max(1.5, n / 12)).save(
             os.path.join(OUT, f"tray-{n}.png"))
+    with open(os.path.join(OUT, "tray-symbolic.svg"), "w") as f:
+        f.write(symbolic(16, 1.0, 1.5))
     glyph(36, (0, 0, 0), 1.5, 3.0).save(os.path.join(OUT, "tray-template.png"))
     print("wrote icons to", OUT)
 

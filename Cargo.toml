@@ -157,3 +157,6 @@ x11rb = { version = "0.13", features = ["cursor", "resource_manager", "xtest"] }
 # tests/tray.rs reads the tray item over a private session bus. The
 # features the tray's ksni already builds zbus with.
 zbus = { version = "5", default-features = false, features = ["async-io"] }
+# The tray tests render the symbolic tray glyph as the panels recolor
+# it. Already in the tree through gpui.
+resvg = { version = "0.46", default-features = false }
