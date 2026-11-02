@@ -37,6 +37,8 @@ mod rebuild;
 mod render_chrome;
 mod render_stage;
 #[cfg(test)]
+mod swatch_tests;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use action::Action;

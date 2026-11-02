@@ -10,6 +10,9 @@ use gpui::*;
 mod svg;
 mod tessellate;
 
+#[cfg(test)]
+pub(crate) use svg::ink_box;
+
 pub(crate) use tessellate::{
     push_disc, push_ellipse_fill, push_filled_triangle, push_rect_fill, push_ring, push_segment,
     TriRecorder, TriSink,
@@ -62,6 +65,7 @@ pub enum Icon {
     Minimize,
     Maximize,
     Restore,
+    WindowClose,
     CaptionMinimize,
     CaptionMaximize,
     CaptionRestore,

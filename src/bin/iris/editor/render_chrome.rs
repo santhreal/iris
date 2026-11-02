@@ -18,6 +18,32 @@ pub(super) const STAGE_TOP: f32 = theme::TOOLBAR_H + OPTIONS_H;
 /// The clear space between the fit image and each stage edge.
 pub(super) const STAGE_MARGIN: f32 = 24.0;
 
+/// The least channel difference, of 1, between a swatch's rim and the
+/// options bar under it.
+pub(super) const SWATCH_APART: f32 = 16.0 / 255.0;
+
+/// The rim of a swatch on the options bar over its opaque `fill`: the
+/// hairline, or where the hairline over the fill would land within
+/// SWATCH_APART of the bar, `theme::SWATCH_RIM`. A swatch then shows its
+/// whole size: black under the hairline drew at the bar's own gray, a
+/// swatch narrower than every other.
+pub(super) fn swatch_rim(fill: Rgba) -> Rgba {
+    let over = |rim: Rgba| {
+        let mix = |r: f32, f: f32| r * rim.a + f * (1.0 - rim.a);
+        [mix(rim.r, fill.r), mix(rim.g, fill.g), mix(rim.b, fill.b)]
+    };
+    let bar = theme::BG_ELEV;
+    let apart = over(theme::HAIRLINE)
+        .iter()
+        .zip([bar.r, bar.g, bar.b])
+        .fold(0f32, |m, (c, b)| m.max((c - b).abs()));
+    if apart >= SWATCH_APART {
+        theme::HAIRLINE
+    } else {
+        theme::SWATCH_RIM
+    }
+}
+
 /// The stroke-width stops: glyph, tooltip, and the key that selects it.
 const STROKES: [(Icon, &str, &str); 3] = [
     (Icon::Stroke1, "Thin Stroke", "1"),
@@ -476,6 +502,7 @@ impl Editor {
         bar = bar.child(divider());
         for (c, name) in COLORS {
             let active = c == self.color;
+            let fill = hex_rgba(c);
             bar = bar.child(
                 div()
                     .id(ElementId::Name(c.into()))
@@ -498,9 +525,9 @@ impl Editor {
                             .w(px(16.))
                             .h(px(16.))
                             .rounded_full()
-                            .bg(hex_rgba(c))
+                            .bg(fill)
                             .border_1()
-                            .border_color(theme::HAIRLINE),
+                            .border_color(swatch_rim(fill)),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.set_color(c);

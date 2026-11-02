@@ -37,12 +37,12 @@ macro_rules! documents {
 documents! {
     Pen => r##"<path d="M6.47 11.53L13.83 4.17" stroke-width="3"/><path d="M2.56 15.44L3.71 11.07L6.93 14.29Z" fill="#fff" stroke="none"/>"##,
     Line => r##"<path d="M5 13L13 5"/><circle cx="4.6" cy="13.4" r="1.9" fill="#fff" stroke="none"/><circle cx="13.4" cy="4.6" r="1.9" fill="#fff" stroke="none"/>"##,
-    Arrow => r##"<path d="M4.2 13.8L11.43 6.57"/><path d="M14.4 3.6L12.92 9.19L8.81 5.08Z" fill="#fff" stroke="none"/>"##,
+    Arrow => r##"<path d="M3.7 14.3L11.83 6.17"/><path d="M15.1 2.9L13.47 9.05L8.95 4.53Z" fill="#fff" stroke="none"/>"##,
     Ellipse => r##"<ellipse cx="9" cy="9" rx="6" ry="4.6"/>"##,
     Rect => r##"<rect x="3.6" y="5" width="10.8" height="8" rx="0.6"/>"##,
     Text => r##"<path d="M3.8 4.4L14.2 4.4"/><path d="M9 4.4L9 14.4"/>"##,
     Highlight => r##"<path d="M4.6 10.4L11.6 3.4" stroke-width="3.4"/><path d="M3 14.6L15 14.6"/>"##,
-    Blur => r##"<path d="M4.2 4.2L13.8 4.2L13.8 13.8L4.2 13.8Z"/><rect x="6.4" y="6.4" width="2" height="2" fill="#fff" stroke="none"/><rect x="9.6" y="6.4" width="2" height="2" fill="#fff" stroke="none"/><rect x="6.4" y="9.6" width="2" height="2" fill="#fff" stroke="none"/><rect x="9.6" y="9.6" width="2" height="2" fill="#fff" stroke="none"/>"##,
+    Blur => r##"<path d="M3.8 3.8L14.2 3.8L14.2 14.2L3.8 14.2Z"/><rect x="6.6" y="6.6" width="1.6" height="1.6" fill="#fff" stroke="none"/><rect x="9.8" y="6.6" width="1.6" height="1.6" fill="#fff" stroke="none"/><rect x="6.6" y="9.8" width="1.6" height="1.6" fill="#fff" stroke="none"/><rect x="9.8" y="9.8" width="1.6" height="1.6" fill="#fff" stroke="none"/>"##,
     Undo => r##"<path d="M7.4 3.6L4 7L7.4 10.4"/><path d="M4.4 7H10.6A3.8 3.8 0 0 1 10.6 14.6H8"/>"##,
     Redo => r##"<g transform="matrix(-1 0 0 1 18 0)"><path d="M7.4 3.6L4 7L7.4 10.4"/><path d="M4.4 7H10.6A3.8 3.8 0 0 1 10.6 14.6H8"/></g>"##,
     Trash => r##"<path d="M4.4 5.6L13.6 5.6"/><path d="M7.4 4L10.6 4"/><path d="M5.4 5.6L6.2 14.2L11.8 14.2L12.6 5.6"/><path d="M8 7.6L8.3 12.2" stroke-width="1.36"/><path d="M10 7.6L9.7 12.2" stroke-width="1.36"/>"##,
@@ -62,7 +62,7 @@ documents! {
     Pin => r##"<path d="M8 10L3 15"/><path d="M5.5 7.5L10.5 12.5" stroke-width="1.8"/><path d="M8 10L12.5 5.5" stroke-width="3"/><path d="M11 3L15 7"/>"##,
     Pause => r##"<path d="M6.2 4.9L6.2 13.1" stroke-width="3"/><path d="M11.8 4.9L11.8 13.1" stroke-width="3"/>"##,
     MicOff => r##"<g transform="matrix(0.9 0 0 0.9 0.9 0.9)" stroke-width="1.78"><mask id="m"><rect width="18" height="18" fill="#fff" stroke="none"/><path d="M3.4 3.4L14.6 14.6" stroke="#000" stroke-width="4.9"/></mask><g mask="url(#m)"><rect x="6.4" y="2.4" width="5.2" height="8.6" rx="2.6" fill="#fff" stroke="none"/><path d="M4.4 9A4.6 4.6 0 0 0 13.6 9"/><path d="M9 13.6L9 15.6"/></g><path d="M3.4 3.4L14.6 14.6"/></g>"##,
-    Counter => r##"<circle cx="9" cy="9" r="6.4"/><path d="M7.6 7.2L9.2 5.9V12.2" stroke-width="1.6"/>"##,
+    Counter => r##"<circle cx="9" cy="9" r="5.9"/><path d="M7.71 7.34L9.18 6.14V11.95"/>"##,
     Record => r##"<rect x="2.2" y="4.6" width="9.4" height="8.8" rx="2"/><path d="M11.6 7.9L15.4 5.7L15.4 12.3L11.6 10.1"/>"##,
     Play => r##"<path d="M6.2 4.3L6.2 13.7L14.3 9Z" fill="#fff" stroke-width="1.4"/>"##,
     Stop => r##"<rect x="4.5" y="4.5" width="9" height="9" rx="2" fill="#fff" stroke="none"/>"##,
@@ -77,6 +77,7 @@ documents! {
     Minimize => r##"<path d="M5.4 9L12.6 9"/>"##,
     Maximize => r##"<rect x="5.4" y="5.4" width="7.2" height="7.2" rx="1"/>"##,
     Restore => r##"<rect x="5.4" y="7.4" width="5.2" height="5.2" rx="0.8"/><path d="M7.4 5.4L12.6 5.4L12.6 10.6"/>"##,
+    WindowClose => r##"<path d="M5.4 5.4L12.6 12.6"/><path d="M12.6 5.4L5.4 12.6"/>"##,
     CaptionMinimize => r##"<path d="M4 9.5L14 9.5" stroke-width="1" stroke-linecap="butt"/>"##,
     CaptionMaximize => r##"<rect x="4.5" y="4.5" width="9" height="9" rx="1" stroke-width="1"/>"##,
     CaptionRestore => r##"<rect x="4.5" y="6.5" width="7" height="7" rx="1" stroke-width="1"/><path d="M6.5 4.5L12.5 4.5A1 1 0 0 1 13.5 5.5L13.5 11.5" stroke-width="1"/>"##,
@@ -85,6 +86,39 @@ documents! {
     Selection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/>"##,
     RecordScreen => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.8"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
     RecordSelection => r##"<rect x="2.6" y="3.6" width="12.8" height="10.8" rx="1.2" stroke-dasharray="2.2 2.1"/><circle cx="9" cy="9" r="2.7" fill="#fff" stroke="none"/>"##,
+}
+
+/// The alpha of each pixel of `kind` rasterized at `scale`, in rows of
+/// `18 * scale`.
+#[cfg(test)]
+fn coverage(kind: Icon, scale: f32) -> (usize, Vec<u8>) {
+    let (_, svg) = document(kind);
+    let image = gpui::SvgRenderer::new(std::sync::Arc::new(()))
+        .render_single_frame(svg.as_bytes(), scale)
+        .unwrap_or_else(|e| panic!("{kind:?} does not parse: {e}"));
+    let side = image.size(0).width.0 as usize;
+    let bgra = image.as_bytes(0).unwrap();
+    (side, bgra.iter().skip(3).step_by(4).copied().collect())
+}
+
+/// The ink box of `kind` as (left, top, right, bottom) in units of its
+/// 18-unit box: the pixels at least half covered at scale 8.
+#[cfg(test)]
+pub(crate) fn ink_box(kind: Icon) -> [f32; 4] {
+    let (side, alpha) = coverage(kind, 8.0);
+    let unit = side as f32 / 18.0;
+    let (mut lo, mut hi) = ((side, side), (0, 0));
+    for (i, _) in alpha.iter().enumerate().filter(|&(_, &a)| a > 127) {
+        let (x, y) = (i % side, i / side);
+        lo = (lo.0.min(x), lo.1.min(y));
+        hi = (hi.0.max(x), hi.1.max(y));
+    }
+    [
+        lo.0 as f32 / unit,
+        lo.1 as f32 / unit,
+        (hi.0 + 1) as f32 / unit,
+        (hi.1 + 1) as f32 / unit,
+    ]
 }
 
 // WHY: the classes closed here are "an icon draws outside its box or

@@ -128,24 +128,37 @@ pub fn side(
     Some(row)
 }
 
+/// The glyph of a Windows caption button, and of a Linux round button.
+/// Each set draws its glyphs in one ink box, as the platform's own do,
+/// the minimize line across its width.
+fn caption_glyph(button: WindowButton, maximized: bool) -> Icon {
+    match button {
+        WindowButton::Minimize => Icon::CaptionMinimize,
+        WindowButton::Maximize if maximized => Icon::CaptionRestore,
+        WindowButton::Maximize => Icon::CaptionMaximize,
+        WindowButton::Close => Icon::CaptionClose,
+    }
+}
+
+fn round_glyph(button: WindowButton, maximized: bool) -> Icon {
+    match button {
+        WindowButton::Minimize => Icon::Minimize,
+        WindowButton::Maximize if maximized => Icon::Restore,
+        WindowButton::Maximize => Icon::Maximize,
+        WindowButton::Close => Icon::WindowClose,
+    }
+}
+
 /// A Windows caption button. The system runs it: a press and release
 /// on its hit-test area minimizes, maximizes or restores, or posts
 /// `WM_CLOSE`, which runs the window's close route. A fixed-size
 /// window's maximize button is dimmed and drags the window, as the
 /// system's own caption does.
 fn caption(button: WindowButton, resizable: bool, maximized: bool, active: bool) -> Stateful<Div> {
-    let (id, area, glyph) = match button {
-        WindowButton::Minimize => ("win-min", WindowControlArea::Min, Icon::CaptionMinimize),
-        WindowButton::Maximize => (
-            "win-max",
-            WindowControlArea::Max,
-            if maximized {
-                Icon::CaptionRestore
-            } else {
-                Icon::CaptionMaximize
-            },
-        ),
-        WindowButton::Close => ("win-close", WindowControlArea::Close, Icon::CaptionClose),
+    let (id, area) = match button {
+        WindowButton::Minimize => ("win-min", WindowControlArea::Min),
+        WindowButton::Maximize => ("win-max", WindowControlArea::Max),
+        WindowButton::Close => ("win-close", WindowControlArea::Close),
     };
     let enabled = resizable || button != WindowButton::Maximize;
     let ink = match (enabled, active) {
@@ -164,7 +177,7 @@ fn caption(button: WindowButton, resizable: bool, maximized: bool, active: bool)
         .text_color(ink)
         .occlude()
         .window_control_area(area)
-        .child(icon_in_text_color(glyph, 18.));
+        .child(icon_in_text_color(caption_glyph(button, maximized), 18.));
     match (enabled, button) {
         (false, _) => el,
         (true, WindowButton::Close) => el
@@ -182,17 +195,10 @@ fn caption(button: WindowButton, resizable: bool, maximized: bool, active: bool)
 /// A Linux round button, as libadwaita draws a header bar's window
 /// controls.
 fn round(button: WindowButton, maximized: bool, on_close: Option<OnClose>) -> Stateful<Div> {
-    let (id, glyph) = match button {
-        WindowButton::Minimize => ("win-min", Icon::Minimize),
-        WindowButton::Maximize => (
-            "win-max",
-            if maximized {
-                Icon::Restore
-            } else {
-                Icon::Maximize
-            },
-        ),
-        WindowButton::Close => ("win-close", Icon::Close),
+    let id = match button {
+        WindowButton::Minimize => "win-min",
+        WindowButton::Maximize => "win-max",
+        WindowButton::Close => "win-close",
     };
     let el = div()
         .id(id)
@@ -207,7 +213,7 @@ fn round(button: WindowButton, maximized: bool, on_close: Option<OnClose>) -> St
         .active(|s| s.bg(theme::ROUND_PRESS))
         // A press on a window control must not start a title-bar drag.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(icon(glyph, theme::FG, 16.));
+        .child(icon(round_glyph(button, maximized), theme::FG, 16.));
     match button {
         WindowButton::Minimize => el.on_click(|_, window, _| window.minimize_window()),
         WindowButton::Maximize => {

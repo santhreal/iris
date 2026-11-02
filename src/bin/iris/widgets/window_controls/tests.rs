@@ -13,7 +13,8 @@ use std::prelude::v1::test;
 use gpui::WindowButton::{self, Close, Maximize, Minimize};
 use gpui::WindowButtonLayout;
 
-use super::{sides, Register};
+use super::{caption_glyph, round_glyph, sides, Register};
+use crate::icons::{ink_box, Icon};
 
 /// A register, the desktop's layout, whether the window resizes, and
 /// the buttons expected at the leading and trailing edges.
@@ -92,4 +93,41 @@ fn each_platform_places_its_window_controls_where_its_own_windows_do() {
         }
     }
     assert!(wrong.is_empty(), "window controls:\n{}", wrong.join("\n"));
+}
+
+// WHY: the class closed here is "one window control's glyph larger than
+// the others". The Linux close button drew the shared X, 10.4 units
+// across beside a maximize square of 8.8, where Adwaita and Windows draw
+// all three glyphs in one box. Every glyph of each set, every button
+// maximized or not, matches the maximize glyph's ink box within a
+// quarter unit, the minimize line in width only. Not covered: ink
+// weight, in which an X and a square differ on every platform.
+#[test]
+fn each_set_of_window_control_glyphs_shares_one_ink_box() {
+    const TOLERANCE: f32 = 0.25;
+    let size = |kind: Icon| {
+        let [left, top, right, bottom] = ink_box(kind);
+        (right - left, bottom - top)
+    };
+    type Glyph = fn(WindowButton, bool) -> Icon;
+    let sets: [(&str, Glyph); 2] = [("caption", caption_glyph), ("round", round_glyph)];
+    let mut wrong = Vec::new();
+    for (set, glyph) in sets {
+        let (w, h) = size(glyph(Maximize, false));
+        for button in [Minimize, Maximize, Close] {
+            for maximized in [false, true] {
+                let kind = glyph(button, maximized);
+                let (gw, gh) = size(kind);
+                let tall = button != Minimize;
+                if (gw - w).abs() > TOLERANCE || (tall && (gh - h).abs() > TOLERANCE) {
+                    wrong.push(format!("{set} {kind:?}: {gw} x {gh}, maximize {w} x {h}"));
+                }
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "window control glyphs:\n{}",
+        wrong.join("\n")
+    );
 }
