@@ -9,7 +9,7 @@ use windows::Media::Ocr::OcrEngine;
 use windows::Security::Cryptography::CryptographicBuffer;
 
 /// The error for a profile whose languages have no OCR recognizer.
-const NO_LANGUAGE: &str = "text recognition failed: Windows has no OCR recognizer for your \
+const NO_LANGUAGE: &str = "Text recognition failed: Windows has no OCR recognizer for your \
      languages; add a language with Optical character recognition in Settings > Time & \
      language > Language & region";
 
@@ -41,7 +41,7 @@ pub(crate) fn recognize_text(source: &Path) -> Result<String, String> {
 }
 
 fn failed(e: impl std::fmt::Display) -> String {
-    format!("text recognition failed: {e}")
+    format!("Text recognition failed: {e}")
 }
 
 /// `img`, scaled down to fit `max` pixels on its longer side when it is

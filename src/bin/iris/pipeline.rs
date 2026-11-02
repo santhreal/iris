@@ -267,16 +267,13 @@ pub fn copy_image(img: &image::RgbaImage) -> Result<(), String> {
 
 pub fn copy_image_file(path: &Path) -> Result<(), String> {
     let img = image::open(path)
-        .map_err(|e| format!("cannot open {}: {e}", path.display()))?
+        .map_err(|e| iris_lib::reason::not_an_image(path, &e))?
         .into_rgba8();
     clipboard::set_image(&img)
 }
 
 pub fn copy_path_text(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        return Err(format!("path does not exist: {}", path.display()));
-    }
-    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let abs = std::fs::canonicalize(path).map_err(|e| iris_lib::reason::unreadable(path, &e))?;
     clipboard::set_text(&abs.to_string_lossy())
 }
 
@@ -505,5 +502,17 @@ mod tests {
             let dst = (dy * 600 + dx) * 4;
             assert_eq!(out[dst..dst + 4], bgra[src..src + 4], "pixel at {dx},{dy}");
         }
+    }
+
+    // WHY: Copy Image and Copy Path of a file gone since its toast or
+    // editor opened showed the full path. See `iris_lib::reason::tests`
+    // for the class.
+    #[test]
+    fn a_copy_of_a_file_that_is_gone_states_it_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone.png");
+        let want = Err("gone.png no longer exists.".to_string());
+        assert_eq!(copy_image_file(&gone), want, "Copy Image");
+        assert_eq!(copy_path_text(&gone), want, "Copy Path");
     }
 }

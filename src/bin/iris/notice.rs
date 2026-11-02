@@ -100,10 +100,7 @@ enum Kind {
 /// A recording was written: its first frame, its name, and Show in
 /// Folder.
 pub fn saved(cx: &mut App, title: &str, path: &Path) {
-    let name = path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    );
+    let name = iris_lib::reason::file_name(path);
     show(cx, title, name, Some(path.to_path_buf()), Kind::Saved);
 }
 

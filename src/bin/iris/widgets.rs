@@ -348,7 +348,13 @@ pub fn shortcuts_sheet(
                 .flex()
                 .flex_col()
                 .max_h_full()
-                .p(px(20.))
+                // The last row's 30 px line leaves 10 px under its
+                // text, so 15 px under the row puts the text's baseline
+                // as far from the bottom as the title's cap is from the
+                // top.
+                .pt(px(20.))
+                .px(px(20.))
+                .pb(px(15.))
                 .rounded(px(12.))
                 .bg(theme::BG_ELEV)
                 .shadow(theme::shadow_float())

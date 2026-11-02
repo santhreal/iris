@@ -7,6 +7,12 @@
 //! it does not wait for, and a Unix `head` closes its end once it has
 //! read enough. Not covered: `--check-update` and `--update`, which
 //! print only after a network round trip.
+//!
+//! The cases run one at a time. macOS has no `pipe2`: a pipe gets its
+//! close-on-exec flag in a second call, and a child another test thread
+//! spawns between the two calls inherits both ends. A pipe whose reader
+//! a case dropped then still has one, in that child, and the write to
+//! it succeeds.
 
 use std::process::{Command, Output, Stdio};
 
@@ -24,6 +30,7 @@ fn run(arg: &str, stdout: Stdio) -> Output {
 }
 
 #[test]
+#[serial_test::serial]
 fn version_prints_the_package_version() {
     let out = run("--version", Stdio::piped());
     assert_eq!(out.status.code(), Some(0));
@@ -35,6 +42,7 @@ fn version_prints_the_package_version() {
 }
 
 #[test]
+#[serial_test::serial]
 fn help_prints_every_option_and_exits_0() {
     let out = run("--help", Stdio::piped());
     assert_eq!(out.status.code(), Some(0));
@@ -45,6 +53,7 @@ fn help_prints_every_option_and_exits_0() {
 }
 
 #[test]
+#[serial_test::serial]
 fn a_closed_stdout_ends_the_command_with_status_1_and_no_panic() {
     for arg in ["--version", "--help"] {
         let (reader, writer) = std::io::pipe().unwrap();

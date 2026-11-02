@@ -5,16 +5,26 @@ use super::raster_shapes::*;
 
 pub(crate) const BLUR_BLOCK: u32 = 12;
 
-/// Width and height from the PNG IHDR, without decoding. The full
-/// decode runs in the background; the window opens on these dims.
-pub(crate) fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
-    if png.len() < 24 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return None;
+/// Width and height from the PNG IHDR of the file at `path`, without
+/// decoding it. The full decode runs in the background; the window
+/// opens on these dims. A file shorter than the header, or one that
+/// does not start with the PNG signature, is not a PNG.
+pub(crate) fn png_header(path: &std::path::Path) -> Result<(u32, u32), String> {
+    use std::io::Read;
+    let mut header = [0u8; 24];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut header))
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => iris_lib::reason::not_png(path),
+            _ => iris_lib::reason::unreadable(path, &e),
+        })?;
+    if !header.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err(iris_lib::reason::not_png(path));
     }
-    Some((
-        u32::from_be_bytes(png[16..20].try_into().ok()?),
-        u32::from_be_bytes(png[20..24].try_into().ok()?),
-    ))
+    let be = |at: usize| {
+        u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    Ok((be(16), be(20)))
 }
 
 pub(crate) fn png_bytes(img: &image::RgbaImage) -> Result<Vec<u8>, String> {

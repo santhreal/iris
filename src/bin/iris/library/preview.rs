@@ -38,7 +38,7 @@ impl Library {
             async move {
                 ::image::open(&path)
                     .map(|img| crate::widgets::render_image_from_rgba_owned(img.into_rgba8()))
-                    .map_err(|e| format!("Could not read {}: {e}", path.display()))
+                    .map_err(|e| iris_lib::reason::not_an_image(&path, &e))
             }
         });
         cx.spawn(async move |this, cx| {

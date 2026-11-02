@@ -14,6 +14,7 @@ pub mod ocr;
 pub mod output;
 pub mod par;
 pub mod pixel;
+pub mod reason;
 pub mod record;
 pub mod sys;
 pub mod thumb;

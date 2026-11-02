@@ -24,7 +24,7 @@ pub(crate) fn recognize_text(source: &Path) -> Result<String, String> {
 unsafe fn recognize(path: &str) -> Result<String, String> {
     let request_class = class(c"VNRecognizeTextRequest");
     if request_class.is_null() {
-        return Err("text recognition failed: the Vision framework is not available".to_string());
+        return Err("Text recognition failed: the Vision framework is not available".to_string());
     }
     let ns_path = nsstring(path);
     let url: Id = send1(class(c"NSURL"), sel(c"fileURLWithPath:"), ns_path);
@@ -48,7 +48,7 @@ unsafe fn recognize(path: &str) -> Result<String, String> {
     let text = if ok == 0 {
         let reason = string(send(error, sel(c"localizedDescription")));
         Err(format!(
-            "text recognition failed: {}",
+            "Text recognition failed: {}",
             if reason.is_empty() {
                 "Vision reported no reason"
             } else {

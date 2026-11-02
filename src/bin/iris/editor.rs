@@ -275,24 +275,16 @@ pub fn open(
         }
         return Ok(());
     }
-    let mut header = [0u8; 24];
-    {
-        use std::io::Read;
-        let mut f =
-            std::fs::File::open(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        f.read_exact(&mut header)
-            .map_err(|e| format!("read {} header: {e}", path.display()))?;
-    }
-    let dims = png_dimensions(&header).ok_or_else(|| format!("not a PNG: {}", path.display()))?;
+    let dims = png_header(path)?;
     let decode_path = path.to_path_buf();
     let decoded = cx.background_executor().spawn(async move {
         let base = match crate::pipeline::take_decoded(&decode_path) {
             Some(img) => img,
             None => {
                 let png = std::fs::read(&decode_path)
-                    .map_err(|e| format!("read {}: {e}", decode_path.display()))?;
+                    .map_err(|e| iris_lib::reason::unreadable(&decode_path, &e))?;
                 let img = image::load_from_memory(&png)
-                    .map_err(|e| format!("decode {}: {e}", decode_path.display()))?;
+                    .map_err(|e| iris_lib::reason::not_an_image(&decode_path, &e))?;
                 // into, not to: an RGBA capture moves its pixels instead
                 // of copying them.
                 Arc::new(img.into_rgba8())
@@ -472,7 +464,7 @@ impl Editor {
                 }
             }
             Err(e) => {
-                self.status = Some(format!("decode: {e}"));
+                self.status = Some(e);
                 self.morph = None;
                 if let Some(ready) = &self.morph_sync {
                     ready.store(true, Ordering::Release);

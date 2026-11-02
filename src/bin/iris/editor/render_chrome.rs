@@ -515,17 +515,22 @@ impl Editor {
                 .ok();
             },
         );
-        let fill_toggle = widgets::icon_button(
-            "fill-toggle",
-            Icon::Fill,
-            self.fill,
-            theme::TOOLBAR_CONTROL_H,
-        )
-        .tooltip(tip("Fill Shapes", Some("F".into())))
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.toggle_fill();
-            cx.notify();
-        }));
+        // The fill toggle is a one-segment control: in the stroke
+        // widths' track, so the dividers stand as far from its edges as
+        // from theirs.
+        let this = cx.entity().downgrade();
+        let fill_toggle = widgets::segmented(
+            "fill",
+            vec![Segment::icon(Icon::Fill).tip("Fill Shapes", Some("F".into()))],
+            self.fill.then_some(0),
+            move |_, _, cx| {
+                this.update(cx, |this, cx| {
+                    this.toggle_fill();
+                    cx.notify();
+                })
+                .ok();
+            },
+        );
         let mut swatches = div().flex().items_center().gap(px(4.));
         for (c, name) in COLORS {
             let active = c == self.color;

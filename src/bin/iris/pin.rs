@@ -79,9 +79,9 @@ pub fn open(cx: &mut App, path: &std::path::Path, over: Option<Over>) {
                     ));
                 }
                 let bytes =
-                    std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+                    std::fs::read(&path).map_err(|e| iris_lib::reason::unreadable(&path, &e))?;
                 crate::widgets::render_image_from_png(&bytes)
-                    .ok_or_else(|| format!("decode {}: not a supported image", path.display()))
+                    .ok_or_else(|| iris_lib::reason::undecodable(&path))
             })
             .await;
         cx.update(|cx| {

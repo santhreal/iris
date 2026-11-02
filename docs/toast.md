@@ -96,10 +96,10 @@ When an action produces feedback, a status line takes the place of the hover act
 Trigger OCR text extraction via the **Copy Text** item in the right-click context menu:
 - Sets the status line to `"Reading text…"` and holds the auto-dismiss timer open.
 - Recognizes text off the UI thread: on macOS through the Vision framework and on Windows through Windows.Media.Ocr, neither of which needs an installed tool; on Linux by running `tesseract <source> stdout`.
-- On macOS and Windows, a file the recognizer cannot read reports `text recognition failed: <reason>`.
-- On Windows, a user profile with no language that has the Optical character recognition feature reports `text recognition failed: Windows has no OCR recognizer for your languages; add a language with Optical character recognition in Settings > Time & language > Language & region`.
+- On macOS and Windows, a file the recognizer cannot read reports `Text recognition failed: <reason>`.
+- On Windows, a user profile with no language that has the Optical character recognition feature reports `Text recognition failed: Windows has no OCR recognizer for your languages; add a language with Optical character recognition in Settings > Time & language > Language & region`.
 - On Linux, a missing Tesseract reports the installation instruction: `tesseract is not installed: install the tesseract package (tesseract-ocr on Debian and Ubuntu)`.
-- If the image contains no recognized characters, reports `"no text recognized in this image"`.
+- If the image contains no recognized characters, reports `No text found in this image`.
 - On completion, copies extracted text to the system clipboard as UTF-8 text and displays `"Copied <count> characters"` on the status line.
 
 ## Context Menu
@@ -143,11 +143,11 @@ Triggered via the toast context menu (**Pin to Screen**) or the library's card c
 
 A notice is a 380 logical pixel wide card in the toast corner of the primary monitor's work area (see [Placement and Geometry](#placement-and-geometry)). It reports an outcome of a command whose trigger (a hotkey, the tray menu, the recording chip, or a forwarded command line) has already returned:
 - A saved recording: a check mark, the title, the file name, and a folder button that reveals the file in the system file manager (see [Reveal in Folder](#reveal-in-folder) and [recording.md](recording.md#completion-and-failure-notices)).
-- A failed command: an alert mark in red, the title, and the error on up to three lines, ending in an ellipsis when longer.
+- A failed command: an alert mark in red, the title, and the error on up to three lines, ending in an ellipsis when longer. A file that does not open is shown by its file name with the cause: `shot.png no longer exists.`, `No permission to read shot.png.`, `shot.png is not a PNG image.` (the editor opens PNG files only), or `shot.png is not a readable image.` iris.log holds the full path and the system's or the decoder's error.
 - A window pick on X11: a record mark in red, **Click a window to record it**, and **Press Esc to cancel.** The card has no buttons: the pick holds the pointer. The card stays until the pick lands or is cancelled, then leaves.
 - A delayed capture: a timer mark and **Screenshot in N seconds**, counting down the whole seconds left, rounded up. The card stays until the capture, then leaves the screen before the capture reads it (see [Delayed Capture](capture.md#delayed-capture)).
 
-The title is 13 pixel semibold text on a 24 logical pixel line, centered on the 24×24 logical pixel buttons and the 18 pixel glyph beside it; the detail is 11 pixel text in the secondary color on 15 pixel lines. The **×** button at the card's right edge dismisses a saved, failure, or update card, and cancels a delayed capture (tooltip **Cancel**). Resting the pointer on a button shows its name in a tooltip.
+The title is 13 pixel semibold text on a 24 logical pixel line, centered on the 24×24 logical pixel buttons and on the 24 logical pixel disc beside it, which holds the kind's 14 pixel glyph on an 18% fill of its tint; the detail is 11 pixel text in the secondary color on 15 pixel lines. The **×** button at the card's right edge dismisses a saved, failure, or update card, and cancels a delayed capture (tooltip **Cancel**). Resting the pointer on a button shows its name in a tooltip.
 
 Failure titles:
 

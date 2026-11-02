@@ -383,3 +383,39 @@ fn color_keys_walk_the_swatches_in_order_and_wrap() {
     let hexes: std::collections::HashSet<_> = COLORS.iter().map(|c| c.0).collect();
     assert_eq!((names.len(), hexes.len()), (n, n), "a swatch is shared");
 }
+
+// WHY: an editor open that failed showed "read <full path> header:
+// failed to fill whole buffer" in its notice. The class and its other
+// members are in `iris_lib::reason::tests`; these are the editor's own
+// reads: a file gone, one shorter than a PNG header, text, a JPEG named
+// .png, and a PNG, whose header gives its size.
+#[test]
+fn the_editor_states_a_file_it_cannot_open_by_name_and_cause() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |name: &str| dir.path().join(name);
+    std::fs::write(at("short.png"), b"\x89PNG").unwrap();
+    std::fs::write(
+        at("text.png"),
+        b"not an image, and longer than a PNG header",
+    )
+    .unwrap();
+    std::fs::write(
+        at("photo.png"),
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\x00\x00",
+    )
+    .unwrap();
+    image::RgbaImage::new(30, 20).save(at("plain.png")).unwrap();
+    for (name, want) in [
+        ("gone.png", "gone.png no longer exists."),
+        ("short.png", "short.png is not a PNG image."),
+        ("text.png", "text.png is not a PNG image."),
+        ("photo.png", "photo.png is not a PNG image."),
+    ] {
+        assert_eq!(
+            super::png_header(&at(name)),
+            Err(want.to_string()),
+            "{name}"
+        );
+    }
+    assert_eq!(super::png_header(&at("plain.png")), Ok((30, 20)));
+}

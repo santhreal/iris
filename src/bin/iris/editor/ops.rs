@@ -18,6 +18,9 @@ use super::render_chrome::{STAGE_MARGIN, STAGE_TOP};
 
 /// The status line a first Escape over unsaved changes shows.
 const DISCARD_PROMPT: &str = "Press Esc again to discard changes";
+/// The status line a blur, a crop, a rotate or flip, or a save shows
+/// before the image decodes.
+const STILL_DECODING: &str = "Still decoding";
 
 /// The zoom range, as a multiple of the fit scale.
 const ZOOM_MIN: f32 = 0.1;
@@ -60,7 +63,7 @@ impl Editor {
             if !self.base_ready {
                 // The composite is still the placeholder; a blur would
                 // bake transparent pixels into the patch.
-                self.status = Some("still decoding".into());
+                self.status = Some(STILL_DECODING.into());
                 return;
             }
             let p0 = action.points[0];
@@ -421,7 +424,7 @@ impl Editor {
     pub(crate) fn apply_crop(&mut self, cx: &mut Context<Self>) {
         if !self.base_ready {
             self.crop_rect = None;
-            self.status = Some("still decoding".into());
+            self.status = Some(STILL_DECODING.into());
             return;
         }
         let Some((x, y, w, h)) = self.crop_rect.take() else {
@@ -450,7 +453,7 @@ impl Editor {
     /// restores them.
     pub(crate) fn transform(&mut self, op: Transform, cx: &mut Context<Self>) {
         if !self.base_ready {
-            self.status = Some("still decoding".into());
+            self.status = Some(STILL_DECODING.into());
             return;
         }
         self.commit_text(true);
@@ -482,7 +485,7 @@ impl Editor {
             return;
         }
         if !self.base_ready {
-            self.status = Some("still decoding".into());
+            self.status = Some(STILL_DECODING.into());
             cx.notify();
             return;
         }

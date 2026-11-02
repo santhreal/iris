@@ -34,7 +34,7 @@ pub(crate) fn prepare_thumb(path: &Path, scale: f32) -> Result<Thumb, String> {
         arc
     } else {
         owned = image::open(path)
-            .map_err(|e| format!("cannot open {}: {e}", path.display()))?
+            .map_err(|e| iris_lib::reason::not_an_image(path, &e))?
             .into_rgba8();
         &owned
     };

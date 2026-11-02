@@ -7,16 +7,17 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// The status line of an image with no text the recognizer finds.
+const NO_TEXT: &str = "No text found in this image";
+
 /// Recognize text in the image at `path`: the toast's Copy Text menu
 /// row, over the saved capture.
 pub fn recognize_text(source: &Path) -> Result<String, String> {
-    if !source.exists() {
-        return Err(format!("image does not exist: {}", source.display()));
-    }
+    std::fs::metadata(source).map_err(|e| crate::reason::unreadable(source, &e))?;
     let text = recognize(source)?;
     let text = text.trim();
     if text.is_empty() {
-        return Err("no text recognized in this image".to_string());
+        return Err(NO_TEXT.to_string());
     }
     Ok(text.to_string())
 }
@@ -124,7 +125,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             recognize_text(&blank),
-            Err("no text recognized in this image".to_string())
+            Err("No text found in this image".to_string())
         );
     }
 
@@ -134,6 +135,6 @@ mod tests {
         let file = dir.path().join("notes.png");
         std::fs::write(&file, b"plain text, not a PNG").unwrap();
         let err = recognize_text(&file).unwrap_err();
-        assert!(err.starts_with("text recognition failed: "), "{err}");
+        assert!(err.starts_with("Text recognition failed: "), "{err}");
     }
 }
