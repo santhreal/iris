@@ -35,7 +35,7 @@ fn menu_panel() -> Div {
         .flex()
         .flex_col()
         .rounded(px(MENU_RADIUS))
-        .bg(theme::alpha(theme::BG_ELEV, 0.98))
+        .bg(theme::BG_ELEV)
         .border_1()
         .border_color(theme::HAIRLINE)
         .shadow(theme::shadow_float())

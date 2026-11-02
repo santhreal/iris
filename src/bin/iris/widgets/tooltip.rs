@@ -43,7 +43,7 @@ impl Render for Tooltip {
                 .px(px(8.))
                 .py(px(4.))
                 .rounded(px(theme::RADIUS_CONTROL))
-                .bg(theme::alpha(theme::BG_ELEV, 0.98))
+                .bg(theme::BG_ELEV)
                 .border_1()
                 .border_color(theme::HAIRLINE)
                 .shadow(theme::shadow_float())

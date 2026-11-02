@@ -760,7 +760,7 @@ impl Render for Notice {
             .items_start()
             .gap(px(GAP))
             .rounded(px(theme::RADIUS_GROUP))
-            .bg(theme::alpha(theme::BG_ELEV, 0.96))
+            .bg(theme::BG_ELEV)
             .border_1()
             .border_color(theme::HAIRLINE)
             .overflow_hidden()

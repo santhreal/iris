@@ -468,7 +468,7 @@ impl Render for Chip {
             .pr(px(PAD_TRAIL))
             .rounded_full()
             .font_family(theme::FONT)
-            .bg(theme::alpha(theme::BG_ELEV, 0.92))
+            .bg(theme::BG_ELEV)
             .shadow(pill_shadow())
             .flex()
             .items_center()

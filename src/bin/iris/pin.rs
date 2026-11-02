@@ -328,7 +328,7 @@ impl Render for PinStage {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(theme::alpha(theme::BG_ELEV, 0.9))
+                    .bg(theme::OVERLAY_CHIP)
                     .border_1()
                     .border_color(theme::HAIRLINE)
                     .shadow(theme::shadow_float())
@@ -336,7 +336,8 @@ impl Render for PinStage {
                     .group_hover("pin", |s| s.opacity(1.))
                     // It occludes the pin, which then no longer counts as
                     // hovered, so its own hover keeps it shown.
-                    .hover(|s| s.bg(theme::BG_ELEV).opacity(1.))
+                    .hover(|s| s.bg(theme::OVERLAY_CHIP_HOVER).opacity(1.))
+                    .active(|s| s.bg(theme::OVERLAY_CHIP_PRESS))
                     .occlude()
                     .tooltip(crate::widgets::tip("Close", Some("Esc".into())))
                     .on_click(|_, window, _| window.remove_window())

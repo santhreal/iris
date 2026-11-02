@@ -35,7 +35,7 @@ Features in region capture mode:
 - **Double-click commit**: Double-clicking inside the selection commits the capture.
 - **Confirmation and Cancel**: Press `Enter` (or the configured `confirm_keybind`), or click the capture bar's run button, to commit. Press `Escape` (or the configured `cancel_keybind`), click **Cancel**, or click the right mouse button, to cancel the capture.
 
-The coordinate readout, the selection dimensions, and the loupe's info banner share one style: 11 pixel Medium text on a 14 pixel line with tabular digits on a black tag at 62% opacity with 5 logical pixel corners, 6 by 2 logical pixel padding, and no border. Tabular digits hold a readout's width while its numbers change under the pointer.
+The coordinate readout, the selection dimensions, and the loupe's info banner share one style: 11 pixel Medium text on a 14 pixel line with tabular digits on an opaque near-black tag (`#1a1a1a`) with 5 logical pixel corners, 6 by 2 logical pixel padding, and no border. Tabular digits hold a readout's width while its numbers change under the pointer.
 
 ### Fullscreen Capture
 

@@ -156,7 +156,7 @@ fn icon_button_inked(
 pub const OVERLAY_BUTTON: f32 = 26.0;
 
 /// Small icon button for card overlays: OVERLAY_BUTTON square on a
-/// dark chip that keeps its fill under the pointer and on a press.
+/// dark chip that lightens under the pointer and more on a press.
 pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Div> {
     div()
         .id(id)
@@ -166,7 +166,7 @@ pub fn overlay_icon_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Di
         .flex()
         .items_center()
         .justify_center()
-        .hover(|s| s.bg(theme::BG_ELEV))
+        .hover(|s| s.bg(theme::OVERLAY_CHIP_HOVER))
         .active(|s| s.bg(theme::OVERLAY_CHIP_PRESS))
         .child(icons::icon(glyph, theme::FG, theme::ICON_ROW))
 }
@@ -192,7 +192,7 @@ pub fn status_pill(content: impl IntoElement, inset: f32) -> Div {
                 .px(px(12.))
                 .py(px(5.))
                 .rounded(px(12.))
-                .bg(theme::alpha(theme::BG_ELEV, 0.95))
+                .bg(theme::BG_ELEV)
                 .border_1()
                 .border_color(theme::HAIRLINE)
                 .shadow(theme::shadow_float())
