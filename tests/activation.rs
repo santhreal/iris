@@ -36,7 +36,9 @@ mod x11;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, EventMask, InputFocus};
+use x11rb::protocol::xproto::{
+    ChangeWindowAttributesAux, ConnectionExt as _, EventMask, InputFocus,
+};
 use x11rb::protocol::Event;
 
 use daemon::{enabled, xvfb, Daemon};
