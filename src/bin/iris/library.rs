@@ -170,6 +170,8 @@ pub struct Library {
     pub(super) ring: Option<Tool>,
     pub(super) status: Option<String>,
     pub(super) focus: FocusHandle,
+    /// The window's frame: its shadow, input shape, and resize edges.
+    pub(super) frame: crate::widgets::AppFrame,
     /// The config snapshot: render reads the hotkey every frame, and
     /// Config::load() hits the disk each call.
     pub(super) cfg: iris_lib::config::Config,
@@ -367,6 +369,7 @@ fn open_window(cx: &mut App, ready: Option<FirstScreen>, page: Page) -> Result<(
                     ring: None,
                     status: None,
                     focus,
+                    frame: crate::widgets::AppFrame::default(),
                     cfg,
                     band: None,
                     scroll: gpui::ScrollHandle::new(),

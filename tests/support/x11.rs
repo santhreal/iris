@@ -574,3 +574,34 @@ impl Compositor {
         );
     }
 }
+
+/// A running EWMH window manager's check window: a window that the
+/// root's `_NET_SUPPORTING_WM_CHECK` names, and that names itself.
+pub fn wm_check(conn: &impl Connection, root: u32) -> u32 {
+    let check = conn
+        .intern_atom(false, b"_NET_SUPPORTING_WM_CHECK")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let wm = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        wm,
+        root,
+        -1,
+        -1,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_ONLY,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    for window in [root, wm] {
+        conn.change_property32(PropMode::REPLACE, window, check, AtomEnum::WINDOW, &[wm])
+            .unwrap();
+    }
+    wm
+}

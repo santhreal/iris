@@ -36,12 +36,8 @@ mod x11;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{
-    AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux, EventMask,
-    InputFocus, PropMode, WindowClass,
-};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, EventMask, InputFocus};
 use x11rb::protocol::Event;
-use x11rb::wrapper::ConnectionExt as _;
 
 use daemon::{enabled, xvfb, Daemon};
 use x11::{focus, windows_of};
@@ -76,38 +72,11 @@ fn a_second_open_activates_through_the_window_manager_only_when_one_runs() {
         let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
         let root = conn.setup().roots[screen].root;
         let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
-        let (check, active) = (
-            atom(b"_NET_SUPPORTING_WM_CHECK"),
-            atom(b"_NET_ACTIVE_WINDOW"),
-        );
+        let active = atom(b"_NET_ACTIVE_WINDOW");
         match state {
             Wm::None => {}
             Wm::Exited | Wm::Running => {
-                let wm = conn.generate_id().unwrap();
-                conn.create_window(
-                    x11rb::COPY_DEPTH_FROM_PARENT,
-                    wm,
-                    root,
-                    -1,
-                    -1,
-                    1,
-                    1,
-                    0,
-                    WindowClass::INPUT_ONLY,
-                    x11rb::COPY_FROM_PARENT,
-                    &CreateWindowAux::new(),
-                )
-                .unwrap();
-                for window in [root, wm] {
-                    conn.change_property32(
-                        PropMode::REPLACE,
-                        window,
-                        check,
-                        AtomEnum::WINDOW,
-                        &[wm],
-                    )
-                    .unwrap();
-                }
+                let wm = x11::wm_check(&conn, root);
                 if let Wm::Exited = state {
                     conn.destroy_window(wm).unwrap();
                 }

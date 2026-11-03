@@ -804,7 +804,7 @@ impl Editor {
     /// so scroll-zoom can recompute it at the new scale and solve for
     /// the pan that keeps the cursor's image point fixed.
     pub(crate) fn fit_origin(&self, window: &Window, scale: f32) -> (f32, f32) {
-        let size = window.bounds().size;
+        let size = window.client_area().size;
         (
             (f32::from(size.width) - self.base_dims.0 as f32 * scale) / 2.0,
             STAGE_TOP
@@ -812,16 +812,16 @@ impl Editor {
         )
     }
 
-    /// Stage geometry: the image fit into the window minus chrome, then
+    /// Stage geometry: the image fit into the frame minus chrome, then
     /// zoomed and panned. Returns (origin_x, origin_y, scale) mapping
-    /// image -> window px.
+    /// image -> frame-local px (`widgets::frame_local`).
     pub(crate) fn view(&self, window: &Window) -> (f32, f32, f32) {
         // The stage is the window under the toolbar and the options
         // bar; the fit image keeps STAGE_MARGIN clear on every side. It
         // is never larger than one device pixel per image pixel, so a
         // capture smaller than the stage opens sharp, not magnified and
         // filtered.
-        let size = window.bounds().size;
+        let size = window.client_area().size;
         let usable_w = (f32::from(size.width) - 2.0 * STAGE_MARGIN).max(100.0);
         let usable_h = (f32::from(size.height) - STAGE_TOP - 2.0 * STAGE_MARGIN).max(100.0);
         let fit = (usable_w / self.base_dims.0 as f32)
@@ -833,8 +833,8 @@ impl Editor {
     }
 
     /// Multiply the zoom by `factor`, clamped to the zoom range, and
-    /// pan so the image point under `at` stays under it. Returns
-    /// whether the zoom changed.
+    /// pan so the image point under `at`, frame-local, stays under it.
+    /// Returns whether the zoom changed.
     pub(crate) fn zoom_at(&mut self, at: (f32, f32), factor: f32, window: &Window) -> bool {
         let new_zoom = (self.zoom * factor).clamp(ZOOM_MIN, ZOOM_MAX);
         if (new_zoom - self.zoom).abs() < f32::EPSILON {
@@ -849,7 +849,9 @@ impl Editor {
         true
     }
 
+    /// The image pixel under `pos`, a window-local position.
     pub(crate) fn to_image(&self, pos: Point<Pixels>, window: &Window) -> (f32, f32) {
+        let pos = crate::widgets::frame_local(window, pos);
         let (ox, oy, scale) = self.view(window);
         let x = ((f32::from(pos.x) - ox) / scale).clamp(0.0, self.base_dims.0 as f32);
         let y = ((f32::from(pos.y) - oy) / scale).clamp(0.0, self.base_dims.1 as f32);

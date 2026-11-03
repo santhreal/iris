@@ -46,8 +46,8 @@ futures = "0.3"
 # the application for the current OS (X11 and Wayland on Linux, AppKit
 # on macOS, Win32 on Windows). Pinned to a rev so a later push to
 # santh-gpui cannot move the dependency under the build.
-gpui = { git = "https://github.com/santhreal/santh-gpui.git", rev = "62178a51a8258bf7a8fcbd0e9f42bbbf83c16309" }
-gpui_platform = { git = "https://github.com/santhreal/santh-gpui.git", rev = "62178a51a8258bf7a8fcbd0e9f42bbbf83c16309", features = ["font-kit", "wayland", "x11"] }
+gpui = { git = "https://github.com/santhreal/santh-gpui.git", rev = "4f5823829675e7ad6c8c07d83af1382be471aa44" }
+gpui_platform = { git = "https://github.com/santhreal/santh-gpui.git", rev = "4f5823829675e7ad6c8c07d83af1382be471aa44", features = ["font-kit", "wayland", "x11"] }
 libc = "0.2"
 # Auto-update: HTTPS GET of the release manifest + asset download.
 # rustls (no system OpenSSL), blocking API — the updater runs on its own
@@ -152,8 +152,9 @@ serial_test = "3"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # XTest: tests/exit.rs clicks the window a recording picks. The cursor
-# theme: tests/cursor.rs reads the arrow a control shows.
-x11rb = { version = "0.13", features = ["cursor", "resource_manager", "xtest"] }
+# theme: tests/cursor.rs reads the arrow a control shows. Shape:
+# tests/frame.rs reads a window's input shape.
+x11rb = { version = "0.13", features = ["cursor", "resource_manager", "shape", "xtest"] }
 # tests/tray.rs reads the tray item over a private session bus. The
 # features the tray's ksni already builds zbus with.
 zbus = { version = "5", default-features = false, features = ["async-io"] }

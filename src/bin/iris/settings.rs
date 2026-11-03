@@ -273,7 +273,7 @@ impl Settings {
 /// sidebar, logical px: the form centered at its widest
 /// (`widgets::page_lead`). The toolbar's title starts there.
 pub(crate) fn lead(window: &Window) -> f32 {
-    let page = f32::from(window.bounds().size.width) - theme::SIDEBAR_W;
+    let page = f32::from(window.client_area().size.width) - theme::SIDEBAR_W;
     widgets::page_lead(page, panes::FORM_MAX_W - 2.0 * theme::INSET)
 }
 

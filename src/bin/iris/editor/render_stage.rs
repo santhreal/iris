@@ -350,13 +350,15 @@ impl Editor {
             // Scroll and pinch zoom around the cursor: the image point
             // under the pointer stays put while the scale changes.
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
-                let at = (ev.position.x.into(), ev.position.y.into());
+                let at = crate::widgets::frame_local(window, ev.position);
+                let at = (at.x.into(), at.y.into());
                 if this.zoom_at(at, crate::zoom::wheel_zoom(ev.delta), window) {
                     cx.notify();
                 }
             }))
             .on_pinch(cx.listener(|this, ev: &PinchEvent, window, cx| {
-                let at = (ev.position.x.into(), ev.position.y.into());
+                let at = crate::widgets::frame_local(window, ev.position);
+                let at = (at.x.into(), at.y.into());
                 if this.zoom_at(at, crate::zoom::pinch_zoom(ev.delta), window) {
                     cx.notify();
                 }

@@ -52,13 +52,13 @@ pub use self::menu::{
     hover_row, menu, menu_at, menu_key, menu_separator, popup_button, popup_menu, MenuItem,
     MenuKey, MENU_PAD, MENU_RADIUS, MENU_ROW_H, MENU_W,
 };
-pub use self::resize::resize_edges;
+use self::resize::{resize_edges, GRIP};
 pub use self::scroll::scroll_y;
 pub use self::tooltip::tip;
 pub use self::vanish::{clear_then_run, close_then_run};
 pub use self::window_frame::{
-    close_route, page_lead, sidebar_frame, toolbar_bar, window_corner, window_edge, OnClose,
-    Toolbar,
+    close_route, frame_local, page_lead, sidebar_frame, toolbar_bar, window_corners, window_edge,
+    window_rounded, AppFrame, OnClose, Toolbar,
 };
 pub use self::window_move::{move_handle, Double};
 pub use self::window_open::open_window;

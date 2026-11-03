@@ -253,7 +253,7 @@ pub fn begin_wm_move(window: &gpui::Window, grab: gpui::Point<gpui::Pixels>) {
         // X11: the window manager moves it on _NET_WM_MOVERESIZE, with
         // its snapping and tiling; under one that does not handle that,
         // the window follows the root pointer.
-        if iris_lib::sys::session::wayland() || x11::wm_moveresize() {
+        if iris_lib::sys::session::wayland() || x11::wm_supports(b"_NET_WM_MOVERESIZE") {
             window.start_window_move();
         } else if let Some(xid) = x11::xid(window) {
             let s = window.scale_factor();
@@ -310,6 +310,27 @@ pub fn platform_shape(window: &gpui::Window) -> bool {
     cfg!(windows) || platform_frame(window)
 }
 
+/// The room, logical px, an app window that draws its own frame keeps
+/// around the frame for its shadow (`theme::window_shadow`), or None
+/// where it keeps none. An X11 window keeps `theme::WINDOW_ROOM` under
+/// a compositing manager and a window manager that lists
+/// `_GTK_FRAME_EXTENTS` in `_NET_SUPPORTED`, which then places, snaps,
+/// and tiles the frame inside the room and draws no shadow of its own;
+/// a window manager that lists none would treat the transparent room
+/// as part of the window. A Wayland window keeps none, and the platform
+/// draws the shadow of a Windows or macOS window.
+pub fn frame_room() -> Option<f32> {
+    #[cfg(target_os = "linux")]
+    {
+        (!iris_lib::sys::session::wayland()
+            && x11::compositor()
+            && x11::wm_supports(b"_GTK_FRAME_EXTENTS"))
+        .then_some(crate::theme::WINDOW_ROOM)
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
 /// Hand a left-button press on a window edge to a resize from `edge`.
 /// `grab` is the press's window-local position; `min` is the window's
 /// minimum logical size, where the X11 resize stops.
@@ -326,7 +347,7 @@ pub fn begin_wm_resize(
         // window manager resizes on _NET_WM_MOVERESIZE and enforces the
         // minimum from WM_NORMAL_HINTS; under one that does not handle
         // that, the window follows the root pointer and stops at `min`.
-        if iris_lib::sys::session::wayland() || x11::wm_moveresize() {
+        if iris_lib::sys::session::wayland() || x11::wm_supports(b"_NET_WM_MOVERESIZE") {
             window.start_window_resize(edge);
         } else if let Some(xid) = x11::xid(window) {
             let s = window.scale_factor();

@@ -249,12 +249,12 @@ impl Library {
             window.request_animation_frame();
         }
 
-        // The grid spans the window's width beside the sidebar, under
-        // the toolbar. The window's size is this frame's; the scroll
+        // The grid spans the frame's width beside the sidebar, under
+        // the toolbar. The frame's size is this frame's; the scroll
         // container's bounds are the last paint's, a resize behind on
         // the first frame after one, which laid out columns for the old
         // width.
-        let win = window.bounds().size;
+        let win = window.client_area().size;
         let width = f32::from(win.width) - theme::SIDEBAR_W;
         let viewport_h = f32::from(win.height) - theme::TOOLBAR_H;
         self.viewport_h = viewport_h;
@@ -426,11 +426,13 @@ impl Render for Library {
             ));
 
         if let Some((x0, y0, x1, y1)) = self.band {
+            // The band is in window space, the root in the frame's.
+            let at = widgets::frame_local(window, point(px(x0.min(x1)), px(y0.min(y1))));
             root = root.child(
                 div()
                     .absolute()
-                    .left(px(x0.min(x1)))
-                    .top(px(y0.min(y1)))
+                    .left(at.x)
+                    .top(at.y)
                     .w(px((x1 - x0).abs()))
                     .h(px((y1 - y0).abs()))
                     .bg(theme::alpha(theme::ACCENT, 0.12))
@@ -454,7 +456,7 @@ impl Render for Library {
         } else {
             self.help_scroll.set_offset(Point::default());
         }
-        root.children(widgets::resize_edges(window, MIN_SIZE))
+        self.frame.wrap(window, root, 1.0, MIN_SIZE)
     }
 }
 

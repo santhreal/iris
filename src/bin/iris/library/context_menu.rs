@@ -174,13 +174,14 @@ impl Library {
             MenuRow::QuickLook => self.open_preview(index, cx),
             MenuRow::Pin => {
                 if let Some(e) = self.listing.entries().get(index) {
-                    // Over the library window, which the pin opens above.
-                    let b = window.bounds();
+                    // Over the library window's frame, which the pin
+                    // opens above.
+                    let (b, area) = (window.bounds(), window.client_area());
                     let over: crate::pin::Over = (
-                        b.origin.x.into(),
-                        b.origin.y.into(),
-                        b.size.width.into(),
-                        b.size.height.into(),
+                        (b.origin.x + area.origin.x).into(),
+                        (b.origin.y + area.origin.y).into(),
+                        area.size.width.into(),
+                        area.size.height.into(),
                     );
                     crate::pin::open(cx, &e.path, Some(over));
                 }
@@ -219,9 +220,11 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let index = open.index;
-        let size = window.bounds().size;
+        // `at` is in window space, the menu in the frame's.
+        let size = window.client_area().size;
+        let at = widgets::frame_local(window, open.at);
         let (x, y) = place(
-            (open.at.x.into(), open.at.y.into()),
+            (at.x.into(), at.y.into()),
             size.width.into(),
             size.height.into(),
         );

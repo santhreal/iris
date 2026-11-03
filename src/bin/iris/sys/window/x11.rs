@@ -29,18 +29,20 @@ pub fn xid(window: &gpui::Window) -> Option<u32> {
     }
 }
 
-/// Whether a running EWMH window manager moves and resizes a window on
-/// _NET_WM_MOVERESIZE. _NET_SUPPORTED outlives a window manager that
-/// exits, so its _NET_SUPPORTING_WM_CHECK window must still name itself.
-pub fn wm_moveresize() -> bool {
+/// Whether a running EWMH window manager lists the atom `name` in
+/// _NET_SUPPORTED: it moves and resizes a window on _NET_WM_MOVERESIZE,
+/// and frames a client-decorated window inside its _GTK_FRAME_EXTENTS.
+/// _NET_SUPPORTED outlives a window manager that exits, so its
+/// _NET_SUPPORTING_WM_CHECK window must still name itself.
+pub fn wm_supports(name: &'static [u8]) -> bool {
     let Ok((conn, screen_num)) = iris_lib::sys::capture::x11::shared_conn() else {
         return false;
     };
     let root = conn.setup().roots[screen_num].root;
-    let (Some(check), Some(supported), Some(moveresize)) = (
+    let (Some(check), Some(supported), Some(wanted)) = (
         fixup::atom_cached(conn, b"_NET_SUPPORTING_WM_CHECK"),
         fixup::atom_cached(conn, b"_NET_SUPPORTED"),
-        fixup::atom_cached(conn, b"_NET_WM_MOVERESIZE"),
+        fixup::atom_cached(conn, name),
     ) else {
         return false;
     };
@@ -56,7 +58,7 @@ pub fn wm_moveresize() -> bool {
     let handled = atoms
         .reply()
         .ok()
-        .and_then(|reply| Some(reply.value32()?.any(|atom| atom == moveresize)))
+        .and_then(|reply| Some(reply.value32()?.any(|atom| atom == wanted)))
         .unwrap_or(false);
     handled
         && conn

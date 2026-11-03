@@ -151,7 +151,7 @@ impl Editor {
             "=" | "+" | "-" => {
                 // A key step zooms about the stage's center, so the
                 // part of the image in view stays in view.
-                let size = window.bounds().size;
+                let size = window.client_area().size;
                 let top = super::render_chrome::STAGE_TOP;
                 let at = (
                     f32::from(size.width) / 2.0,

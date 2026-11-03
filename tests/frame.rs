@@ -17,22 +17,30 @@
 //!   window manager's frame, beside the frame's own;
 //! - a selection overlay in the window manager's frame, whose client area
 //!   is then off the screen's origin, so that a point on the overlay is
-//!   not the same point on the screen.
+//!   not the same point on the screen;
+//! - room for the frame's shadow kept where nothing reads it, or not
+//!   kept where a window manager does: a window under a compositing
+//!   manager and a window manager that lists `_GTK_FRAME_EXTENTS` keeps
+//!   ROOM around its frame, states it in `_GTK_FRAME_EXTENTS`, takes
+//!   pointer input only in the frame and GRIP past it, and has its
+//!   strips and controls at the frame; any other window keeps none.
 //!
 //! Each state in `STATES` is set up on a private Xvfb with no window
 //! manager: the case's connection stands in for the compositing manager
 //! (it owns the screen's `_NET_WM_CM_S<n>` selection, EWMH) and writes the
-//! root `_NET_SUPPORTED` list a window manager would. The states with a
+//! root `_NET_SUPPORTED` list and `_NET_SUPPORTING_WM_CHECK` window a
+//! window manager would. The states with a
 //! compositor are the controls for the pointer checks: in them a drag on
 //! the window's left strip resizes it and a click on its close control
 //! on the Settings page closes it.
 //!
 //! Not covered: a compositor that starts or exits while a window is open,
 //! whose frame stays as it opened; how a real window manager draws the
-//! frame; the square corners; Wayland, where the compositor draws the
-//! frame when the window asks for one; Windows and macOS. The cases run
-//! only with `IRIS_X11_TEST_DISPLAY` set and need `Xvfb`; without it a
-//! case prints that it did not run.
+//! frame or places the window by its frame extents; the square corners;
+//! the shadow's pixels; Wayland, where the compositor draws the frame
+//! when the window asks for one; Windows and macOS. The cases run only
+//! with `IRIS_X11_TEST_DISPLAY` set and need `Xvfb`; without it a case
+//! prints that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -46,6 +54,7 @@ mod daemon;
 mod x11;
 
 use x11rb::connection::Connection;
+use x11rb::protocol::shape::{ConnectionExt as _, SK};
 use x11rb::protocol::xproto::{self, AtomEnum, ConnectionExt as _, PropMode};
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
@@ -91,7 +100,31 @@ const STATES: &[State] = &[
         at_open: false,
         frame_extents: true,
     },
+    // A compositor under a window manager that lists
+    // _GTK_FRAME_EXTENTS: room for the frame's shadow.
+    State {
+        at_connect: true,
+        at_open: true,
+        frame_extents: true,
+    },
 ];
+
+impl State {
+    /// The room the window keeps around its frame, in pixels at the
+    /// Xvfb's scale of 1.
+    fn room(self) -> i16 {
+        if self.at_open && self.frame_extents {
+            ROOM
+        } else {
+            0
+        }
+    }
+}
+
+/// The room an app window keeps around its frame for its shadow, and how
+/// far past the frame its resize strips reach into it, logical px.
+const ROOM: i16 = 40;
+const GRIP: i16 = 8;
 
 /// The option that opens the window, and the window's title: a
 /// resizable window, so that a frame the window draws has resize strips.
@@ -114,13 +147,13 @@ const UNFRAMED: u32 = 0;
 /// frame the click lands on empty toolbar.
 const SETTINGS: (&str, &str) = ("--settings", "Settings - iris");
 
-/// The close control of a frame the window draws, from the window's
+/// The close control of a frame the window draws, from the frame's
 /// top-right corner in pixels: with no desktop button layout to read,
 /// the last control, 24 px round, 12 px in, and centered in the 52 px
 /// toolbar.
 const CLOSE: (i16, i16) = (12 + 12, 26);
 
-/// A point on the left resize strip, 6 px wide, from the window's left
+/// A point on the left resize strip, 6 px wide, from the frame's left
 /// edge, and how far a drag takes it leftward.
 const STRIP: i16 = 2;
 const DRAG: i16 = 60;
@@ -159,6 +192,7 @@ fn a_window_draws_its_own_frame_exactly_when_a_compositor_runs_as_it_opens() {
             &supported,
         )
         .unwrap();
+        x11::wm_check(&conn, root);
         let selection = atom(&format!("_NET_WM_CM_S{screen}"));
         let hints = atom("_MOTIF_WM_HINTS");
 
@@ -203,14 +237,59 @@ fn a_window_draws_its_own_frame_exactly_when_a_compositor_runs_as_it_opens() {
             ));
         }
 
-        // The window's resize strips and window controls, through the
-        // pointer, once the window has drawn its first frame.
+        // The room for the frame's shadow: stated to the window manager
+        // from the map, and outside GRIP past the frame no pointer input.
+        let room = state.room();
+        let extents = conn
+            .get_property(
+                false,
+                window,
+                atom("_GTK_FRAME_EXTENTS"),
+                AtomEnum::CARDINAL,
+                0,
+                4,
+            )
+            .unwrap()
+            .reply()
+            .unwrap()
+            .value32()
+            .map(|v| v.collect::<Vec<_>>());
+        let expected = (room > 0).then(|| vec![ROOM as u32; 4]);
+        if extents != expected {
+            wrong.push(format!(
+                "{state:?}: _GTK_FRAME_EXTENTS {extents:?}, expected {expected:?}"
+            ));
+        }
         daemon.settle();
         let before = rect(&conn, root, window);
+        let input: Vec<_> = conn
+            .shape_get_rectangles(window, SK::INPUT)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .rectangles
+            .iter()
+            .map(|r| (r.x, r.y, r.width, r.height))
+            .collect();
+        let taken = if room > 0 { room - GRIP } else { 0 };
+        let expected = vec![(
+            taken,
+            taken,
+            before.2 - 2 * taken as u16,
+            before.3 - 2 * taken as u16,
+        )];
+        if input != expected {
+            wrong.push(format!(
+                "{state:?}: input shape {input:?} of {before:?}, expected {expected:?}"
+            ));
+        }
+
+        // The window's resize strips and window controls, through the
+        // pointer, once the window has drawn its first frame.
         drag(
             &conn,
             root,
-            (before.0 + STRIP, before.1 + (before.3 / 2) as i16),
+            (before.0 + room + STRIP, before.1 + (before.3 / 2) as i16),
             -DRAG,
             &daemon,
         );
@@ -232,7 +311,11 @@ fn a_window_draws_its_own_frame_exactly_when_a_compositor_runs_as_it_opens() {
         );
         daemon.settle();
         let at = rect(&conn, root, window);
-        x11::click(&conn, root, (at.0 + at.2 as i16 - CLOSE.0, at.1 + CLOSE.1));
+        x11::click(
+            &conn,
+            root,
+            (at.0 + at.2 as i16 - room - CLOSE.0, at.1 + room + CLOSE.1),
+        );
         daemon.settle();
         let closed = windows_of(&conn, root, title).is_empty();
         if closed != own {

@@ -17,7 +17,7 @@ use gpui::{
     point, px, size, ActivationPolicy, Bounds, WindowBounds, WindowId, WindowKind, WindowOptions,
 };
 
-use super::{iris_options, AppWindows};
+use super::{iris_options, with_frame_room, AppWindows};
 
 #[test]
 fn every_window_animates_unthrottled_under_the_iris_app_id() {
@@ -80,6 +80,45 @@ fn the_callers_other_options_pass_through() {
             ),
             (focus, show, !focus, focus)
         );
+    }
+}
+
+/// WHY: an app window that keeps room around its frame for the frame's
+/// shadow opens that much larger on every side, so the frame lands on
+/// the bounds and keeps the minimum size the caller gives, and the room
+/// is its client inset from the first map, when Mutter reads
+/// `_GTK_FRAME_EXTENTS`. Closed here: a frame moved or shrunk by the
+/// room, a minimum the frame cannot reach, a window opened without the
+/// inset, and a bounds variant left out. Not covered: which window
+/// managers the room is kept under (`sys::window::frame_room`).
+#[test]
+fn an_app_window_grows_by_its_frame_room_on_every_side() {
+    let frame = Bounds::new(point(px(300.), px(200.)), size(px(900.), px(600.)));
+    let grown = Bounds::new(point(px(260.), px(160.)), size(px(980.), px(680.)));
+    for (asked, opened) in [
+        (WindowBounds::Windowed(frame), WindowBounds::Windowed(grown)),
+        (
+            WindowBounds::Maximized(frame),
+            WindowBounds::Maximized(grown),
+        ),
+        (
+            WindowBounds::Fullscreen(frame),
+            WindowBounds::Fullscreen(grown),
+        ),
+    ] {
+        let options = with_frame_room(
+            WindowOptions {
+                window_bounds: Some(asked),
+                window_min_size: Some(size(px(640.), px(400.))),
+                is_minimizable: true,
+                ..Default::default()
+            },
+            40.,
+        );
+        assert_eq!(options.window_bounds, Some(opened));
+        assert_eq!(options.window_min_size, Some(size(px(720.), px(480.))));
+        assert_eq!(options.client_inset, Some(px(40.)));
+        assert!(options.is_minimizable);
     }
 }
 

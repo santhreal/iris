@@ -102,7 +102,7 @@ impl Library {
     ) -> impl IntoElement {
         let entry = self.listing.entries().get(preview.index);
         let caption = self.listing.captions().get(preview.index);
-        let win = window.bounds().size;
+        let win = window.client_area().size;
         let avail_w = f32::from(win.width) - crate::theme::SIDEBAR_W - 2.0 * MARGIN;
         let avail_h = f32::from(win.height) - crate::theme::TOOLBAR_H - 2.0 * MARGIN - FOOTER_H;
         // The thumbnail stands in until the full decode lands.

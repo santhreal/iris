@@ -7,8 +7,8 @@
 use std::cell::{Cell, RefCell};
 
 use gpui::{
-    ActivationPolicy, AnyWindowHandle, App, Entity, Render, Window, WindowHandle, WindowId,
-    WindowOptions,
+    point, px, size, ActivationPolicy, AnyWindowHandle, App, Bounds, Entity, Pixels, Render,
+    Window, WindowBounds, WindowDecorations, WindowHandle, WindowId, WindowOptions,
 };
 
 /// Open a window titled `title` with the app id `iris_lib::APP_ID`: the
@@ -31,10 +31,13 @@ use gpui::{
 /// windows. An app window has AppKit's own close, minimize, and zoom
 /// buttons on macOS, at `MAC_TRAFFIC_LIGHTS` in its transparent title
 /// bar, and moves only from its toolbar's own drag; on Linux it draws
-/// again when the desktop's button layout changes.
+/// again when the desktop's button layout changes. An app window that
+/// draws its own frame keeps room around it for its shadow where the
+/// platform has it (`sys::window::frame_room`; `with_frame_room`).
 ///
-/// `options` sets everything else. clippy.toml disallows
-/// `App::open_window` and `AsyncApp::open_window` outside this function.
+/// `options` sets everything else, with the bounds and minimum size of
+/// the window's frame. clippy.toml disallows `App::open_window` and
+/// `AsyncApp::open_window` outside this function.
 #[allow(clippy::disallowed_methods)] // the one caller of App::open_window
 pub fn open_window<V: 'static + Render>(
     cx: &mut App,
@@ -43,6 +46,14 @@ pub fn open_window<V: 'static + Render>(
     build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
 ) -> gpui::Result<WindowHandle<V>> {
     let app_window = options.is_minimizable;
+    let own_frame = matches!(options.window_decorations, Some(WindowDecorations::Client));
+    let options = match (app_window && own_frame)
+        .then(crate::sys::window::frame_room)
+        .flatten()
+    {
+        Some(room) => with_frame_room(options, room),
+        None => options,
+    };
     #[cfg(target_os = "linux")]
     let options = WindowOptions {
         icon: options.icon.or_else(|| app_window.then(app_icon).flatten()),
@@ -147,6 +158,30 @@ impl AppWindows {
         let before = self.0.len();
         self.0.retain(|w| *w != id);
         (before == 1 && self.0.is_empty()).then_some(ActivationPolicy::Accessory)
+    }
+}
+
+/// `options` for an app window that keeps `room` logical px around its
+/// frame for the frame's shadow: the window grows by the room on every
+/// side, so the frame has the bounds and the minimum size `options`
+/// gives, and the room is the client inset, set before the window maps,
+/// where the window manager reads where the frame is.
+fn with_frame_room(options: WindowOptions, room: f32) -> WindowOptions {
+    let grow = |b: Bounds<Pixels>| Bounds {
+        origin: point(b.origin.x - px(room), b.origin.y - px(room)),
+        size: size(b.size.width + px(2. * room), b.size.height + px(2. * room)),
+    };
+    WindowOptions {
+        window_bounds: options.window_bounds.map(|bounds| match bounds {
+            WindowBounds::Windowed(b) => WindowBounds::Windowed(grow(b)),
+            WindowBounds::Maximized(b) => WindowBounds::Maximized(grow(b)),
+            WindowBounds::Fullscreen(b) => WindowBounds::Fullscreen(grow(b)),
+        }),
+        window_min_size: options
+            .window_min_size
+            .map(|min| grow(Bounds::new(point(px(0.), px(0.)), min)).size),
+        client_inset: Some(px(room)),
+        ..options
     }
 }
 

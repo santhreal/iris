@@ -1,20 +1,23 @@
 // WHY: the strips are the only resize affordance a Linux window has.
 // Three classes are closed here. "A border pixel falls through": a gap
 // between strips hands the press to the content under it, which moves
-// the window from the toolbar or draws on the editor canvas. "A strip
-// drags the wrong side": a corner that resizes one axis, a swapped
-// diagonal cursor. "A tiled side resizes": a strip on a side held
-// against the screen edge. Every ResizeEdge is run; `sides` matches the
-// enum exhaustively, so a new variant does not compile until it is
-// listed. Not covered: the strips being painted above the content,
-// which window-chrome-probe.py drives through the pointer.
+// the window from the toolbar or draws on the editor canvas, and a gap
+// in the GRIP past a frame with room around it hands the press to the
+// window under the shadow. "A strip drags the wrong side": a corner
+// that resizes one axis, a swapped diagonal cursor. "A tiled side
+// resizes": a strip on a side held against the screen edge. Every
+// ResizeEdge is run; `sides` matches the enum exhaustively, so a new
+// variant does not compile until it is listed. Not covered: the strips
+// being painted above the content, which window-chrome-probe.py drives
+// through the pointer, and the input shape that lets a press on the
+// shadow past GRIP through.
 
 use std::prelude::v1::test;
 
 use gpui::ResizeEdge::{self, *};
 use gpui::{CursorStyle, Tiling};
 
-use super::{cursor, free, strips, CORNER, EDGE};
+use super::{cursor, free, strips, CORNER, EDGE, GRIP};
 
 const ALL: [ResizeEdge; 8] = [
     Top,
@@ -43,12 +46,27 @@ fn sides(edge: ResizeEdge) -> (bool, bool, bool, bool) {
 
 #[test]
 fn the_border_is_covered_once_and_each_strip_drags_the_sides_it_touches() {
-    for (w, h) in [(640.0, 480.0), (1101.0, 721.0)] {
-        let strips = strips(w, h);
-        // Pixel centers, so no sample sits on a strip boundary.
-        for yi in 0..h as usize {
-            for xi in 0..w as usize {
-                let (x, y) = (xi as f32 + 0.5, yi as f32 + 0.5);
+    for ((w, h), out) in [
+        ((640.0, 480.0), 0.0),
+        ((1101.0, 721.0), 0.0),
+        ((640.0, 480.0), GRIP),
+        ((1101.0, 721.0), GRIP),
+    ] {
+        let strips = strips(w, h, out);
+        // Past the grip the room takes no input: a strip there is a
+        // press on the window beneath.
+        for (edge, [sx, sy, sw, sh]) in strips {
+            assert!(
+                sx >= -out && sy >= -out && sx + sw <= w + out && sy + sh <= h + out,
+                "{edge:?} in {w}x{h} reaches past the grip {out}"
+            );
+        }
+        // Pixel centers from the grip's outer edge, so no sample sits
+        // on a strip boundary.
+        let (cols, rows) = ((w + 2.0 * out) as usize, (h + 2.0 * out) as usize);
+        for yi in 0..rows {
+            for xi in 0..cols {
+                let (x, y) = (xi as f32 + 0.5 - out, yi as f32 + 0.5 - out);
                 let mut hits = strips.iter().filter(|(_, [sx, sy, sw, sh])| {
                     x >= *sx && x < sx + sw && y >= *sy && y < sy + sh
                 });
@@ -56,7 +74,8 @@ fn the_border_is_covered_once_and_each_strip_drags_the_sides_it_touches() {
                 if let Some((second, _)) = hits.next() {
                     panic!("({x}, {y}) in {w}x{h} is under {first:?} and {second:?}");
                 }
-                // Distance to each side: (left, top, right, bottom).
+                // Distance to each side of the frame: (left, top, right,
+                // bottom); negative past it.
                 let d = (x, y, w - x, h - y);
                 let near = |reach: f32| (d.0 < reach, d.1 < reach, d.2 < reach, d.3 < reach);
                 let (el, et, er, eb) = near(EDGE);

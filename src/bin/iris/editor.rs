@@ -138,8 +138,10 @@ pub struct Editor {
     /// that showing.
     pub(crate) status_since: Option<(String, Instant)>,
     pub(crate) focus: FocusHandle,
+    /// The window's frame: its shadow, input shape, and resize edges.
+    pub(crate) frame: crate::widgets::AppFrame,
     /// Expand-morph from a toast/library card: the image's starting
-    /// rect in window coordinates. The clock starts at first render:
+    /// rect in frame-local coordinates. The clock starts at first render:
     /// window mapping latency would otherwise eat the animation.
     pub(crate) morph: Option<(f32, f32, f32, f32)>,
     pub(crate) morph_started: Option<Instant>,
@@ -407,6 +409,7 @@ fn open_window(
                     status: None,
                     status_since: None,
                     focus,
+                    frame: crate::widgets::AppFrame::default(),
                     morph,
                     morph_started: None,
                     morph_sync,
@@ -568,11 +571,10 @@ impl Render for Editor {
 
         // Paint order is stacking order: the zoomed or panned image
         // runs under the toolbar and options bar, never over them.
-        let root = div()
+        let root = crate::widgets::window_rounded(div(), window)
             .id("editor")
             .size_full()
             .font_family(theme::FONT)
-            .rounded(crate::widgets::window_corner(window, 12.))
             .bg(theme::alpha(theme::BG, chrome))
             .opacity(outro)
             .track_focus(&self.focus)
@@ -586,9 +588,9 @@ impl Render for Editor {
             .child(stage)
             .child(self.render_topbar(topbar, window, cx))
             .child(self.render_options(options, cx))
-            .children(crate::widgets::window_edge(window, 12., chrome));
+            .children(crate::widgets::window_edge(window, chrome));
 
-        self.render_menus_and_overlays(root, topbar, window, cx)
-            .children(crate::widgets::resize_edges(window, MIN_SIZE))
+        let root = self.render_menus_and_overlays(root, topbar, window, cx);
+        self.frame.wrap(window, root, chrome * outro, MIN_SIZE)
     }
 }

@@ -1,15 +1,20 @@
-//! The Normal-window scaffold: the rounded root, the sidebar beside the
-//! unified toolbar that is the window's title bar, and the platform's
-//! window controls (`window_controls`), or a square root with no
-//! controls under a platform frame.
+//! The Normal-window scaffold: the frame (`AppFrame`) with its shadow
+//! and resize edges, the rounded root, the sidebar beside the unified
+//! toolbar that is the window's title bar, and the platform's window
+//! controls (`window_controls`), or a square root with no controls
+//! under a platform frame.
 
 use std::rc::Rc;
 
 use gpui::*;
 
 use super::window_controls::{self, Register, REGISTER};
-use super::{move_handle, Double};
+use super::{move_handle, resize_edges, Double, GRIP};
+use crate::sys::window::{Cutout, Rounded};
 use crate::theme;
+
+#[cfg(test)]
+mod tests;
 
 /// What the close control runs. A window that has work to finish on
 /// close (a save, a typed value) runs the same handler from its close
@@ -91,26 +96,128 @@ impl Toolbar {
     }
 }
 
-/// The 1px rim of a client-drawn window, `radius` round, for the last
-/// child of a `relative` root: it lies over the content's edge pixels
-/// and takes no input, so the content keeps its layout and its hit
-/// areas. `opacity` scales it with chrome that fades. `None` where the
-/// platform draws the outline (`sys::window::platform_shape`).
-pub fn window_edge(window: &Window, radius: f32, opacity: f32) -> Option<Div> {
-    if crate::sys::window::platform_shape(window) {
+/// The 1px rim of a client-drawn window for the last child of its
+/// frame: it lies over the content's edge pixels and takes no input, so
+/// the content keeps its layout and its hit areas. It follows the
+/// frame's corners (`window_corners`), and a side tiled against a
+/// screen edge or a neighbor has none. `opacity` scales it with chrome
+/// that fades. `None` where the platform draws the outline
+/// (`sys::window::platform_shape`) or every side is tiled.
+pub fn window_edge(window: &Window, opacity: f32) -> Option<Div> {
+    let t = frame_tiling(window);
+    if t == Tiling::tiled() {
         return None;
     }
+    let side = |tiled: bool| px(if tiled { 0. } else { 1. });
     Some(
-        div()
+        with_corners(div(), corners(t))
             .absolute()
             .inset_0()
-            .rounded(px(radius))
-            .border_1()
+            .border_l(side(t.left))
+            .border_t(side(t.top))
+            .border_r(side(t.right))
+            .border_b(side(t.bottom))
             .border_color(theme::alpha(
                 theme::WINDOW_EDGE,
                 theme::WINDOW_EDGE.a * opacity,
             )),
     )
+}
+
+/// The corners of a client-drawn window's frame: RADIUS_WINDOW round
+/// between two free sides, square beside a side tiled against a screen
+/// edge or a neighbor, and square everywhere the platform draws the
+/// outline (`sys::window::platform_shape`) and clips the window to it.
+pub fn window_corners(window: &Window) -> Corners<Pixels> {
+    corners(frame_tiling(window))
+}
+
+/// The corners of a frame tiled on the sides `t` holds.
+fn corners(t: Tiling) -> Corners<Pixels> {
+    let r = |a: bool, b: bool| px(if a || b { 0. } else { theme::RADIUS_WINDOW });
+    Corners {
+        top_left: r(t.top, t.left),
+        top_right: r(t.top, t.right),
+        bottom_right: r(t.bottom, t.right),
+        bottom_left: r(t.bottom, t.left),
+    }
+}
+
+/// The sides of `window`'s frame that meet a screen edge or a neighbor
+/// and so have no corner or rim of their own: the tiled ones, every one
+/// in fullscreen, and every one where the platform draws the outline.
+fn frame_tiling(window: &Window) -> Tiling {
+    if crate::sys::window::platform_shape(window) || window.is_fullscreen() {
+        return Tiling::tiled();
+    }
+    match window.window_decorations() {
+        Decorations::Client { tiling } => tiling,
+        Decorations::Server => Tiling::default(),
+    }
+}
+
+/// The frame of an app window that draws its own: the window's root at
+/// the client area (`Window::client_area`), clipped to the frame's
+/// corners, with the frame's shadow (`theme::window_shadow`) in the room
+/// the window keeps around it (`sys::window::frame_room`), and the
+/// resize edges over it. Only the frame and GRIP past it take pointer
+/// input, so a press on the shadow reaches the window beneath. Hold one
+/// per window.
+#[derive(Default)]
+pub struct AppFrame {
+    input: Cutout,
+    /// Whether the input shape was ever cut, so a window with no room
+    /// sends none.
+    cut: bool,
+}
+
+impl AppFrame {
+    /// `root` in the frame. The root lays out in frame-local logical px
+    /// (`frame_local`); `fade` scales the shadow with chrome that fades;
+    /// `min` is the frame's minimum logical size.
+    pub fn wrap(
+        &mut self,
+        window: &Window,
+        root: impl IntoElement,
+        fade: f32,
+        min: Size<Pixels>,
+    ) -> Div {
+        let area = window.client_area();
+        let room = area.size != window.viewport_size();
+        if room || self.cut {
+            let grip = if room { GRIP } else { 0. };
+            let input = Rounded {
+                x: f32::from(area.origin.x) - grip,
+                y: f32::from(area.origin.y) - grip,
+                w: f32::from(area.size.width) + 2. * grip,
+                h: f32::from(area.size.height) + 2. * grip,
+                r: 0.,
+            };
+            self.input.set(window, &[input]);
+            self.cut = true;
+        }
+        let mut frame = window_rounded(div(), window)
+            .absolute()
+            .left(area.origin.x)
+            .top(area.origin.y)
+            .w(area.size.width)
+            .h(area.size.height)
+            .overflow_hidden();
+        if room {
+            frame = frame.shadow(theme::window_shadow(window.is_window_active(), fade));
+        }
+        div()
+            .size_full()
+            .relative()
+            .child(frame.child(root))
+            .children(resize_edges(window, area, min))
+    }
+}
+
+/// `p`, a window-local position such as a mouse event's, in the
+/// frame-local logical px an `AppFrame`'s root lays out in.
+pub fn frame_local(window: &Window, p: Point<Pixels>) -> Point<Pixels> {
+    p - window.client_area().origin
 }
 
 /// The TOOLBAR_H unified toolbar band on its own: the window controls
@@ -180,18 +287,17 @@ pub fn sidebar_frame(
         .flex_col()
         .child(bar(window, cx, toolbar, resizable, false))
         .child(content);
-    div()
+    window_rounded(div(), window)
         .size_full()
         .relative()
         .font_family(theme::FONT)
-        .rounded(window_corner(window, 12.))
         .overflow_hidden()
         .bg(theme::BG)
         .text_color(theme::FG)
         .flex()
         .child(side)
         .child(column)
-        .children(window_edge(window, 12., 1.0))
+        .children(window_edge(window, 1.0))
 }
 
 /// Where content `content` wide starts in a page `page` wide beside a
@@ -332,13 +438,15 @@ fn bar(
         .child(trailing)
 }
 
-/// The corner radius of a window root that draws the window's shape:
-/// `radius` logical px, or square where the platform draws the outline
-/// (`sys::window::platform_shape`) and clips the window to it.
-pub fn window_corner(window: &Window, radius: f32) -> Pixels {
-    if crate::sys::window::platform_shape(window) {
-        px(0.)
-    } else {
-        px(radius)
-    }
+/// `el`, a window root or the frame around it, with the frame's corners
+/// (`window_corners`).
+pub fn window_rounded<E: Styled>(el: E, window: &Window) -> E {
+    with_corners(el, window_corners(window))
+}
+
+fn with_corners<E: Styled>(el: E, c: Corners<Pixels>) -> E {
+    el.rounded_tl(c.top_left)
+        .rounded_tr(c.top_right)
+        .rounded_br(c.bottom_right)
+        .rounded_bl(c.bottom_left)
 }

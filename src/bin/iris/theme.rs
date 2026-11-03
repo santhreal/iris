@@ -141,6 +141,8 @@ pub const RADIUS_MENU: f32 = 8.0;
 /// Buttons, fields, pop-up buttons, and segmented controls share one
 /// corner radius so a row of mixed controls lines up edge to edge.
 pub const RADIUS_CONTROL: f32 = 6.0;
+/// App window corners, where the window draws its own outline.
+pub const RADIUS_WINDOW: f32 = 12.0;
 /// Control height inside forms and settings rows.
 pub const CONTROL_H: f32 = 24.0;
 /// Control height in toolbars, and the minimum icon-only hit area.
@@ -360,6 +362,38 @@ pub fn card_shadow(visibility: f32) -> Vec<BoxShadow> {
 /// shadow off in a straight line.
 pub const CARD_BLEED: f32 = 44.0;
 
+/// The shadow under an app window's frame where the window draws it
+/// (`sys::window::frame_room`): a soft drop, a contact layer, and a
+/// dark hairline just outside the frame that holds the edge over a
+/// light desktop, where the light rim inside it (`WINDOW_EDGE`) does
+/// not. The window in front casts the deeper drop. `visibility` scales
+/// every layer with chrome that fades.
+pub fn window_shadow(active: bool, visibility: f32) -> Vec<BoxShadow> {
+    let ((drop, y, blur), contact) = if active {
+        ((0.45, 10.0, 10.0), 0.28)
+    } else {
+        ((0.28, 6.0, 7.0), 0.18)
+    };
+    let layer = |a: f32, y: f32, blur: f32, spread: f32| BoxShadow {
+        color: gpui::hsla(0.0, 0.0, 0.0, a * visibility),
+        offset: point(px(0.), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(spread),
+        inset: false,
+    };
+    vec![
+        layer(drop, y, blur, 0.0),
+        layer(contact, 1.0, 2.5, 0.0),
+        layer(0.40, 0.0, 0.0, 0.5),
+    ]
+}
+
+/// Room around an app window's frame inside the window for
+/// `window_shadow`, logical px: its `shadow_reach`. Only X11 keeps it
+/// (`sys::window::frame_room`).
+#[cfg(any(target_os = "linux", test))]
+pub const WINDOW_ROOM: f32 = 40.0;
+
 /// How far past its element's bounds a shadow list paints, logical px.
 /// GPUI draws each shadow's Gaussian out to three blur radii around the
 /// element's bounds grown by the spread and moved by the offset.
@@ -391,6 +425,23 @@ mod tests {
         assert!(
             reach <= CARD_BLEED,
             "card_shadow reaches {reach}px past the card; windows leave {CARD_BLEED}px"
+        );
+    }
+
+    // WHY: an app window's shadow is drawn inside the window, in the
+    // room its client inset keeps around the frame; a layer that reaches
+    // past WINDOW_ROOM ends in a hard line at the window's edge. Both
+    // the active and the inactive shadow fit, and the active one uses
+    // the room, so the room holds no transparent band nothing paints.
+    // Not covered: the room the window opens with, which `window_open`
+    // tests.
+    #[test]
+    fn window_shadow_fills_the_window_room() {
+        assert_eq!(shadow_reach(&window_shadow(true, 1.0)), WINDOW_ROOM);
+        let inactive = shadow_reach(&window_shadow(false, 1.0));
+        assert!(
+            inactive <= WINDOW_ROOM,
+            "the inactive window_shadow reaches {inactive}px past the frame; the room is {WINDOW_ROOM}px"
         );
     }
 

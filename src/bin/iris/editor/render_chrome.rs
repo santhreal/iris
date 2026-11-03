@@ -470,13 +470,15 @@ impl Editor {
             .on_close(self.on_close.clone());
         // The toolbar is opaque and over the stage: a zoomed image runs
         // under it and never takes its presses, hover, or wheel.
+        let corners = widgets::window_corners(window);
         widgets::toolbar_bar(window, cx, toolbar, true)
             .absolute()
             .top_0()
             .left_0()
             .right_0()
             .opacity(topbar)
-            .rounded_t(widgets::window_corner(window, 12.))
+            .rounded_tl(corners.top_left)
+            .rounded_tr(corners.top_right)
             .bg(theme::BG_ELEV)
             .occlude()
     }
@@ -639,8 +641,9 @@ impl Editor {
                 // The discard prompt draws the key it names as a cap.
                 let text = widgets::text_with_key(text, "Esc", theme::FG);
                 let (_, oy, scale) = self.view(window);
-                let below =
-                    f32::from(window.bounds().size.height) - oy - self.base_dims.1 as f32 * scale;
+                let below = f32::from(window.client_area().size.height)
+                    - oy
+                    - self.base_dims.1 as f32 * scale;
                 root = root.child(
                     widgets::status_pill(text, STAGE_MARGIN).bottom(px(status_bottom(below))),
                 );
