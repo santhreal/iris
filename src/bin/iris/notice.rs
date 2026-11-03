@@ -247,7 +247,7 @@ pub fn update_available(cx: &mut App, version: &semver::Version) {
     show(
         cx,
         &format!("iris {version} is available"),
-        "Install it now, or later from the tray menu or Settings.".to_string(),
+        "Install it now, or later from the tray menu.".to_string(),
         None,
         Kind::Update,
     );
