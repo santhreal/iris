@@ -155,9 +155,8 @@ pub struct Overlay {
     /// label. A mousemove inside the same pixel reuses it.
     coord_at: Option<(i64, i64)>,
     coord_label: SharedString,
-    /// Selection size label: the physical (w, h) it was built for.
-    size_at: Option<(u32, u32)>,
-    size_label: SharedString,
+    /// Selection size readout.
+    size_tag: crate::widgets::selection::SizeTag,
 }
 
 /// The pooled overlay window: created on the first capture, parked

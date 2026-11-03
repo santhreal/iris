@@ -277,13 +277,16 @@ impl Editor {
                 }
             }
             // The readout states the pixels the crop keeps.
-            let size = (w as u32, h as u32);
-            if self.crop_label.0 != size || self.crop_label.1.is_empty() {
-                self.crop_label = (size, SharedString::from(format!("{} × {}", size.0, size.1)));
-            }
+            let (label, tag_w) = self.crop_tag.of((w as u32, h as u32), window);
             let hair = selection::hairline(window.scale_factor());
-            // Above the crop where the options bar leaves room.
-            let (tag_x, tag_y) = selection::size_readout_at(rx, ry, hair, STAGE_TOP - sy);
+            // Above the crop where the options bar leaves room, inside
+            // the part of the image the window shows.
+            let visible = (
+                (-sx).max(0.0),
+                STAGE_TOP - sy,
+                sw.min(f32::from(window.client_area().size.width) - sx),
+            );
+            let (tag_x, tag_y) = selection::size_readout_at((rx, ry, rw, rh), hair, visible, tag_w);
             let mut frame = div()
                 .absolute()
                 .left_0()
@@ -292,7 +295,7 @@ impl Editor {
                 .h(px(sh))
                 .child(selection::selection_edge(rx, ry, rw, rh, hair))
                 .child(
-                    selection::readout(self.crop_label.1.clone(), theme::FG)
+                    selection::readout(label, theme::FG)
                         .absolute()
                         .left(px(tag_x))
                         .top(px(tag_y)),

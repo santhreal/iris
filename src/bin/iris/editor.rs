@@ -118,9 +118,8 @@ pub struct Editor {
     pub(crate) crop_anchor: Option<(f32, f32)>,
     pub(crate) crop_move: Option<CropMove>,
     pub(crate) crop_resize: Option<CropResize>,
-    /// The pending crop's size readout, "W × H", and the size it states:
-    /// rebuilt only when the size changes.
-    pub(crate) crop_label: ((u32, u32), SharedString),
+    /// The pending crop's size readout.
+    pub(crate) crop_tag: crate::widgets::selection::SizeTag,
     pub(crate) copy_menu: bool,
     /// The toolbar's More menu: Copy Text, Rotate, Flip, Clear,
     /// shortcuts, Discard.
@@ -400,7 +399,7 @@ fn open_window(
                     crop_anchor: None,
                     crop_move: None,
                     crop_resize: None,
-                    crop_label: ((0, 0), SharedString::default()),
+                    crop_tag: Default::default(),
                     copy_menu: false,
                     more_menu: false,
                     menu_lit: None,

@@ -19,8 +19,10 @@ pub const HANDLE_PX: f32 = 16.0;
 /// A readout's line height; with its padding the tag is 18 px tall.
 const READOUT_LINE: f32 = 14.0;
 const READOUT_H: f32 = READOUT_LINE + 4.0;
+/// A readout's padding either side of its text.
+const READOUT_PAD_X: f32 = 6.0;
 /// The space between a rect's top edge and the bottom of its size
-/// readout above it, or the readout's top and left inside it: the NW
+/// readout above it, or the readout's top and side inside it: the NW
 /// handle's dot reaches 4.5 px past the corner either way.
 const READOUT_GAP: f32 = 10.0;
 
@@ -31,7 +33,7 @@ const READOUT_GAP: f32 = 10.0;
 /// its width.
 pub fn readout(text: SharedString, color: Rgba) -> Div {
     div()
-        .px(px(6.))
+        .px(px(READOUT_PAD_X))
         .py(px(2.))
         .rounded(px(5.))
         .bg(theme::READOUT_FILL)
@@ -44,16 +46,81 @@ pub fn readout(text: SharedString, color: Rgba) -> Div {
         .child(text)
 }
 
-/// The origin of the size readout of the rect at `(x, y)`: aligned with
-/// the white line's outer edge above the rect, or inside its top left
-/// corner where less than a readout's room is between the line and
-/// `ceiling`, the top of the visible area.
-pub fn size_readout_at(x: f32, y: f32, hair: f32, ceiling: f32) -> (f32, f32) {
-    if y - hair - ceiling >= READOUT_H + READOUT_GAP {
-        (x - hair, y - hair - READOUT_GAP - READOUT_H)
-    } else {
-        (x + READOUT_GAP, y + READOUT_GAP)
+/// The width of the readout of `text`, logical px, as `readout` draws
+/// it in `theme::FONT`: a text element rounds its shaped width up to a
+/// whole logical px.
+fn readout_w(window: &Window, text: &str) -> f32 {
+    let font = Font {
+        features: theme::tabular(),
+        ..theme::font(FontWeight::MEDIUM)
+    };
+    theme::text_w(window, text, font, theme::TEXT_SMALL).ceil() + 2.0 * READOUT_PAD_X
+}
+
+/// A rect's size readout: its text and its width, made again only when
+/// the size changes.
+#[derive(Default)]
+pub struct SizeTag {
+    size: Option<(u32, u32)>,
+    text: SharedString,
+    w: f32,
+}
+
+impl SizeTag {
+    /// The text and the width of the readout of `size`, device px.
+    pub fn of(&mut self, size: (u32, u32), window: &Window) -> (SharedString, f32) {
+        if self.size != Some(size) {
+            self.size = Some(size);
+            self.text = SharedString::from(format!("{} × {}", size.0, size.1));
+            self.w = readout_w(window, &self.text);
+        }
+        (self.text.clone(), self.w)
     }
+}
+
+/// The origin of the `tag_w` px wide size readout of the rect at
+/// `(x, y)`, `w` by `h` px, in the visible area from `left` to `right`
+/// below `top`. Above the rect, READOUT_GAP over the white line, where
+/// the area has the room; else inside the rect's top, READOUT_GAP in
+/// from its side and top. A rect too narrow to hold the readout has it
+/// beside its top, READOUT_GAP right of the line, or left where the
+/// right side has no room; one too short has it READOUT_GAP below the
+/// line. Above and below, the readout aligns with the line's outer edge
+/// on the rect's left side, or on its right side where the left one
+/// would cross `right`, and inside it takes the same side. It never
+/// starts left of `left` or ends past `right`, and never covers the
+/// line.
+pub fn size_readout_at(
+    (x, y, w, h): (f32, f32, f32, f32),
+    hair: f32,
+    (left, top, right): (f32, f32, f32),
+    tag_w: f32,
+) -> (f32, f32) {
+    // The readout on the rect's left side `inset` in from its left
+    // edge, or on its right side as far in from its right edge.
+    let side = |inset: f32| {
+        if x + inset + tag_w <= right {
+            x + inset
+        } else {
+            x + w - inset - tag_w
+        }
+    };
+    let (tx, ty) = if y - hair - top >= READOUT_H + READOUT_GAP {
+        (side(-hair), y - hair - READOUT_GAP - READOUT_H)
+    } else if w < tag_w + 2.0 * READOUT_GAP {
+        let beside = x + w + hair + READOUT_GAP;
+        let tx = if beside + tag_w <= right {
+            beside
+        } else {
+            x - hair - READOUT_GAP - tag_w
+        };
+        (tx, y + READOUT_GAP)
+    } else if h < READOUT_H + 2.0 * READOUT_GAP {
+        (side(-hair), y + h + hair + READOUT_GAP)
+    } else {
+        (side(READOUT_GAP), y + READOUT_GAP)
+    };
+    (tx.min(right - tag_w).max(left), ty)
 }
 
 /// One device pixel at scale factor `sf`, or the nearest whole number

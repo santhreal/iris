@@ -133,12 +133,6 @@ impl Overlay {
     ) -> Stateful<Div> {
         if let Some((x, y, w, h)) = self.current {
             let sf = window.scale_factor();
-            let crop = frame_rect(sf, (sx, sy), self.view, (x, y, w, h));
-            let phys = (crop.width, crop.height);
-            if self.size_at != Some(phys) {
-                self.size_at = Some(phys);
-                self.size_label = SharedString::from(format!("{} × {}", phys.0, phys.1));
-            }
             if let Some(fi) = self.frame_img.clone() {
                 root = root.child(reveal(fi, x, y, w, h, window));
             }
@@ -149,8 +143,11 @@ impl Overlay {
             }
             let hair = hairline(sf);
             root = root.child(selection_edge(x, y, w, h, hair));
-            let size_label = self.size_label.clone();
-            let (tag_x, tag_y) = selection::size_readout_at(x, y, hair, 0.0);
+            let crop = frame_rect(sf, (sx, sy), self.view, (x, y, w, h));
+            let (size_label, tag_w) = self.size_tag.of((crop.width, crop.height), window);
+            let right = f32::from(window.client_area().size.width);
+            let (tag_x, tag_y) =
+                selection::size_readout_at((x, y, w, h), hair, (0.0, 0.0, right), tag_w);
             root = root.child(
                 readout(size_label, theme::FG)
                     .absolute()

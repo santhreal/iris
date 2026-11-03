@@ -82,7 +82,6 @@ impl Overlay {
         self.resize = None;
         self.moving = None;
         self.coord_at = None;
-        self.size_at = None;
         self.hovered = None;
         self.hover_in = None;
         self.hover_out = None;

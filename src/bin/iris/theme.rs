@@ -3,7 +3,7 @@
 //! falling opacity, one systemBlue accent for state and selection,
 //! semantic red and green only where they carry meaning, a 4px grid.
 
-use gpui::{px, App, FontFeatures, FontWeight, Rgba};
+use gpui::{px, App, FontFeatures, FontWeight, Rgba, SharedString, TextRun, Window};
 
 const fn rgb(r: f32, g: f32, b: f32) -> Rgba {
     Rgba { r, g, b, a: 1.0 }
@@ -262,6 +262,24 @@ pub fn wrapped_lines(cx: &App, text: &str, size: f32, weight: FontWeight, width:
                 .count()
         })
         .sum()
+}
+
+/// Width of `text` in `font` at `size` as GPUI shapes it, logical px.
+pub fn text_w(window: &Window, text: &str, font: gpui::Font, size: f32) -> f32 {
+    let run = TextRun {
+        len: text.len(),
+        font,
+        color: FG.into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        tracking: px(0.),
+    };
+    window
+        .text_system()
+        .shape_line(SharedString::from(text.to_owned()), px(size), &[run], None)
+        .width
+        .into()
 }
 
 /// The sum of the Regular face's glyph advances for `text` at `size`,

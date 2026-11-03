@@ -170,8 +170,7 @@ fn open_shell_opts(
                     cfg,
                     coord_at: None,
                     coord_label: SharedString::default(),
-                    size_at: None,
-                    size_label: SharedString::default(),
+                    size_tag: Default::default(),
                 }
             })
         },

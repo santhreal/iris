@@ -362,25 +362,6 @@ impl Chip {
     }
 }
 
-/// Width of `text` in the UI font at `size` and `weight` as GPUI shapes
-/// it, logical px.
-fn shaped_w(window: &Window, text: &str, size: f32, weight: FontWeight) -> f32 {
-    let run = TextRun {
-        len: text.len(),
-        font: theme::font(weight),
-        color: theme::FG.into(),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-        tracking: px(0.),
-    };
-    window
-        .text_system()
-        .shape_line(SharedString::from(text.to_owned()), px(size), &[run], None)
-        .width
-        .into()
-}
-
 impl Render for Chip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let elapsed = self.elapsed(Instant::now());
@@ -413,9 +394,18 @@ impl Render for Chip {
                 // The shortcut shows when it fits beside the name; the
                 // slot never grows, and a clipped shortcut reads wrong.
                 let keys = keys.filter(|keys| {
-                    shaped_w(window, label, theme::TEXT_BODY, FontWeight::MEDIUM)
-                        + KEYS_GAP
-                        + shaped_w(window, keys, theme::TEXT_SMALL, FontWeight::NORMAL)
+                    theme::text_w(
+                        window,
+                        label,
+                        theme::font(FontWeight::MEDIUM),
+                        theme::TEXT_BODY,
+                    ) + KEYS_GAP
+                        + theme::text_w(
+                            window,
+                            keys,
+                            theme::font(FontWeight::NORMAL),
+                            theme::TEXT_SMALL,
+                        )
                         <= SLOT_W
                 });
                 div()

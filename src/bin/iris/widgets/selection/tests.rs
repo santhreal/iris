@@ -200,3 +200,90 @@ fn a_drag_shows_its_own_cursor_and_a_resize_wins() {
         }
     }
 }
+
+// WHY: the class closed here is "a size readout drawn off the visible
+// area or over the selection's line": a rect narrower than its readout
+// against the right edge cut the readout at the screen edge; at the top
+// right corner, where it moves inside the rect, it went wholly off
+// screen; and inside a rect at the top narrower or shorter than the
+// readout, it covered the rect's white line. Each placement is pinned:
+// above on either side, inside, beside a narrow rect on either side,
+// below a short one, and in a panned editor's area. Over a grid of rect
+// positions and sizes at both heights, the readout stays inside the
+// area and off the line. Not covered: the shaped width `SizeTag`
+// measures, which takes a GPUI text system.
+#[test]
+fn the_size_readout_stays_on_screen_and_off_the_line() {
+    const RIGHT: f32 = 1600.0;
+    const TAG: f32 = 60.0;
+    const HAIR: f32 = 0.5;
+    let screen = (0.0, 0.0, RIGHT);
+    // (rect x, y, w, h), the visible area, the readout's origin.
+    let cases = [
+        // Above, aligned with the line's outer left edge.
+        ((400.0, 300.0, 200.0, 100.0), screen, (399.5, 271.5)),
+        // Above, against the right edge and narrower than the readout:
+        // aligned with the line's outer right edge.
+        ((1580.0, 300.0, 10.0, 100.0), screen, (1530.5, 271.5)),
+        // Above, flush with the right edge: the line's outer edge is past
+        // it, and the readout ends at it.
+        ((1590.0, 300.0, 10.0, 100.0), screen, (1540.0, 271.5)),
+        // Above, flush with the left edge: the readout starts at it.
+        ((0.0, 300.0, 200.0, 100.0), screen, (0.0, 271.5)),
+        // Inside the top, READOUT_GAP in from the left side.
+        ((400.0, 2.0, 200.0, 100.0), screen, (410.0, 12.0)),
+        ((1500.0, 2.0, 98.0, 100.0), screen, (1510.0, 12.0)),
+        // A narrow rect at the top: beside it, right of the line.
+        ((2.0, 2.0, 10.0, 100.0), screen, (22.5, 12.0)),
+        // A narrow rect at the top right: beside it, left of the line.
+        ((1588.0, 2.0, 10.0, 100.0), screen, (1517.5, 12.0)),
+        // A short rect at the top: below the line.
+        ((400.0, 2.0, 200.0, 20.0), screen, (399.5, 32.5)),
+        // A crop on a panned image: the window shows it from x 100, and
+        // the options bar ends at y 40.
+        (
+            (100.0, 300.0, 200.0, 100.0),
+            (100.0, 40.0, RIGHT),
+            (100.0, 271.5),
+        ),
+        (
+            (300.0, 60.0, 200.0, 100.0),
+            (100.0, 40.0, RIGHT),
+            (310.0, 70.0),
+        ),
+    ];
+    for (rect, area, want) in cases {
+        assert_eq!(
+            size_readout_at(rect, HAIR, area, TAG),
+            want,
+            "rect {rect:?} in {area:?}"
+        );
+    }
+    for y in [2.0, 300.0] {
+        for x in (0..=1600).step_by(7).map(|x| x as f32) {
+            for w in [1.0, 10.0, 59.0, 61.0, 79.0, 81.0, 200.0] {
+                for h in [1.0, 20.0, 37.0, 39.0, 200.0] {
+                    if x + w > RIGHT {
+                        continue;
+                    }
+                    let rect = (x, y, w, h);
+                    let (tx, ty) = size_readout_at(rect, HAIR, screen, TAG);
+                    assert!(
+                        (0.0..=RIGHT - TAG).contains(&tx),
+                        "rect {rect:?}: readout at {tx}"
+                    );
+                    let inside = tx >= x && tx + TAG <= x + w && ty >= y && ty + READOUT_H <= y + h;
+                    let outside = tx + TAG <= x - HAIR
+                        || tx >= x + w + HAIR
+                        || ty + READOUT_H <= y - HAIR
+                        || ty >= y + h + HAIR;
+                    assert!(
+                        inside || outside,
+                        "rect {rect:?}: readout at {:?} covers the line",
+                        (tx, ty)
+                    );
+                }
+            }
+        }
+    }
+}
