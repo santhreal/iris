@@ -559,7 +559,7 @@ impl Settings {
     ) {
         let ks = &ev.keystroke;
         // The page takes every key but the window's own: Ctrl+W, and
-        // Esc with nothing open, go on to the window.
+        // Esc with nothing open and no ring, go on to the window.
         cx.stop_propagation();
         // Recording takes every combination, Esc included: Esc is the
         // overlay's default cancel key, and stops a global hotkey's
@@ -636,7 +636,11 @@ impl Settings {
             return;
         }
         if ks.key == "escape" {
-            cx.propagate();
+            if self.ring.take().is_some() {
+                cx.notify();
+            } else {
+                cx.propagate();
+            }
         }
     }
 

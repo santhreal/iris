@@ -9,8 +9,10 @@
 //! Space, Down, and Return, and reads each change from config.toml. It
 //! reads the focus ring above the control under it, that an off switch
 //! inside the ring keeps its gray track, that the ring moves off the
-//! control Tab left, that a pane change clears it, and that a mouse
-//! press clears it.
+//! control Tab left, that a pane change clears it, that a mouse press
+//! clears it, and that Escape clears it and keeps the page while the
+//! next Escape returns to the Library page, as the library's own ring
+//! does.
 //!
 //! Not covered: Space on Choose…, which opens the system folder picker,
 //! and on Check Now, which reaches the network; the traversal over every
@@ -43,6 +45,7 @@ use x11::{chord, click, client, move_to, rect, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 const SETTINGS: &str = "Settings - iris";
+const LIBRARY: &str = "Library - iris";
 /// Keysyms.
 const TAB: u32 = 0xff09;
 const SHIFT: u32 = 0xffe1;
@@ -50,6 +53,7 @@ const CONTROL: u32 = 0xffe3;
 const DOWN: u32 = 0xff54;
 const RETURN: u32 = 0xff0d;
 const SPACE: u32 = 0x20;
+const ESCAPE: u32 = 0xff1b;
 /// The General and Capture panes' places in the sidebar.
 const GENERAL: usize = 0;
 const CAPTURE: usize = 1;
@@ -262,4 +266,24 @@ fn the_keyboard_reaches_and_runs_every_kind_of_control() {
         Some((false, 8_000)),
         "a press on the page's inset changed a setting"
     );
+
+    // Escape takes the ring away and keeps the page; the next Escape
+    // goes on to the window, which shows the Library page.
+    tap(&rig.conn, rig.root, TAB);
+    rig.wait_for_ring("Tab to ring the switch once more", FLASH_Y, TOGGLE_HALF);
+    tap(&rig.conn, rig.root, ESCAPE);
+    rig.daemon.until("Escape to clear the ring", || {
+        (!rig.ring_at(FLASH_Y, TOGGLE_HALF)).then_some(())
+    });
+    rig.daemon.settle();
+    assert_eq!(
+        windows_of(&rig.conn, rig.root, SETTINGS),
+        [rig.settings],
+        "Escape with the ring on a control left the Settings page"
+    );
+    tap(&rig.conn, rig.root, ESCAPE);
+    rig.daemon
+        .until("the next Escape to show the Library page", || {
+            (windows_of(&rig.conn, rig.root, LIBRARY) == [rig.settings]).then_some(())
+        });
 }
