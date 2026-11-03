@@ -52,14 +52,14 @@ mod x11;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::ConnectionExt as _;
 use x11rb::protocol::xproto::{
-    AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, PropMode,
+    AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, ImageFormat, PropMode,
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{drag, move_to, rect, tap, windows_of, Compositor};
+use x11::{all_windows_of, drag, move_to, rect, tap, windows_of, Compositor};
 
 /// The screen, and its width and height in pixels.
 const SCREEN: &str = "1280x1024x24";
@@ -326,6 +326,89 @@ fn a_popup_rests_in_the_corner_of_the_work_area() {
         check("region toast", toast);
     }
     assert!(wrong.is_empty(), "work area:\n{}", wrong.join("\n"));
+}
+
+// WHY: the class closed here is "a flash that does not open at its
+// peak, grows brighter after its first frame, or stays on the screen":
+// a ramped attack, a decay that steps back up, or a blink that never
+// stows. It reads the flash window's own pixels, whose alpha is the
+// fill's opacity in a frame: gray pixels with alpha over 0 and under
+// 255 are flash frames, and neither the transparent window before its
+// first frame nor the desktop's colour the server copies into a newly
+// sized window is one. Not covered: a clock that starts before the
+// first frame over the screen, which this rig draws within a
+// millisecond of the show (`flash::tests` steps that clock); a flash
+// window opened fresh, which X11 builds once at start; the frame rate of
+// the decay; Wayland, Windows, and macOS.
+#[test]
+fn a_capture_flash_draws_its_peak_first_and_leaves() {
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized("flash peak", SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    conn.change_window_attributes(
+        root,
+        &ChangeWindowAttributesAux::new().background_pixel(DESKTOP),
+    )
+    .unwrap();
+    conn.clear_area(false, root, 0, 0, 0, 0).unwrap();
+    let selection = conn
+        .intern_atom(false, format!("_NET_WM_CM_S{screen}").as_bytes())
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let _compositor = Compositor::start(&conn, root, selection);
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    // The daemon builds the flash window stowed at start.
+    let flash = daemon.until("the stowed flash window", || {
+        all_windows_of(&conn, root, "Flash - iris").first().copied()
+    });
+    daemon.settle();
+    daemon.send(&["--capture-fullscreen"]);
+    // Each change of the window's pixel at (100, 100) as [b, g, r, a],
+    // until the window has shown a flash frame and left the screen.
+    let mut seen: Vec<[u8; 4]> = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let lit = |p: &[u8; 4]| p[0] == p[1] && p[1] == p[2] && (1..255).contains(&p[3]);
+    loop {
+        let image = conn
+            .get_image(ImageFormat::Z_PIXMAP, flash, 100, 100, 1, 1, !0)
+            .unwrap()
+            .reply();
+        match image {
+            Ok(image) => {
+                let p: [u8; 4] = image.data[..4].try_into().unwrap();
+                if seen.last() != Some(&p) {
+                    seen.push(p);
+                }
+            }
+            // Unmapped or one pixel wide: stowed.
+            Err(_) if seen.iter().any(lit) => break,
+            Err(_) => {}
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the flash did not show and leave within 5 s; its pixels went {seen:?}"
+        );
+    }
+    let alphas: Vec<u8> = seen.iter().filter(|p| lit(p)).map(|p| p[3]).collect();
+    assert!(
+        (95..=99).contains(&alphas[0]),
+        "the flash's first frame is at {}/255 opacity, not its peak 97 (0.38); frames {alphas:?}",
+        alphas[0]
+    );
+    assert!(
+        alphas.windows(2).all(|w| w[1] <= w[0]),
+        "the flash grew brighter after its first frame: {alphas:?}"
+    );
 }
 
 /// Check that a click on the room around the resting card of the pop-up
