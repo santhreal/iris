@@ -444,8 +444,7 @@ impl Editor {
                         if inside {
                             this.crop_move = Some((p, this.crop_rect.unwrap()));
                         } else {
-                            this.crop_rect = Some((p.0, p.1, 0.0, 0.0));
-                            this.crop_anchor = Some(p);
+                            this.begin_crop(p);
                         }
                     } else {
                         this.commit_text(true);
@@ -531,6 +530,18 @@ impl Editor {
 }
 
 impl Editor {
+    /// Start a fresh crop at image point `p`, or at the image's point
+    /// nearest it for a press beside the image: the corner a drag from
+    /// there reshapes.
+    pub(super) fn begin_crop(&mut self, p: (f32, f32)) {
+        let p = (
+            p.0.clamp(0.0, self.base_dims.0 as f32),
+            p.1.clamp(0.0, self.base_dims.1 as f32),
+        );
+        self.crop_rect = Some((p.0, p.1, 0.0, 0.0));
+        self.crop_anchor = Some(p);
+    }
+
     /// A pointer move, anywhere: it carries on the stage drag in
     /// progress, if any. Returns whether the editor needs a redraw.
     fn stage_drag(&mut self, ev: &MouseMoveEvent, window: &Window) -> bool {

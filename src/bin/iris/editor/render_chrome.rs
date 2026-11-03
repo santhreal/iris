@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use gpui::*;
 
-use super::action::{hex_rgba, Transform, COLORS, TOOLS};
+use super::action::{hex_rgba, Tool, Transform, COLORS, TOOLS};
 use super::Editor;
 use crate::icons::Icon;
 use crate::theme;
@@ -278,22 +278,33 @@ impl Editor {
     }
 
     pub(super) fn render_backdrop(&self, chrome: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let backdrop = div()
             .absolute()
             .left_0()
             .top(px(STAGE_TOP))
             .right_0()
             .bottom_0()
             .id("backdrop")
-            .opacity(chrome)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _ev: &MouseDownEvent, _, _| {
-                    // A press outside the image settles an open text
-                    // entry and keeps it; Discard is explicit.
-                    this.commit_text(true);
-                }),
-            )
+            .opacity(chrome);
+        // The Crop tool's crosshair shows beside the image too: a crop
+        // begun there starts at the nearest point of the image.
+        let backdrop = if self.tool == Tool::Crop {
+            backdrop.cursor(Tool::Crop.cursor())
+        } else {
+            backdrop
+        };
+        backdrop.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                // A press outside the image settles an open text
+                // entry and keeps it; Discard is explicit.
+                this.commit_text(true);
+                if this.tool == Tool::Crop && !this.space_pan {
+                    this.begin_crop(this.to_image(ev.position, window));
+                    cx.notify();
+                }
+            }),
+        )
     }
 
     /// The tools as one toolbar segmented control; each tooltip shows
@@ -307,6 +318,7 @@ impl Editor {
                 .map(|&(_, glyph, label, key)| Segment::icon(glyph).tip(label, Some(key.into())))
                 .collect(),
             TOOLS.iter().position(|t| t.0 == self.tool),
+            true,
             move |ix, _, cx| {
                 this.update(cx, |this, cx| this.set_tool(TOOLS[ix].0, cx))
                     .ok();
@@ -487,17 +499,23 @@ impl Editor {
     /// the fill toggle, and the markup colors, each set split by a
     /// divider, for the next mark and the selected one. A set the
     /// selected mark, or the tool's next mark, does not take shows
-    /// disabled, its value still drawn.
+    /// disabled, its value still drawn: dimmed, with no hover, press,
+    /// or click, and its tooltips kept.
     pub(super) fn render_options(&self, options: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let subject = self
             .selected
             .and_then(|i| self.actions.borrow().get(i).map(|a| a.tool))
             .unwrap_or(self.tool);
-        let applies = |takes: bool, el: AnyElement| {
+        let (stroked, fillable, colored) =
+            (subject.stroked(), subject.fillable(), subject.colored());
+        let dim = |takes: bool, el: AnyElement| {
             if takes {
                 el
             } else {
-                widgets::disabled(el).into_any_element()
+                div()
+                    .opacity(theme::DISABLED_OPACITY)
+                    .child(el)
+                    .into_any_element()
             }
         };
         let divider = || div().w(px(1.)).h(px(20.)).mx(px(8.)).bg(theme::HAIRLINE);
@@ -509,6 +527,7 @@ impl Editor {
                 .map(|&(glyph, label, key)| Segment::icon(glyph).tip(label, Some(key.into())))
                 .collect(),
             Some(usize::from(self.stroke)),
+            stroked,
             move |ix, _, cx| {
                 this.update(cx, |this, cx| {
                     this.set_stroke(ix as u8);
@@ -525,6 +544,7 @@ impl Editor {
             "fill",
             vec![Segment::icon(Icon::Fill).tip("Fill Shapes", Some("F".into()))],
             self.fill.then_some(0),
+            fillable,
             move |_, _, cx| {
                 this.update(cx, |this, cx| {
                     this.toggle_fill();
@@ -551,29 +571,30 @@ impl Editor {
             // rings under the pointer, and in a faded accent while pressed.
             let swatch = if active {
                 swatch.border_color(theme::ACCENT)
-            } else {
+            } else if colored {
                 swatch
                     .border_color(theme::alpha(theme::ACCENT, 0.0))
                     .hover(|s| s.border_color(theme::SWATCH_HOVER))
                     .active(|s| s.border_color(theme::alpha(theme::ACCENT, 0.6)))
+            } else {
+                swatch.border_color(theme::alpha(theme::ACCENT, 0.0))
             };
-            swatches = swatches.child(
-                swatch
-                    .tooltip(tip(name, None))
-                    .child(
-                        div()
-                            .w(px(16.))
-                            .h(px(16.))
-                            .rounded_full()
-                            .bg(fill)
-                            .border_1()
-                            .border_color(swatch_rim(fill)),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_color(c);
-                        cx.notify();
-                    })),
+            let mut swatch = swatch.tooltip(tip(name, None)).child(
+                div()
+                    .w(px(16.))
+                    .h(px(16.))
+                    .rounded_full()
+                    .bg(fill)
+                    .border_1()
+                    .border_color(swatch_rim(fill)),
             );
+            if colored {
+                swatch = swatch.on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_color(c);
+                    cx.notify();
+                }));
+            }
+            swatches = swatches.child(swatch);
         }
         div()
             .id("tool-options")
@@ -593,19 +614,18 @@ impl Editor {
             .border_color(theme::HAIRLINE)
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(applies(subject.stroked(), strokes.into_any_element()))
+            .child(dim(stroked, strokes.into_any_element()))
             .child(divider())
-            .child(applies(subject.fillable(), fill_toggle.into_any_element()))
+            .child(dim(fillable, fill_toggle.into_any_element()))
             .child(divider())
             // A swatch's ring box reaches 4 px past its color on each
             // side: the margin takes that back, so the divider stands as
             // far from the first color as from the tracks' edges, and the
-            // bar centers on the colors it shows. The disabled layer
-            // still covers every ring box.
+            // bar centers on the colors it shows.
             .child(
                 div()
                     .mx(px(-4.))
-                    .child(applies(subject.colored(), swatches.into_any_element())),
+                    .child(dim(colored, swatches.into_any_element())),
             )
     }
 

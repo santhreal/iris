@@ -228,12 +228,17 @@ impl Segment {
 
 /// A toolbar segmented control: one choice among `segments`, square
 /// TOOLBAR_CONTROL_H segments in a quiet track, the `selected` one
-/// accent-filled with white content. A click on a segment runs
-/// `on_select(index)`, including on the one already selected.
+/// accent-filled with white content, darker under the pointer and
+/// while pressed as an icon button that is on. A click on a segment
+/// runs `on_select(index)`, including on the one already selected.
+/// With `enabled` false no segment hovers, presses, or runs, and each
+/// keeps its tooltip, as a disabled toolbar item does; the caller dims
+/// the control.
 pub fn segmented(
     id: &'static str,
     segments: Vec<Segment>,
     selected: Option<usize>,
+    enabled: bool,
     on_select: impl Fn(usize, &mut Window, &mut App) + 'static,
 ) -> Div {
     let on_select = Rc::new(on_select);
@@ -257,20 +262,27 @@ pub fn segmented(
             .justify_center()
             .rounded(px(theme::RADIUS_CONTROL))
             .text_color(if on { theme::ACCENT_INK } else { theme::FG_DIM });
-        let mut cell = if on {
-            cell.bg(theme::ACCENT)
-        } else {
-            cell.hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
-                .active(|s| s.bg(theme::SURFACE_PRESS))
+        let mut cell = match (on, enabled) {
+            (true, true) => cell
+                .bg(theme::ACCENT)
+                .hover(|s| s.bg(theme::ACCENT_HOVER))
+                .active(|s| s.bg(theme::ACCENT_PRESS)),
+            (true, false) => cell.bg(theme::ACCENT),
+            (false, true) => cell
+                .hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
+                .active(|s| s.bg(theme::SURFACE_PRESS)),
+            (false, false) => cell,
         }
         .child(icons::icon_in_text_color(seg.icon, theme::ICON_TOOLBAR));
         if let Some((label, shortcut)) = seg.tip {
             cell = cell.tooltip(tip(label, shortcut));
         }
-        let on_select = on_select.clone();
-        cell = cell
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| on_select(i, window, cx));
+        if enabled {
+            let on_select = on_select.clone();
+            cell = cell
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(move |_, window, cx| on_select(i, window, cx));
+        }
         row = row.child(cell);
     }
     row

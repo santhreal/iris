@@ -46,7 +46,7 @@ Select a tool in the toolbar or press its key without a modifier:
 | `T` | Text | Click on the canvas to place an inline text entry box with a blinking caret. |
 | `H` | Highlight | Semi-transparent horizontal or freehand highlighter stroke. |
 | `B` | Blur | Pixelated rectangular area sampled from the composite image below the blur action. |
-| `C` | Crop | Drag to define a rectangular crop region, with its size in image pixels above it. Drag inside the box to reposition it, or drag a handle to move that corner or edge; the handles are the selection handles of [capture](capture.md). The pointer is an open hand inside the box and a closed hand while the box moves. A drag that leaves the image stops at its edge. Commit with `Enter` or discard with `Escape`. |
+| `C` | Crop | Drag to define a rectangular crop region, with its size in image pixels placed as the selection's size readout in [capture](capture.md). A drag that starts beside the image starts at the nearest point of the image, and the pointer is a crosshair there. Drag inside the box to reposition it, or drag a handle to move that corner or edge; the handles are the selection handles of [capture](capture.md). The pointer is an open hand inside the box and a closed hand while the box moves. A drag that leaves the image stops at its edge. Commit with `Enter` or discard with `Escape`. |
 | `N` | Counter | Click to place circular numbered badges containing an integer that increments from 1. |
 
 Switching tools settles any active text entry, committing non-empty text to the canvas.
@@ -59,7 +59,7 @@ Switching tools settles any active text entry, committing non-empty text to the 
 
 Selecting an annotation with the Select tool frames it with a white line and a dark rim 3 px outside its bounds, the edge of a crop box, and shows its color, stroke width, and fill in the tool options bar, and the next annotation is drawn with them. Each change in the bar also applies to the selected annotation, as one undo step: a color to every annotation but a blur, a stroke width to pen strokes, lines, arrows, rectangles, and ellipses, and fill to rectangles and ellipses. Choosing another tool clears the selection.
 
-A group in the bar that the selected annotation, or the current tool when nothing is selected, does not take is dimmed and takes no click: the stroke widths with Text, Highlight, and Counter, the fill toggle with every tool but Rectangle and Ellipse, and all three groups with Blur, Crop, and Select while nothing is selected. The keys still set each value for the next annotation.
+A group in the bar that the selected annotation, or the current tool when nothing is selected, does not take is dimmed and takes no hover or click, and each of its controls keeps its tooltip: the stroke widths with Text, Highlight, and Counter, the fill toggle with every tool but Rectangle and Ellipse, and all three groups with Blur, Crop, and Select while nothing is selected. The keys still set each value for the next annotation.
 
 ## Text Tool
 

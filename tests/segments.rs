@@ -34,7 +34,7 @@ use std::ops::Range;
 use x11rb::connection::Connection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{click, client, extent, move_to, rect, windows_of};
+use x11::{click, client, extent, glide, move_to, press_and_move, rect, release, tap, windows_of};
 
 const SCREEN: &str = "1280x1024x24";
 const EDITOR: &str = "plain.png - iris";
@@ -241,11 +241,16 @@ fn a_segment_lights_only_under_the_pointer() {
     daemon.settle();
     click(&conn, root, at(ELLIPSE, CELL / 2));
     daemon.settle();
-    let (_, _, px) = client(&conn, root, editor);
-    assert!(
-        accent(px[FILL_ROW * w + left(ELLIPSE) + CELL / 2]),
-        "a click on the Ellipse segment left it unselected"
+    // The pointer stays on Ellipse, which the click selected: the
+    // selected fill under the pointer.
+    x11::until_color(
+        &conn,
+        root,
+        (x0 + (left(ELLIPSE) + CELL / 2) as i16, y0 + FILL_ROW as i16),
+        ACCENT_HOVER,
+        "the Ellipse segment selected under the pointer",
     );
+    let (_, _, px) = client(&conn, root, editor);
     let after = peak(&px, w, &rows, &glyph(RECTANGLE));
     assert!(
         after.abs_diff(dim_rectangle) <= SAME,
@@ -263,4 +268,210 @@ fn a_segment_lights_only_under_the_pointer() {
         hovered >= dim_counter.saturating_add(LIT),
         "the hovered segment's glyph stays dim: {hovered}, unhovered {dim_counter}"
     );
+}
+
+/// The selected segment's fill under the pointer and while pressed,
+/// `theme::ACCENT_HOVER` and `theme::ACCENT_PRESS`, and at rest,
+/// `theme::ACCENT`, as [r, g, b].
+const ACCENT_HOVER: [u32; 3] = [12, 120, 228];
+const ACCENT_PRESS: [u32; 3] = [15, 106, 197];
+const ACCENT: [u32; 3] = [10, 132, 255];
+
+/// WHY: the class closed here is "a press that draws no answer". The
+/// selected segment kept its fill under the pointer and under a press,
+/// where every other segment and the icon button that is on shade, so a
+/// press on the selected tool, or on the fill toggle while it is on,
+/// looked dead. The case reads the selected Pen cell above its glyph at
+/// rest, hovered, pressed, with the press dragged off, and released
+/// there.
+///
+/// Not covered: the fill toggle's own cell, which the same constructor
+/// builds.
+#[test]
+fn the_selected_segment_shades_under_the_pointer_and_a_press() {
+    let case = "the_selected_segment_shades_under_the_pointer_and_a_press";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plain.png");
+    image::RgbImage::from_pixel(SIZE.0, SIZE.1, image::Rgb(IMAGE))
+        .save(&file)
+        .unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&[OsStr::new("--annotate"), file.as_os_str()]);
+    let editor = daemon.until("the editor to open", || {
+        windows_of(&conn, root, EDITOR).first().copied()
+    });
+    daemon.until("the editor to draw the image", || {
+        extent(&client(&conn, root, editor), IMAGE).map(|_| ())
+    });
+    let (x0, y0, ..) = rect(&conn, root, editor);
+    let park = (x0 + 10, y0 + 300);
+    move_to(&conn, root, park);
+    daemon.settle();
+
+    let (w, _, px) = client(&conn, root, editor);
+    let first = first_cell(&px, w).expect("the selected Pen segment's fill is on the toolbar");
+    let cell = first + PEN * PITCH;
+    let fill = (x0 + (cell + CELL / 2) as i16, y0 + FILL_ROW as i16);
+    // Under the glyph, clear of the tooltip that opens below the pointer.
+    let on = (
+        x0 + (cell + CELL / 2) as i16,
+        y0 + (CELL_TOP + CELL - 3) as i16,
+    );
+    x11::until_color(&conn, root, fill, ACCENT, "the selected Pen cell at rest");
+    move_to(&conn, root, on);
+    x11::until_color(&conn, root, fill, ACCENT_HOVER, "the hovered Pen cell");
+    press_and_move(&conn, root, on, on, 1);
+    x11::until_color(&conn, root, fill, ACCENT_PRESS, "the pressed Pen cell");
+    glide(&conn, root, on, park, 20);
+    x11::until_color(
+        &conn,
+        root,
+        fill,
+        ACCENT,
+        "the Pen cell with its press dragged off",
+    );
+    release(&conn, root);
+    daemon.settle();
+    x11::until_color(
+        &conn,
+        root,
+        fill,
+        ACCENT,
+        "the Pen cell after the release off it",
+    );
+}
+
+/// The keysyms of `p`, `t`, and `v`, which pick Pen, Text, and Select.
+const PEN_KEY: u32 = 0x70;
+const TEXT_KEY: u32 = 0x74;
+const SELECT_KEY: u32 = 0x76;
+
+/// Pixels of `a` and `b`, two captures `w` px wide, in `rows` x `cols`
+/// that differ by more than `over` on a channel.
+fn changed(
+    a: &[[u8; 3]],
+    b: &[[u8; 3]],
+    w: usize,
+    (rows, cols): (Range<usize>, Range<usize>),
+    over: u8,
+) -> usize {
+    rows.flat_map(|y| cols.clone().map(move |x| y * w + x))
+        .filter(|&i| (0..3).any(|c| a[i][c].abs_diff(b[i][c]) > over))
+        .count()
+}
+
+/// Levels apart: the tooltip's text from the bar's ground under it; and
+/// a hover in a dimmed group, its glyph lit or its color's ring drawn,
+/// about 26 at DISABLED_OPACITY, from the tooltip's shadow, under 6.
+const TIP_TEXT: u8 = 40;
+const DIM_HOVER: u8 = 12;
+
+/// WHY: the class closed here is "a dimmed control that says nothing".
+/// A dimmed group in the options bar lay under a layer that took the
+/// pointer, so its controls showed no tooltip, where the dimmed Undo and
+/// Redo beside them show theirs. The case dims each of the three groups
+/// in turn, the fill toggle with Pen, the stroke widths with Text, and
+/// the colors with Select, rests the pointer on one control of the group,
+/// waits for a tooltip under it, and reads the bar for no hover: a glyph
+/// lit or a color ringed; then clicks the control and reads the bar for
+/// no change of value.
+///
+/// Not covered: a dimmed segment's hover wash without its lit glyph,
+/// about 5 levels at DISABLED_OPACITY, as faint as the tooltip's shadow
+/// over the bar; the tooltip's text; and a group dimmed by the selected
+/// annotation rather than by the tool.
+#[test]
+fn a_dimmed_option_keeps_its_tooltip_and_takes_no_click() {
+    let case = "a_dimmed_option_keeps_its_tooltip_and_takes_no_click";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plain.png");
+    image::RgbImage::from_pixel(SIZE.0, SIZE.1, image::Rgb(IMAGE))
+        .save(&file)
+        .unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&[OsStr::new("--annotate"), file.as_os_str()]);
+    let editor = daemon.until("the editor to open", || {
+        windows_of(&conn, root, EDITOR).first().copied()
+    });
+    daemon.until("the editor to draw the image", || {
+        extent(&client(&conn, root, editor), IMAGE).map(|_| ())
+    });
+    let (x0, y0, ..) = rect(&conn, root, editor);
+    let park = (x0 + 10, y0 + 300);
+    move_to(&conn, root, park);
+    daemon.settle();
+
+    // (group, the key that dims it, its first and last places among the
+    // bar's controls, and the first control's center's offset from its
+    // left edge.)
+    let groups: [(&str, u32, usize, usize, usize); 3] = [
+        ("fill toggle", PEN_KEY, 2, 2, 14),
+        ("stroke widths", TEXT_KEY, 0, 0, 14),
+        ("colors", SELECT_KEY, 4, 14, 8),
+    ];
+    for (group, key, place, last, offset) in groups {
+        tap(&conn, root, key);
+        move_to(&conn, root, park);
+        daemon.settle();
+        let (w, _, before) = client(&conn, root, editor);
+        let row = &before[OPTIONS_ROW * w..(OPTIONS_ROW + 1) * w];
+        let shown: Vec<_> = controls(row, 8, w - 8)
+            .into_iter()
+            .filter(|r| !r.2)
+            .collect();
+        assert_eq!(
+            shown.len(),
+            15,
+            "the options bar's center row reads {shown:?}"
+        );
+        let x = shown[place].0 + offset;
+        let on = (x0 + x as i16, y0 + OPTIONS_ROW as i16);
+        move_to(&conn, root, on);
+        // The tooltip opens below and right of the pointer, under the bar.
+        let tip_rows = OPTIONS_ROW + 16..OPTIONS_ROW + 56;
+        let tip_cols = x..x + 80;
+        let shown_tip = daemon.until(&format!("the dimmed {group}'s tooltip"), || {
+            let (_, _, now) = client(&conn, root, editor);
+            let tip = (tip_rows.clone(), tip_cols.clone());
+            (changed(&before, &now, w, tip, TIP_TEXT) >= 30).then_some(now)
+        });
+        // The group's rows and columns, its colors' 4 px ring boxes in:
+        // the tooltip's shadow darkens a full color beside it by up to
+        // 16 levels, and a dimmed one by under DIM_HOVER.
+        let own = (52..52 + 36, shown[place].0 - 4..shown[last].1 + 5);
+        assert_eq!(
+            changed(&before, &shown_tip, w, own, DIM_HOVER),
+            0,
+            "the dimmed {group} changes under the pointer"
+        );
+        click(&conn, root, on);
+        move_to(&conn, root, park);
+        daemon.settle();
+        let (_, _, after) = client(&conn, root, editor);
+        assert_eq!(
+            changed(&before, &after, w, (52..52 + 36, 0..w), DIM_HOVER),
+            0,
+            "a click on the dimmed {group} changes the options bar"
+        );
+    }
 }

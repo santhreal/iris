@@ -31,6 +31,13 @@
 //! label or the Settings File name field takes, which hides it until
 //! the pointer moves.
 //!
+//! The fourth class is "a crop that cannot start beside the image".
+//! With the Crop tool, a press on the backdrop beside the image did
+//! nothing and showed the arrow, so a crop could not be swept in from
+//! past a corner, where a drag that leaves the image stops at its edge.
+//! The case reads the crosshair there, drags a crop from there, and
+//! applies it.
+//!
 //! Not covered: the menus, the other settings controls, the editor's
 //! options bar, the notice's poster, a crop or selection handle's
 //! arrow, which `widgets/selection/tests.rs` states; Wayland, where the
@@ -94,6 +101,10 @@ const TEXT: u32 = 0x74;
 const LETTER: u32 = 0x61;
 /// The editor's image: one colour, which the stage shows it by.
 const IMAGE: [u8; 3] = [60, 140, 200];
+/// The border of the image the crop case cuts, 4 px wide, and the
+/// keysym of Return, which applies a crop.
+const BORDER: [u8; 3] = [220, 90, 40];
+const RETURN: u32 = 0xff0d;
 
 /// The capture bar on a 1280x1024 monitor (`tests/capture_bar.rs`): its
 /// left edge and its buttons' row, and the centers of cancel, entire
@@ -424,6 +435,68 @@ fn the_editor_shows_the_hands_for_a_pan_and_a_crop_move() {
     s.shows(&cross, "crosshair", "the image outside the crop");
 }
 
+/// The crop case (the fourth class above): a 600x400 image in a 4 px
+/// BORDER, the crosshair over the backdrop up and left of its top-left
+/// corner, and a crop dragged from there to the image's center. The
+/// applied crop keeps the border's top and left sides and cuts its
+/// right and bottom ones, so it started at the corner.
+///
+/// Not covered: a press beside the other corners and sides, which reach
+/// the image through the same clamp, and a zoomed or panned image.
+#[test]
+fn a_crop_starts_beside_the_image() {
+    let case = "a_crop_starts_beside_the_image";
+    let Some(s) = session(case) else {
+        return;
+    };
+    let cross = x11::themed(&s.conn, s.screen, CROSSHAIR, (0, 0));
+    assert!(
+        cross != s.arrow,
+        "the cursor theme draws the crosshair and the arrow alike"
+    );
+    let file = s.dir.path().join("plain.png");
+    let mut framed = image::RgbImage::from_pixel(600, 400, image::Rgb(BORDER));
+    for (x, y, p) in framed.enumerate_pixels_mut() {
+        if (4..596).contains(&x) && (4..396).contains(&y) {
+            *p = image::Rgb(IMAGE);
+        }
+    }
+    framed.save(&file).unwrap();
+    s.daemon.send(&[OsStr::new("--annotate"), file.as_os_str()]);
+    let editor = s.daemon.until("the editor to open", || {
+        windows_of(&s.conn, s.root, EDITOR).first().copied()
+    });
+    let (left, top, right, bottom) = s.daemon.until("the editor to draw the image", || {
+        extent(&client(&s.conn, s.root, editor), BORDER)
+            .filter(|&(left, top, right, bottom)| right - left >= 200 && bottom - top >= 100)
+    });
+    s.daemon.settle();
+    let (x0, y0, ..) = rect(&s.conn, s.root, editor);
+    let on = |x: usize, y: usize| (x0 + x as i16, y0 + y as i16);
+    // A key goes to the window under the pointer.
+    let center = on((left + right) / 2, (top + bottom) / 2);
+    move_to(&s.conn, s.root, center);
+    s.daemon.settle();
+    tap(&s.conn, s.root, CROP);
+    let beside = on(left - 10, top - 10);
+    s.shows_at(
+        beside,
+        &cross,
+        "crosshair",
+        "the backdrop beside the image with the Crop tool",
+    );
+    drag(&s.conn, s.root, beside, center, 20);
+    s.daemon.settle();
+    tap(&s.conn, s.root, RETURN);
+    s.daemon
+        .until("the crop to apply from the image's top-left corner", || {
+            let shot = client(&s.conn, s.root, editor);
+            let (bl, bt, br, bb) = extent(&shot, BORDER)?;
+            let (il, it, ir, ib) = extent(&shot, IMAGE)?;
+            (bl < il && bt < it && br == ir && bb == ib).then_some(())
+        });
+}
+
 #[test]
 fn a_tool_key_keeps_the_pointer_and_a_letter_a_label_takes_hides_it() {
     let case = "a_tool_key_keeps_the_pointer_and_a_letter_a_label_takes_hides_it";
@@ -467,15 +540,21 @@ fn a_letter_a_settings_field_takes_hides_the_pointer() {
     });
     s.daemon.settle();
     // The File name field, left of the card's right padding on its
-    // row's center line (`settings_paste.rs`).
-    let (w, _, px) = client(&s.conn, s.root, settings);
-    let scale = app_window::scale(w);
-    let y = (TEMPLATE_Y * scale) as usize;
-    let row = &px[y * w..(y + 1) * w];
-    let card = row[w - ((INSET + 6.0) * scale) as usize];
-    let before = w - (INSET * scale) as usize - 1;
-    let (left, right) = field_left_of(row, card, before, (FIELD_W * scale) as usize)
-        .unwrap_or_else(|| panic!("the File name row has no field {FIELD_W} px wide"));
+    // row's center line (`settings_paste.rs`), read until it draws: the
+    // window maps before its first frame.
+    let (y, left, right) = s.daemon.until(
+        &format!("the File name row to show a field {FIELD_W} px wide"),
+        || {
+            let (w, _, px) = client(&s.conn, s.root, settings);
+            let scale = app_window::scale(w);
+            let y = (TEMPLATE_Y * scale) as usize;
+            let row = &px[y * w..(y + 1) * w];
+            let card = row[w - ((INSET + 6.0) * scale) as usize];
+            let before = w - (INSET * scale) as usize - 1;
+            field_left_of(row, card, before, (FIELD_W * scale) as usize)
+                .map(|(left, right)| (y, left, right))
+        },
+    );
     let (x, top, _, _) = rect(&s.conn, s.root, settings);
     let field = (x + ((left + right) / 2) as i16, top + y as i16);
     s.shows_at(field, &ibeam, "I-beam", "the File name field");
