@@ -197,6 +197,34 @@ pub fn channels(rgb: u32) -> [u32; 3] {
     [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff]
 }
 
+/// Wait up to 10 s for the screen at `spot` to come within 2 of `want`,
+/// [r, g, b], on each channel. A timeout fails with every change of the
+/// reading, as (ms since the wait began, [r, g, b]), the first 16 kept.
+pub fn until_color(
+    conn: &impl Connection,
+    root: u32,
+    spot: (i16, i16),
+    want: [u32; 3],
+    what: &str,
+) {
+    let near = |got: [u32; 3]| got.iter().zip(want).all(|(&g, w)| g.abs_diff(w) <= 2);
+    let start = std::time::Instant::now();
+    let deadline = start + std::time::Duration::from_secs(10);
+    let mut got = channels(pixel(conn, root, spot));
+    let mut seen = vec![(0, got)];
+    while !near(got) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        got = channels(pixel(conn, root, spot));
+        if seen.last().is_some_and(|&(_, last)| last != got) && seen.len() < 16 {
+            seen.push((start.elapsed().as_millis(), got));
+        }
+    }
+    assert!(
+        near(got),
+        "timed out waiting for {what}: {spot:?} reads {got:?}, not {want:?}; seen {seen:?}"
+    );
+}
+
 /// Paint the root `rgb`, behind every window, as a desktop does: a root
 /// pixmap of that colour, named in `_XROOTPMAP_ID`. A compositing
 /// manager such as picom paints the root from that pixmap, and paints

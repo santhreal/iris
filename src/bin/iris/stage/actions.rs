@@ -593,12 +593,23 @@ fn pill(id: &'static str, label: &'static str) -> Stateful<Div> {
 }
 
 /// A corner hover action: its glyph on a light disc, or on the accent
-/// while `active`.
+/// while `active`, each with a fill of its own under the pointer and
+/// while pressed.
 fn disc(id: &'static str, glyph: Icon, active: bool) -> Stateful<Div> {
-    let (fill, ink) = if active {
-        (theme::ACCENT, theme::ACCENT_INK)
+    let (fill, hover, press, ink) = if active {
+        (
+            theme::ACCENT,
+            theme::ACCENT_HOVER,
+            theme::ACCENT_PRESS,
+            theme::ACCENT_INK,
+        )
     } else {
-        (theme::THUMB_BUTTON, theme::THUMB_INK)
+        (
+            theme::THUMB_BUTTON,
+            theme::THUMB_BUTTON_HOVER,
+            theme::THUMB_BUTTON_PRESS,
+            theme::THUMB_INK,
+        )
     };
     let el = div()
         .id(id)
@@ -608,13 +619,9 @@ fn disc(id: &'static str, glyph: Icon, active: bool) -> Stateful<Div> {
         .justify_center()
         .rounded_full()
         .bg(fill)
-        .shadow(theme::shadow_tight());
-    let el = if active {
-        el
-    } else {
-        el.hover(|s| s.bg(theme::THUMB_BUTTON_HOVER))
-            .active(|s| s.bg(theme::THUMB_BUTTON_PRESS))
-    };
+        .shadow(theme::shadow_tight())
+        .hover(move |s| s.bg(hover))
+        .active(move |s| s.bg(press));
     el.child(crate::icons::icon(glyph, ink, 12.0))
 }
 

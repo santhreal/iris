@@ -354,8 +354,8 @@ impl Overlay {
             .child(self.mode.verb())
             .tooltip(tip(self.mode.verb(), Some(confirm_keys)));
         let run = if runnable {
-            run.hover(|s| s.bg(theme::alpha(theme::ACCENT, 0.88)))
-                .active(|s| s.bg(theme::alpha(theme::ACCENT, 0.74)))
+            run.hover(|s| s.bg(theme::ACCENT_HOVER))
+                .active(|s| s.bg(theme::ACCENT_PRESS))
                 .on_click(cx.listener(|this, _, window, cx| this.finish(window, cx)))
         } else {
             run.opacity(theme::DISABLED_OPACITY)

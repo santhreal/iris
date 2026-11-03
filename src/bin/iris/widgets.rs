@@ -101,9 +101,10 @@ pub fn glyph_for(size: f32) -> f32 {
 
 /// Icon-only button, `size`px square (28 in toolbars, the minimum hit
 /// area). `active` (a selected tool, a pressed toggle) fills it with
-/// the accent and draws the glyph white; otherwise ghost: a hover wash
-/// that lights the glyph to primary ink, as a segmented cell and a text
-/// button light their labels. Pair with `.tooltip(tip(label, shortcut))`.
+/// the accent and draws the glyph white, the accent darker under the
+/// pointer and while pressed; otherwise ghost: a hover wash that lights
+/// the glyph to primary ink, as a segmented cell and a text button
+/// light their labels. Pair with `.tooltip(tip(label, shortcut))`.
 pub fn icon_button(
     id: impl Into<ElementId>,
     glyph: Icon,
@@ -166,7 +167,9 @@ pub fn hud_icon_button(
 enum IconFace {
     /// No fill: a hover wash, and the press fill while pressed.
     Ghost,
-    /// The accent, with the glyph in accent ink: a toggle that is on.
+    /// The accent, with the glyph in accent ink, thinned under the
+    /// pointer and more while pressed: a toggle that is on, or an
+    /// install, a click on either still runs.
     On,
     /// The press fill, with the glyph in primary ink: a menu button
     /// whose menu is open.
@@ -207,7 +210,11 @@ fn icon_button_inked(
             .text_color(ink)
             .hover(|s| s.bg(theme::SURFACE_HOVER).text_color(theme::FG))
             .active(|s| s.bg(theme::SURFACE_PRESS)),
-        IconFace::On => el.bg(theme::ACCENT).text_color(theme::ACCENT_INK),
+        IconFace::On => el
+            .bg(theme::ACCENT)
+            .text_color(theme::ACCENT_INK)
+            .hover(|s| s.bg(theme::ACCENT_HOVER))
+            .active(|s| s.bg(theme::ACCENT_PRESS)),
         IconFace::Held => el.bg(theme::SURFACE_PRESS).text_color(theme::FG),
         IconFace::Disabled => el.text_color(ink),
     };

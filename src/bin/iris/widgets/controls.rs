@@ -191,8 +191,8 @@ pub(super) fn styled_button(base: Stateful<Div>, style: ButtonStyle) -> Stateful
             .bg(theme::ACCENT)
             .text_color(theme::ACCENT_INK)
             .font_weight(FontWeight::MEDIUM)
-            .hover(|s| s.bg(theme::alpha(theme::ACCENT, 0.88)))
-            .active(|s| s.bg(theme::alpha(theme::ACCENT, 0.74))),
+            .hover(|s| s.bg(theme::ACCENT_HOVER))
+            .active(|s| s.bg(theme::ACCENT_PRESS)),
         ButtonStyle::Destructive => base
             .bg(theme::CONTROL_BG)
             .text_color(theme::DANGER)

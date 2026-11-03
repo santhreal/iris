@@ -13,6 +13,17 @@ pub const fn alpha(color: Rgba, a: f32) -> Rgba {
     Rgba { a, ..color }
 }
 
+/// `color` at opacity `a` composited over the opaque `under`: a fill
+/// that reads the same over a toolbar, the glass bar, and a capture.
+const fn over(color: Rgba, a: f32, under: Rgba) -> Rgba {
+    let b = 1.0 - a;
+    rgb(
+        color.r * a + under.r * b,
+        color.g * a + under.g * b,
+        color.b * a + under.b * b,
+    )
+}
+
 const WHITE: Rgba = rgb(1.0, 1.0, 1.0);
 const BLACK: Rgba = rgb(0.0, 0.0, 0.0);
 
@@ -112,6 +123,11 @@ pub const DISABLED_OPACITY: f32 = 0.4;
 pub const ACCENT: Rgba = rgb(0.039, 0.518, 1.0);
 /// Text and glyphs drawn on an `ACCENT` fill.
 pub const ACCENT_INK: Rgba = WHITE;
+/// An `ACCENT` fill under the pointer and pressed: the accent at 88%
+/// and 74% over `BG`, opaque, so every accent-filled control that runs
+/// a command answers the pointer the same way over any backdrop.
+pub const ACCENT_HOVER: Rgba = over(ACCENT, 0.88, BG);
+pub const ACCENT_PRESS: Rgba = over(ACCENT, 0.74, BG);
 /// Keyboard focus ring: 3px of accent at 45%.
 pub const FOCUS_RING: Rgba = alpha(ACCENT, 0.45);
 /// The fill behind selected text in an entry: accent at 40%.

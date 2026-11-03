@@ -13,10 +13,27 @@
 //! and `ToastAction::rect`: a button placed elsewhere makes the reads and
 //! the clicks miss.
 //!
+//! The third case closes "an accent-filled button that still runs
+//! shows no hover or press": the pinned card's Keep Open, on the
+//! accent, kept its fill under the pointer and while pressed, where
+//! every light button answers both. It reads the accent darker under
+//! the pointer, at rest off it, and darker still while pressed, then
+//! unpins the card. Not covered by it: an accent-filled control added
+//! elsewhere, which only a case of its own reads.
+//!
+//! The fourth case closes "a held click that moves a pixel runs
+//! something other than the action it pressed": a press that moved at
+//! all reported the card unhovered, the actions went under the held
+//! button, and the release clicked the card, which opens the editor. It
+//! holds Copy, moves the pointer a pixel, reads the press fill after
+//! the actions' fade would have run, releases, and reads the clipboard;
+//! the card stays and no editor opens. Not covered by it: a move past
+//! the drag threshold, which starts the card's swipe or file drag.
+//!
 //! Not covered: the fade, which only a compositing manager shows; the
-//! Keep Open, Show in Folder, and Move to Trash buttons; Wayland,
-//! Windows, and macOS. The cases run only with `IRIS_X11_TEST_DISPLAY`
-//! set and need Xvfb; without it a case prints that it did not run.
+//! Show in Folder and Move to Trash buttons; Wayland, Windows, and
+//! macOS. The cases run only with `IRIS_X11_TEST_DISPLAY` set and need
+//! Xvfb; without it a case prints that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -34,7 +51,10 @@ use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{channels, click, move_to, paint_root, pixel, rect, windows_of};
+use x11::{
+    channels, click, move_to, paint_root, pixel, press_and_move, rect, release, until_color,
+    windows_of,
+};
 
 /// The root window's colour, 0xRRGGBB.
 const DESKTOP: u32 = 0x5b7fa6;
@@ -47,20 +67,35 @@ const BLEED: i16 = 44;
 /// Spots on the 175x140 card of a 1280x1024 capture, from its top-left
 /// corner: the centers of Copy and Markup, two 68x24 buttons 6 apart
 /// centered on the card, and a spot on each button's fill left of its
-/// label; the center of Close, a 22 px disc 6 in from the top-left
-/// corner, and a spot on its fill left of its glyph; and a spot on the
-/// scrim clear of every button.
+/// label; the centers of Close and Keep Open, 22 px discs 6 in from the
+/// top-left and top-right corners, and a spot on each one's fill left
+/// of its glyph; and a spot on the scrim clear of every button.
 const COPY: (i16, i16) = (51, 70);
 const COPY_FILL: (i16, i16) = (23, 70);
 const MARKUP: (i16, i16) = (125, 70);
 const MARKUP_FILL: (i16, i16) = (97, 70);
 const CLOSE: (i16, i16) = (17, 17);
 const CLOSE_FILL: (i16, i16) = (9, 17);
+const KEEP_OPEN: (i16, i16) = (158, 17);
+const KEEP_OPEN_FILL: (i16, i16) = (150, 17);
 const SCRIM: (i16, i16) = (87, 104);
+
+/// theme::ACCENT, and theme::ACCENT_HOVER and ACCENT_PRESS, the accent
+/// at 88% and 74% over theme::BG, as [r, g, b].
+const ACCENT: [u32; 3] = [10, 132, 255];
+const ACCENT_HOVER: [u32; 3] = [12, 120, 228];
+const ACCENT_PRESS: [u32; 3] = [15, 106, 197];
+
+/// theme::THUMB_BUTTON_PRESS, a light button's fill while pressed.
+const THUMB_BUTTON_PRESS: [u32; 3] = [214, 214, 219];
 
 /// Longer than a double-click: two clicks this far apart are two
 /// single clicks.
 const APART: Duration = Duration::from_millis(500);
+
+/// Longer than motion::FADE, 140 ms: a click held this long outlasts
+/// the fade of actions that went from under it.
+const HOLD: Duration = Duration::from_millis(300);
 
 /// A daemon on its own Xvfb with a one-colour desktop.
 struct Session {
@@ -198,4 +233,75 @@ fn markup_opens_the_editor_on_the_capture() {
     s.daemon.until("Markup to open the editor", || {
         (!windows_of(&s.conn, s.root, &editor).is_empty()).then_some(())
     });
+}
+
+#[test]
+fn keep_open_on_the_accent_answers_the_pointer() {
+    let Some(s) = session("toast actions: keep open") else {
+        return;
+    };
+    let (window, card) = toast(&s);
+    hover(&s, card, KEEP_OPEN_FILL, "Keep Open");
+    click(&s.conn, s.root, at(card, KEEP_OPEN));
+    let fill = at(card, KEEP_OPEN_FILL);
+    let wait = |want: [u32; 3], what: &str| until_color(&s.conn, s.root, fill, want, what);
+    wait(
+        ACCENT_HOVER,
+        "Keep Open to pin the card, on the accent lit under the pointer",
+    );
+    move_to(&s.conn, s.root, at(card, SCRIM));
+    wait(ACCENT, "the pinned Keep Open at rest off the pointer");
+    std::thread::sleep(APART);
+    move_to(&s.conn, s.root, at(card, KEEP_OPEN));
+    wait(ACCENT_HOVER, "the pinned Keep Open lit under the pointer");
+    press_and_move(&s.conn, s.root, at(card, KEEP_OPEN), at(card, KEEP_OPEN), 1);
+    wait(ACCENT_PRESS, "the pressed Keep Open to take the press fill");
+    release(&s.conn, s.root);
+    s.daemon.until("a second Keep Open to unpin the card", || {
+        let got = channels(pixel(&s.conn, s.root, fill));
+        got.iter().all(|&c| c >= 0xe0).then_some(())
+    });
+    assert!(
+        windows_of(&s.conn, s.root, TOAST).contains(&window),
+        "unpinning took the card off under the pointer"
+    );
+}
+
+#[test]
+fn a_held_click_that_moves_a_pixel_runs_the_action() {
+    let Some(s) = session("toast actions: held copy") else {
+        return;
+    };
+    let (window, card) = toast(&s);
+    let name = capture_name(&s);
+    hover(&s, card, COPY_FILL, "Copy");
+    press_and_move(
+        &s.conn,
+        s.root,
+        at(card, COPY),
+        at(card, (COPY.0 + 1, COPY.1)),
+        1,
+    );
+    std::thread::sleep(HOLD);
+    until_color(
+        &s.conn,
+        s.root,
+        at(card, COPY_FILL),
+        THUMB_BUTTON_PRESS,
+        "the held Copy to keep its press fill",
+    );
+    release(&s.conn, s.root);
+    s.daemon
+        .until("the held Copy to put a PNG on the clipboard", || {
+            x11::clipboard(&s.conn, s.root, b"image/png")
+        });
+    s.daemon.settle();
+    assert!(
+        windows_of(&s.conn, s.root, TOAST).contains(&window),
+        "the held Copy took the card off"
+    );
+    assert!(
+        windows_of(&s.conn, s.root, &format!("{name} - iris")).is_empty(),
+        "the held Copy opened the editor"
+    );
 }
