@@ -16,6 +16,13 @@
 //! Space, pick options; a key darkens the row under the pointer, and a
 //! move of the pointer within its row takes the highlight back.
 //!
+//! The third case closes "a pop-up's label that jumps as its menu
+//! opens": the menu opened 9 px left of its button, so the selected
+//! row's label, right of the checkmark column, stood 10 px right of the
+//! button's. The case reads the label's ink columns in the button, then
+//! in the selected row of the open menu, finds the shift that matches
+//! them, and reads the row's highlight across the whole button.
+//!
 //! Not covered: a menu that the window edge pushes off its button; a
 //! pop-up with no selected row, which opens under its button. The
 //! editor's toolbar menus take keys in the history cases. The cases run
@@ -37,6 +44,7 @@ mod daemon;
 #[path = "support/x11.rs"]
 mod x11;
 
+use std::ops::Range;
 use std::path::Path;
 
 use x11rb::connection::Connection;
@@ -101,9 +109,11 @@ struct Rig {
     root: u32,
     settings: u32,
     scale: f32,
-    /// The button's center on the screen and in the window.
+    /// The button's center on the screen and in the window, and its
+    /// first and last columns in the window.
     button: (i16, i16),
     local: (usize, usize),
+    span: (usize, usize),
     dir: tempfile::TempDir,
     _xvfb: Server,
 }
@@ -159,6 +169,7 @@ impl Rig {
         Some(Rig {
             button: (at.dst_x + ((left + right) / 2) as i16, at.dst_y + y as i16),
             local: ((left + right) / 2, y),
+            span: (left, right),
             daemon,
             conn,
             root,
@@ -266,4 +277,55 @@ fn the_arrow_keys_move_a_pop_ups_highlight_and_return_picks_it() {
         .until("Up to light the row above", || rig.lit_at(-1).then_some(()));
     tap(&rig.conn, rig.root, SPACE);
     rig.wait_for_ms("Space to pick 5 seconds", 5_000);
+}
+
+/// The columns of `cols` with label ink on a row of `rows`: a pixel over
+/// 140 on every channel, which a label's core is in the button (FG on
+/// CONTROL_BG) and in a lit row (ACCENT_INK on ACCENT), and neither fill
+/// is.
+fn ink(px: &[[u8; 3]], w: usize, rows: Range<usize>, cols: Range<usize>) -> Vec<bool> {
+    cols.map(|x| rows.clone().any(|y| px[y * w + x].iter().all(|&c| c > 140)))
+        .collect()
+}
+
+#[test]
+fn a_pop_ups_selected_label_opens_over_its_buttons_label() {
+    let Some(rig) = Rig::open("a_pop_ups_selected_label_opens_over_its_buttons_label") else {
+        return;
+    };
+    let s = rig.scale;
+    let (left, right) = rig.span;
+    let y = rig.local.1;
+    let rows = y - (5.0 * s) as usize..y + (5.0 * s) as usize;
+    // The label's columns, left of the chevron and its padding.
+    let label = left..right - (20.0 * s) as usize;
+    let (w, _, px) = client(&rig.conn, rig.root, rig.settings);
+    let shut = ink(&px, w, rows.clone(), label.clone());
+    assert!(
+        shut.iter().filter(|&&on| on).count() >= (20.0 * s) as usize,
+        "the Dismiss after button shows no label in {label:?}"
+    );
+    rig.open_menu("the menu to open over the button");
+    let (w, _, px) = client(&rig.conn, rig.root, rig.settings);
+    // The shift of the row's label from the button's: the one under
+    // which the most ink columns agree.
+    let reach = (16.0 * s) as usize;
+    let open = ink(&px, w, rows, label.start - reach..label.end + reach);
+    let agree = |shift: usize| {
+        (0..shut.len())
+            .filter(|&i| shut[i] == open[i + shift])
+            .count()
+    };
+    let best = (0..=2 * reach).max_by_key(|&shift| agree(shift)).unwrap();
+    assert!(
+        best.abs_diff(reach) <= 1,
+        "the selected row's label opens {} px right of the button's",
+        best as isize - reach as isize
+    );
+    let line = (y - (9.0 * s) as usize) * w;
+    let bare: Vec<usize> = (left..=right).filter(|&x| !accent(px[line + x])).collect();
+    assert!(
+        bare.is_empty(),
+        "the selected row's highlight leaves the button's columns {bare:?} uncovered"
+    );
 }

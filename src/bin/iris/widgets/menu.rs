@@ -21,6 +21,11 @@ pub const MENU_RADIUS: f32 = theme::RADIUS_MENU;
 pub const MENU_PAD: f32 = 5.0;
 /// The leading column of a menu that marks its selected value.
 const CHECK_COL: f32 = 18.0;
+/// A pop-up button's label inset from its left edge.
+const POPUP_LABEL_X: f32 = 9.0;
+/// A marked row's label inset from its menu's left edge: the border,
+/// the row's margin and padding, the checkmark column, and the gap.
+const MARKED_LABEL_X: f32 = 1.0 + MENU_PAD + CHECK_COL + 4.0;
 /// The group of a menu row, so its shortcut column turns with the row's
 /// hover wash.
 const MENU_ROW_GROUP: &str = "menu-row";
@@ -30,9 +35,8 @@ pub fn menu() -> Div {
     menu_panel().w(px(MENU_W))
 }
 
-/// Menu surface sized by the caller (a pop-up button's menu is as wide
-/// as its widest option, and at least its button's least width with the
-/// menu's overhang on each side).
+/// Menu surface sized by its rows (a pop-up button's menu is as wide as
+/// its button with the menu's overhang on each side).
 fn menu_panel() -> Div {
     div()
         .flex()
@@ -197,6 +201,26 @@ pub fn popup_button(
     options: &[&'static str],
     open: bool,
 ) -> Stateful<Div> {
+    let button = popup_face(current, options)
+        .id(id)
+        .rounded(px(theme::RADIUS_CONTROL))
+        .text_color(theme::FG);
+    // Held at the press fill while its menu is open, as a push button
+    // is while pressed.
+    if open {
+        button.bg(theme::CONTROL_PRESS)
+    } else {
+        button
+            .bg(theme::CONTROL_BG)
+            .hover(|s| s.bg(theme::CONTROL_HOVER))
+            .active(|s| s.bg(theme::CONTROL_PRESS))
+    }
+}
+
+/// A pop-up button's box and content, unfilled: CONTROL_H tall, at
+/// least FORM_CONTROL_W wide, its label POPUP_LABEL_X from its left
+/// edge and as wide as the widest of `current` and `options`.
+fn popup_face(current: impl Into<SharedString>, options: &[&'static str]) -> Div {
     // A column of the shown value over every option at zero height: the
     // hidden rows take part in the width and paint nothing.
     let label = div().flex().flex_col().child(current.into()).children(
@@ -204,39 +228,26 @@ pub fn popup_button(
             .iter()
             .map(|opt| div().h_0().overflow_hidden().child(*opt)),
     );
-    let button = div()
-        .id(id)
+    div()
         .h(px(theme::CONTROL_H))
         .min_w(px(theme::FORM_CONTROL_W))
-        .pl(px(9.))
+        .pl(px(POPUP_LABEL_X))
         .pr(px(5.))
         .flex()
         .flex_shrink_0()
         .items_center()
         .justify_between()
         .gap(px(8.))
-        .rounded(px(theme::RADIUS_CONTROL))
         .text_size(px(theme::TEXT_BODY))
-        .text_color(theme::FG)
-        .whitespace_nowrap();
-    // Held at the press fill while its menu is open, as a push button
-    // is while pressed.
-    let button = if open {
-        button.bg(theme::CONTROL_PRESS)
-    } else {
-        button
-            .bg(theme::CONTROL_BG)
-            .hover(|s| s.bg(theme::CONTROL_HOVER))
-            .active(|s| s.bg(theme::CONTROL_PRESS))
-    };
-    button
+        .whitespace_nowrap()
         .child(label)
         .child(icons::icon(Icon::ChevronUpDown, theme::FG_DIM, 12.0))
 }
 
 /// The option menu of a pop-up button, to be added as a child of a
 /// `relative` box that holds the button at its top-left (see
-/// [`menu_at`]). The selected row opens over the button, as on macOS;
+/// [`menu_at`]). The selected row opens over the button, its label where
+/// the button's was and its checkmark left of the button, as on macOS;
 /// the menu stays inside the window. Rows mark the selected option, and
 /// the `lit` row has the highlight, which the caller moves with the
 /// pointer and the arrow keys: the pointer entering row `i` runs
@@ -255,10 +266,20 @@ pub fn popup_menu(
 ) -> impl IntoElement {
     let on_select = Rc::new(on_select);
     let on_hover = Rc::new(on_hover);
+    // A zero-height copy of the button, inset so the menu covers it: the
+    // labels' column over the button's label, and the highlight 3 px
+    // past its right edge.
+    let width = div()
+        .h_0()
+        .overflow_hidden()
+        .flex()
+        .pl(px(MARKED_LABEL_X - POPUP_LABEL_X - 1.))
+        .pr(px(MENU_PAD + 3.))
+        .child(popup_face("", options));
     let mut panel = menu_panel()
         .id(id)
-        .min_w(px(theme::FORM_CONTROL_W + 2. * (MENU_PAD + 4.)))
-        .on_mouse_down_out(move |_, window, cx| on_dismiss(window, cx));
+        .on_mouse_down_out(move |_, window, cx| on_dismiss(window, cx))
+        .child(width);
     for (i, opt) in options.iter().enumerate() {
         let (on_select, on_hover) = (on_select.clone(), on_hover.clone());
         panel = panel.child(
@@ -271,7 +292,10 @@ pub fn popup_menu(
         );
     }
     menu_at(
-        point(px(-(MENU_PAD + 4.)), px(popup_offset(selected))),
+        point(
+            px(POPUP_LABEL_X - MARKED_LABEL_X),
+            px(popup_offset(selected)),
+        ),
         panel,
     )
 }
