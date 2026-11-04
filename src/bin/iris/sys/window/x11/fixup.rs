@@ -16,6 +16,9 @@ use x11rb::protocol::xproto::{
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
+#[cfg(test)]
+mod tests;
+
 /// What a fixup asserts on its window.
 #[derive(Clone, Copy)]
 enum Fixup {
@@ -44,6 +47,11 @@ const RESCAN: Duration = Duration::from_millis(50);
 const SPAN_AGAIN: Duration = Duration::from_millis(200);
 
 static PENDING: parking_lot::Mutex<Vec<Pending>> = parking_lot::Mutex::new(Vec::new());
+/// The spans' second assertions: when each is due, its window, its span.
+static AGAIN: parking_lot::Mutex<Vec<(Instant, u32, Fixup)>> = parking_lot::Mutex::new(Vec::new());
+/// Held while the dispatcher sends fixups, so `forget` returns only
+/// once no request of a forgotten fixup is still to be sent.
+static SENDING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 /// The write end of the dispatcher's wake pipe, -1 until it runs.
 static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
 
@@ -85,6 +93,17 @@ pub fn park_unmanaged(xid: u32) -> bool {
     let _ = conn.unmap_window(xid);
     let _ = conn.flush();
     true
+}
+
+/// Drop every fixup still due on window `xid`, waiting or to be asserted
+/// again. A fixup restacks its window, and a window manager restores a
+/// minimized window it is asked to raise, so a window taken off the
+/// screen must receive no more of them. On return the dispatcher sends
+/// no further request for `xid`.
+pub fn forget(xid: u32) {
+    let _sending = SENDING.lock();
+    PENDING.lock().retain(|p| p.xid != xid);
+    AGAIN.lock().retain(|a| a.1 != xid);
 }
 
 /// Bring the parked window `xid` back over the virtual screen: the
@@ -179,7 +198,6 @@ fn dispatcher_loop(wake_fd: i32) {
     let _ = conn.flush();
     let client_list = atom_cached(&conn, b"_NET_CLIENT_LIST");
     let x_fd = conn.stream().as_raw_fd();
-    let mut again: Vec<(Instant, u32, Fixup)> = Vec::new();
     let mut scanned = Instant::now() - RESCAN;
     loop {
         let mut changed = false;
@@ -194,24 +212,27 @@ fn dispatcher_loop(wake_fd: i32) {
             }
         }
         let now = Instant::now();
-        let waiting = !PENDING.lock().is_empty();
-        if waiting && (changed || scanned.elapsed() >= RESCAN) {
-            scanned = now;
-            for (xid, fixup) in managed(&conn, root, client_list) {
-                apply(&conn, root, xid, fixup);
-                if let Fixup::Span { .. } = fixup {
-                    again.push((now + SPAN_AGAIN, xid, fixup));
+        {
+            let _sending = SENDING.lock();
+            let waiting = !PENDING.lock().is_empty();
+            if waiting && (changed || scanned.elapsed() >= RESCAN) {
+                scanned = now;
+                for (xid, fixup) in managed(&conn, root, client_list) {
+                    apply(&conn, root, xid, fixup);
+                    if let Fixup::Span { .. } = fixup {
+                        AGAIN.lock().push((now + SPAN_AGAIN, xid, fixup));
+                    }
                 }
             }
+            AGAIN.lock().retain(|&(at, xid, fixup)| {
+                let due = at <= now;
+                if due {
+                    apply(&conn, root, xid, fixup);
+                }
+                !due
+            });
+            let _ = conn.flush();
         }
-        again.retain(|&(at, xid, fixup)| {
-            let due = at <= now;
-            if due {
-                apply(&conn, root, xid, fixup);
-            }
-            !due
-        });
-        let _ = conn.flush();
         PENDING.lock().retain(|p| p.deadline > now);
 
         // Sleep until the next second assertion, the rescan bound while
@@ -221,7 +242,7 @@ fn dispatcher_loop(wake_fd: i32) {
         } else {
             Some(RESCAN)
         };
-        if let Some(at) = again.iter().map(|a| a.0).min() {
+        if let Some(at) = AGAIN.lock().iter().map(|a| a.0).min() {
             let left = at.saturating_duration_since(Instant::now());
             timeout = Some(timeout.map_or(left, |t| t.min(left)));
         }
