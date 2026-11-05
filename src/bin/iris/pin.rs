@@ -55,6 +55,15 @@ const CASCADE: f32 = 24.0;
 /// The corner radius of a pin whose window the platform does not shape.
 const RADIUS: f32 = 8.0;
 
+/// The close disc's distance from the pin's top and left edges.
+const CLOSE_INSET: f32 = 8.0;
+
+/// The close disc's shadow: a raised disc's, which ends inside
+/// CLOSE_INSET, where the pin's edge would cut a longer one off.
+fn close_shadow() -> Vec<BoxShadow> {
+    theme::shadow_knob()
+}
+
 /// Open a pinned window showing `path`'s image at native scale,
 /// centered on `over`. The PNG read + decode run on the background
 /// executor: a 4K decode on the UI thread stalls every other surface
@@ -321,8 +330,8 @@ impl Render for PinStage {
                 div()
                     .id("pin-close")
                     .absolute()
-                    .top(px(8.))
-                    .left(px(8.))
+                    .top(px(CLOSE_INSET))
+                    .left(px(CLOSE_INSET))
                     .size(px(22.))
                     .rounded_full()
                     .flex()
@@ -331,7 +340,7 @@ impl Render for PinStage {
                     .bg(theme::OVERLAY_CHIP)
                     .border_1()
                     .border_color(theme::HAIRLINE)
-                    .shadow(theme::shadow_float())
+                    .shadow(close_shadow())
                     .opacity(0.)
                     .group_hover("pin", |s| s.opacity(1.))
                     // It occludes the pin, which then no longer counts as

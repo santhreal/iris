@@ -81,3 +81,24 @@ fn a_pins_zoom_stays_between_its_floor_and_ceiling() {
         assert_eq!(zoom_range(native, screen), want, "{native:?} on {screen:?}");
     }
 }
+
+// WHY: the class closed here is "a shadow cut off by the pin's edge":
+// the pin clips what it draws to its window, and its close disc sits
+// CLOSE_INSET in from the top and left edges. The disc wore the menus'
+// floating shadow, whose blur reaches 50 px above it, so the window's
+// edge ended the shadow in a straight line across the image. Every
+// layer of the disc's shadow must end inside CLOSE_INSET above and left
+// of the disc. Not covered: the disc's paint and hover.
+#[test]
+fn the_close_discs_shadow_ends_inside_the_pin() {
+    for s in super::close_shadow() {
+        let reach = 3.0 * f32::from(s.blur_radius) + f32::from(s.spread_radius);
+        let up = reach - f32::from(s.offset.y);
+        let left = reach - f32::from(s.offset.x);
+        assert!(
+            up <= super::CLOSE_INSET && left <= super::CLOSE_INSET,
+            "{s:?} reaches {up} px above and {left} px left of the disc; the pin leaves {}",
+            super::CLOSE_INSET
+        );
+    }
+}
