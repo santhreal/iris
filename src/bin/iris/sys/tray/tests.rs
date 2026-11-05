@@ -10,6 +10,7 @@ use futures::channel::mpsc;
 use super::{
     command, drawn, pick, rows, set_offer, set_recording, Drawn, Row, When, MENU, TX, UPDATE_LABEL,
 };
+use crate::daemon::{line_wait, MENU_FADE};
 
 fn debug(cmd: Option<crate::daemon::Command>) -> String {
     format!("{cmd:?}")
@@ -43,27 +44,63 @@ fn ids_start_at_one_because_zero_means_no_item() {
     assert!(command(usize::MAX).is_none());
 }
 
+// WHY: the class closed here is "a tray row freezes the tray menu into
+// the screen it reads". The click that picks a row arrives while the
+// shell's menu is still fading out, and a capture sent at once froze a
+// frame holding the menu with the clicked row lit. Every row is walked
+// from `MENU`: a row whose command `line_wait` holds for a menu is sent
+// no sooner than `MENU_FADE` after the click, and every other row at
+// once. Which commands wait is held in the cli tests. Not covered: how
+// long a given shell's fade runs.
 #[test]
-fn a_pick_sends_the_command_and_a_separator_sends_nothing() {
+fn a_pick_sends_its_command_once_the_menu_has_faded() {
+    use std::time::{Duration, Instant};
     let (tx, mut rx) = mpsc::unbounded();
     assert!(TX.set(tx).is_ok(), "only this test sets the channel");
     for (id, row) in rows() {
+        let start = Instant::now();
         pick(id);
-        let sent = rx.try_recv().ok();
-        match row {
-            Row::Item { command, .. } => {
-                assert_eq!(debug(sent), debug(Some(command.clone())), "row id {id}")
+        let want = match row {
+            Row::Item { command, .. } => Some(command.clone()),
+            Row::Update => Some(crate::daemon::Command::InstallUpdate),
+            Row::Separator => None,
+        };
+        let sends = want.is_some();
+        let waits = want
+            .as_ref()
+            .is_some_and(|c| !line_wait(std::slice::from_ref(c), true).is_zero());
+        if waits {
+            assert!(
+                rx.try_recv().is_err(),
+                "row id {id} sent its command while the menu still fades"
+            );
+        }
+        let sent = loop {
+            match rx.try_recv() {
+                Ok(cmd) => break Some(cmd),
+                Err(_) if start.elapsed() > MENU_FADE * 5 => break None,
+                Err(_) => std::thread::sleep(Duration::from_millis(5)),
             }
-            Row::Update => assert_eq!(
-                debug(sent),
-                debug(Some(crate::daemon::Command::InstallUpdate)),
-                "install row id {id}"
-            ),
-            Row::Separator => assert!(sent.is_none(), "separator id {id} sent {sent:?}"),
+        };
+        let took = start.elapsed();
+        assert_eq!(debug(sent), debug(want), "row id {id}");
+        if waits {
+            assert!(took >= MENU_FADE, "row id {id} sent after {took:?}");
+        } else if sends {
+            assert!(took < MENU_FADE, "row id {id} waited {took:?}");
         }
     }
+    assert!(
+        rows().any(|(id, _)| command(id).is_some_and(|c| !line_wait(
+            std::slice::from_ref(&c),
+            true
+        )
+        .is_zero())),
+        "no row starts reading the screen, so no pick waits"
+    );
     pick(0);
     pick(MENU.len() + 1);
+    std::thread::sleep(MENU_FADE + Duration::from_millis(100));
     assert!(rx.try_recv().is_err());
 }
 

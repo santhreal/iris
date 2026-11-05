@@ -227,6 +227,46 @@ pub fn run(cx: &mut App, cmd: &Command) {
     }
 }
 
+/// How long a command picked from a menu row waits after the click when
+/// it starts reading the screen: the tray menu, the macOS File menu, and
+/// a launcher's iris menu, whose rows pass `--from-menu`. The click
+/// arrives while the menu is still fading out, so a capture run at once
+/// freezes a frame that holds the menu. GNOME Shell's fade ends 150 ms
+/// after the click, and KWin's popup fade (600 ms, OutQuart) is under
+/// 1.2% opacity at 400 ms.
+pub(crate) const MENU_FADE: Duration = Duration::from_millis(400);
+
+/// How long a command line waits before it runs: `MENU_FADE` for a
+/// line picked from a menu that starts reading the screen (a capture,
+/// the region pick, or a recording's start), and none for any other.
+pub(crate) fn line_wait(cmds: &[Command], from_menu: bool) -> Duration {
+    if from_menu && cmds.iter().any(|c| c.screen() == Screen::Starts) {
+        MENU_FADE
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// Run a command line's commands in order once `line_wait` has passed.
+pub fn run_line(cx: &mut App, cmds: Vec<Command>, from_menu: bool) {
+    let wait = line_wait(&cmds, from_menu);
+    if wait.is_zero() {
+        for cmd in &cmds {
+            run(cx, cmd);
+        }
+        return;
+    }
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(wait).await;
+        cx.update(|cx| {
+            for cmd in &cmds {
+                run(cx, cmd);
+            }
+        });
+    })
+    .detach();
+}
+
 /// Take the resting toast and the live notice off the screen before
 /// `cmd` reads it, and run `cmd` again once they are gone. Returns
 /// whether `cmd` waits on them.
@@ -401,11 +441,7 @@ pub fn start(cx: &mut App, claimed: crate::sys::ipc::Claimed) {
                     for e in &parsed.errors {
                         iris_lib::ilog!("iris: forwarded command line: {e}");
                     }
-                    cx.update(|cx| {
-                        for cmd in parsed.cmds {
-                            run(cx, &cmd);
-                        }
-                    });
+                    cx.update(|cx| run_line(cx, parsed.cmds, parsed.from_menu));
                 }
             })
             .detach();

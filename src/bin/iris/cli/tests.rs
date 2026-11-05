@@ -33,7 +33,7 @@ fn alone(opt: &Opt) -> Vec<String> {
     match opt.takes {
         Takes::Secs(_) => args.push("3".into()),
         Takes::File(_) => args.push(manifest().to_str().unwrap().into()),
-        Takes::Local(_) | Takes::Background | Takes::Nothing(_) => {}
+        Takes::Local(_) | Takes::Background | Takes::FromMenu | Takes::Nothing(_) => {}
     }
     args
 }
@@ -76,6 +76,12 @@ fn every_option_sends_its_command() {
                 p.cmds.is_empty() && p.forward.is_empty() && p.local.is_empty(),
                 "{args:?}"
             );
+            continue;
+        }
+        if let Takes::FromMenu = opt.takes {
+            assert!(p.from_menu, "{args:?}");
+            assert!(p.cmds.is_empty() && p.local.is_empty(), "{args:?}");
+            assert_eq!(p.forward, args, "{args:?}");
             continue;
         }
         let want = expected(opt.flag)
@@ -268,11 +274,71 @@ fn every_launcher_entry_starts_the_app_itself() {
     }
 }
 
+/// WHY: the classes closed here are "a launcher's action names a command
+/// differently from the tray" and "a launcher's action freezes its menu
+/// into the screen it reads". The desktop entry's actions, which a dock
+/// or launcher shows in the iris icon's menu, read Capture Region,
+/// Record Screen, and Open Library where the tray and the library read
+/// New Screenshot, Record Window, and Library, and Record Screen named a
+/// desktop recording for a line that picks a window; and New Screenshot
+/// froze the dock's menu with its row lit. Each action is read from the
+/// packaging file: it runs one command, its name is the tray row's label
+/// for that command, so an action with no tray row fails here, and it
+/// passes `--from-menu`. Not covered: translated names.
+#[cfg(target_os = "linux")]
+#[test]
+fn every_desktop_action_reads_as_its_tray_row() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/linux/dev.iris.app.desktop");
+    let desktop = std::fs::read_to_string(&path).expect("the desktop entry");
+    let listed: Vec<&str> = desktop
+        .lines()
+        .find_map(|l| l.strip_prefix("Actions="))
+        .expect("Actions=")
+        .split(';')
+        .filter(|id| !id.is_empty())
+        .collect();
+    let groups: Vec<&str> = desktop.split("\n[Desktop Action ").skip(1).collect();
+    assert_eq!(
+        groups.len(),
+        listed.len(),
+        "a group per listed action: {listed:?}"
+    );
+    for group in groups {
+        let (id, body) = group.split_once("]\n").expect(group);
+        assert!(listed.contains(&id), "{id} is not listed in Actions=");
+        let field = |key: &str| {
+            body.lines()
+                .find_map(|l| l.strip_prefix(key))
+                .unwrap_or_else(|| panic!("{id} has no {key}"))
+        };
+        let exec = field("Exec=");
+        let args: Vec<String> = exec
+            .strip_prefix("iris")
+            .expect(exec)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        let p = parse(&args);
+        assert!(
+            p.errors.is_empty() && p.local.is_empty() && !p.background,
+            "{id}: {exec}"
+        );
+        assert!(p.from_menu, "{id}: {exec} lacks --from-menu");
+        let cmds = p.startup();
+        assert_eq!(cmds.len(), 1, "{id}: {exec} runs one command");
+        assert_eq!(
+            Some(field("Name=")),
+            crate::sys::tray::label_of(&cmds[0]),
+            "{id}: {exec}"
+        );
+    }
+}
+
 /// A running iris prints nothing: on Windows one attached to the console
 /// of the terminal that started it would print there and end when that
-/// terminal closes. A bare line and a lone `--background` start iris;
-/// every option alone, an unknown option, and a `--background` line in
-/// error print.
+/// terminal closes. A bare line, a lone `--background`, and a lone
+/// `--from-menu` start iris; every other option alone, an unknown
+/// option, and a `--background` line in error print.
 #[test]
 fn only_a_start_line_prints_nothing() {
     for line in [&[][..], &["-psn_0_1"]] {
@@ -280,8 +346,8 @@ fn only_a_start_line_prints_nothing() {
     }
     for opt in OPTS {
         let line = alone(opt);
-        let background = matches!(opt.takes, Takes::Background);
-        assert_eq!(parse(&line).prints(), !background, "{line:?}");
+        let starts = matches!(opt.takes, Takes::Background | Takes::FromMenu);
+        assert_eq!(parse(&line).prints(), !starts, "{line:?}");
     }
     for line in [
         &["--bogus"][..],
@@ -311,6 +377,51 @@ fn forwarded_argv_parses_to_the_same_commands() {
     assert!(daemon.local.is_empty(), "{:?}", daemon.local);
     assert_eq!(debug(&daemon.cmds), debug(&client.cmds));
     assert_eq!(daemon.forward, client.forward);
+    assert!(client.from_menu && daemon.from_menu);
+}
+
+// WHY: the class closed here is "a line picked from a menu freezes the
+// menu into the screen it reads". Every daemon-bound option is parsed
+// alone and with `--from-menu`: with it, an option that starts reading
+// the screen waits `MENU_FADE` and no other waits; without it none
+// waits, so a hotkey bound to `iris --capture` starts at once. An option
+// that reads the screen and is missing from `READS` fails here. Not
+// covered: how long a given menu's fade runs.
+#[test]
+fn a_menu_line_waits_for_the_menu_only_before_reading_the_screen() {
+    use crate::daemon::{line_wait, MENU_FADE};
+    use std::time::Duration;
+    const READS: &[&str] = &[
+        "--capture",
+        "--capture-fullscreen",
+        "--capture-window",
+        "--record-window",
+        "--record-region",
+    ];
+    for opt in OPTS {
+        if !matches!(
+            opt.takes,
+            Takes::Nothing(_) | Takes::Secs(_) | Takes::File(_)
+        ) {
+            continue;
+        }
+        let line = alone(opt);
+        let mut menu = line.clone();
+        menu.push("--from-menu".into());
+        let p = parse(&menu);
+        assert!(p.from_menu && p.errors.is_empty(), "{menu:?}");
+        let want = if READS.contains(&opt.flag) {
+            MENU_FADE
+        } else {
+            Duration::ZERO
+        };
+        assert_eq!(line_wait(&p.cmds, p.from_menu), want, "{menu:?}");
+        assert_eq!(
+            line_wait(&parse(&line).cmds, false),
+            Duration::ZERO,
+            "{line:?}"
+        );
+    }
 }
 
 /// The daemon runs in its own working directory: a relative file must

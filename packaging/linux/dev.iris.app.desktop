@@ -13,21 +13,21 @@ Keywords=screenshot;screen;capture;recorder;snip;record;video;
 Actions=Capture;Record;Library;Settings;
 
 [Desktop Action Capture]
-Name=Capture Region
-Exec=iris --capture
+Name=New Screenshot
+Exec=iris --capture --from-menu
 Icon=iris
 
 [Desktop Action Record]
-Name=Record Screen
-Exec=iris --record-window
+Name=Record Window
+Exec=iris --record-window --from-menu
 Icon=iris
 
 [Desktop Action Library]
-Name=Open Library
-Exec=iris --library
+Name=Library
+Exec=iris --library --from-menu
 Icon=iris
 
 [Desktop Action Settings]
 Name=Settings
-Exec=iris --settings
+Exec=iris --settings --from-menu
 Icon=iris

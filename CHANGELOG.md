@@ -13,6 +13,7 @@ Version numbers follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.
 - The capture overlay has a capture bar that cancels, captures or records the entire screen or a selection, and runs the chosen capture.
 - `--capture-fullscreen`, `--capture-window`, and `--delay <secs>` capture the whole display, the focused window, or the display after a delay.
 - A delayed capture counts down on a corner card whose close button cancels it, and the card leaves the screen before the capture.
+- `--from-menu` starts a capture or recording 400 ms after a launcher menu click, and the desktop entry's actions, the tray menu, and the macOS File menu wait the same, so the capture does not contain the menu.
 - A capture is saved as a PNG, copied to the clipboard, and shown in a thumbnail toast.
 - A saved capture states its display's scale as the PNG's pixel density, and an edit keeps it, so a document places a HiDPI capture at its on-screen size.
 - The Settings file name field shows the name a screenshot taken at that moment is saved under.

@@ -20,7 +20,7 @@ The tray menu holds the same actions:
 | **Install iris** *version* | Download, verify, and install the update the last check found; shown only while one is available ([Updates](updates.md)) |
 | **Quit** | Quit iris |
 
-A primary or secondary click on the tray icon opens the tray menu.
+A primary or secondary click on the tray icon opens the tray menu. **New Screenshot**, **Record Window**, and **Record Screen** start 400 ms after the click, once the menu has faded, so the capture or recording does not contain the menu.
 
 To start iris at login, turn on **Start iris at login** on the settings page ([Start at Login](configuration.md#start-at-login)). The Windows installer and the deb and rpm packages turn it on at install.
 

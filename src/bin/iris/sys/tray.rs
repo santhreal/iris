@@ -167,10 +167,32 @@ fn command(id: usize) -> Option<Command> {
     }
 }
 
-/// Push the command behind row `id` onto the daemon channel.
+/// Push the command behind row `id` onto the daemon channel once
+/// `daemon::line_wait` has passed: a row that starts reading the screen
+/// waits for the menu to fade. The wait runs on a thread of its own, so
+/// the platform's tray thread is never blocked.
 fn pick(id: usize) {
-    if let (Some(cmd), Some(tx)) = (command(id), TX.get()) {
+    let (Some(cmd), Some(tx)) = (command(id), TX.get()) else {
+        return;
+    };
+    let wait = crate::daemon::line_wait(std::slice::from_ref(&cmd), true);
+    if wait.is_zero() {
         let _ = tx.unbounded_send(cmd);
+        return;
+    }
+    let what = cmd.failure_title();
+    let tx = tx.clone();
+    let spawned = std::thread::Builder::new()
+        .name("iris-tray-pick".into())
+        .spawn(move || {
+            std::thread::sleep(wait);
+            let _ = tx.unbounded_send(cmd);
+        });
+    if let Err(e) = spawned {
+        crate::daemon::report_failure(
+            what,
+            format!("the tray menu could not wait out its fade: {e}"),
+        );
     }
 }
 

@@ -27,6 +27,8 @@ enum Takes {
     Local(Local),
     /// Starts iris with no window; see `Parsed::background`.
     Background,
+    /// Marks the line as picked from a menu row; see `Parsed::from_menu`.
+    FromMenu,
     Nothing(fn() -> Command),
     /// Whole seconds.
     Secs(fn(u64) -> Command),
@@ -119,6 +121,11 @@ const OPTS: &[Opt] = &[
         help: "quit iris, saving the active recording first",
     },
     Opt {
+        flag: "--from-menu",
+        takes: Takes::FromMenu,
+        help: "wait 400 ms for a launcher menu to fade before capturing or recording",
+    },
+    Opt {
         flag: BACKGROUND,
         takes: Takes::Background,
         help: "start iris with no window; exit if iris already runs",
@@ -159,6 +166,11 @@ pub struct Parsed {
     /// or exits when another process holds the instance claim. The line
     /// holds no other option.
     pub background: bool,
+    /// `--from-menu`: the line was picked from a menu row, as the
+    /// desktop entry's actions are, and a command in it that starts
+    /// reading the screen waits for the menu to fade
+    /// (`daemon::line_wait`).
+    pub from_menu: bool,
     /// One message per argument that is not an option or lacks a valid
     /// value; the other arguments still parse.
     pub errors: Vec<String>,
@@ -220,6 +232,11 @@ pub fn parse(args: &[String]) -> Parsed {
             }
             Takes::Background => {
                 out.background = true;
+                continue;
+            }
+            Takes::FromMenu => {
+                out.from_menu = true;
+                out.forward.push(opt.flag.to_string());
                 continue;
             }
             Takes::Nothing(cmd) => Ok((cmd(), None)),

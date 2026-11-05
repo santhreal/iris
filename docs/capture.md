@@ -12,6 +12,8 @@ While the region overlay, the region-recording overlay, or an X11 window pick is
 
 A capture, region pick, or recording start sent as the overlay closes runs once the overlay is off the screen, at most about 130 ms later, so the capture does not contain it. On X11 with no compositing manager the overlay leaves at once.
 
+A capture or recording start picked from the tray menu, the macOS **File** menu, or a launcher's iris menu (the desktop entry's actions, which pass `--from-menu`) runs 400 ms after the click, once the menu has faded, so the capture does not contain the menu.
+
 ### Region Capture
 
 Trigger region capture using any of the following interfaces:

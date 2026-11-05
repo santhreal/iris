@@ -19,6 +19,7 @@ iris is a single-instance app. A command line forwards over local interprocess c
 | `--annotate` | `<file>` | Open [annotation editor](editor.md#annotation-editor) for the image at `<file>`, or raise and focus the editor already open on that file. |
 | `--toast` | `<file>` | Display [toast notification](toast.md#toast-notifications) for the image at `<file>`. |
 | `--quit` | None | Quit the running iris after saving the active recording and any stopped recording still being joined. Requires a running iris. |
+| `--from-menu` | None | Mark the line as picked from a menu row: a capture or recording start on it runs 400 ms later, once the menu has faded, so the capture does not contain the menu. The desktop entry's actions pass it. Alone, it starts iris as a bare `iris` does. |
 | `--background` | None | Start iris in this process with no window open. When another process runs iris or is starting it, exit with status 0. Takes no other option. |
 | `--version` | None | Print version string to standard output and exit. |
 | `--check-update` | None | Query GitHub releases API for newer version and print status. |

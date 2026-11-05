@@ -43,7 +43,9 @@ pub fn install(cx: &mut App) {
     }
     cx.bind_keys(bindings());
     cx.on_action(|_: &OpenSettings, cx| daemon::run(cx, &Command::Settings));
-    cx.on_action(|_: &NewScreenshot, cx| daemon::run(cx, &Command::Capture));
+    // The File menu can still be on the screen when AppKit sends the
+    // action.
+    cx.on_action(|_: &NewScreenshot, cx| daemon::run_line(cx, vec![Command::Capture], true));
     cx.on_action(|_: &OpenLibrary, cx| daemon::run(cx, &Command::Library));
     cx.on_action(|_: &HideIris, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());

@@ -101,6 +101,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let from_menu = parsed.from_menu;
     let cmds = parsed.startup();
 
     // No thread starts before this: on a Wayland session gpui creates the
@@ -120,9 +121,7 @@ fn main() {
         theme::load_fonts(cx);
         sys::menu_bar::install(cx);
         daemon::start(cx, claimed);
-        for cmd in &cmds {
-            daemon::run(cx, cmd);
-        }
+        daemon::run_line(cx, cmds, from_menu);
     });
 }
 
