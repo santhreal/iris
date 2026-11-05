@@ -147,7 +147,7 @@ A notice is a 380 logical pixel wide card in the toast corner of the primary mon
 - A window pick on X11: a record mark in red, **Click a window to record it**, and **Press Esc to cancel.** The card has no buttons: the pick holds the pointer. The card stays until the pick lands or is cancelled, then leaves.
 - A delayed capture: a timer mark and **Screenshot in N seconds**, counting down the whole seconds left, rounded up. The card stays until the capture, then leaves the screen before the capture reads it (see [Delayed Capture](capture.md#delayed-capture)).
 
-The title is 13 pixel semibold text on a 24 logical pixel line, centered on the 24×24 logical pixel buttons and on the 24 logical pixel disc beside it, which holds the kind's 14 pixel glyph on an 18% fill of its tint; the detail is 11 pixel text in the secondary color on 15 pixel lines. The **×** button at the card's right edge dismisses a saved, failure, or update card, and cancels a delayed capture (tooltip **Cancel**). Resting the pointer on a button shows its name in a tooltip.
+The title is 13 pixel semibold text on a 24 logical pixel line, centered on the 24×24 logical pixel buttons and on the 24 logical pixel disc beside it, which holds the kind's 14 pixel glyph on an 18% fill of its tint; the detail is 11 pixel text in the secondary color on 15 pixel lines. The **×** button at the card's right edge dismisses a saved, failure, or update card, and cancels a delayed capture; its name is **Cancel** then. While the pointer is on a button, its name shows on the buttons' row, 4 logical pixels left of the leftmost button.
 
 Failure titles:
 

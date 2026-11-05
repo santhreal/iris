@@ -23,6 +23,15 @@
 //! its hold. Not covered by it: an enter in a grab mode, which the
 //! backend ignores, and Wayland, whose enter already carries a move.
 //!
+//! The third case closes "a button's name drawn across the card's
+//! edge". The notice's window is the card's size and its margin, so a
+//! tooltip at the pointer found room only across the card's top or
+//! bottom edge. The case rests the pointer on Close and reads, past a
+//! tooltip's 500 ms wait, every pixel the name lightens: all on the
+//! buttons' row, some left of the buttons, none on Install. Not covered
+//! by it: a title long enough to reach the buttons, which the name then
+//! covers, and the poster's tooltip on a saved recording's notice.
+//!
 //! Not covered: Install's click, which downloads; Record while a
 //! recording runs, the library's other button on the accent; an
 //! accent-filled control added elsewhere, which only a case of its own
@@ -67,6 +76,14 @@ const TITLE: (i16, i16) = (200, 44 + 13 + 12);
 const ACCENT: [u32; 3] = [10, 132, 255];
 const ACCENT_HOVER: [u32; 3] = [12, 120, 228];
 const ACCENT_PRESS: [u32; 3] = [15, 106, 197];
+/// Close's centre: the last 24px button, inside the card's border and
+/// padding.
+const CLOSE: (i16, i16) = (44 + 380 - 13 - 12, 44 + 13 + 12);
+/// The buttons' row in the notice window: inside the card's top border
+/// and padding, one 24px button tall.
+const ROW: std::ops::Range<usize> = 57..81;
+/// Install's box across the row, the leftmost button.
+const INSTALL_X: std::ops::Range<usize> = (INSTALL.0 as usize - 12)..(INSTALL.0 as usize + 12);
 
 /// The notice's hold, notice::FAILURE_HOLD (8 s), with a second to
 /// spare: a notice the pointer does not hold has left by then.
@@ -226,4 +243,51 @@ fn hover_returns_after_a_window_above_comes_and_goes() {
         windows_of(&s.conn, s.root, NOTICE).contains(&s.notice),
         "the notice left under the resting pointer"
     );
+}
+
+/// The pixels lighter in `after` than in `before` by more than a fade's
+/// noise, as indices: text and hairlines that show. A shadow only
+/// darkens.
+fn lightened(before: &[[u8; 3]], after: &[[u8; 3]]) -> Vec<usize> {
+    let level = |p: [u8; 3]| p.iter().map(|&c| c as i32).max().unwrap_or(0);
+    (0..before.len())
+        .filter(|&i| level(after[i]) > level(before[i]) + 12)
+        .collect()
+}
+
+#[test]
+fn a_buttons_name_shows_on_its_row_clear_of_the_buttons() {
+    let Some(s) = session("notice: names") else {
+        return;
+    };
+    // Past the overlay warmup's shell over the screen.
+    std::thread::sleep(Duration::from_secs(1));
+    s.until(INSTALL_FILL, ACCENT, "Install on the accent at rest");
+    let (w, _, before) = x11::client(&s.conn, s.root, s.notice);
+    move_to(&s.conn, s.root, s.at(CLOSE));
+    // Past the 500 ms a tooltip waits for, with time to draw.
+    std::thread::sleep(Duration::from_millis(900));
+    s.daemon.settle();
+    let (_, _, after) = x11::client(&s.conn, s.root, s.notice);
+    let lit = lightened(&before, &after);
+    let off_row: Vec<(usize, usize)> = lit
+        .iter()
+        .map(|&i| (i % w, i / w))
+        .filter(|(_, y)| !ROW.contains(y))
+        .collect();
+    assert!(
+        off_row.is_empty(),
+        "Close's name shows off the buttons' row, at {:?}",
+        &off_row[..off_row.len().min(5)]
+    );
+    let left_of_buttons = lit.iter().filter(|&&i| i % w < INSTALL_X.start).count();
+    assert!(
+        left_of_buttons > 20,
+        "Close's name does not show left of the buttons"
+    );
+    let on_install = lit
+        .iter()
+        .filter(|&&i| INSTALL_X.contains(&(i % w)))
+        .count();
+    assert_eq!(on_install, 0, "Close's name covers Install");
 }

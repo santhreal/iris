@@ -333,6 +333,16 @@ fn buttons(kind: Kind, file: bool) -> usize {
     usize::from(file) + usize::from(kind == Kind::Update) + usize::from(kind != Kind::Guide)
 }
 
+/// The name of the button whose hover group is `group`, the `at`th of
+/// the buttons from the left, shown while the pointer is on it on the
+/// buttons' row left of them all, so it covers no other button. A
+/// tooltip at the pointer has no room in the card's window but across
+/// the card's edge.
+fn button_name(group: &'static str, label: &'static str, at: usize) -> Div {
+    let to_left = (at + 1) as f32 * BUTTON + at as f32 * BUTTON_GAP;
+    widgets::hover_name(group, label, BUTTON).right(px(to_left + widgets::NAME_GAP))
+}
+
 /// Card height for `lines` detail lines, with the tail under the last.
 fn card_height(lines: usize) -> f32 {
     let text = if lines == 0 {
@@ -724,9 +734,12 @@ impl Render for Notice {
                     .child(self.detail.clone()),
             );
         }
+        let file = self.file.is_some();
+        let update = self.kind == Kind::Update;
         let reveal = self.file.clone().map(|path| {
             icon_button("notice-reveal", Icon::Folder, false, BUTTON)
-                .tooltip(crate::widgets::tip(crate::sys::reveal::LABEL, None))
+                .group("notice-reveal")
+                .child(button_name("notice-reveal", crate::sys::reveal::LABEL, 0))
                 .on_click(cx.listener(move |n, _, _, cx| {
                     crate::sys::reveal::reveal(&path);
                     n.leave(EXIT, cx);
@@ -734,9 +747,10 @@ impl Render for Notice {
         });
         // The install runs on a thread of its own; a failure arrives
         // through the command pump as a new notice.
-        let install = (self.kind == Kind::Update).then(|| {
+        let install = update.then(|| {
             icon_button("notice-install", Icon::Download, true, BUTTON)
-                .tooltip(crate::widgets::tip("Install", None))
+                .group("notice-install")
+                .child(button_name("notice-install", "Install", usize::from(file)))
                 .on_click(cx.listener(|n, _, _, cx| {
                     if let Err(e) = crate::update::install_offered() {
                         crate::daemon::report_failure("Update failed", e);
@@ -747,9 +761,11 @@ impl Render for Notice {
         let countdown = matches!(self.kind, Kind::Countdown(_));
         let close = (self.kind != Kind::Guide).then(|| {
             icon_button("notice-close", Icon::Close, false, BUTTON)
-                .tooltip(crate::widgets::tip(
+                .group("notice-close")
+                .child(button_name(
+                    "notice-close",
                     if countdown { "Cancel" } else { "Close" },
-                    None,
+                    usize::from(file) + usize::from(update),
                 ))
                 .on_click(cx.listener(move |n, _, _, cx| {
                     if countdown {

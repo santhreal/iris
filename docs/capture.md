@@ -69,7 +69,7 @@ iris --delay 5
 
 Takes a whole number of seconds (`u64`). Any other value is an error ([Command-Line Interface](cli.md#command-reference)).
 
-A card in the corner set by `toast_position` ([configuration.md#toast](configuration.md#toast)) counts down the seconds left: **Screenshot in 3 seconds**, then 2, then 1. At zero the card closes, and iris captures every display once the card is off the screen. The card's close button (tooltip **Cancel**) closes the card and cancels the capture. A second `--delay` replaces the pending one, card and capture. `--delay 0` captures at once with no card.
+A card in the corner set by `toast_position` ([configuration.md#toast](configuration.md#toast)) counts down the seconds left: **Screenshot in 3 seconds**, then 2, then 1. At zero the card closes, and iris captures every display once the card is off the screen. The card's close button, named **Cancel**, closes the card and cancels the capture. A second `--delay` replaces the pending one, card and capture. `--delay 0` captures at once with no card.
 
 ## Post-Capture Pipeline
 

@@ -42,10 +42,26 @@ impl Render for Tooltip {
     }
 }
 
+/// The space between a control and its name drawn beside it.
+pub const NAME_GAP: f32 = 4.0;
+
+/// The name of the control whose hover group is `group`, drawn beside
+/// it while the pointer is on it, as tall as the control's `height`:
+/// for a surface with no room for a tooltip at the pointer. The caller
+/// places it with `left` or `right`, NAME_GAP past the control.
+pub fn hover_name(group: &'static str, label: impl Into<SharedString>, height: f32) -> Div {
+    tip_pill(label.into(), None)
+        .absolute()
+        .top_0()
+        .h(px(height))
+        .py_0()
+        .opacity(0.)
+        .group_hover(group, |s| s.opacity(1.))
+}
+
 /// The tooltip's pill: `label`, then `shortcut` in secondary color when
-/// there is one. A surface with no room for a tooltip at the pointer
-/// draws it beside the control it names.
-pub fn tip_pill(label: SharedString, shortcut: Option<&str>) -> Div {
+/// there is one.
+fn tip_pill(label: SharedString, shortcut: Option<&str>) -> Div {
     div()
         .flex()
         .items_center()

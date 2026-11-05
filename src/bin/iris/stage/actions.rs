@@ -10,7 +10,7 @@ use super::*;
 use crate::{
     icons::Icon,
     motion, pipeline,
-    widgets::{tip_pill, MENU_PAD, MENU_ROW_H, MENU_W},
+    widgets::{hover_name, MENU_PAD, MENU_ROW_H, MENU_W, NAME_GAP},
 };
 
 impl ToastStage {
@@ -565,8 +565,6 @@ const DISC: f32 = 22.0;
 pub(super) const SLOT_INSET: f32 = 6.0;
 /// The least space between the centered row and a corner button's row.
 const CLEAR: f32 = 4.0;
-/// The space between a corner button and its name.
-const NAME_GAP: f32 = 4.0;
 
 /// The card's least size: the centered row with its inset, over the
 /// height of two rows of corner buttons with the centered row between
@@ -634,13 +632,7 @@ fn disc(id: &'static str, glyph: Icon, active: bool) -> Stateful<Div> {
 /// shown while the pointer is on the button. A tooltip at the pointer has
 /// no room on the card but over the centered row, which it covered.
 fn corner_name(group: &'static str, label: &'static str, corner: Corner) -> Div {
-    let name = tip_pill(label.into(), None)
-        .absolute()
-        .top_0()
-        .h(px(DISC))
-        .py_0()
-        .opacity(0.)
-        .group_hover(group, |s| s.opacity(1.));
+    let name = hover_name(group, label, DISC);
     match corner {
         Corner::TopLeft | Corner::BottomLeft => name.left(px(DISC + NAME_GAP)),
         Corner::TopRight | Corner::BottomRight => name.right(px(DISC + NAME_GAP)),
