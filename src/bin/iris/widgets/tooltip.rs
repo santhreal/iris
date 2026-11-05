@@ -35,28 +35,36 @@ impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // GPUI places the tooltip at the pointer; the margin keeps the
         // pill clear of the cursor glyph.
-        div().pl(px(6.)).pt(px(16.)).child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .px(px(8.))
-                .py(px(4.))
-                .rounded(px(theme::RADIUS_CONTROL))
-                .bg(theme::BG_ELEV)
-                .border_1()
-                .border_color(theme::HAIRLINE)
-                .shadow(theme::shadow_float())
-                .font_family(theme::FONT)
-                .text_size(px(theme::TEXT_SMALL))
-                .whitespace_nowrap()
-                .text_color(theme::FG)
-                .child(self.label.clone())
-                .children(self.shortcut.as_deref().map(|keys| {
-                    div()
-                        .text_color(theme::FG_DIM)
-                        .child(super::shortcut_text(keys))
-                })),
-        )
+        div()
+            .pl(px(6.))
+            .pt(px(16.))
+            .child(tip_pill(self.label.clone(), self.shortcut.as_deref()))
     }
+}
+
+/// The tooltip's pill: `label`, then `shortcut` in secondary color when
+/// there is one. A surface with no room for a tooltip at the pointer
+/// draws it beside the control it names.
+pub fn tip_pill(label: SharedString, shortcut: Option<&str>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .px(px(8.))
+        .py(px(4.))
+        .rounded(px(theme::RADIUS_CONTROL))
+        .bg(theme::BG_ELEV)
+        .border_1()
+        .border_color(theme::HAIRLINE)
+        .shadow(theme::shadow_float())
+        .font_family(theme::FONT)
+        .text_size(px(theme::TEXT_SMALL))
+        .whitespace_nowrap()
+        .text_color(theme::FG)
+        .child(label)
+        .children(shortcut.map(|keys| {
+            div()
+                .text_color(theme::FG_DIM)
+                .child(super::shortcut_text(keys))
+        }))
 }

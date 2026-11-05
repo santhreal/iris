@@ -10,7 +10,7 @@ use super::*;
 use crate::{
     icons::Icon,
     motion, pipeline,
-    widgets::{tip, MENU_PAD, MENU_ROW_H, MENU_W},
+    widgets::{tip_pill, MENU_PAD, MENU_ROW_H, MENU_W},
 };
 
 impl ToastStage {
@@ -326,7 +326,8 @@ impl ToastStage {
     /// The hover actions on a scrim over the capture: Copy and Markup at
     /// the card's center and a round button in each corner, each at its
     /// `ToastAction::rect`. Keep Open shows when `toast_pin_enabled`.
-    /// Every round button has a tooltip.
+    /// Every round button shows its name beside it while the pointer is
+    /// on it (`corner_name`).
     pub(super) fn render_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.cfg.toast_show_actions {
             return None;
@@ -344,12 +345,13 @@ impl ToastStage {
             let label = action.label(self.pinned);
             let button = match action.place() {
                 Place::Center(_) => pill(action.id(), label),
-                Place::Corner(_) => disc(
+                Place::Corner(corner) => disc(
                     action.id(),
                     action.glyph(),
                     action == ToastAction::KeepOpen && self.pinned,
                 )
-                .tooltip(tip(label, None)),
+                .group(action.id())
+                .child(corner_name(action.id(), label, corner)),
             };
             layer = layer.child(
                 button
@@ -467,7 +469,7 @@ impl ToastAction {
         }
     }
 
-    /// The label of a centered button, or the tooltip of a round one,
+    /// The label of a centered button, or the name of a round one,
     /// for a toast `pinned` or not.
     fn label(self, pinned: bool) -> &'static str {
         match self {
@@ -563,6 +565,8 @@ const DISC: f32 = 22.0;
 pub(super) const SLOT_INSET: f32 = 6.0;
 /// The least space between the centered row and a corner button's row.
 const CLEAR: f32 = 4.0;
+/// The space between a corner button and its name.
+const NAME_GAP: f32 = 4.0;
 
 /// The card's least size: the centered row with its inset, over the
 /// height of two rows of corner buttons with the centered row between
@@ -623,6 +627,24 @@ fn disc(id: &'static str, glyph: Icon, active: bool) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
         .active(move |s| s.bg(press));
     el.child(crate::icons::icon(glyph, ink, 12.0))
+}
+
+/// The name of the corner button whose hover group is `group`, beside
+/// it on its row toward the card's center and as tall as the button,
+/// shown while the pointer is on the button. A tooltip at the pointer has
+/// no room on the card but over the centered row, which it covered.
+fn corner_name(group: &'static str, label: &'static str, corner: Corner) -> Div {
+    let name = tip_pill(label.into(), None)
+        .absolute()
+        .top_0()
+        .h(px(DISC))
+        .py_0()
+        .opacity(0.)
+        .group_hover(group, |s| s.opacity(1.));
+    match corner {
+        Corner::TopLeft | Corner::BottomLeft => name.left(px(DISC + NAME_GAP)),
+        Corner::TopRight | Corner::BottomRight => name.right(px(DISC + NAME_GAP)),
+    }
 }
 
 /// The pinned toast's mark at rest: its Keep Open button, on the

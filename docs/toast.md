@@ -73,9 +73,9 @@ Two 68×24 logical pixel buttons, 6 logical pixels apart, sit at the card's cent
 1. **Copy**: Encodes and copies image pixels to the system clipboard on a background thread.
 2. **Markup**: Opens the image in the annotation editor.
 
-A 22 logical pixel round button with a 12 pixel glyph sits 6 logical pixels in from each corner. Resting the pointer on one for 500 milliseconds shows its name in a tooltip:
+A 22 logical pixel round button with a 12 pixel glyph sits 6 logical pixels in from each corner. While the pointer is on one, its name shows beside it on its row, 4 logical pixels toward the card's center, clear of the centered buttons:
 - Top left, **Close** (× glyph): Dismisses the card.
-- Top right, **Keep Open** (pin glyph): Toggles the pinned state of the card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). The button fills with the accent color while pinned, and its tooltip reads **Allow to Close**.
+- Top right, **Keep Open** (pin glyph): Toggles the pinned state of the card, suspending auto-dismissal. Rendered only when `toast_pin_enabled` is true (default: `true`). The button fills with the accent color while pinned, and its name reads **Allow to Close**.
 - Bottom left, **Show in Folder** (folder glyph; **Show in Finder** on macOS, **Show in File Explorer** on Windows): Reveals the file in the desktop file manager.
 - Bottom right, **Move to Trash** (trash glyph): Moves the PNG file to the system trash, deletes the cached thumbnail, removes the record from `library.json`, and dismisses the toast ([library.md#move-to-trash](library.md#move-to-trash)).
 
