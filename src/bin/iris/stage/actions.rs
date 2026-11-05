@@ -547,7 +547,7 @@ impl ToastRow {
     fn label(self) -> &'static str {
         match self {
             ToastRow::Markup => "Markup",
-            ToastRow::Copy => "Copy",
+            ToastRow::Copy => "Copy Image",
             ToastRow::CopyFile => "Copy File",
             ToastRow::CopyText => "Copy Text",
             ToastRow::Pin => "Pin to Screen",

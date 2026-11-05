@@ -409,7 +409,7 @@ impl Pick {
     /// The option labels, in the order of the values they select.
     pub(super) fn options(self) -> &'static [&'static str] {
         match self {
-            Pick::ToastClick => &["Open Editor", "Copy", "Show in Folder", "Nothing"],
+            Pick::ToastClick => &["Open Editor", "Copy", crate::sys::reveal::LABEL, "Nothing"],
             Pick::ToastDuration => &[
                 "2 seconds",
                 "3 seconds",

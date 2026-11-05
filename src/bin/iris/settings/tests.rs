@@ -84,6 +84,26 @@ fn every_option_of_every_pop_up_round_trips_through_config_toml() {
     }
 }
 
+// WHY: the class closed here is "one action under two names": the
+// toast click option that reveals the capture read Show in Folder on
+// every platform, where the toast, the library, and the notices name
+// the same action after the platform's file manager (Show in Finder,
+// Show in File Explorer). Not covered: labels of other actions.
+#[test]
+#[serial_test::serial]
+fn the_toast_click_reveal_option_takes_the_platform_reveal_label() {
+    let _home = temp_home();
+    let mut s = settings(Release::None);
+    let ix = (0..Pick::ToastClick.options().len())
+        .find(|&ix| {
+            s.choose(Pick::ToastClick, ix);
+            s.cfg.toast_click_action == iris_lib::config::ToastClickAction::OpenFolder
+        })
+        .expect("a toast click option reveals the capture");
+    assert_eq!(Pick::ToastClick.options()[ix], crate::sys::reveal::LABEL);
+    assert_eq!(Pick::ToastClick.current(&s.cfg), crate::sys::reveal::LABEL);
+}
+
 #[test]
 #[serial_test::serial]
 fn a_text_field_applies_on_commit_and_keeps_a_rejected_value_open() {

@@ -108,7 +108,7 @@ Right-clicking the toast card opens a context menu that fades in over 140 millis
 
 Menu choices in order:
 1. **Markup**: Opens the annotation editor over the capture.
-2. **Copy**: Copies raw image pixels to the system clipboard.
+2. **Copy Image**: Copies raw image pixels to the system clipboard.
 3. **Copy File**: Copies the file in the platform's file-list format (`text/uri-list`, `CF_HDROP`, or `NSURL`).
 4. **Copy Text**: Extracts text through OCR and copies it to the clipboard.
 5. **Pin to Screen**: Opens the capture in a [pinned window](#pinned-windows) and dismisses the toast.
