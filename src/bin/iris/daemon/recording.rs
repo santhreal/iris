@@ -145,11 +145,7 @@ pub(super) fn record_region_pick(cx: &mut App) -> Result<(), String> {
         });
         match session {
             Ok(true) => {
-                let u = &layout.union;
-                let _ = h.update(cx, |_, window, _| {
-                    crate::sys::window::unpark_span(window, u.x, u.y, u.width, u.height);
-                    window.activate_window();
-                });
+                let _ = h.update(cx, |o, window, _| o.unpark(window));
                 h
             }
             Ok(false) => return Ok(()),

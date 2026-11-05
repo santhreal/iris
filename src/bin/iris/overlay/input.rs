@@ -43,6 +43,9 @@ impl Overlay {
         }
         self.frame_size = Some((width, height));
         self.frame_img = Some(img);
+        if std::mem::take(&mut self.map_on_frame) && !self.hidden {
+            self.span(window);
+        }
         // The prewarmed window maps unfocused and a WM does not
         // re-focus a window it maps again: without this the first
         // keystroke after re-arm can land on the root window. By the
@@ -59,12 +62,34 @@ impl Overlay {
         }
     }
 
+    /// Bring the parked window back for the session `reset` armed. Where
+    /// no compositor blends, a frame drawn before the frozen screen
+    /// lands shows the dim over black, so the window maps when the frame
+    /// lands (`set_frame`), and the screen shows until then.
+    pub fn unpark(&mut self, window: &mut Window) {
+        if !crate::sys::window::blends() {
+            self.map_on_frame = true;
+            return;
+        }
+        self.span(window);
+        // Activate on GPUI's own connection too: a window manager that
+        // handles the map after the request applies its own focus.
+        window.activate_window();
+    }
+
+    /// Map the parked window over the virtual screen, above and focused.
+    fn span(&self, window: &Window) {
+        let ((x, y), (w, h)) = (self.origin, self.view);
+        crate::sys::window::unpark_span(window, x, y, w, h);
+    }
+
     /// Re-arm a pooled window for a new session: every per-session
     /// field back to its opening state on the new layout. Images were
     /// already released when the window parked.
     pub fn reset(&mut self, layout: &ShellLayout) {
         self.hidden = false;
         self.parking = None;
+        self.map_on_frame = false;
         self.frame_size = None;
         self.frame_img = None;
         self.origin = (layout.union.x, layout.union.y);

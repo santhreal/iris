@@ -67,6 +67,8 @@ pub struct Overlay {
     /// cleared frame (`Overlay::park`); None once it ran or a session
     /// re-armed the window.
     parking: Option<std::time::Instant>,
+    /// The re-armed window maps when its frame lands (`Overlay::unpark`).
+    map_on_frame: bool,
     /// What finish() does with the committed selection.
     mode: OverlayMode,
     /// What a press on the frame selects, chosen on the capture bar.

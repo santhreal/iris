@@ -40,14 +40,7 @@ pub(super) fn capture_region(cx: &mut App) -> Result<(), String> {
         });
         match session {
             Ok(true) => {
-                let u = &layout.union;
-                let _ = h.update(cx, |_, window, _| {
-                    crate::sys::window::unpark_span(window, u.x, u.y, u.width, u.height);
-                    // Activate on GPUI's own connection too: a window
-                    // manager that handles the map after the request
-                    // applies its own focus.
-                    window.activate_window();
-                });
+                let _ = h.update(cx, |o, window, _| o.unpark(window));
                 h
             }
             // Busy mid-session: no stacking. Dead handle: fresh open.

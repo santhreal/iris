@@ -134,6 +134,7 @@ fn open_shell_opts(
                 Overlay {
                     hidden: false,
                     parking: None,
+                    map_on_frame: false,
                     mode: super::OverlayMode::Capture,
                     scope: super::Scope::Selection,
                     bar_at: seed,

@@ -66,6 +66,7 @@ use x11rb::protocol::xproto::{
     EventMask, ImageFormat, InputFocus, PropMode,
 };
 use x11rb::protocol::Event;
+use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::CURRENT_TIME;
 
@@ -484,16 +485,26 @@ fn a_parked_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs() {
     );
 }
 
-/// Cancel a capture and check what the overlay draws before it is
-/// withdrawn: with `composited` it is withdrawn on a transparent frame,
-/// and without it on the frame the cancel found.
-fn last_frame(case: &str, composited: bool) {
+/// A daemon on a private Xvfb whose desktop is `DESKTOP`, under the
+/// stand-in compositor with `composited`, its warm overlay parked.
+/// Fields drop in order: the daemon first, then its state directory,
+/// the X server last.
+struct Desk {
+    daemon: Daemon,
+    _dir: tempfile::TempDir,
+    _compositor: Option<Compositor>,
+    conn: RustConnection,
+    root: u32,
+    /// The warm overlay window.
+    warm: u32,
+    _xvfb: daemon::Server,
+}
+
+fn desk(case: &str, composited: bool) -> Option<Desk> {
     if !enabled() {
-        return;
+        return None;
     }
-    let Some((_xvfb, display)) = xvfb(case) else {
-        return;
-    };
+    let (xvfb, display) = xvfb(case)?;
     let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
     let root = conn.setup().roots[screen].root;
     conn.change_window_attributes(
@@ -508,7 +519,7 @@ fn last_frame(case: &str, composited: bool) {
         .reply()
         .unwrap()
         .atom;
-    let _compositor = composited.then(|| {
+    let compositor = composited.then(|| {
         // A compositor draws each window from a pixmap of its own, which
         // keeps the window's last frame once the window unmaps.
         conn.composite_query_version(0, 4).unwrap().reply().unwrap();
@@ -527,23 +538,45 @@ fn last_frame(case: &str, composited: bool) {
     daemon.until("the warmup to park the overlay", || {
         windows_of(&conn, root, OVERLAY).is_empty().then_some(())
     });
-    daemon.send(&["--capture"]);
-    // The overlay's pixel at (100, 100) as [b, g, r, a].
-    let read = || {
-        conn.get_image(ImageFormat::Z_PIXMAP, warm, 100, 100, 1, 1, !0)
-            .unwrap()
-            .reply()
-            .ok()
-            .map(|image| <[u8; 4]>::try_from(&image.data[..4]).unwrap())
+    Some(Desk {
+        daemon,
+        _dir: dir,
+        _compositor: compositor,
+        conn,
+        root,
+        warm,
+        _xvfb: xvfb,
+    })
+}
+
+/// The overlay's pixel at (100, 100) as [b, g, r, a]; None while it is
+/// unmapped.
+fn overlay_pixel(conn: &RustConnection, warm: u32) -> Option<[u8; 4]> {
+    conn.get_image(ImageFormat::Z_PIXMAP, warm, 100, 100, 1, 1, !0)
+        .unwrap()
+        .reply()
+        .ok()
+        .map(|image| <[u8; 4]>::try_from(&image.data[..4]).unwrap())
+}
+
+/// Whether `p` is the frozen screen under the dim: opaque, and darker
+/// than the desktop. An unpainted window reads as the desktop, and the
+/// dim drawn before the frame lands is translucent.
+fn frozen_screen(p: &[u8; 4]) -> bool {
+    p[3] == 255 && p[..3] != DESKTOP.to_le_bytes()[..3] && p[..3] != [0, 0, 0]
+}
+
+/// Cancel a capture and check what the overlay draws before it is
+/// withdrawn: with `composited` it is withdrawn on a transparent frame,
+/// and without it on the frame the cancel found.
+fn last_frame(case: &str, composited: bool) {
+    let Some(desk) = desk(case, composited) else {
+        return;
     };
-    // The frozen screen under the dim: opaque, and darker than the
-    // desktop. An unpainted window reads as the desktop, and the dim
-    // drawn before the frame lands is translucent.
-    let desktop = DESKTOP.to_le_bytes();
+    let (daemon, conn, root, warm) = (&desk.daemon, &desk.conn, desk.root, desk.warm);
+    daemon.send(&["--capture"]);
     let frozen = daemon.until("the capture's frozen screen to show", || {
-        read().filter(|p| {
-            p[3] == 255 && p[..3] != desktop[..3] && p[..3] != [0, 0, 0] && focus(&conn) == warm
-        })
+        overlay_pixel(conn, warm).filter(|p| frozen_screen(p) && focus(conn) == warm)
     });
     // What the cancel draws: the window's damage until it unmaps, and,
     // where the stand-in compositor holds the window's pixmap, the
@@ -565,7 +598,7 @@ fn last_frame(case: &str, composited: bool) {
     }
     conn.get_input_focus().unwrap().reply().unwrap();
     while conn.poll_for_event().unwrap().is_some() {}
-    tap(&conn, root, ESCAPE);
+    tap(conn, root, ESCAPE);
     let mut drawn = 0;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -598,6 +631,59 @@ fn last_frame(case: &str, composited: bool) {
             "the overlay drew after the cancel, where a transparent pixel \
              shows black"
         );
+    }
+}
+
+// WHY: where no compositor blends, a translucent pixel shows over black.
+// The re-armed overlay mapped at the press and drew its dim before the
+// frozen screen landed, so a capture on such a screen began with a dark
+// frame over every monitor for as long as the grab took, over 100 ms on
+// a busy host. The overlay now maps there when its frame lands. The
+// class closed here is any overlay frame before the frozen screen where
+// no compositor runs, for a capture and for a record pick, which share
+// the re-arm. Not covered: the fresh window a dead pool opens, which
+// maps as it opens; the dim drawn at once where a compositor blends; a
+// grab that never lands, which leaves the overlay unmapped.
+
+#[test]
+fn a_capture_overlay_maps_on_its_frozen_screen_where_no_compositor_runs() {
+    let case = "a_capture_overlay_maps_on_its_frozen_screen_where_no_compositor_runs";
+    let Some(desk) = desk(case, false) else {
+        return;
+    };
+    let (daemon, conn, root, warm) = (&desk.daemon, &desk.conn, desk.root, desk.warm);
+    for (session, command) in [
+        ("capture 1", "--capture"),
+        ("capture 2", "--capture"),
+        ("the record pick", "--record-region"),
+    ] {
+        daemon.send(&[command]);
+        // Each change of the overlay's pixel from the press to the
+        // frozen screen: the desktop shows until then.
+        let mut seen: Vec<[u8; 4]> = Vec::new();
+        daemon.until(&format!("{session}'s frozen screen to show"), || {
+            let p = overlay_pixel(conn, warm)?;
+            if seen.last() != Some(&p) {
+                seen.push(p);
+            }
+            frozen_screen(&p).then_some(())
+        });
+        let before: Vec<[u8; 4]> = seen[..seen.len() - 1]
+            .iter()
+            .filter(|p| p[..3] != DESKTOP.to_le_bytes()[..3])
+            .copied()
+            .collect();
+        assert_eq!(
+            before,
+            Vec::<[u8; 4]>::new(),
+            "{session}'s overlay drew before its frozen screen, which \
+             shows over black where no compositor runs; its pixel went \
+             {seen:?}"
+        );
+        tap(conn, root, ESCAPE);
+        daemon.until(&format!("{session}'s overlay to park"), || {
+            windows_of(conn, root, OVERLAY).is_empty().then_some(())
+        });
     }
 }
 
