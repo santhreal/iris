@@ -249,6 +249,55 @@ pub fn tabular() -> FontFeatures {
     FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
 }
 
+/// `text` in `font` and `color` with tabular figures on its digits
+/// alone: a number that changes in place keeps its width, and the
+/// characters between digits keep their own advance, where `tabular`
+/// on the whole text widens Inter's hyphen, period, and colon to a
+/// figure's.
+pub fn tabular_digits(text: SharedString, font: gpui::Font, color: Rgba) -> gpui::StyledText {
+    let runs = digit_runs(&text, font, color);
+    gpui::StyledText::new(text).with_runs(runs)
+}
+
+/// The runs of `tabular_digits`: one per stretch of ASCII digits, in
+/// `font` with `tabular` features, and one per stretch between them, in
+/// `font` as given.
+fn digit_runs(text: &str, font: gpui::Font, color: Rgba) -> Vec<TextRun> {
+    let figures = gpui::Font {
+        features: tabular(),
+        ..font.clone()
+    };
+    let run = |len: usize, digits: bool| TextRun {
+        len,
+        font: if digits {
+            figures.clone()
+        } else {
+            font.clone()
+        },
+        color: color.into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        tracking: px(0.),
+    };
+    let mut runs = Vec::new();
+    let mut start = 0;
+    let mut digits = None;
+    for (at, c) in text.char_indices() {
+        let digit = c.is_ascii_digit();
+        if digits != Some(digit) {
+            if let Some(was) = digits {
+                runs.push(run(at - start, was));
+            }
+            (start, digits) = (at, Some(digit));
+        }
+    }
+    if let Some(was) = digits {
+        runs.push(run(text.len() - start, was));
+    }
+    runs
+}
+
 /// Lines `text` wraps to in `FONT` at `size` and `weight` within
 /// `width` logical px, as GPUI's text element wraps it: at word
 /// boundaries, with a word wider than a line broken across lines. An
@@ -453,6 +502,46 @@ pub fn shadow_reach(shadows: &[BoxShadow]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // WHY: the class closed here is "a number that changes in place
+    // moves its neighbours, or tabular figures spread the text around
+    // it": digits must take `tnum` and nothing else may, since Inter's
+    // tabular hyphen, period, and colon are a figure wide. Every run
+    // must cover the text exactly, or GPUI rejects it. Not covered: the
+    // shaped widths, which need a platform text system.
+    #[test]
+    fn only_digits_take_tabular_figures() {
+        let tnum = |run: &TextRun| run.font.features == tabular();
+        for text in [
+            "",
+            "Enter a file name",
+            "120",
+            "2026-11-05_16-03-49.png",
+            "Enter 1 to 120",
+            "à9é",
+        ] {
+            let runs = digit_runs(text, font(FontWeight::NORMAL), FG);
+            assert_eq!(
+                runs.iter().map(|r| r.len).sum::<usize>(),
+                text.len(),
+                "{text}"
+            );
+            let mut at = 0;
+            for (i, run) in runs.iter().enumerate() {
+                let part = &text[at..at + run.len];
+                assert!(!part.is_empty(), "{text}: an empty run");
+                assert_eq!(
+                    tnum(run),
+                    part.bytes().all(|b| b.is_ascii_digit()),
+                    "{text}: {part:?}"
+                );
+                if i > 0 {
+                    assert_ne!(tnum(run), tnum(&runs[i - 1]), "{text}: split at {at}");
+                }
+                at += run.len;
+            }
+        }
+    }
 
     #[test]
     fn card_shadow_ends_inside_the_card_bleed() {

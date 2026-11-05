@@ -116,7 +116,9 @@ fn row_shell(label: &'static str, control: impl IntoElement) -> Div {
 }
 
 /// A control with a note beside it: the reason its last value was
-/// rejected, or what the value does.
+/// rejected, or what the value does. The note ends at the control, so
+/// its digits are tabular: the file name preview's time changes as it
+/// renders, and proportional digits would move its start.
 fn with_note(note: Option<(SharedString, Rgba)>, control: impl IntoElement) -> Div {
     div()
         .flex()
@@ -130,8 +132,11 @@ fn with_note(note: Option<(SharedString, Rgba)>, control: impl IntoElement) -> D
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_size(px(theme::TEXT_SMALL))
-                .text_color(color)
-                .child(text)
+                .child(theme::tabular_digits(
+                    text,
+                    theme::font(FontWeight::NORMAL),
+                    color,
+                ))
         }))
         .child(control)
 }
