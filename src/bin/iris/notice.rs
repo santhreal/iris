@@ -701,11 +701,16 @@ impl Render for Notice {
             Kind::Saved => (Icon::Check, theme::SUCCESS),
             Kind::Countdown(_) => (Icon::Timer, theme::FG),
         };
+        // A countdown's seconds change in place: tabular digits keep the
+        // word after them still.
         let title = match self.kind {
-            Kind::Countdown(at) => {
-                countdown_title(at.saturating_duration_since(Instant::now())).into()
-            }
-            _ => self.title.clone(),
+            Kind::Countdown(at) => theme::tabular_digits(
+                countdown_title(at.saturating_duration_since(Instant::now())).into(),
+                theme::font(FontWeight::SEMIBOLD),
+                theme::FG,
+            )
+            .into_any_element(),
+            _ => self.title.clone().into_any_element(),
         };
         let mut text = div()
             .flex()
