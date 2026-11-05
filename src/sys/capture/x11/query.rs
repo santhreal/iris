@@ -160,8 +160,11 @@ fn list_top_level_windows_on(
         .map_err(|e| format!("query stacking reply: {e}"))?;
     let mut windows: Vec<u32> = list.value32().map(|v| v.collect()).unwrap_or_default();
     if windows.is_empty() {
-        // No window manager (or none that sets EWMH lists): fall back to
-        // the root's child list, which is bottom-to-top stacking order.
+        // A window manager that sets no stacking list, as xfwm4 4.18
+        // with one window open, or none at all: the root's children, in
+        // bottom-to-top stacking order. A reparenting window manager's
+        // child is its frame, which has no _NET_WM_PID or extents, so
+        // each child is read as the client inside it.
         let tree = conn
             .query_tree(root)
             .map_err(|e| format!("query_tree: {e}"))?
@@ -187,6 +190,7 @@ fn list_top_level_windows_on(
                 windows.push(win);
             }
         }
+        windows = clients(conn, windows);
     }
 
     let own_pid = std::process::id();
@@ -262,6 +266,64 @@ fn list_top_level_windows_on(
         ));
     }
     Ok(rects)
+}
+
+/// How many levels below a top-level window [`clients`] searches: a
+/// window manager's frame holds the client, or a wrapper that holds it.
+const CLIENT_DEPTH: usize = 2;
+
+/// The client window each of `tops` frames: the window itself, or the
+/// first window within [`CLIENT_DEPTH`] levels below it, that has the
+/// ICCCM `WM_STATE` a window manager sets on every client it manages. A
+/// window with none below it is its own client, as with no window
+/// manager. Each level's requests are sent before any reply is read.
+fn clients(conn: &impl Connection, tops: Vec<u32>) -> Vec<u32> {
+    let Some(wm_state) = atom_cached(conn, b"WM_STATE") else {
+        return tops;
+    };
+    let mut found: Vec<Option<u32>> = vec![None; tops.len()];
+    let mut level: Vec<(usize, u32)> = tops.iter().copied().enumerate().collect();
+    for depth in 0..=CLIENT_DEPTH {
+        let probes: Vec<_> = level
+            .iter()
+            .map(|&(top, win)| {
+                let state = conn
+                    .get_property(false, win, wm_state, AtomEnum::ANY, 0, 0)
+                    .ok();
+                let tree = if depth < CLIENT_DEPTH {
+                    conn.query_tree(win).ok()
+                } else {
+                    None
+                };
+                (top, win, state, tree)
+            })
+            .collect();
+        let _ = conn.flush();
+        let mut next = Vec::new();
+        for (top, win, state, tree) in probes {
+            let managed = state
+                .and_then(|c| c.reply().ok())
+                .is_some_and(|r| r.type_ != x11rb::NONE);
+            let tree = tree.and_then(|c| c.reply().ok());
+            if found[top].is_some() {
+                continue;
+            }
+            if managed {
+                found[top] = Some(win);
+            } else if let Some(tree) = tree {
+                next.extend(tree.children.into_iter().map(|child| (top, child)));
+            }
+        }
+        next.retain(|&(top, _)| found[top].is_none());
+        if next.is_empty() {
+            break;
+        }
+        level = next;
+    }
+    tops.into_iter()
+        .zip(found)
+        .map(|(top, client)| client.unwrap_or(top))
+        .collect()
 }
 
 /// The focused top-level window's rect in root (frame) pixels, from
