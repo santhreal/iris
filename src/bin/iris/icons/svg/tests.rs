@@ -166,3 +166,55 @@ fn every_icon_matches_its_mirror_images_but_across_its_listed_axes() {
         "differs from its mirror image by more than {TOLERANCE} of its ink and is not listed off that axis, or is listed and does not: {wrong:?}"
     );
 }
+
+/// The seams of `kind` drawn `size` logical px wide at scale factor 2: a
+/// gap under a pixel between two strokes, which paints as a run of
+/// partly covered pixels each between two covered ones. A run is 3 such
+/// pixels in a line along the gap: one alone is the inside corner of a
+/// bend or a junction. gpui paints an icon from a raster at twice its
+/// device size, downsampled by 2.
+fn seams(kind: Icon, size: f32) -> usize {
+    let (side, alpha) = coverage(kind, size * 2.0 / 18.0);
+    let half = side / 2;
+    let px: Vec<u16> = (0..half * half)
+        .map(|i| {
+            let (x, y) = (2 * (i % half), 2 * (i / half));
+            [(0, 0), (1, 0), (0, 1), (1, 1)]
+                .iter()
+                .map(|&(dx, dy)| u16::from(alpha[(y + dy) * side + x + dx]))
+                .sum::<u16>()
+                / 4
+        })
+        .collect();
+    let at = |x: usize, y: usize| px[y * half + x];
+    let (part, full) = (48..=200, 215);
+    // Partly covered between covered pixels left and right, or above
+    // and below.
+    let across = |x: usize, y: usize| {
+        part.contains(&at(x, y)) && at(x - 1, y) >= full && at(x + 1, y) >= full
+    };
+    let down = |x: usize, y: usize| {
+        part.contains(&at(x, y)) && at(x, y - 1) >= full && at(x, y + 1) >= full
+    };
+    (2..half - 2)
+        .flat_map(|y| (2..half - 2).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            (across(x, y - 1) && across(x, y) && across(x, y + 1))
+                || (down(x - 1, y) && down(x, y) && down(x + 1, y))
+        })
+        .count()
+}
+
+/// The trash's two inner strokes sat 0.64 units apart and painted as one
+/// grey bar at 12 and 14 px. No icon at 12, 14, or 16 px at scale factor
+/// 2 has a seam.
+#[test]
+fn no_icons_strokes_run_together_at_scale_factor_2() {
+    let wrong: Vec<String> = ALL
+        .iter()
+        .map(|&kind| (kind, [12.0, 14.0, 16.0].map(|size| seams(kind, size))))
+        .filter(|(_, found)| found.iter().any(|&n| n > 0))
+        .map(|(kind, found)| format!("{kind:?} {found:?}"))
+        .collect();
+    assert!(wrong.is_empty(), "seams at 12, 14, and 16 px: {wrong:?}");
+}

@@ -45,7 +45,7 @@ documents! {
     Blur => r##"<path d="M3.8 3.8L14.2 3.8L14.2 14.2L3.8 14.2Z"/><rect x="6.6" y="6.6" width="1.6" height="1.6" fill="#fff" stroke="none"/><rect x="9.8" y="6.6" width="1.6" height="1.6" fill="#fff" stroke="none"/><rect x="6.6" y="9.8" width="1.6" height="1.6" fill="#fff" stroke="none"/><rect x="9.8" y="9.8" width="1.6" height="1.6" fill="#fff" stroke="none"/>"##,
     Undo => r##"<path d="M7.4 3.6L4 7L7.4 10.4"/><path d="M4.4 7H10.6A3.8 3.8 0 0 1 10.6 14.6H8"/>"##,
     Redo => r##"<g transform="matrix(-1 0 0 1 18 0)"><path d="M7.4 3.6L4 7L7.4 10.4"/><path d="M4.4 7H10.6A3.8 3.8 0 0 1 10.6 14.6H8"/></g>"##,
-    Trash => r##"<path d="M4.4 5.6L13.6 5.6"/><path d="M7.4 4L10.6 4"/><path d="M5.4 5.6L6.2 14.2L11.8 14.2L12.6 5.6"/><path d="M8 7.6L8.3 12.2" stroke-width="1.36"/><path d="M10 7.6L9.7 12.2" stroke-width="1.36"/>"##,
+    Trash => r##"<path d="M4.4 5.6L13.6 5.6"/><path d="M7.4 4L10.6 4"/><path d="M5.4 5.6L6.2 14.2L11.8 14.2L12.6 5.6"/><path d="M9 7.8L9 12.2" stroke-width="1.4"/>"##,
     ChevronDown => r##"<path d="M5.4 7L9 10.6L12.6 7"/>"##,
     Check => r##"<path d="M4.4 9.6L7.8 13L13.6 5.2"/>"##,
     Copy => r##"<rect x="6.8" y="3.6" width="7.6" height="7.6" rx="1.6"/><path d="M11.2 14.4L5.2 14.4A1.6 1.6 0 0 1 3.6 12.8L3.6 6.8"/>"##,
@@ -76,7 +76,7 @@ documents! {
     Timer => r##"<circle cx="9" cy="10" r="5.6"/><path d="M7.2 2.6L10.8 2.6"/><path d="M9 2.6L9 4.4"/><path d="M9 10L9 7.2"/><path d="M13.2 4.8L14.2 5.8"/>"##,
     Minimize => r##"<path d="M5.4 9L12.6 9"/>"##,
     Maximize => r##"<rect x="5.4" y="5.4" width="7.2" height="7.2" rx="1"/>"##,
-    Restore => r##"<rect x="5.4" y="7.4" width="5.2" height="5.2" rx="0.8"/><path d="M7.4 5.4L12.6 5.4L12.6 10.6"/>"##,
+    Restore => r##"<rect x="5.4" y="8" width="4.6" height="4.6" rx="0.8"/><path d="M8 5.4L12.6 5.4L12.6 10"/>"##,
     WindowClose => r##"<path d="M5.4 5.4L12.6 12.6"/><path d="M12.6 5.4L5.4 12.6"/>"##,
     CaptionMinimize => r##"<path d="M4 9.5L14 9.5" stroke-width="1" stroke-linecap="butt"/>"##,
     CaptionMaximize => r##"<rect x="4.5" y="4.5" width="9" height="9" rx="1" stroke-width="1"/>"##,
@@ -123,9 +123,12 @@ pub(crate) fn ink_box(kind: Icon) -> [f32; 4] {
 
 // WHY: the classes closed here are "an icon draws outside its box or
 // not at all": every variant's document parses, draws ink, and leaves
-// the box's edge clear, so no stroke is cut off; and "a glyph sits off
-// its box's centre", which a button centres by its box. Not covered:
-// how a glyph reads, which the screenshots show (`tests/glyphs.rs`
-// reads overlaps on screen).
+// the box's edge clear, so no stroke is cut off; "a glyph sits off its
+// box's centre", which a button centres by its box; and "two strokes
+// run together into a grey bar", a gap under a device pixel at the
+// sizes the chrome draws on a scale factor 2 screen. Not covered: how a
+// glyph reads, which the screenshots show (`tests/glyphs.rs` reads
+// overlaps on screen), and scale factor 1, where a 12 px glyph has no
+// room for such a gap.
 #[cfg(test)]
 mod tests;
