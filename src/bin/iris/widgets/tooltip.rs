@@ -35,10 +35,11 @@ impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // GPUI places the tooltip at the pointer; the margin keeps the
         // pill clear of the cursor glyph.
-        div()
-            .pl(px(6.))
-            .pt(px(16.))
-            .child(tip_pill(self.label.clone(), self.shortcut.as_deref()))
+        div().pl(px(6.)).pt(px(16.)).child(tip_pill(
+            self.label.clone(),
+            self.shortcut.as_deref(),
+            theme::shadow_float(),
+        ))
     }
 }
 
@@ -48,9 +49,11 @@ pub const NAME_GAP: f32 = 4.0;
 /// The name of the control whose hover group is `group`, drawn beside
 /// it while the pointer is on it, as tall as the control's `height`:
 /// for a surface with no room for a tooltip at the pointer. The caller
-/// places it with `left` or `right`, NAME_GAP past the control.
+/// places it with `left` or `right`, NAME_GAP past the control. Its
+/// shadow is a contact shadow: a float shadow's blur would dim the
+/// neighbouring controls and text NAME_GAP away.
 pub fn hover_name(group: &'static str, label: impl Into<SharedString>, height: f32) -> Div {
-    tip_pill(label.into(), None)
+    tip_pill(label.into(), None, theme::shadow_knob())
         .absolute()
         .top_0()
         .h(px(height))
@@ -60,8 +63,8 @@ pub fn hover_name(group: &'static str, label: impl Into<SharedString>, height: f
 }
 
 /// The tooltip's pill: `label`, then `shortcut` in secondary color when
-/// there is one.
-fn tip_pill(label: SharedString, shortcut: Option<&str>) -> Div {
+/// there is one, over `shadow`.
+fn tip_pill(label: SharedString, shortcut: Option<&str>, shadow: Vec<BoxShadow>) -> Div {
     div()
         .flex()
         .items_center()
@@ -72,7 +75,7 @@ fn tip_pill(label: SharedString, shortcut: Option<&str>) -> Div {
         .bg(theme::BG_ELEV)
         .border_1()
         .border_color(theme::HAIRLINE)
-        .shadow(theme::shadow_float())
+        .shadow(shadow)
         .font_family(theme::FONT)
         .text_size(px(theme::TEXT_SMALL))
         .whitespace_nowrap()

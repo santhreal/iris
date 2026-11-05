@@ -281,6 +281,26 @@ fn lightened(before: &[[u8; 3]], after: &[[u8; 3]]) -> Vec<usize> {
         .collect()
 }
 
+/// The pixels that differ between `before` and `after` by more than a
+/// redraw's noise, as (x, y).
+fn changed(before: &[[u8; 3]], after: &[[u8; 3]], w: usize) -> Vec<(usize, usize)> {
+    (0..before.len())
+        .filter(|&i| {
+            before[i]
+                .iter()
+                .zip(after[i])
+                .any(|(a, b)| a.abs_diff(b) > 6)
+        })
+        .map(|i| (i % w, i / w))
+        .collect()
+}
+
+// WHY: the class closed here is "a hover name draws over its
+// neighbours": the name sits NAME_GAP from the other buttons and above
+// the detail line, and a float shadow's blur dimmed both. Lighter pixels
+// place the name; any change past its row's contact band, or on
+// Install, is the name drawing on something else. It does not cover a
+// toast's corner names, which use the same widgets::hover_name.
 #[test]
 fn a_buttons_name_shows_on_its_row_clear_of_the_buttons() {
     let Some(s) = session("notice: names") else {
@@ -316,6 +336,16 @@ fn a_buttons_name_shows_on_its_row_clear_of_the_buttons() {
         .filter(|&&i| INSTALL_X.contains(&(i % w)))
         .count();
     assert_eq!(on_install, 0, "Close's name covers Install");
+    let below = ROW.end + 4;
+    let spill: Vec<(usize, usize)> = changed(&before, &after, w)
+        .into_iter()
+        .filter(|&(x, y)| !(ROW.start - 2..below).contains(&y) || INSTALL_X.contains(&x))
+        .collect();
+    assert!(
+        spill.is_empty(),
+        "Close's name changed Install or the card past its row, at {:?}",
+        &spill[..spill.len().min(5)]
+    );
 }
 
 #[test]
@@ -324,9 +354,14 @@ fn a_hover_on_a_saved_notice_draws_inside_its_card() {
         return;
     };
     let (conn, root) = rec.x();
+    // The pick's guide is a notice too, and may still be leaving: the
+    // saved notice is the one the stop opens.
+    let guides = windows_of(conn, root, NOTICE);
     rec.daemon.send(&["--record-window"]);
     let notice = rec.daemon.until("the saved notice to open", || {
-        windows_of(conn, root, NOTICE).first().copied()
+        windows_of(conn, root, NOTICE)
+            .into_iter()
+            .find(|w| !guides.contains(w))
     });
     let (x, y, _, _) = rect(conn, root, notice);
     let at = |(dx, dy): (i16, i16)| (x + dx, y + dy);

@@ -301,7 +301,8 @@ pub fn advance_sum(text: &str, size: f32) -> f32 {
 
 use gpui::{point, BoxShadow};
 
-/// The soft drop under a toggle knob and similar raised discs.
+/// The soft drop under a toggle knob, similar raised discs, and a
+/// control's name drawn beside it.
 pub fn shadow_knob() -> Vec<BoxShadow> {
     vec![BoxShadow {
         color: gpui::hsla(0.0, 0.0, 0.0, 0.30),
