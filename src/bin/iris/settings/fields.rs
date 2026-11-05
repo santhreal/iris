@@ -260,6 +260,7 @@ impl Settings {
             return;
         }
         self.open_pick = None;
+        self.edit_note = None;
         self.field_scroll.set(0.0);
         self.editing = Some(Edit {
             field,
@@ -338,8 +339,8 @@ impl Settings {
                 self.persist(false);
             }
             Err(e) => {
-                self.status = Some(format!("{e}; type the folder path instead"));
                 self.begin_edit(field);
+                self.edit_note = Some((field, format!("{e}; type the folder path instead")));
             }
         }
     }

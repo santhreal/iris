@@ -116,6 +116,10 @@ pub struct Settings {
     /// folder picker), shown in the status pill until the next change
     /// applies.
     pub(super) status: Option<String>,
+    /// Advice for the edit open on its field, shown in the status pill
+    /// while that edit stays open: a folder picker that did not open
+    /// leaves its path open for typing.
+    pub(super) edit_note: Option<(Field, String)>,
     pub(super) release: Release,
     /// The update row's state line after a check or an install started
     /// in this window. None shows when the last check ran.
@@ -145,6 +149,7 @@ impl Settings {
             menu_lit: None,
             ring: None,
             status: None,
+            edit_note: None,
             release,
             update_note: None,
             last_checked: None,
@@ -173,6 +178,16 @@ impl Settings {
     /// The pane shown.
     pub(crate) fn pane(&self) -> Pane {
         self.pane
+    }
+
+    /// The status pill's text: a failure to apply a setting, else the
+    /// open edit's note.
+    pub(super) fn pill(&self) -> Option<&str> {
+        self.status.as_deref().or_else(|| {
+            let (field, note) = self.edit_note.as_ref()?;
+            let open = self.editing.as_ref().is_some_and(|e| e.field == *field);
+            open.then_some(note.as_str())
+        })
     }
 
     /// The config as last written: the library reads its shortcuts
@@ -352,8 +367,8 @@ impl Render for Settings {
                 cx.listener(|this, _, _, _| this.field_drag = false),
             )
             .child(content);
-        if let Some(status) = &self.status {
-            root = root.child(widgets::status_pill(status.clone(), 10.0));
+        if let Some(text) = self.pill() {
+            root = root.child(widgets::status_pill(text.to_string(), 10.0));
         }
         root
     }

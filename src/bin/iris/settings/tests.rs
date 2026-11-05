@@ -311,6 +311,12 @@ fn a_global_hotkey_needs_a_modifier_and_esc_stops_its_recording() {
     );
 }
 
+// WHY: the class closed here is "a picker failure's advice outlives the
+// edit it advises": the pill said to type the folder path on every pane
+// after that edit ended. Each way the edit ends (a commit of the same
+// text, a pane change, Restore Defaults, another field opening) must
+// hide it, and a reopened field must not bring it back. It does not
+// cover the Escape key, which needs a window.
 #[test]
 #[serial_test::serial]
 fn a_chosen_folder_applies_and_a_picker_failure_opens_the_path_for_typing() {
@@ -320,18 +326,33 @@ fn a_chosen_folder_applies_and_a_picker_failure_opens_the_path_for_typing() {
     s.picked(Field::RecordingsDir, Ok(recs.clone()));
     assert_eq!(Config::load().recordings_dir, recs);
 
-    s.picked(
-        Field::ScreenshotsDir,
-        Err("The folder picker did not open".into()),
-    );
-    assert_eq!(
-        s.status.as_deref(),
-        Some("The folder picker did not open; type the folder path instead")
-    );
-    assert_eq!(
-        s.editing.as_ref().map(|e| e.field),
-        Some(Field::ScreenshotsDir)
-    );
+    let advice = "The folder picker did not open; type the folder path instead";
+    type End = fn(&mut Settings);
+    let ends: [(&str, End); 4] = [
+        ("a commit", |s| assert!(s.blur())),
+        ("a pane change", |s| assert!(s.select_pane(Pane::Shortcuts))),
+        ("Restore Defaults", |s| s.restore_defaults()),
+        ("another field", |s| s.begin_edit(Field::Template)),
+    ];
+    for (end, run) in ends {
+        s.pane = Pane::General;
+        s.picked(
+            Field::ScreenshotsDir,
+            Err("The folder picker did not open".into()),
+        );
+        assert_eq!(s.pill(), Some(advice), "{end}");
+        assert_eq!(
+            s.editing.as_ref().map(|e| e.field),
+            Some(Field::ScreenshotsDir),
+            "{end}"
+        );
+        run(&mut s);
+        assert_eq!(s.pill(), None, "the advice outlived {end}");
+        s.editing = None;
+        s.begin_edit(Field::ScreenshotsDir);
+        assert_eq!(s.pill(), None, "reopening the field after {end}");
+        s.editing = None;
+    }
 }
 
 #[test]
