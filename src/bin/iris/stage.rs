@@ -567,6 +567,7 @@ impl Render for ToastStage {
                         stage.menu_at = Some(actions::menu_place(
                             (ev.position.x.into(), ev.position.y.into()),
                             (win.width.into(), win.height.into()),
+                            stage.cfg.toast_position,
                         ));
                         stage.menu_opened = None;
                         cx.notify();

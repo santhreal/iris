@@ -52,11 +52,9 @@ use x11::{move_to, paint_root, pixel, rect, windows_of, Compositor};
 const DESKTOP: u32 = 0x5b7fa6;
 const TOAST: &str = "Screenshot - iris";
 
-/// The toast's card sits BLEED in from its window's top-left corner
-/// (theme::CARD_BLEED) and MARGIN in from the screen's edges
-/// (stage::MARGIN). A 1280x1024 capture's card is 175x140.
-const BLEED: i16 = 44;
-const MARGIN: i16 = 12;
+/// The 175x140 card of a 1280x1024 capture's toast, MARGIN in from the
+/// screen's edges (stage::MARGIN).
+const MARGIN: i16 = x11::TOAST_MARGIN;
 const CARD: (i16, i16) = (175, 140);
 
 /// Every animation runs this many times slower, so the entrance spans
@@ -167,7 +165,7 @@ fn entrance(case: &str, reduced_motion: u32) -> Option<Entrance> {
         windows_of(&conn, root, TOAST).first().copied()
     });
     let (x, y, w, h) = rect(&conn, root, window);
-    let card = (x + BLEED, y + BLEED);
+    let card = x11::toast_card(&conn, root, window, CARD);
     let mid = card.1 + CARD.1 / 2;
     assert_eq!(
         (x + w as i16, y + h as i16),

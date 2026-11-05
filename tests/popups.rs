@@ -68,12 +68,16 @@ const SIZE: (u16, u16) = (1280, 1024);
 /// The root window's colour, 0xRRGGBB.
 const DESKTOP: u32 = 0x5b7fa6;
 
-/// A pop-up window's room for the card's shadow on the card's inner
+/// A notice window's room for the card's shadow on the card's inner
 /// sides, and its gap to the screen edge on the outer ones, in pixels at
-/// scale 1 (theme::CARD_BLEED, stage::MARGIN, notice::MARGIN). A pop-up
-/// in the default bottom-right corner has its card at (BLEED, BLEED).
+/// scale 1 (theme::CARD_BLEED, notice::MARGIN). A notice in the default
+/// bottom-right corner has its card at (BLEED, BLEED).
 const BLEED: i16 = 44;
 const MARGIN: i16 = 12;
+/// The 175x140 card of a 1280x1024 capture's toast, `x11::TOAST_MARGIN`
+/// in from its window's right and bottom edges. The toast's window
+/// grows up and to the left past the card's shadow for its context menu.
+const TOAST_CARD: (i16, i16) = (175, 140);
 
 /// The titles of the toast's and a notice's windows.
 const TOAST: &str = "Screenshot - iris";
@@ -431,12 +435,10 @@ fn input(
         .reply()
         .unwrap();
     let size = conn.get_geometry(window).unwrap().reply().unwrap();
-    let mut spots = vec![("the room around the card", (BLEED / 2, BLEED / 2), false)];
+    let (x, y, w, h) = rest_of(title, size.width as i16, size.height as i16);
+    let mut spots = vec![("the room around the card", (x / 2, y / 2), false)];
     if card {
-        let centre = (
-            BLEED + (size.width as i16 - BLEED - MARGIN) / 2,
-            BLEED + (size.height as i16 - BLEED - MARGIN) / 4,
-        );
+        let centre = (x + w as i16 / 2, y + h as i16 / 4);
         spots.push(("the card", centre, true));
     }
     for (what, (x, y), takes) in spots {
@@ -455,6 +457,23 @@ fn input(
 /// A window's bounding shape when it has one: the extents x, y, width,
 /// and height.
 type Shape = (i16, i16, u16, u16);
+
+/// The card's rect at rest in the `w`x`h` pop-up window titled `title`
+/// in the default bottom-right corner.
+fn rest_of(title: &str, w: i16, h: i16) -> Shape {
+    if title == TOAST {
+        let m = x11::TOAST_MARGIN;
+        let (cw, ch) = TOAST_CARD;
+        (w - m - cw, h - m - ch, cw as u16, ch as u16)
+    } else {
+        (
+            BLEED,
+            BLEED,
+            (w - BLEED - MARGIN) as u16,
+            (h - BLEED - MARGIN) as u16,
+        )
+    }
+}
 
 /// The bounding shape of `window`, None when it has none or is gone.
 fn shape(conn: &RustConnection, window: u32) -> Option<Shape> {
@@ -513,13 +532,7 @@ fn card(
         windows_of(conn, root, title).first().copied()
     });
     let size = conn.get_geometry(window).unwrap().reply().unwrap();
-    let (w, h) = (size.width as i16, size.height as i16);
-    let rest = (
-        BLEED,
-        BLEED,
-        (w - BLEED - MARGIN) as u16,
-        (h - BLEED - MARGIN) as u16,
-    );
+    let rest = rest_of(title, size.width as i16, size.height as i16);
     if compositor {
         // The card slides in and settles; the daemon then goes idle.
         daemon.settle();
@@ -554,7 +567,8 @@ fn card(
         .reply()
         .unwrap();
     let pixel = |x: i16, y: i16| x11::pixel(conn, root, (at.dst_x + x, at.dst_y + y));
-    let shown: Vec<((i16, i16), u32)> = [(BLEED / 2, BLEED / 2), (BLEED, BLEED)]
+    let (x, y, _, _) = rest;
+    let shown: Vec<((i16, i16), u32)> = [(x / 2, y / 2), (x, y)]
         .into_iter()
         .map(|(x, y)| ((x, y), pixel(x, y)))
         .filter(|&(_, colour)| colour != DESKTOP)

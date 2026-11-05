@@ -3,7 +3,9 @@
 
 use gpui::*;
 
-use crate::widgets::{self, menu, menu_separator, MenuItem, MenuKey, MENU_PAD, MENU_ROW_H, MENU_W};
+use crate::widgets::{
+    self, menu, menu_separator, MenuItem, MenuKey, MENU_PAD, MENU_ROW_H, MENU_SEPARATOR_H, MENU_W,
+};
 
 use super::Library;
 use crate::sys::reveal::LABEL as REVEAL_LABEL;
@@ -88,14 +90,12 @@ const SEPARATORS: usize = {
     }
     n
 };
-/// A separator's height with its margins (`menu_separator`).
-const SEPARATOR_H: f32 = 9.0;
 /// Space kept between the menu and the window edge.
 const EDGE: f32 = 4.0;
 
 /// The menu's height.
 pub(super) const MENU_H: f32 =
-    MenuRow::ALL.len() as f32 * MENU_ROW_H + SEPARATORS as f32 * SEPARATOR_H + 2.0 * MENU_PAD;
+    MenuRow::ALL.len() as f32 * MENU_ROW_H + SEPARATORS as f32 * MENU_SEPARATOR_H + 2.0 * MENU_PAD;
 
 /// Where a menu of `MENU_W` x `MENU_H` opened at `at` goes in a
 /// `win_w` x `win_h` window: at the pointer, moved left to stay inside

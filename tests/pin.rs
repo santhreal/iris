@@ -55,16 +55,22 @@ const WHEEL_DOWN: u8 = 5;
 const FROM: (i16, i16) = (200, 200);
 const TO: (i16, i16) = (520, 440);
 
-/// The toast's card sits BLEED in from its window's top-left corner.
-/// Its context menu is MENU_W wide, MENU_PAD above its first row, rows
-/// MENU_ROW_H tall, ROWS of them, and stays 2 px inside the window
-/// (theme::CARD_BLEED, widgets::menu). Pin to Screen is row PIN_ROW.
-const BLEED: i16 = 44;
+/// The 187x140 card of the FROM..TO capture's toast. Its context menu
+/// is MENU_W wide, MENU_PAD above its first row, rows MENU_ROW_H tall,
+/// ROWS of them with one SEPARATOR_H separator above the last, and stays
+/// MENU_EDGE inside the window's right and bottom edges, on the screen's
+/// edges, and MENU_ROOM inside its left and top ones, for its shadow
+/// (widgets::menu, stage::actions). Pin to Screen is row PIN_ROW, above
+/// the separator.
+const CARD: (i16, i16) = (187, 140);
 const MENU_W: i16 = 192;
 const MENU_PAD: i16 = 5;
 const MENU_ROW_H: i16 = 24;
+const SEPARATOR_H: i16 = 9;
 const ROWS: i16 = 6;
 const PIN_ROW: i16 = 4;
+const MENU_EDGE: i16 = 2;
+const MENU_ROOM: i16 = 58;
 
 /// The pins' step down and right (pin::CASCADE).
 const CASCADE: i16 = 24;
@@ -530,13 +536,14 @@ fn pin_from_toast(conn: &RustConnection, root: u32, daemon: &Daemon) {
     });
     daemon.settle();
     let (x, y, w, h) = rect(conn, root, toast);
-    let press = (BLEED + 20, BLEED + 20);
+    let card = x11::toast_card(conn, root, toast, CARD);
+    let press = (card.0 - x + 20, card.1 - y + 20);
     click_with(conn, root, (x + press.0, y + press.1), 3);
     daemon.settle();
-    let menu_h = ROWS * MENU_ROW_H + 2 * MENU_PAD;
+    let menu_h = ROWS * MENU_ROW_H + SEPARATOR_H + 2 * MENU_PAD;
     let menu = (
-        press.0.min(w as i16 - MENU_W - 2).max(2),
-        press.1.min(h as i16 - menu_h - 2).max(2),
+        press.0.min(w as i16 - MENU_W - MENU_EDGE).max(MENU_ROOM),
+        press.1.min(h as i16 - menu_h - MENU_EDGE).max(MENU_ROOM),
     );
     click(
         conn,

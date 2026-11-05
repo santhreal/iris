@@ -74,7 +74,7 @@ use app_window::{FIELD_W, INSET, TEMPLATE_Y};
 use daemon::{enabled, xvfb_sized, Daemon};
 use x11::{
     click, client, cursor, drag, extent, field_left_of, hold, let_go, move_to, paint_root,
-    press_and_move, rect, release, tap, windows_of, CursorImage,
+    press_and_move, rect, release, tap, toast_card, windows_of, CursorImage,
 };
 
 const DESKTOP: u32 = 0x5b7fa6;
@@ -119,10 +119,9 @@ const BAR: [(&str, i16); 4] = [
 ];
 const RUN: (i16, i16) = (BAR_LEFT + 270, ROW);
 
-/// The toast's card sits BLEED in from its window's top-left corner; on
-/// it, the centers of the Close disc and the Copy pill
-/// (`tests/toast_actions.rs`).
-const BLEED: i16 = 44;
+/// The 175x140 card of a 1280x1024 capture's toast; on it, the centers
+/// of the Close disc and the Copy pill (`tests/toast_actions.rs`).
+const CARD: (i16, i16) = (175, 140);
 const CLOSE: (i16, i16) = (17, 17);
 const COPY: (i16, i16) = (51, 70);
 
@@ -302,8 +301,7 @@ fn the_toast_shows_the_arrow_over_its_buttons() {
         windows_of(&s.conn, s.root, TOAST).first().copied()
     });
     s.daemon.settle();
-    let (x, y, _, _) = rect(&s.conn, s.root, toast);
-    let card = (x + BLEED, y + BLEED);
+    let card = toast_card(&s.conn, s.root, toast, CARD);
     for (button, spot) in [("Close disc", CLOSE), ("Copy pill", COPY)] {
         s.arrow_at(
             &format!("the toast's {button}"),

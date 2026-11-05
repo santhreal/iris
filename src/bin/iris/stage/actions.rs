@@ -10,7 +10,7 @@ use super::*;
 use crate::{
     icons::Icon,
     motion, pipeline,
-    widgets::{hover_name, MENU_PAD, MENU_ROW_H, MENU_W, NAME_GAP},
+    widgets::{hover_name, MENU_PAD, MENU_ROW_H, MENU_SEPARATOR_H, MENU_W, NAME_GAP},
 };
 
 impl ToastStage {
@@ -294,8 +294,11 @@ impl ToastStage {
             .top(px(area.y))
             .opacity(mt * opacity);
         for row in ToastRow::ALL {
+            if row.starts_group() {
+                menu = menu.child(crate::widgets::menu_separator());
+            }
             let mut item = crate::widgets::MenuItem::new(row.id(), row.label());
-            if row == ToastRow::Trash {
+            if row.destructive() {
                 item = item.destructive();
             }
             menu = menu.child(item.into_row().on_click(cx.listener(
@@ -538,20 +541,75 @@ impl ToastRow {
             ToastRow::Trash => "Move to Trash",
         }
     }
+
+    /// Removes the capture: drawn in the destructive color.
+    pub(super) const fn destructive(self) -> bool {
+        matches!(self, ToastRow::Trash)
+    }
+
+    /// A separator goes above this row: the destructive row stands
+    /// apart from the others, as in the library's card menu.
+    pub(super) const fn starts_group(self) -> bool {
+        self.destructive()
+    }
 }
 
+/// The context menu's separators.
+const SEPARATORS: usize = {
+    let (mut n, mut i) = (0, 0);
+    while i < ToastRow::ALL.len() {
+        if ToastRow::ALL[i].starts_group() {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+};
+
 /// The context menu's height.
-pub(super) const MENU_H: f32 = ToastRow::ALL.len() as f32 * MENU_ROW_H + 2.0 * MENU_PAD;
-/// Space kept between the context menu and the window's edge.
+pub(super) const MENU_H: f32 =
+    ToastRow::ALL.len() as f32 * MENU_ROW_H + SEPARATORS as f32 * MENU_SEPARATOR_H + 2.0 * MENU_PAD;
+/// Space kept between the context menu and a window edge on the
+/// screen's edge, where the screen ends the menu's shadow.
 pub(super) const MENU_EDGE: f32 = 2.0;
+/// Space kept between the context menu and a window edge that faces
+/// the screen: the reach of its shadow (`theme::shadow_float`), so the
+/// window's edge does not cut the shadow off in a straight line.
+pub(super) const MENU_ROOM: f32 = 58.0;
 
 /// Where the context menu opened at window point `at` goes in a
-/// `win` (width, height) window: at the pointer, moved left and up to
-/// stay MENU_EDGE inside the window.
-pub(super) fn menu_place(at: (f32, f32), win: (f32, f32)) -> (f32, f32) {
+/// `win` (width, height) window resting in the screen's `corner`: at
+/// the pointer, moved to stay MENU_EDGE inside the window's edges on
+/// the screen's edges and MENU_ROOM inside the others.
+pub(super) fn menu_place(
+    at: (f32, f32),
+    win: (f32, f32),
+    corner: iris_lib::config::ToastPosition,
+) -> (f32, f32) {
+    use iris_lib::config::ToastPosition::{BottomLeft, BottomRight, TopRight};
+    // The start of a span `size` long in a window `win` long, the
+    // window's far edge on the screen's edge or not.
+    let span = |at: f32, win: f32, size: f32, far_on_edge: bool| {
+        let (near, far) = if far_on_edge {
+            (MENU_ROOM, MENU_EDGE)
+        } else {
+            (MENU_EDGE, MENU_ROOM)
+        };
+        at.min(win - size - far).max(near)
+    };
     (
-        at.0.min(win.0 - MENU_W - MENU_EDGE).max(MENU_EDGE),
-        at.1.min(win.1 - MENU_H - MENU_EDGE).max(MENU_EDGE),
+        span(
+            at.0,
+            win.0,
+            MENU_W,
+            matches!(corner, BottomRight | TopRight),
+        ),
+        span(
+            at.1,
+            win.1,
+            MENU_H,
+            matches!(corner, BottomRight | BottomLeft),
+        ),
     )
 }
 

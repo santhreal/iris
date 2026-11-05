@@ -54,7 +54,7 @@ fn a_toast_drag_onto_a_folder_window_copies_the_capture_there() {
     let folder = desk::open_folder(&dest);
     println!("toast {toast:?}, folder window {:?}", folder.rect);
 
-    // The window's center lies on the card for any toast size. The
+    // The window's center lies on this capture's 200x125 card. The
     // folder window sits left of the toast: the first move is away from
     // the toast's screen edge, so it starts a drag, not a dismiss swipe.
     drag(toast.at(0.5, 0.5), folder.rect.at(0.65, 0.6));

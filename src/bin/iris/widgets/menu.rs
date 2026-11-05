@@ -177,11 +177,17 @@ impl MenuItem {
     }
 }
 
+/// The space above and below a separator's line.
+const SEPARATOR_MARGIN: f32 = 4.0;
+/// A separator's height with its margins, for a caller that sizes a
+/// menu without laying it out.
+pub const MENU_SEPARATOR_H: f32 = 1.0 + 2.0 * SEPARATOR_MARGIN;
+
 /// A thin separator between groups of menu rows.
 pub fn menu_separator() -> Div {
     div()
         .h(px(1.))
-        .my(px(4.))
+        .my(px(SEPARATOR_MARGIN))
         .mx(px(MENU_PAD + 4.))
         .bg(theme::HAIRLINE)
 }

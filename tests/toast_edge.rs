@@ -32,13 +32,11 @@ mod x11;
 use x11rb::connection::Connection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{channels, move_to, paint_root, pixel, rect, windows_of};
+use x11::{channels, move_to, paint_root, pixel, toast_card, windows_of};
 
 const TOAST: &str = "Screenshot - iris";
 
-/// The toast's card sits BLEED in from its window's top-left corner
-/// (theme::CARD_BLEED). A 1280x1024 capture's card is 175x140.
-const BLEED: i16 = 44;
+/// The 175x140 card of a 1280x1024 capture's toast.
 const CARD: (i16, i16) = (175, 140);
 
 /// How far a channel may stray from the blend gpui draws.
@@ -75,8 +73,7 @@ fn outline(case: &str, rgb: u32) {
         windows_of(&conn, root, TOAST).first().copied()
     });
     daemon.settle();
-    let (x, y, _, _) = rect(&conn, root, window);
-    let card = (x + BLEED, y + BLEED);
+    let card = toast_card(&conn, root, window, CARD);
     let (w, h) = CARD;
     let blend = |c: u32| (c as f32 + (EDGE_GRAY - c as f32) * EDGE_ALPHA).round() as u32;
     let edge = channels(rgb).map(blend);

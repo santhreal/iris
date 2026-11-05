@@ -109,6 +109,23 @@ pub fn rect(conn: &impl Connection, root: u32, window: u32) -> (i16, i16, u16, u
     (at.dst_x, at.dst_y, size.width, size.height)
 }
 
+/// The gap between a toast's card and its window's right and bottom
+/// edges in the default bottom-right corner, in pixels at scale 1
+/// (stage::MARGIN). The window grows up and to the left past the card
+/// for the card's shadow and for the context menu with its shadow.
+pub const TOAST_MARGIN: i16 = 12;
+
+/// The top-left corner in root pixels of the `card` (width, height)
+/// card of the toast `window` resting in the default bottom-right
+/// corner.
+pub fn toast_card(conn: &impl Connection, root: u32, window: u32, card: (i16, i16)) -> (i16, i16) {
+    let (x, y, w, h) = rect(conn, root, window);
+    (
+        x + w as i16 - TOAST_MARGIN - card.0,
+        y + h as i16 - TOAST_MARGIN - card.1,
+    )
+}
+
 /// The colour the screen shows at `spot`, 0xRRGGBB.
 pub fn pixel(conn: &impl Connection, root: u32, spot: (i16, i16)) -> u32 {
     let image = conn

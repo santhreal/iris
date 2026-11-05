@@ -114,6 +114,8 @@ Menu choices in order:
 5. **Pin to Screen**: Opens the capture in a [pinned window](#pinned-windows) and dismisses the toast.
 6. **Move to Trash**: Moves the PNG file to the system trash, removes the cached thumbnail, deletes the library entry, and dismisses the toast.
 
+A separator sets **Move to Trash** apart from the rows above it. The menu opens at the pointer and moves to stay inside the toast's window, which keeps room for the menu's shadow on its sides away from the screen's edges.
+
 ## Reveal in Folder
 
 Platform implementations for folder reveal:

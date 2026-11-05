@@ -292,44 +292,102 @@ fn status_holds_the_slot_off_pointer_while_busy_and_through_the_hold() {
     assert!(status_holds_slot(true, true, true, stale));
 }
 
-// WHY: the class closed here is "the toast's context menu cut off by
-// its own window". The window was the card plus its bleed and margin,
-// so the card of a wide capture (a short card) or a tall one (a narrow
-// card) had a window smaller than the menu, and the menu opened past
-// its edge. Every card size the toast can have and a right click at
-// each of the card's corners must place the whole menu inside the
-// window. A card whose window already holds the menu keeps that window,
-// so the transparent area around a common capture's card does not
-// grow. Not covered: the menu's paint, and a toast window the platform
-// sizes differently than asked.
+// WHY: the class closed here is "the toast's context menu or its shadow
+// cut off by its own window". The window was the card plus its bleed
+// and margin, so the card of a wide capture (a short card) or a tall
+// one (a narrow card) had a window smaller than the menu, and the menu
+// opened past its edge; then a window that held the menu 2 px inside
+// its edges cut the menu's shadow off in a straight line above it.
+// Every card size the toast can have, in every corner, and a right
+// click at each of the card's corners must place the whole menu inside
+// the window, with the shadow's reach between it and every window edge
+// that faces the screen. The window is no larger than the card or the
+// menu needs. Not covered: the menu's paint, and a toast window the
+// platform sizes differently than asked.
 #[test]
-fn the_toast_menu_fits_its_window_for_every_card_size() {
+fn the_toast_menu_and_its_shadow_fit_its_window_for_every_card_size() {
     use crate::widgets::MENU_W;
-    use actions::{menu_place, MENU_EDGE, MENU_H};
+    use actions::{menu_place, MENU_EDGE, MENU_H, MENU_ROOM};
+    use iris_lib::config::ToastPosition::{self, BottomLeft, BottomRight, TopLeft, TopRight};
+    let reach = crate::theme::shadow_reach(&crate::theme::shadow_float());
+    assert!(
+        MENU_ROOM >= reach,
+        "the menu's shadow reaches {reach}px; its window keeps {MENU_ROOM}px"
+    );
+    let corners: [ToastPosition; 4] = [BottomRight, BottomLeft, TopRight, TopLeft];
     for w in (1..=MAX_W as u32).step_by(3) {
         for h in (1..=MAX_H as u32).step_by(3) {
             let card = (w as f32, h as f32);
             let win = window::window_size(card);
-            // The card rests in the window's bottom-right corner; the
-            // other corners mirror it.
-            let (x0, y0) = (win.0 - MARGIN - card.0, win.1 - MARGIN - card.1);
-            for at in [
-                (x0, y0),
-                (x0 + card.0, y0),
-                (x0, y0 + card.1),
-                (win.0 - MARGIN, win.1 - MARGIN),
-            ] {
-                let (mx, my) = menu_place(at, win);
+            for (side, card_side, menu_side) in [(win.0, card.0, MENU_W), (win.1, card.1, MENU_H)] {
                 assert!(
-                    mx >= MENU_EDGE
-                        && my >= MENU_EDGE
-                        && mx + MENU_W <= win.0 - MENU_EDGE
-                        && my + MENU_H <= win.1 - MENU_EDGE,
-                    "card {card:?}: a menu opened at {at:?} lands at ({mx}, {my}) in a {win:?} window"
+                    side == card_side + BLEED + MARGIN || side == menu_side + MENU_EDGE + MENU_ROOM,
+                    "card {card:?}: a {win:?} window is larger than the card or the menu needs"
                 );
+            }
+            for corner in corners {
+                let right = matches!(corner, BottomRight | TopRight);
+                let bottom = matches!(corner, BottomRight | BottomLeft);
+                let x0 = if right {
+                    win.0 - MARGIN - card.0
+                } else {
+                    MARGIN
+                };
+                let y0 = if bottom {
+                    win.1 - MARGIN - card.1
+                } else {
+                    MARGIN
+                };
+                // The least gap to each edge: left, top, right, bottom.
+                let need = [
+                    if right { MENU_ROOM } else { MENU_EDGE },
+                    if bottom { MENU_ROOM } else { MENU_EDGE },
+                    if right { MENU_EDGE } else { MENU_ROOM },
+                    if bottom { MENU_EDGE } else { MENU_ROOM },
+                ];
+                for at in [
+                    (x0, y0),
+                    (x0 + card.0, y0),
+                    (x0, y0 + card.1),
+                    (x0 + card.0, y0 + card.1),
+                ] {
+                    let (mx, my) = menu_place(at, win, corner);
+                    let gaps = [mx, my, win.0 - mx - MENU_W, win.1 - my - MENU_H];
+                    assert!(
+                        gaps.iter().zip(need).all(|(&g, n)| g >= n),
+                        "card {card:?} at {corner:?}: a menu opened at {at:?} lands at ({mx}, {my}) in a {win:?} window, {gaps:?} from its edges"
+                    );
+                }
             }
         }
     }
-    // A 16:9 capture's card already holds the menu.
-    assert_eq!(window::window_size((200.0, 113.0)), (256.0, 169.0));
+}
+
+// WHY: the class closed here is "a destructive menu row sits in a group
+// with the rows beside it". The toast's context menu drew Move to Trash
+// directly under Pin to Screen, one slip of the pointer from it, where
+// the library's card menu and the editor's More menu set their
+// destructive row apart with a separator. Every destructive row of the
+// toast menu must open a group of its own, and the menu's height must
+// count that group's separator, or the menu placed by that height runs
+// past the window. Not covered: the library's and the editor's menus,
+// whose tables are private to their modules; the separator's paint.
+#[test]
+fn the_toast_menu_sets_its_destructive_row_apart() {
+    use crate::widgets::{MENU_PAD, MENU_ROW_H, MENU_SEPARATOR_H};
+    use actions::{ToastRow, MENU_H};
+    let mut groups = 0;
+    for (i, row) in ToastRow::ALL.into_iter().enumerate() {
+        if row.starts_group() {
+            groups += 1;
+        }
+        if row.destructive() {
+            assert!(i > 0 && row.starts_group(), "{row:?} opens no group");
+        }
+    }
+    assert!(ToastRow::ALL.iter().any(|r| r.destructive()));
+    assert_eq!(
+        MENU_H,
+        ToastRow::ALL.len() as f32 * MENU_ROW_H + groups as f32 * MENU_SEPARATOR_H + 2.0 * MENU_PAD
+    );
 }

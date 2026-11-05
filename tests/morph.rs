@@ -41,7 +41,7 @@ use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
 use x11rb::rust_connection::RustConnection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
-use x11::{click, pixel, tap, windows_of, Compositor};
+use x11::{click, pixel, tap, toast_card, windows_of, Compositor};
 
 /// The screen: large enough for the editor's window and the toast.
 const SCREEN: &str = "1280x1024x24";
@@ -49,12 +49,8 @@ const SCREEN: &str = "1280x1024x24";
 /// The root window's colour, 0xRRGGBB.
 const DESKTOP: u32 = 0x5b7fa6;
 
-/// The toast window's room for the card's shadow on the card's inner
-/// sides, and its gap to the screen edge on the outer ones, in pixels at
-/// scale 1 (theme::CARD_BLEED, stage::MARGIN). The toast in the default
-/// bottom-right corner has its card at (BLEED, BLEED).
-const BLEED: i16 = 44;
-const MARGIN: i16 = 12;
+/// The 175x140 card of a 1280x1024 capture's toast.
+const CARD: (i16, i16) = (175, 140);
 
 /// The title of the toast's window.
 const TOAST: &str = "Screenshot - iris";
@@ -107,13 +103,8 @@ fn an_editor_opens_and_closes_at_once_where_no_compositor_blends_it() {
             windows_of(&conn, root, TOAST).first().copied()
         });
         daemon.settle();
-        let (at, w, h) = placed(&conn, root, toast);
-        let card = (w - BLEED - MARGIN, h - BLEED - MARGIN);
-        click(
-            &conn,
-            root,
-            (at.0 + BLEED + card.0 / 2, at.1 + BLEED + card.1 / 4),
-        );
+        let card = toast_card(&conn, root, toast, CARD);
+        click(&conn, root, (card.0 + CARD.0 / 2, card.1 + CARD.1 / 4));
         let title = format!("{} - iris", shot(&daemon, &dir.path().join("shots")));
         let editor = daemon.until(&format!("the {title:?} window to open"), || {
             windows_of(&conn, root, &title).first().copied()

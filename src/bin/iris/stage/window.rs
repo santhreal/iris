@@ -34,10 +34,12 @@ pub fn card_rest_rect(disp_w: f32, disp_h: f32, img_w: u32, img_h: u32) -> (Rect
 
 /// The toast window's size for a card of `card` (width, height): the
 /// card with its shadow's bleed and the screen margin, and at least
-/// the context menu with `MENU_EDGE` around it, so the menu of a card
-/// from a wide or tall capture is not cut off by the window's edge.
+/// the context menu with `MENU_EDGE` on the screen's side and its
+/// shadow's `MENU_ROOM` on the other, so neither the menu of a card
+/// from a wide or tall capture nor its shadow is cut off by the
+/// window's edge.
 pub(super) fn window_size(card: (f32, f32)) -> (f32, f32) {
-    let room = |side: f32| side + 2.0 * actions::MENU_EDGE;
+    let room = |side: f32| side + actions::MENU_EDGE + actions::MENU_ROOM;
     (
         (card.0 + BLEED + MARGIN).max(room(crate::widgets::MENU_W)),
         (card.1 + BLEED + MARGIN).max(room(actions::MENU_H)),

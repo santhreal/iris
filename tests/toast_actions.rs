@@ -52,7 +52,7 @@ use x11rb::connection::Connection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
 use x11::{
-    channels, click, move_to, paint_root, pixel, press_and_move, rect, release, until_color,
+    channels, click, move_to, paint_root, pixel, press_and_move, release, toast_card, until_color,
     windows_of,
 };
 
@@ -60,9 +60,8 @@ use x11::{
 const DESKTOP: u32 = 0x5b7fa6;
 const TOAST: &str = "Screenshot - iris";
 
-/// The toast's card sits BLEED in from its window's top-left corner
-/// (theme::CARD_BLEED).
-const BLEED: i16 = 44;
+/// The 175x140 card of a 1280x1024 capture's toast.
+const CARD: (i16, i16) = (175, 140);
 
 /// Spots on the 175x140 card of a 1280x1024 capture, from its top-left
 /// corner: the centers of Copy and Markup, two 68x24 buttons 6 apart
@@ -141,8 +140,7 @@ fn toast(s: &Session) -> (u32, (i16, i16)) {
         windows_of(&s.conn, s.root, TOAST).first().copied()
     });
     s.daemon.settle();
-    let (x, y, _, _) = rect(&s.conn, s.root, window);
-    (window, (x + BLEED, y + BLEED))
+    (window, toast_card(&s.conn, s.root, window, CARD))
 }
 
 /// Rest the pointer on the card's scrim and wait for the button whose
