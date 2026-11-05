@@ -322,11 +322,11 @@ fn a_chosen_folder_applies_and_a_picker_failure_opens_the_path_for_typing() {
 
     s.picked(
         Field::ScreenshotsDir,
-        Err("folder picker: no portal".into()),
+        Err("The folder picker did not open".into()),
     );
     assert_eq!(
         s.status.as_deref(),
-        Some("folder picker: no portal; type the folder path instead")
+        Some("The folder picker did not open; type the folder path instead")
     );
     assert_eq!(
         s.editing.as_ref().map(|e| e.field),

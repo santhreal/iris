@@ -311,7 +311,8 @@ pub fn folder_field(
 
 /// Open the platform's directory picker. A chosen directory runs
 /// `on_pick(Ok(dir))`; a picker that fails to open runs
-/// `on_pick(Err(message))`; a cancelled picker runs nothing.
+/// `on_pick(Err(message))`, with the cause in the log; a cancelled
+/// picker runs nothing.
 pub fn choose_folder(
     window: &mut Window,
     cx: &mut App,
@@ -328,7 +329,10 @@ pub fn choose_folder(
             let picked = match rx.await {
                 Ok(Ok(Some(mut dirs))) => dirs.pop().map(Ok),
                 Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(e)) => Some(Err(format!("folder picker: {e}"))),
+                Ok(Err(e)) => {
+                    iris_lib::ilog!("iris: folder picker: {e}");
+                    Some(Err("The folder picker did not open".to_string()))
+                }
             };
             if let Some(picked) = picked {
                 cx.update(|window, cx| on_pick(picked, window, cx)).ok();

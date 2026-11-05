@@ -14,16 +14,15 @@
 //! next Escape returns to the Library page, as the library's own ring
 //! does.
 //!
-//! A second case presses Space on Screenshots' Choose… with no session
-//! bus, so the folder picker fails, and reads the picker's error, a line
-//! longer than the page, wrapped in a status line inside the page: the
-//! status line kept its text's unwrapped width and ran over the sidebar
-//! and past the window's edge.
+//! A second case presses Restore Defaults where config.toml takes no
+//! write and reads the error, a line longer than the page, wrapped in a
+//! status line inside the page: the status line kept its text's
+//! unwrapped width and ran over the sidebar and past the window's edge.
 //!
-//! Not covered: a folder picker that opens, and Check Now, which reaches
-//! the network; the traversal over every pane, which `settings::tests`
-//! walks; a status line in the other windows, which share
-//! `widgets::status_pill`. The cases run only with
+//! Not covered: Space on Choose…, which opens the system folder picker,
+//! and on Check Now, which reaches the network; the traversal over every
+//! pane, which `settings::tests` walks; a status line in the other
+//! windows, which share `widgets::status_pill`. The cases run only with
 //! `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without it they print that
 //! they did not run.
 
@@ -76,10 +75,11 @@ const BUTTON_HALF: f32 = 12.0;
 /// A point on a switch's track right of its knob when off, logical px
 /// from the window's right edge: inside the card inset and row padding.
 const OFF_TRACK_FROM_RIGHT: f32 = 20.0 + 12.0 + 6.0;
-/// The center line of the Screenshots row on the General pane: under the
-/// toolbar, the inset, the login card, the group gap, and the Storage
-/// header, half a row down.
-const SHOTS_Y: f32 = 52.0 + 20.0 + 36.0 + 20.0 + 20.0 + 18.0;
+/// The center line of the General pane's Restore Defaults row: under
+/// the toolbar, the inset, the login card, the group gap, the Storage
+/// header, its three rows with their hairlines, and the group gap, half
+/// a row down.
+const RESTORE_Y: f32 = 52.0 + 20.0 + 36.0 + 20.0 + 20.0 + 110.0 + 20.0 + 18.0;
 /// A status line's one-line height (`widgets::STATUS_H`: a key cap's
 /// 18, padding, and border) and its inset from the page's sides,
 /// logical px.
@@ -323,8 +323,8 @@ fn lit_rows(
 }
 
 #[test]
-fn a_folder_picker_error_wraps_inside_the_page() {
-    let case = "a_folder_picker_error_wraps_inside_the_page";
+fn a_status_longer_than_the_page_wraps_inside_it() {
+    let case = "a_status_longer_than_the_page_wraps_inside_it";
     if !enabled() {
         return;
     }
@@ -334,8 +334,16 @@ fn a_folder_picker_error_wraps_inside_the_page() {
     let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
     let root = conn.setup().roots[screen].root;
     let dir = tempfile::tempdir().unwrap();
+    // A config file that is a directory takes no write, from any user,
+    // and the error names its path, which runs wider than the page.
+    let home = dir
+        .path()
+        .join("a-folder-whose-name-runs-past-the-page-".repeat(5));
+    std::fs::create_dir_all(home.join("config").join("config.toml")).unwrap();
     let daemon = Daemon::start(dir.path(), |cmd| {
-        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+        cmd.env("DISPLAY", &display)
+            .env_remove("WAYLAND_DISPLAY")
+            .env("IRIS_HOME", &home);
     });
     daemon.send(&["--settings"]);
     let settings = daemon.until("Settings to open", || {
@@ -359,24 +367,17 @@ fn a_folder_picker_error_wraps_inside_the_page() {
     );
     rig.daemon.settle();
 
-    // Tab rings the login switch, on the first row as Screen flash is on
-    // its pane, or Choose… when a session cannot start at login; one
-    // more Tab goes on from the switch.
-    tap(&rig.conn, rig.root, TAB);
-    rig.daemon.until("Tab to ring the first control", || {
-        (rig.ring_at(FLASH_Y, TOGGLE_HALF) || rig.ring_at(SHOTS_Y, BUTTON_HALF)).then_some(())
-    });
-    if !rig.ring_at(SHOTS_Y, BUTTON_HALF) {
-        tap(&rig.conn, rig.root, TAB);
-    }
-    rig.wait_for_ring("Tab to ring Screenshots' Choose…", SHOTS_Y, BUTTON_HALF);
+    // Shift+Tab rings the General pane's last control, Restore Defaults,
+    // which writes config.toml.
+    chord(&rig.conn, rig.root, &[SHIFT, TAB]);
+    rig.wait_for_ring("Shift+Tab to ring Restore Defaults", RESTORE_Y, BUTTON_HALF);
 
     let (w, h, before) = client(&rig.conn, rig.root, rig.settings);
     let rows = (STATUS_FROM * s) as usize..h;
     let probe = ((app_window::SIDEBAR_W + STATUS_INSET + 30.0) * s) as usize;
     tap(&rig.conn, rig.root, SPACE);
     rig.daemon
-        .until("Space on Choose… to show the picker's error", || {
+        .until("Space on the switch to show the write's error", || {
             let (_, _, after) = client(&rig.conn, rig.root, rig.settings);
             (lit_rows(&before, &after, w, probe, rows.clone()) > 0).then_some(())
         });
