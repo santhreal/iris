@@ -30,6 +30,15 @@
 //! the card stays and no editor opens. Not covered by it: a move past
 //! the drag threshold, which starts the card's swipe or file drag.
 //!
+//! The fifth case closes "a context menu left open holds the toast on
+//! the screen for good": an open menu held the countdown wherever the
+//! pointer went, and nothing closes the menu once the pointer leaves the
+//! toast's window. It rests the pointer on the menu where the menu lies
+//! off the card past the countdown, reads the toast still there, then
+//! moves the pointer off both and reads the toast leave within the
+//! countdown and its exit. Not covered by it: the pointer resting on the
+//! card under the open menu, which the card's own hover holds.
+//!
 //! Not covered: the fade, which only a compositing manager shows; the
 //! Show in Folder and Move to Trash buttons; Wayland, Windows, and
 //! macOS. The cases run only with `IRIS_X11_TEST_DISPLAY` set and need
@@ -52,8 +61,8 @@ use x11rb::connection::Connection;
 
 use daemon::{enabled, xvfb_sized, Daemon};
 use x11::{
-    channels, click, move_to, paint_root, pixel, press_and_move, release, toast_card, until_color,
-    windows_of,
+    channels, click, click_with, move_to, paint_root, pixel, press_and_move, release, toast_card,
+    until_color, windows_of,
 };
 
 /// The root window's colour, 0xRRGGBB.
@@ -78,6 +87,17 @@ const CLOSE_FILL: (i16, i16) = (9, 17);
 const KEEP_OPEN: (i16, i16) = (158, 17);
 const KEEP_OPEN_FILL: (i16, i16) = (150, 17);
 const SCRIM: (i16, i16) = (87, 104);
+
+/// A spot on the context menu a right click on SCRIM opens, from the
+/// card's top-left corner: its first row, above the card. The menu
+/// stays MENU_ROOM (58) inside its window's left and top edges, where
+/// the card sits CARD_BLEED (44) and more in from them.
+const MENU_OFF_CARD: (i16, i16) = (85, -7);
+
+/// The toast's countdown, `toast_duration_ms` by default, and the most
+/// its exit and the harness's reads add to it.
+const COUNTDOWN: Duration = Duration::from_millis(5_000);
+const EXIT_SLACK: Duration = Duration::from_millis(2_000);
 
 /// theme::ACCENT, and theme::ACCENT_HOVER and ACCENT_PRESS, the accent
 /// at 88% and 74% over theme::BG, as [r, g, b].
@@ -301,5 +321,37 @@ fn a_held_click_that_moves_a_pixel_runs_the_action() {
     assert!(
         windows_of(&s.conn, s.root, &format!("{name} - iris")).is_empty(),
         "the held Copy opened the editor"
+    );
+}
+
+#[test]
+fn an_open_menu_holds_the_countdown_only_under_the_pointer() {
+    let Some(s) = session("toast actions: menu countdown") else {
+        return;
+    };
+    let (window, card) = toast(&s);
+    move_to(&s.conn, s.root, at(card, SCRIM));
+    click_with(&s.conn, s.root, at(card, SCRIM), 3);
+    let spot = at(card, MENU_OFF_CARD);
+    s.daemon
+        .until("the context menu to open above the card", || {
+            (pixel(&s.conn, s.root, spot) != DESKTOP).then_some(())
+        });
+    move_to(&s.conn, s.root, spot);
+    std::thread::sleep(COUNTDOWN + EXIT_SLACK);
+    assert!(
+        windows_of(&s.conn, s.root, TOAST).contains(&window),
+        "the toast left while the pointer rested on its menu"
+    );
+
+    let left = Instant::now();
+    move_to(&s.conn, s.root, (10, 10));
+    s.daemon.until("the toast to leave with its menu open", || {
+        (!windows_of(&s.conn, s.root, TOAST).contains(&window)).then_some(())
+    });
+    assert!(
+        left.elapsed() < COUNTDOWN + EXIT_SLACK,
+        "the toast stayed {:?} after the pointer left its menu",
+        left.elapsed()
     );
 }

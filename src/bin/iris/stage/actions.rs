@@ -35,6 +35,7 @@ impl ToastStage {
             swipe_return: None,
             menu_at: None,
             menu_opened: None,
+            menu_hovered: false,
             swallow_click: false,
             pending_morph: None,
             morph_ready_at: None,
@@ -76,7 +77,10 @@ impl ToastStage {
                 if stage.dismiss_gen != gen || stage.pinned {
                     return;
                 }
-                if stage.hover_paused || stage.menu_at.is_some() || stage.busy {
+                if stage.hover_paused
+                    || (stage.menu_at.is_some() && stage.menu_hovered)
+                    || stage.busy
+                {
                     stage.arm_dismiss(cx);
                 } else {
                     stage.begin_close(cx);
@@ -270,7 +274,7 @@ impl ToastStage {
         opacity: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<(Div, crate::sys::window::Rounded)> {
+    ) -> Option<(Stateful<Div>, crate::sys::window::Rounded)> {
         let (menu_x, menu_y) = self.menu_at?;
         let opened = *self.menu_opened.get_or_insert_with(Instant::now);
         let mt = if crate::sys::window::blended(window) {
@@ -289,10 +293,19 @@ impl ToastStage {
             r: crate::widgets::MENU_RADIUS,
         };
         let mut menu = crate::widgets::menu()
+            .id("toast-menu")
             .absolute()
             .left(px(area.x))
             .top(px(area.y))
-            .opacity(mt * opacity);
+            .opacity(mt * opacity)
+            // The pointer on the menu holds the countdown, as on the
+            // card; a menu left behind lets the toast leave.
+            .on_hover(cx.listener(|stage, hovering: &bool, _, cx| {
+                stage.menu_hovered = *hovering;
+                if !*hovering {
+                    stage.arm_dismiss(cx);
+                }
+            }));
         for row in ToastRow::ALL {
             if row.starts_group() {
                 menu = menu.child(crate::widgets::menu_separator());

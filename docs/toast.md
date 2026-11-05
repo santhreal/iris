@@ -61,7 +61,7 @@ The card remains visible for `toast_duration_ms` (default: `5000` ms):
 - Starting a capture, a region pick, or a recording closes the toast first, including one pinned against auto-dismissal, so the capture or recording does not contain it. Stopping a recording leaves the toast. A toast that is opening the editor stays. A [pinned window](#pinned-windows) stays.
 - Auto-dismiss timer behavior:
   - Hovering the pointer over the card pauses the countdown. Moving the pointer away resumes the timer.
-  - Opening the context menu pauses the countdown.
+  - Resting the pointer on the context menu pauses the countdown. With the pointer off the card and the menu, the countdown runs and the toast leaves with its menu open.
   - An active OCR task holds the countdown open.
   - Pinning the toast card suspends auto-dismissal indefinitely.
 

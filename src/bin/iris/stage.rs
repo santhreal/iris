@@ -203,6 +203,8 @@ pub struct ToastStage {
     pub(super) menu_at: Option<(f32, f32)>,
     /// Menu entrance clock; the menu fades in and rises 3px.
     pub(super) menu_opened: Option<Instant>,
+    /// The pointer rests on the open menu.
+    pub(super) menu_hovered: bool,
     /// A left press that only dismissed the open menu is not a click.
     pub(super) swallow_click: bool,
     /// Editor-morph handshake: the toast stays put until the editor
@@ -570,6 +572,7 @@ impl Render for ToastStage {
                             stage.cfg.toast_position,
                         ));
                         stage.menu_opened = None;
+                        stage.menu_hovered = false;
                         cx.notify();
                     }),
                 )
