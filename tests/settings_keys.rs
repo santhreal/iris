@@ -14,11 +14,18 @@
 //! next Escape returns to the Library page, as the library's own ring
 //! does.
 //!
-//! Not covered: Space on Choose…, which opens the system folder picker,
-//! and on Check Now, which reaches the network; the traversal over every
-//! pane, which `settings::tests` walks. The case runs only with
-//! `IRIS_X11_TEST_DISPLAY` set and needs Xvfb; without it it prints that
-//! it did not run.
+//! A second case presses Space on Screenshots' Choose… with no session
+//! bus, so the folder picker fails, and reads the picker's error, a line
+//! longer than the page, wrapped in a status line inside the page: the
+//! status line kept its text's unwrapped width and ran over the sidebar
+//! and past the window's edge.
+//!
+//! Not covered: a folder picker that opens, and Check Now, which reaches
+//! the network; the traversal over every pane, which `settings::tests`
+//! walks; a status line in the other windows, which share
+//! `widgets::status_pill`. The cases run only with
+//! `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without it they print that
+//! they did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -69,6 +76,18 @@ const BUTTON_HALF: f32 = 12.0;
 /// A point on a switch's track right of its knob when off, logical px
 /// from the window's right edge: inside the card inset and row padding.
 const OFF_TRACK_FROM_RIGHT: f32 = 20.0 + 12.0 + 6.0;
+/// The center line of the Screenshots row on the General pane: under the
+/// toolbar, the inset, the login card, the group gap, and the Storage
+/// header, half a row down.
+const SHOTS_Y: f32 = 52.0 + 20.0 + 36.0 + 20.0 + 20.0 + 18.0;
+/// A status line's one-line height (`widgets::STATUS_H`: a key cap's
+/// 18, padding, and border) and its inset from the page's sides,
+/// logical px.
+const STATUS_H: f32 = 30.0;
+const STATUS_INSET: f32 = 10.0;
+/// How far below the window's top the status line is looked for:
+/// under every row of the General pane.
+const STATUS_FROM: f32 = 340.0;
 
 /// The config `dir`'s daemon stored, or `None` while it cannot be read
 /// whole, as mid-write.
@@ -286,4 +305,103 @@ fn the_keyboard_reaches_and_runs_every_kind_of_control() {
         .until("the next Escape to show the Library page", || {
             (windows_of(&rig.conn, rig.root, LIBRARY) == [rig.settings]).then_some(())
         });
+}
+
+/// How many of `rows` at column `x` of `w` device px are lighter in
+/// `after` than in `before` by more than a fade's noise: where the
+/// status line's fill, hairline, or text is over the page. Its shadow
+/// only darkens.
+fn lit_rows(
+    before: &[[u8; 3]],
+    after: &[[u8; 3]],
+    w: usize,
+    x: usize,
+    rows: std::ops::Range<usize>,
+) -> usize {
+    rows.filter(|&y| after[y * w + x][1] as i32 > before[y * w + x][1] as i32 + 8)
+        .count()
+}
+
+#[test]
+fn a_folder_picker_error_wraps_inside_the_page() {
+    let case = "a_folder_picker_error_wraps_inside_the_page";
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb_sized(case, SCREEN) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    daemon.send(&["--settings"]);
+    let settings = daemon.until("Settings to open", || {
+        windows_of(&conn, root, SETTINGS).first().copied()
+    });
+    daemon.settle();
+    let (w, ..) = client(&conn, root, settings);
+    let rig = Rig {
+        daemon,
+        conn,
+        root,
+        settings,
+        scale: app_window::scale(w),
+    };
+    let s = rig.scale;
+    let (x0, y0, ..) = rect(&rig.conn, rig.root, rig.settings);
+    move_to(
+        &rig.conn,
+        rig.root,
+        (x0 + ((app_window::SIDEBAR_W + 5.0) * s) as i16, y0 + 100),
+    );
+    rig.daemon.settle();
+
+    // Tab rings the login switch, on the first row as Screen flash is on
+    // its pane, or Choose… when a session cannot start at login; one
+    // more Tab goes on from the switch.
+    tap(&rig.conn, rig.root, TAB);
+    rig.daemon.until("Tab to ring the first control", || {
+        (rig.ring_at(FLASH_Y, TOGGLE_HALF) || rig.ring_at(SHOTS_Y, BUTTON_HALF)).then_some(())
+    });
+    if !rig.ring_at(SHOTS_Y, BUTTON_HALF) {
+        tap(&rig.conn, rig.root, TAB);
+    }
+    rig.wait_for_ring("Tab to ring Screenshots' Choose…", SHOTS_Y, BUTTON_HALF);
+
+    let (w, h, before) = client(&rig.conn, rig.root, rig.settings);
+    let rows = (STATUS_FROM * s) as usize..h;
+    let probe = ((app_window::SIDEBAR_W + STATUS_INSET + 30.0) * s) as usize;
+    tap(&rig.conn, rig.root, SPACE);
+    rig.daemon
+        .until("Space on Choose… to show the picker's error", || {
+            let (_, _, after) = client(&rig.conn, rig.root, rig.settings);
+            (lit_rows(&before, &after, w, probe, rows.clone()) > 0).then_some(())
+        });
+    rig.daemon.settle();
+    let (_, _, after) = client(&rig.conn, rig.root, rig.settings);
+
+    // The sidebar under the status line is as it was, but for the
+    // shadow's reach past the line's inset.
+    let sidebar = 0..((app_window::SIDEBAR_W - 20.0) * s) as usize;
+    let over_sidebar = rows
+        .clone()
+        .flat_map(|y| sidebar.clone().map(move |x| y * w + x))
+        .filter(|&i| before[i] != after[i])
+        .count();
+    assert_eq!(over_sidebar, 0, "the status line runs over the sidebar");
+    // Nothing of it reaches the window's right edge.
+    let edge = w - ((STATUS_INSET - 1.0) * s) as usize..w;
+    let at_edge: usize = edge
+        .map(|x| lit_rows(&before, &after, w, x, rows.clone()))
+        .sum();
+    assert_eq!(at_edge, 0, "the status line runs past the window's edge");
+    // The error is longer than the page is wide, so it wraps.
+    let tall = lit_rows(&before, &after, w, probe, rows);
+    assert!(
+        tall as f32 > (STATUS_H + 4.0) * s,
+        "the status line is {tall} device px tall, one line of a message wider than the page"
+    );
 }

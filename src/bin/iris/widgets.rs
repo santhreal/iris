@@ -266,7 +266,10 @@ pub fn status_pill(content: impl IntoElement, inset: f32) -> Div {
         .flex()
         .justify_center()
         .child(
+            // A flex item keeps its content's minimum width, which for
+            // text is the whole unwrapped line; this lets it wrap.
             div()
+                .min_w_0()
                 .px(px(12.))
                 .py(px(STATUS_PAD_Y))
                 .rounded(px(STATUS_H / 2.0))
