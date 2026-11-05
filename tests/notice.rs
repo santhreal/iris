@@ -71,7 +71,9 @@ use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
 
 use daemon::{enabled, xvfb_sized, Daemon};
 use recording::Recording;
-use x11::{move_to, paint_root, press_and_move, rect, release, until_color, windows_of};
+use x11::{
+    all_windows_of, move_to, paint_root, press_and_move, rect, release, until_color, windows_of,
+};
 
 /// The root window's colour, 0xRRGGBB.
 const DESKTOP: u32 = 0x5b7fa6;
@@ -354,14 +356,15 @@ fn a_hover_on_a_saved_notice_draws_inside_its_card() {
         return;
     };
     let (conn, root) = rec.x();
-    // The pick's guide is a notice too, and may still be leaving: the
-    // saved notice is the one the stop opens.
-    let guides = windows_of(conn, root, NOTICE);
+    // The pick's guide is a notice too, and under load it can still be
+    // unmapped, or leaving, when the stop is sent: the saved notice is
+    // one that did not exist, mapped or not, before the stop.
+    let earlier = all_windows_of(conn, root, NOTICE);
     rec.daemon.send(&["--record-window"]);
     let notice = rec.daemon.until("the saved notice to open", || {
         windows_of(conn, root, NOTICE)
             .into_iter()
-            .find(|w| !guides.contains(w))
+            .find(|w| !earlier.contains(w))
     });
     let (x, y, _, _) = rect(conn, root, notice);
     let at = |(dx, dy): (i16, i16)| (x + dx, y + dy);
