@@ -261,6 +261,11 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
         );
         return Ok(());
     }
+    // An overlay on its way out is still on the screen, or a frame the
+    // window manager draws as it goes is.
+    if cmd.screen() == Screen::Starts && overlay::hold_while_withdrawing(cmd) {
+        return Ok(());
+    }
     if clear_popups_for(cx, cmd) {
         return Ok(());
     }

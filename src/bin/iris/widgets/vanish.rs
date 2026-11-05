@@ -113,8 +113,8 @@ fn fall_back(cx: &mut App, windows: Vec<AnyWindowHandle>, clear: Rc<Clear>) {
 }
 
 /// Run `cmd` once the compositor has had `VANISH` to drop a window that
-/// just closed.
-fn run_after_vanish(cx: &mut App, cmd: daemon::Command) {
+/// just closed or was withdrawn.
+pub fn run_after_vanish(cx: &mut App, cmd: daemon::Command) {
     cx.spawn(async move |cx| {
         cx.background_executor().timer(VANISH).await;
         cx.update(|cx| daemon::run(cx, &cmd));

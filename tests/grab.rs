@@ -20,20 +20,28 @@
 //! every command that starts reading the screen under the overlay and
 //! during a pick, read that none ran, then that a capture after the
 //! session ends runs; a third reads that a region pick's own commit
-//! still starts its recording.
+//! still starts its recording. An overlay on its way out is such a
+//! surface as well: a capture hotkey pressed as Escape ended a session
+//! froze the last session's dimmed frame, or a black frame a window
+//! manager draws as the overlay goes, and dimmed it again. A case ends
+//! a session and presses the hotkey at once, and reads that the next
+//! frozen frame is the last one's.
 //!
 //! Each pop-up case runs with no compositing manager, where a pop-up
 //! closes at once, and under picom fading windows out over two seconds,
 //! where a pop-up must draw itself empty before it closes. The overlay
 //! and pick cases run with none: they read which commands run, not how
-//! a window leaves.
+//! a window leaves. The hotkey case runs with both.
 //!
 //! Not covered: a pinned capture window and the recording chip, which
-//! are content a capture may hold; a window capture, which needs a
-//! window manager's active window; Wayland, whose portal captures with
-//! its own interface, Windows, and macOS. The cases run only with
-//! `IRIS_X11_TEST_DISPLAY` set and need Xvfb, and ffmpeg for the
-//! recording cases; without them a case prints that it did not run.
+//! are content a capture may hold; a window capture, and the frame a
+//! window manager draws as the overlay goes, which need a window
+//! manager; the time a held command waits after the withdrawal for the
+//! compositor to drop the window, which picom here drops before the grab
+//! reads; Wayland, whose portal captures with its own interface,
+//! Windows, and macOS. The cases run only with `IRIS_X11_TEST_DISPLAY`
+//! set and need Xvfb, and ffmpeg for the recording cases; without them
+//! a case prints that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -196,6 +204,37 @@ fn a_full_screen_capture_leaves_out_a_resting_toast() {
     }
 }
 
+/// The number of frozen frames the daemon has drawn.
+fn frames(daemon: &Daemon) -> usize {
+    daemon.log().matches("frame landed").count()
+}
+
+/// Open the overlay, and return it once its frozen frame is on the
+/// screen.
+fn open_overlay(conn: &RustConnection, root: u32, daemon: &Daemon) -> u32 {
+    let landed = frames(daemon);
+    daemon.send(&["--capture"]);
+    let overlay = daemon.until("the overlay to take the focus", || {
+        windows_of(conn, root, OVERLAY)
+            .into_iter()
+            .find(|&w| w == x11::focus(conn))
+    });
+    daemon.until("the frozen frame to land", || {
+        (frames(daemon) > landed).then_some(())
+    });
+    daemon.settle();
+    overlay
+}
+
+/// End the session `overlay` holds, and wait for it to park.
+fn end_session(conn: &RustConnection, root: u32, daemon: &Daemon, overlay: u32) {
+    x11::tap(conn, root, ESCAPE);
+    daemon.until("the overlay to park", || {
+        (x11::focus(conn) != overlay).then_some(())
+    });
+    daemon.settle();
+}
+
 #[test]
 fn a_capture_session_ignores_a_second_command_that_reads_the_screen() {
     let case = "a_capture_session_ignores_a_second_command_that_reads_the_screen";
@@ -206,16 +245,7 @@ fn a_capture_session_ignores_a_second_command_that_reads_the_screen() {
         return;
     };
     let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
-    daemon.send(&["--capture"]);
-    let overlay = daemon.until("the overlay to take the focus", || {
-        windows_of(conn, root, OVERLAY)
-            .into_iter()
-            .find(|&w| w == x11::focus(conn))
-    });
-    daemon.until("the frozen frame to land", || {
-        daemon.log().contains("frame landed").then_some(())
-    });
-    daemon.settle();
+    let overlay = open_overlay(conn, root, daemon);
     let seconds = [
         "--capture-fullscreen",
         "--record-window",
@@ -242,11 +272,7 @@ fn a_capture_session_ignores_a_second_command_that_reads_the_screen() {
     );
 
     // The session ends, and the screen is free again.
-    x11::tap(conn, root, ESCAPE);
-    daemon.until("the overlay to park", || {
-        (x11::focus(conn) != overlay).then_some(())
-    });
-    daemon.settle();
+    end_session(conn, root, daemon, overlay);
     let shot = capture_fullscreen(daemon, s.dir.path());
     let image = image::open(&shot).unwrap().to_rgb8();
     let [r, g, b] = image.get_pixel(5, 5).0;
@@ -255,6 +281,69 @@ fn a_capture_session_ignores_a_second_command_that_reads_the_screen() {
         DESKTOP,
         "the capture after the session is not the desktop"
     );
+}
+
+#[test]
+fn a_capture_hotkey_pressed_as_a_session_ends_freezes_the_desktop() {
+    let case = "a_capture_hotkey_pressed_as_a_session_ends_freezes_the_desktop";
+    if !enabled() {
+        return;
+    }
+    /// A point of the desktop clear of the overlay's bar, hint and loupe.
+    const AT: (i16, i16) = (100, 100);
+    /// Ctrl+Print, the capture hotkey.
+    const CTRL_PRINT: [u32; 2] = [0xffe3, 0xff61];
+    for compositor in [false, true] {
+        let Some(s) = session(case, compositor) else {
+            return;
+        };
+        let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
+        let mut checked = 0;
+        for _ in 0..6 {
+            let overlay = open_overlay(conn, root, daemon);
+            let dimmed = pixel(conn, root, AT);
+            assert_ne!(
+                dimmed, DESKTOP,
+                "compositor {compositor}: the overlay did not dim the frozen frame"
+            );
+            let (busy, landed) = (daemon.log().matches(BUSY).count(), frames(daemon));
+            x11::tap(conn, root, ESCAPE);
+            x11::chord(conn, root, &CTRL_PRINT);
+            let next = daemon.until("the hotkey to run or be ignored", || {
+                if frames(daemon) > landed {
+                    Some(true)
+                } else {
+                    (daemon.log().matches(BUSY).count() > busy).then_some(false)
+                }
+            });
+            if !next {
+                // The hotkey arrived before Escape, under the session.
+                daemon.until("the overlay to park", || {
+                    (x11::focus(conn) != overlay).then_some(())
+                });
+                daemon.settle();
+                continue;
+            }
+            daemon.settle();
+            let frozen = pixel(conn, root, AT);
+            assert_eq!(
+                frozen, dimmed,
+                "compositor {compositor}: the session the hotkey opened froze {frozen:06x} at \
+                 {AT:?}, not the desktop dimmed once, {dimmed:06x}"
+            );
+            checked += 1;
+            let overlay = daemon.until("the overlay to take the focus", || {
+                windows_of(conn, root, OVERLAY)
+                    .into_iter()
+                    .find(|&w| w == x11::focus(conn))
+            });
+            end_session(conn, root, daemon, overlay);
+        }
+        assert!(
+            checked >= 3,
+            "compositor {compositor}: the hotkey ran after Escape in {checked} of 6 sessions"
+        );
+    }
 }
 
 #[test]

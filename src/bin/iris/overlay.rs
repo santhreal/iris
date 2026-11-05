@@ -31,6 +31,7 @@ mod shell;
 mod tests;
 mod view;
 
+pub use input::hold_while_withdrawing;
 pub use shell::{layout, open_shell, slice_frame_bgra, warmup};
 
 pub(super) const MIN_SIZE: f32 = 3.0;

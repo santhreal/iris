@@ -10,6 +10,8 @@ Starting a capture closes a resting toast and notice first, so the capture does 
 
 While the region overlay, the region-recording overlay, or an X11 window pick is open, iris ignores a second capture, region pick, or recording start, from a shortcut, the tray, or the command line, and logs it in `iris.log`.
 
+A capture, region pick, or recording start sent as the overlay closes runs once the overlay is off the screen, at most about 130 ms later, so the capture does not contain it. On X11 with no compositing manager the overlay leaves at once.
+
 ### Region Capture
 
 Trigger region capture using any of the following interfaces:

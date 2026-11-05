@@ -55,7 +55,7 @@ pub use self::menu::{
 use self::resize::{resize_edges, GRIP};
 pub use self::scroll::scroll_y;
 pub use self::tooltip::tip;
-pub use self::vanish::{clear_then_run, close_then_run};
+pub use self::vanish::{clear_then_run, close_then_run, run_after_vanish};
 pub use self::window_frame::{
     close_route, frame_local, page_lead, sidebar_frame, toolbar_bar, window_corners, window_edge,
     window_rounded, AppFrame, OnClose, Toolbar,

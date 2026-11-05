@@ -18,6 +18,47 @@ use crate::{pipeline, pipeline::Region, stage};
 /// whose frame never reaches the X server is still withdrawn.
 const PARK_DEADLINE: Duration = Duration::from_millis(100);
 
+/// The id of each park in flight: an overlay that draws its cleared
+/// frame and is not withdrawn yet.
+static WITHDRAWING: parking_lot::Mutex<Vec<u64>> = parking_lot::Mutex::new(Vec::new());
+/// The id the next park takes.
+static NEXT_PARK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Commands that read the screen, sent while an overlay withdraws.
+static HELD: parking_lot::Mutex<Vec<crate::daemon::Command>> = parking_lot::Mutex::new(Vec::new());
+
+/// Hold `cmd`, which reads the screen, while an overlay withdraws: the
+/// screen shows that overlay, or a frame a window manager draws around
+/// it as it goes, until the withdrawal and the compositor's next frame.
+/// `cmd` runs once no overlay withdraws. Returns whether it is held.
+pub fn hold_while_withdrawing(cmd: &crate::daemon::Command) -> bool {
+    if WITHDRAWING.lock().is_empty() {
+        return false;
+    }
+    HELD.lock().push(cmd.clone());
+    true
+}
+
+/// The park `park` ran its withdrawal. Once no park is in flight, each
+/// held command runs after the compositor has had the time to drop the
+/// withdrawn window (`widgets::run_after_vanish`). A second call for the
+/// same park does nothing.
+fn withdrawn(cx: &mut App, park: u64) {
+    {
+        let mut withdrawing = WITHDRAWING.lock();
+        let Some(at) = withdrawing.iter().position(|&p| p == park) else {
+            return;
+        };
+        withdrawing.swap_remove(at);
+        if !withdrawing.is_empty() {
+            return;
+        }
+    }
+    let held = std::mem::take(&mut *HELD.lock());
+    for cmd in held {
+        crate::widgets::run_after_vanish(cx, cmd);
+    }
+}
+
 impl Overlay {
     pub fn set_frame(
         &mut self,
@@ -426,7 +467,8 @@ impl Overlay {
 
     /// Withdraw `overlay` once its next frame, drawn hidden, is on the
     /// window, or at [`PARK_DEADLINE`]. A session re-armed before then
-    /// owns the window and is left alone.
+    /// owns the window and is left alone. A command that reads the screen
+    /// waits for the withdrawal (`hold_while_withdrawing`).
     fn withdraw_cleared(
         &mut self,
         overlay: WindowHandle<Overlay>,
@@ -435,6 +477,8 @@ impl Overlay {
     ) {
         let token = Instant::now();
         self.parking = Some(token);
+        let park = NEXT_PARK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        WITHDRAWING.lock().push(park);
         let withdraw = move |cx: &mut App| {
             let _ = overlay.update(cx, |this, window, _| {
                 if this.parking == Some(token) {
@@ -442,6 +486,7 @@ impl Overlay {
                     crate::sys::window::park(window);
                 }
             });
+            withdrawn(cx, park);
         };
         let watch = crate::sys::window::PresentWatch::open(window, token + PARK_DEADLINE);
         window.on_next_frame(move |window, cx| {
