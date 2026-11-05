@@ -133,6 +133,7 @@ fn open_shell_opts(
                 let cfg = iris_lib::config::Config::load();
                 Overlay {
                     hidden: false,
+                    parking: None,
                     mode: super::OverlayMode::Capture,
                     scope: super::Scope::Selection,
                     bar_at: seed,

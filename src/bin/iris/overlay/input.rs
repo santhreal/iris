@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use gpui::*;
 use iris_lib::capture::WinRect;
@@ -10,6 +13,10 @@ use super::{
     slide_rect, Flight, Overlay, OverlayMode, MIN_SIZE,
 };
 use crate::{pipeline, pipeline::Region, stage};
+
+/// Bound on the wait for a parking window's cleared frame: a window
+/// whose frame never reaches the X server is still withdrawn.
+const PARK_DEADLINE: Duration = Duration::from_millis(100);
 
 impl Overlay {
     pub fn set_frame(
@@ -57,6 +64,7 @@ impl Overlay {
     /// already released when the window parked.
     pub fn reset(&mut self, layout: &ShellLayout) {
         self.hidden = false;
+        self.parking = None;
         self.frame_size = None;
         self.frame_img = None;
         self.origin = (layout.union.x, layout.union.y);
@@ -370,14 +378,67 @@ impl Overlay {
     /// window switcher lists it and no placement constraint can fight
     /// it, and the GPU surface is freed while it is unmapped. Where a
     /// parked window cannot be restored it is destroyed instead.
+    ///
+    /// A compositor animates a withdrawn window from its last frame:
+    /// GNOME Shell scales and fades it out over 150 ms. Where a
+    /// compositor blends, the window draws a cleared frame first and is
+    /// withdrawn once that frame is on the window, so the animation
+    /// shows nothing. Without one a transparent pixel shows black, and
+    /// the window is withdrawn at once.
     pub(super) fn park(&mut self, window: &mut Window, cx: &mut App) {
         self.release_assets(cx);
         self.hidden = true;
-        if poolable() {
-            crate::sys::window::park(window);
-        } else {
+        if !poolable() {
             window.remove_window();
+            return;
         }
+        let overlay = window.window_handle().downcast::<Overlay>();
+        match overlay.filter(|_| crate::sys::window::blends()) {
+            Some(overlay) => self.withdraw_cleared(overlay, window, cx),
+            None => crate::sys::window::park(window),
+        }
+    }
+
+    /// Withdraw `overlay` once its next frame, drawn hidden, is on the
+    /// window, or at [`PARK_DEADLINE`]. A session re-armed before then
+    /// owns the window and is left alone.
+    fn withdraw_cleared(
+        &mut self,
+        overlay: WindowHandle<Overlay>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let token = Instant::now();
+        self.parking = Some(token);
+        let withdraw = move |cx: &mut App| {
+            let _ = overlay.update(cx, |this, window, _| {
+                if this.parking == Some(token) {
+                    this.parking = None;
+                    crate::sys::window::park(window);
+                }
+            });
+        };
+        let watch = crate::sys::window::PresentWatch::open(window, token + PARK_DEADLINE);
+        window.on_next_frame(move |window, cx| {
+            // A park from inside a draw leaves the window clean; the
+            // frame to watch must draw.
+            window.refresh();
+            match watch.and_then(|w| w.arm()) {
+                Some(presented) => cx
+                    .spawn(async move |cx| {
+                        let _ = presented.await;
+                        cx.update(withdraw);
+                    })
+                    .detach(),
+                // The frame callback after the cleared frame's.
+                None => window.on_next_frame(move |_, cx| cx.defer(withdraw)),
+            }
+        });
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(PARK_DEADLINE).await;
+            cx.update(withdraw);
+        })
+        .detach();
     }
 
     pub(crate) fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -58,17 +58,19 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use x11rb::connection::Connection;
+use x11rb::protocol::composite::{ConnectionExt as _, Redirect};
+use x11rb::protocol::damage::{ConnectionExt as _, ReportLevel};
 use x11rb::protocol::shape::{ConnectionExt as _, SK};
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConfigWindow, ConfigureWindowAux, ConnectionExt as _,
-    EventMask, InputFocus, PropMode,
+    EventMask, ImageFormat, InputFocus, PropMode,
 };
 use x11rb::protocol::Event;
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::CURRENT_TIME;
 
 use daemon::{enabled, xvfb, Daemon};
-use x11::{all_windows_of, focus, tap, windows_of};
+use x11::{all_windows_of, focus, tap, windows_of, Compositor};
 
 /// The title of the capture overlay's window.
 const OVERLAY: &str = "Capture - iris";
@@ -450,3 +452,154 @@ fn withdrawn_and_back(case: &str, misses: bool) {
     }
     stop.store(true, Ordering::Relaxed);
 }
+
+// WHY: a compositor animates a withdrawn window from the last frame it
+// drew. GNOME Shell scales a closing window down and fades it out over
+// 150 ms, so a park that withdrew the overlay as the capture ended
+// showed the dimmed screen shrinking away after every Escape and every
+// capture. Where a compositor blends, the overlay now draws a cleared
+// frame and is withdrawn once that frame is on the window; without one
+// a transparent pixel shows black, and the overlay is withdrawn on its
+// last drawn frame. The class closed here is an overlay withdrawn with
+// anything drawn where a compositor runs, a park that never withdraws,
+// and a black frame where none runs. Not covered: a park from inside a
+// draw (a failed save), whose cleared frame is the one drawing; a
+// session re-armed between the cleared frame and the withdrawal, which
+// the park's token leaves mapped; the withdrawal at the deadline when no
+// present report comes; a real compositor's animation.
+
+#[test]
+fn a_parked_overlay_leaves_on_a_cleared_frame_where_a_compositor_blends() {
+    last_frame(
+        "a_parked_overlay_leaves_on_a_cleared_frame_where_a_compositor_blends",
+        true,
+    );
+}
+
+#[test]
+fn a_parked_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs() {
+    last_frame(
+        "a_parked_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs",
+        false,
+    );
+}
+
+/// Cancel a capture and check what the overlay draws before it is
+/// withdrawn: with `composited` it is withdrawn on a transparent frame,
+/// and without it on the frame the cancel found.
+fn last_frame(case: &str, composited: bool) {
+    if !enabled() {
+        return;
+    }
+    let Some((_xvfb, display)) = xvfb(case) else {
+        return;
+    };
+    let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    conn.change_window_attributes(
+        root,
+        &ChangeWindowAttributesAux::new().background_pixel(DESKTOP),
+    )
+    .unwrap();
+    conn.clear_area(false, root, 0, 0, 0, 0).unwrap();
+    let selection = conn
+        .intern_atom(false, format!("_NET_WM_CM_S{screen}").as_bytes())
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let _compositor = composited.then(|| {
+        // A compositor draws each window from a pixmap of its own, which
+        // keeps the window's last frame once the window unmaps.
+        conn.composite_query_version(0, 4).unwrap().reply().unwrap();
+        conn.composite_redirect_subwindows(root, Redirect::MANUAL)
+            .unwrap();
+        Compositor::start(&conn, root, selection)
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::start(dir.path(), |cmd| {
+        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+    });
+    let warm = daemon.until("the warmup to open the overlay", || {
+        all_windows_of(&conn, root, OVERLAY).first().copied()
+    });
+    daemon.settle();
+    daemon.until("the warmup to park the overlay", || {
+        windows_of(&conn, root, OVERLAY).is_empty().then_some(())
+    });
+    daemon.send(&["--capture"]);
+    // The overlay's pixel at (100, 100) as [b, g, r, a].
+    let read = || {
+        conn.get_image(ImageFormat::Z_PIXMAP, warm, 100, 100, 1, 1, !0)
+            .unwrap()
+            .reply()
+            .ok()
+            .map(|image| <[u8; 4]>::try_from(&image.data[..4]).unwrap())
+    };
+    // The frozen screen under the dim: opaque, and darker than the
+    // desktop. An unpainted window reads as the desktop, and the dim
+    // drawn before the frame lands is translucent.
+    let desktop = DESKTOP.to_le_bytes();
+    let frozen = daemon.until("the capture's frozen screen to show", || {
+        read().filter(|p| {
+            p[3] == 255 && p[..3] != desktop[..3] && p[..3] != [0, 0, 0] && focus(&conn) == warm
+        })
+    });
+    // What the cancel draws: the window's damage until it unmaps, and,
+    // where the stand-in compositor holds the window's pixmap, the
+    // frame the window was withdrawn on, which a compositor animates.
+    conn.change_window_attributes(
+        warm,
+        &ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY),
+    )
+    .unwrap();
+    conn.damage_query_version(1, 1).unwrap().reply().unwrap();
+    let damage = conn.generate_id().unwrap();
+    conn.damage_create(damage, warm, ReportLevel::RAW_RECTANGLES)
+        .unwrap();
+    let pixmap = conn.generate_id().unwrap();
+    // Past the session's entrance, whose frames are not the cancel's.
+    daemon.settle();
+    if composited {
+        conn.composite_name_window_pixmap(warm, pixmap).unwrap();
+    }
+    conn.get_input_focus().unwrap().reply().unwrap();
+    while conn.poll_for_event().unwrap().is_some() {}
+    tap(&conn, root, ESCAPE);
+    let mut drawn = 0;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match conn.poll_for_event().unwrap() {
+            Some(Event::DamageNotify(e)) if e.drawable == warm => drawn += 1,
+            Some(Event::UnmapNotify(e)) if e.window == warm => break,
+            Some(_) => {}
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the cancelled capture's overlay was not withdrawn within 5 s"
+        );
+    }
+    if composited {
+        let last = conn
+            .get_image(ImageFormat::Z_PIXMAP, pixmap, 100, 100, 1, 1, !0)
+            .unwrap()
+            .reply()
+            .unwrap();
+        assert_eq!(
+            last.data[..4],
+            [0, 0, 0, 0],
+            "the overlay was withdrawn on a drawn frame, which a compositor \
+             animates; the frozen screen read {frozen:?}"
+        );
+    } else {
+        assert_eq!(
+            drawn, 0,
+            "the overlay drew after the cancel, where a transparent pixel \
+             shows black"
+        );
+    }
+}
+
+/// The desktop's colour, 0xRRGGBB, where the frozen screen shows.
+const DESKTOP: u32 = 0x5a_7f_a6;

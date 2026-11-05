@@ -60,8 +60,13 @@ impl OverlayMode {
 
 pub struct Overlay {
     /// Parked (`sys::window::park`): the window stays alive with its
-    /// renderer, and the next capture reuses it.
+    /// renderer, and the next capture reuses it. A hidden overlay draws
+    /// nothing.
     pub hidden: bool,
+    /// The instant of a park whose withdrawal waits for the window's
+    /// cleared frame (`Overlay::park`); None once it ran or a session
+    /// re-armed the window.
+    parking: Option<std::time::Instant>,
     /// What finish() does with the committed selection.
     mode: OverlayMode,
     /// What a press on the frame selects, chosen on the capture bar.
@@ -214,6 +219,11 @@ fn slide_rect(
 
 impl Render for Overlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.hidden {
+            // A parking window's last frame: a compositor animates the
+            // withdrawn window from it.
+            return div().into_any_element();
+        }
         self.focus.focus(window, cx);
         if self.finalize_failed {
             self.finalize_failed = false;
