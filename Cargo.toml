@@ -26,7 +26,7 @@ strip = "symbols"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 # The records the libraries log (GPU, windowing, D-Bus) go to iris.log
 # through iris_lib::log. Already in the tree through gpui.
 log = "0.4"
