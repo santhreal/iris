@@ -244,7 +244,10 @@ pub fn font(weight: FontWeight) -> gpui::Font {
 
 /// Tabular numerals (`tnum`): every digit has one advance, so a number
 /// that updates in place (a timer, a dimension readout) or aligns in a
-/// column does not shift. Apply with `.font_features(theme::tabular())`.
+/// column does not shift. Apply with `.font_features(theme::tabular())`
+/// to a number. Use `tabular_digits` for text with words or hyphens
+/// that changes in place, and proportional figures for text that does
+/// not.
 pub fn tabular() -> FontFeatures {
     FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
 }

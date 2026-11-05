@@ -244,7 +244,6 @@ impl Settings {
                             .text_size(px(theme::TEXT_BODY))
                             .line_height(px(16.))
                             .text_color(theme::FG)
-                            .font_features(theme::tabular())
                             .child(concat!("iris ", env!("CARGO_PKG_VERSION"))),
                     )
                     .child(
@@ -252,7 +251,6 @@ impl Settings {
                             .text_size(px(theme::TEXT_SMALL))
                             .line_height(px(14.))
                             .text_color(theme::FG_DIM)
-                            .font_features(theme::tabular())
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_ellipsis()
