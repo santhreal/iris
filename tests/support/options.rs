@@ -33,6 +33,7 @@ pub const OPTIONS: &[(&str, Kind)] = &[
     ("--annotate", Kind::Single(EDITOR)),
     ("--toast", Kind::Other),
     ("--quit", Kind::Other),
+    ("--from-menu", Kind::Other),
     ("--background", Kind::Other),
     ("--version", Kind::Other),
     ("--check-update", Kind::Other),
