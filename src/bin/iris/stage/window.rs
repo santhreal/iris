@@ -118,17 +118,34 @@ pub fn show_toast(cx: &mut App, path: &Path, source: Option<crate::pin::Over>) {
     cx.spawn(async move |cx| {
         let thumb = scaled.await;
         cx.update(|cx| {
-            let opened = thumb.and_then(|t| open_toast_window(cx, &path, t, false, None, source));
-            if let Err(e) = opened {
-                iris_lib::ilog!("toast: {e}");
-                crate::notice::failed(cx, "Toast did not open", &e);
+            match thumb.and_then(|t| open_toast_window(cx, &path, t, false, None, source)) {
+                Ok(toast) => {
+                    after_first_present(toast, cx, Box::new(move |cx| start_entrance(toast, cx)))
+                }
+                Err(e) => {
+                    iris_lib::ilog!("toast: {e}");
+                    crate::notice::failed(cx, "Toast did not open", &e);
+                }
             }
         });
     })
     .detach();
 }
 
-/// Runs once when a landed toast is on screen, or when it cannot be.
+/// Start `toast`'s entrance clock, once: the slide plays from the frame
+/// after the window's first one is on screen, so none of it runs while
+/// the window is still on its way to the screen.
+fn start_entrance(toast: WindowHandle<ToastStage>, cx: &mut App) {
+    let _ = toast.update(cx, |stage, _, cx| {
+        if stage.opened.is_none() {
+            stage.opened = Some(Instant::now());
+            cx.notify();
+        }
+    });
+}
+
+/// Runs once when a toast's first frame is on screen, or when it cannot
+/// be.
 pub type Handoff = Box<dyn FnOnce(&mut App)>;
 
 /// The capture-flight landing: the card appears at rest, no entrance,
@@ -146,7 +163,7 @@ pub fn show_toast_landed(
     handoff: Handoff,
 ) {
     match thumb.and_then(|t| open_toast_window(cx, path, t, true, anchor, source)) {
-        Ok(toast) => hand_off_after_present(toast, cx, handoff),
+        Ok(toast) => after_first_present(toast, cx, handoff),
         Err(e) => {
             iris_lib::ilog!("toast: {e}");
             crate::notice::failed(cx, "Toast did not open", &e);
@@ -155,20 +172,20 @@ pub fn show_toast_landed(
     }
 }
 
-/// Bound on the wait for a landed toast's first presented frame: a
-/// compositor that never answers a frame callback, or an X server that
-/// never reports the damage, still gets the handoff.
+/// Bound on the wait for a toast's first presented frame: a compositor
+/// that never answers a frame callback, or an X server that never
+/// reports the damage, still gets `then`.
 const HANDOFF_DEADLINE: Duration = Duration::from_millis(250);
 
-/// Run `handoff` once the toast's first frame is on screen. open_window
+/// Run `then` once the toast's first frame is on screen. open_window
 /// drew that frame without presenting it; the first frame callback's
 /// frame presents it. Where the platform reports a present (X11 damage)
-/// the handoff waits for that report, since an X11 frame tick follows a
+/// `then` waits for that report, since an X11 frame tick follows a
 /// timer and the present lands on the server later. Elsewhere the next
 /// frame callback runs after the compositor composited the present.
-fn hand_off_after_present(toast: WindowHandle<ToastStage>, cx: &mut App, handoff: Handoff) {
+fn after_first_present(toast: WindowHandle<ToastStage>, cx: &mut App, then: Handoff) {
     let until = Instant::now() + HANDOFF_DEADLINE;
-    let slot = Rc::new(Cell::new(Some(handoff)));
+    let slot = Rc::new(Cell::new(Some(then)));
     let on_present = slot.clone();
     let registered = toast.update(cx, |_, window, _| {
         let watch = crate::sys::window::PresentWatch::open(window, until);
@@ -179,8 +196,8 @@ fn hand_off_after_present(toast: WindowHandle<ToastStage>, cx: &mut App, handoff
                     cx.update(|cx| run_handoff(&on_present, cx));
                 })
                 .detach(),
-            // The handoff parks another window; run it after this
-            // window's frame callback returns.
+            // A landed toast's handoff parks another window; run `then`
+            // after this window's frame callback returns.
             None => window.on_next_frame(move |_, cx| {
                 cx.defer(move |cx| run_handoff(&on_present, cx));
             }),

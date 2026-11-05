@@ -3,8 +3,9 @@
 //! Raw capture pixels, aspect-true, at most 200x140 logical px and
 //! scaled to the display's device pixels, on a card at least as large
 //! as its hover actions, 12px corners,
-//! one soft deep shadow. It slides in from beyond the screen edge in
-//! 280ms with a hard deceleration and stops dead, sits for the
+//! one soft deep shadow. Once its window's first frame is on screen, it
+//! slides in from beyond the screen edge in 280ms with a hard
+//! deceleration and stops dead, sits for the
 //! configured duration (hovering suspends the clock), then accelerates
 //! back off the edge, fading in the last third. A flick toward the edge
 //! dismisses it 1:1 under the pointer; any other drag is a file
@@ -73,6 +74,20 @@ pub(super) const SWIPE_VELOCITY: f32 = 400.0;
 /// pointer, so the result of a click on an action is read before the
 /// actions return.
 pub(super) const STATUS_HOLD: Duration = Duration::from_millis(1600);
+
+/// How far the entrance has run at `now`, 0..=1: none while `opened`
+/// is unset, which holds the card past the screen edge until the
+/// window's first frame is on screen, and all of it on a screen that
+/// shows the card still.
+pub(super) fn entrance(opened: Option<Instant>, still: bool, now: Instant) -> f32 {
+    match opened {
+        _ if still => 1.0,
+        None => 0.0,
+        Some(opened) => (now.saturating_duration_since(opened).as_secs_f32()
+            / motion::tempo(ENTER).as_secs_f32())
+        .min(1.0),
+    }
+}
 
 /// How far the hover actions show, 0 hidden to 1 shown: `from` at the
 /// last crossing of the card's edge, eased toward the side the pointer
@@ -183,6 +198,8 @@ pub struct ToastStage {
     /// The screen rect a pin of this capture opens over: the capture's
     /// own rect where the toast has it, else the toast's monitor.
     pub(super) pin_over: Option<crate::pin::Over>,
+    /// When the entrance started: the toast's first frame on screen,
+    /// or for a landed card, an entrance's length before it opened.
     pub(super) opened: Option<Instant>,
     pub(super) hover_paused: bool,
     pub(super) pinned: bool,
@@ -285,13 +302,9 @@ impl Render for ToastStage {
         let still = !crate::sys::window::blended(window);
         let reduced = cx.reduce_motion();
 
-        // Entrance: decelerating hard into the corner.
-        let opened = *self.opened.get_or_insert_with(Instant::now);
-        let enter_t = if still {
-            1.0
-        } else {
-            (opened.elapsed().as_secs_f32() / motion::tempo(ENTER).as_secs_f32()).min(1.0)
-        };
+        // Entrance: decelerating hard into the corner, from the frame
+        // after the window's first one is on screen.
+        let enter_t = entrance(self.opened, still, Instant::now());
         let pose = motion::arrive(enter_t, MARGIN, w, reduced);
         let mut offset = pose.inset;
         let mut opacity = pose.opacity;

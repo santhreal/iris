@@ -391,3 +391,48 @@ fn the_toast_menu_sets_its_destructive_row_apart() {
         ToastRow::ALL.len() as f32 * MENU_ROW_H + groups as f32 * MENU_SEPARATOR_H + 2.0 * MENU_PAD
     );
 }
+
+// WHY: the class closed here is "the entrance plays before the card is
+// on screen". The entrance clock started at the toast's first render,
+// and the window's first frame reached the screen about 100 ms later,
+// so most of the slide ran unseen and the card appeared near its rest.
+// An unstarted entrance holds the card at its start however long the
+// wait, a started one runs its length from the start, a screen that
+// shows the card still shows it at rest, and a new toast's clock is
+// unset until something starts it. Not covered here: the present
+// report that starts the clock. `tests/reduce_motion.rs` reaches it
+// under a compositor, where a clock that never starts leaves the card
+// past the screen edge or unfaded; the report's deadline is unexercised.
+#[test]
+#[serial_test::serial]
+fn the_entrance_waits_for_the_first_frame_on_screen() {
+    let now = Instant::now();
+    let enter = motion::tempo(ENTER);
+    for late in [Duration::ZERO, enter, Duration::from_secs(10)] {
+        assert_eq!(
+            entrance(None, false, now + late),
+            0.0,
+            "unstarted, {late:?} on"
+        );
+    }
+    for (since, want) in [
+        (Duration::ZERO, 0.0),
+        (enter / 2, 0.5),
+        (enter, 1.0),
+        (enter * 3, 1.0),
+    ] {
+        let t = entrance(Some(now), false, now + since);
+        assert!(
+            (t - want).abs() < 1e-3,
+            "{since:?} after the start: {t}, want {want}"
+        );
+    }
+    for opened in [None, Some(now)] {
+        assert_eq!(entrance(opened, true, now), 1.0, "still screen, {opened:?}");
+    }
+    let _home = isolated_home();
+    let dir = tempfile::tempdir().unwrap();
+    let path = capture(dir.path(), 8, 8, [255, 0, 0, 255]);
+    let stage = ToastStage::from_parts(&path, prepare_thumb(&path, 1.0).unwrap());
+    assert_eq!(stage.opened, None, "a new toast's entrance has started");
+}
