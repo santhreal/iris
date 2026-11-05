@@ -122,15 +122,16 @@ struct Seen {
 /// for a listed window or one waiting to be mapped, the real one or the
 /// synthetic one ICCCM 4.1.4 asks a withdrawing client to send, it
 /// unmaps the window and drops it from the list. With `misses` set it
-/// misses the first withdrawal of a window waiting to be mapped and maps
-/// the window anyway, as a window manager does that is starting as the
-/// window is withdrawn. It focuses a listed window that asks to be
-/// active (`_NET_ACTIVE_WINDOW`). It records each map, withdrawal,
-/// missed withdrawal, minimize request, and state a `_NET_WM_STATE` add
-/// request asks for, and each restack of a withdrawn window: a
-/// ConfigureWindow with a stack mode, or a `_NET_WM_STATE` request for
-/// `_NET_WM_STATE_ABOVE`. It holds SubstructureRedirect on the root
-/// before it returns.
+/// holds every map request until it misses the first withdrawal of a
+/// window waiting to be mapped, then maps the window anyway, as a window
+/// manager does that is starting as the window is withdrawn; a daemon
+/// slower to withdraw than `MAP_DELAY` still meets the miss. It focuses
+/// a listed window that asks to be active (`_NET_ACTIVE_WINDOW`). It
+/// records each map, withdrawal, missed withdrawal, minimize request,
+/// and state a `_NET_WM_STATE` add request asks for, and each restack
+/// of a withdrawn window: a ConfigureWindow with a stack mode, or a
+/// `_NET_WM_STATE` request for `_NET_WM_STATE_ABOVE`. It holds
+/// SubstructureRedirect on the root before it returns.
 fn window_manager(display: &str, stop: Arc<AtomicBool>, misses: bool) -> Arc<Mutex<Seen>> {
     let (wm, screen) = x11rb::connect(Some(display)).unwrap();
     let root = wm.setup().roots[screen].root;
@@ -164,7 +165,8 @@ fn window_manager(display: &str, stop: Arc<AtomicBool>, misses: bool) -> Arc<Mut
         while !stop.load(Ordering::Relaxed) {
             let now = Instant::now();
             let mut seen = log.lock();
-            for (_, window) in waiting.extract_if(.., |w| w.0 <= now) {
+            let held = misses && seen.missed.is_empty();
+            for (_, window) in waiting.extract_if(.., |w| !held && w.0 <= now) {
                 let states = wm
                     .get_property(false, window, net_state, AtomEnum::ATOM, 0, 32)
                     .ok()
