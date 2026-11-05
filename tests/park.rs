@@ -14,20 +14,32 @@
 //! a capture must restore it.
 //!
 //! The first case runs on a private Xvfb with no window manager. The
-//! second puts a window manager on it, reduced to what a park meets: the
-//! warmup's overlay was minimized, and iris then raised it again, once
-//! the window manager listed the window and again 200 ms later, to span
-//! the screen. xfwm4 restores a minimized window that is raised while
-//! another iris window has the focus, so the library opened during the
-//! warmup showed the dimmed capture overlay over the desktop. The class
-//! closed there is a restack of the overlay after its park. Not covered:
-//! a real window manager's response to a restack; a restack after a
-//! capture's park; a park before the window manager lists the window,
-//! which this window manager answers too fast to reach, and which the
-//! fixup queue's unit test covers; Wayland, Windows, and macOS, which
-//! destroy the overlay in place of a park. The cases run only with
-//! `IRIS_X11_TEST_DISPLAY` set and need `Xvfb`; without it a case prints
-//! that it did not run.
+//! others put a window manager on it, reduced to what a park meets. A
+//! park minimized the overlay there, and a minimized window stays
+//! managed: the taskbar, the window switcher, and the GNOME overview
+//! listed it, and choosing it there restored it. iris also raised the
+//! warmup's overlay again once the window manager listed it, and 200 ms
+//! later, to span the screen, and xfwm4 restores a minimized window that
+//! is raised while another iris window has the focus, so the library
+//! opened during the warmup showed the dimmed capture overlay over the
+//! desktop. A park now withdraws the overlay (ICCCM 4.1.4). This window
+//! manager answers a map request `MAP_DELAY` late, as a busy one does, so
+//! the warmup's park reaches it before it manages the window, where only
+//! the withdrawal's synthetic UnmapNotify tells it to drop the request.
+//! xfwm4 starting as the daemon starts misses that withdrawal and keeps
+//! the overlay mapped over the desktop; the third case's window manager
+//! misses it too, and iris withdraws the overlay again once the window
+//! manager lists it. The class closed there is a parked overlay the
+//! window manager still manages or that iris restacks, after the warmup
+//! or after a capture, a capture's overlay withdrawn while in use, and
+//! an overlay mapped for a capture without listing, and then asking for,
+//! the states that keep it above and out of taskbars and window
+//! switchers. Not covered: a real window manager's response to these
+//! requests; a park that races a fixup the window manager has not yet
+//! listed the window for, which the fixup queue's unit test covers;
+//! Wayland, Windows, and macOS, which destroy the overlay in place of a
+//! park. The cases run only with `IRIS_X11_TEST_DISPLAY` set and need
+//! `Xvfb`; without it a case prints that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -42,17 +54,18 @@ mod x11;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as _, SK};
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConfigWindow, ConfigureWindowAux, ConnectionExt as _,
-    EventMask, PropMode,
+    EventMask, InputFocus, PropMode,
 };
 use x11rb::protocol::Event;
 use x11rb::wrapper::ConnectionExt as _;
+use x11rb::CURRENT_TIME;
 
 use daemon::{enabled, xvfb, Daemon};
 use x11::{all_windows_of, focus, tap, windows_of};
@@ -62,6 +75,10 @@ const OVERLAY: &str = "Capture - iris";
 
 /// The keysym of `Escape`, which cancels a capture.
 const ESCAPE: u32 = 0xff1b;
+
+/// How long the stand-in window manager (`window_manager`) takes to
+/// answer a map request.
+const MAP_DELAY: Duration = Duration::from_millis(100);
 
 /// The rectangles of `window`'s input shape: none passes every click
 /// through, one is the default, the window's whole rect.
@@ -77,21 +94,41 @@ fn input_shape(conn: &impl Connection, window: u32) -> usize {
 /// What the stand-in window manager (`window_manager`) saw.
 #[derive(Default)]
 struct Seen {
-    /// Windows minimized through ICCCM WM_CHANGE_STATE, and not mapped
-    /// since.
-    iconic: Vec<u32>,
-    /// Each restack request for a minimized window: its window and the
+    /// The windows it manages, in `_NET_CLIENT_LIST` order.
+    listed: Vec<u32>,
+    /// Each window it mapped on request, with the states its
+    /// `_NET_WM_STATE` property held then.
+    mapped: Vec<(u32, Vec<u32>)>,
+    /// Each window withdrawn from it (ICCCM 4.1.4), in order.
+    withdrawn: Vec<u32>,
+    /// Each window that asked to be minimized (ICCCM WM_CHANGE_STATE).
+    minimized: Vec<u32>,
+    /// Each state a `_NET_WM_STATE` add request asked for, in order: its
+    /// window and the state's atom.
+    added: Vec<(u32, u32)>,
+    /// Each withdrawal it missed: the window it went on to manage.
+    missed: Vec<u32>,
+    /// Each restack request for a withdrawn window: its window and the
     /// request.
     restacks: Vec<(u32, &'static str)>,
 }
 
 /// A window manager on `display`, on a thread of its own until `stop`
-/// is set: it maps a window that asks and lists it in the root's
-/// `_NET_CLIENT_LIST`, unmaps a window that asks to be iconic, and
-/// records a restack of an iconic window: a ConfigureWindow with a stack
-/// mode, or a `_NET_WM_STATE` request. It holds SubstructureRedirect on
-/// the root before it returns.
-fn window_manager(display: &str, stop: Arc<AtomicBool>) -> Arc<Mutex<Seen>> {
+/// is set. It maps a window `MAP_DELAY` after the window asks, focuses
+/// it, and lists it in the root's `_NET_CLIENT_LIST`; on an UnmapNotify
+/// for a listed window or one waiting to be mapped, the real one or the
+/// synthetic one ICCCM 4.1.4 asks a withdrawing client to send, it
+/// unmaps the window and drops it from the list. With `misses` set it
+/// misses the first withdrawal of a window waiting to be mapped and maps
+/// the window anyway, as a window manager does that is starting as the
+/// window is withdrawn. It focuses a listed window that asks to be
+/// active (`_NET_ACTIVE_WINDOW`). It records each map, withdrawal,
+/// missed withdrawal, minimize request, and state a `_NET_WM_STATE` add
+/// request asks for, and each restack of a withdrawn window: a
+/// ConfigureWindow with a stack mode, or a `_NET_WM_STATE` request for
+/// `_NET_WM_STATE_ABOVE`. It holds SubstructureRedirect on the root
+/// before it returns.
+fn window_manager(display: &str, stop: Arc<AtomicBool>, misses: bool) -> Arc<Mutex<Seen>> {
     let (wm, screen) = x11rb::connect(Some(display)).unwrap();
     let root = wm.setup().roots[screen].root;
     let redirect = EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY;
@@ -100,61 +137,108 @@ fn window_manager(display: &str, stop: Arc<AtomicBool>) -> Arc<Mutex<Seen>> {
         .check()
         .unwrap();
     let atom = |name: &[u8]| wm.intern_atom(false, name).unwrap().reply().unwrap().atom;
-    let (client_list, change_state, net_state) = (
+    let (client_list, change_state, net_state, above, active) = (
         atom(b"_NET_CLIENT_LIST"),
         atom(b"WM_CHANGE_STATE"),
         atom(b"_NET_WM_STATE"),
+        atom(b"_NET_WM_STATE_ABOVE"),
+        atom(b"_NET_ACTIVE_WINDOW"),
     );
     let seen = Arc::new(Mutex::new(Seen::default()));
     let log = seen.clone();
     std::thread::spawn(move || {
-        let mut clients = Vec::new();
+        // Map requests not yet answered: when each is due, its window.
+        let mut waiting: Vec<(Instant, u32)> = Vec::new();
+        let list = |listed: &[u32]| {
+            let _ = wm.change_property32(
+                PropMode::REPLACE,
+                root,
+                client_list,
+                AtomEnum::WINDOW,
+                listed,
+            );
+        };
         while !stop.load(Ordering::Relaxed) {
-            let Some(event) = wm.poll_for_event().unwrap() else {
+            let now = Instant::now();
+            let mut seen = log.lock();
+            for (_, window) in waiting.extract_if(.., |w| w.0 <= now) {
+                let states = wm
+                    .get_property(false, window, net_state, AtomEnum::ATOM, 0, 32)
+                    .ok()
+                    .and_then(|cookie| cookie.reply().ok())
+                    .and_then(|reply| reply.value32().map(Iterator::collect))
+                    .unwrap_or_default();
+                seen.mapped.push((window, states));
+                let _ = wm.map_window(window);
+                let _ = wm.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME);
+                seen.listed.push(window);
+                list(&seen.listed);
+            }
+            let Ok(event) = wm.poll_for_event() else {
+                return;
+            };
+            let Some(event) = event else {
+                drop(seen);
+                let _ = wm.flush();
                 std::thread::sleep(Duration::from_millis(2));
                 continue;
             };
-            let mut seen = log.lock();
+            let withdrawn =
+                |seen: &Seen, w: u32| seen.withdrawn.contains(&w) && !seen.listed.contains(&w);
             match event {
                 Event::MapRequest(ev) => {
-                    wm.map_window(ev.window).unwrap();
-                    seen.iconic.retain(|&w| w != ev.window);
-                    if !clients.contains(&ev.window) {
-                        clients.push(ev.window);
+                    if !seen.listed.contains(&ev.window) && waiting.iter().all(|w| w.1 != ev.window)
+                    {
+                        waiting.push((now + MAP_DELAY, ev.window));
                     }
-                    wm.change_property32(
-                        PropMode::REPLACE,
-                        root,
-                        client_list,
-                        AtomEnum::WINDOW,
-                        &clients,
-                    )
-                    .unwrap();
+                }
+                Event::UnmapNotify(ev)
+                    if ev.event == root
+                        && (seen.listed.contains(&ev.window)
+                            || waiting.iter().any(|w| w.1 == ev.window)) =>
+                {
+                    if misses && seen.missed.is_empty() && !seen.listed.contains(&ev.window) {
+                        seen.missed.push(ev.window);
+                    } else {
+                        waiting.retain(|w| w.1 != ev.window);
+                        let _ = wm.unmap_window(ev.window);
+                        seen.listed.retain(|&w| w != ev.window);
+                        seen.withdrawn.push(ev.window);
+                        list(&seen.listed);
+                    }
                 }
                 Event::ConfigureRequest(ev) => {
                     if ev.value_mask.contains(ConfigWindow::STACK_MODE)
-                        && seen.iconic.contains(&ev.window)
+                        && withdrawn(&seen, ev.window)
                     {
                         seen.restacks
                             .push((ev.window, "ConfigureWindow stack mode"));
                     }
                     let aux = ConfigureWindowAux::from_configure_request(&ev);
-                    wm.configure_window(ev.window, &aux).unwrap();
+                    let _ = wm.configure_window(ev.window, &aux);
                 }
                 Event::ClientMessage(ev) => {
-                    let iconic = seen.iconic.contains(&ev.window);
-                    if ev.type_ == change_state && ev.data.as_data32()[0] == 3 {
-                        wm.unmap_window(ev.window).unwrap();
-                        if !iconic {
-                            seen.iconic.push(ev.window);
+                    let data = ev.data.as_data32();
+                    if ev.type_ == change_state && data[0] == 3 {
+                        seen.minimized.push(ev.window);
+                    } else if ev.type_ == active && seen.listed.contains(&ev.window) {
+                        let _ = wm.set_input_focus(InputFocus::PARENT, ev.window, CURRENT_TIME);
+                    } else if ev.type_ == net_state {
+                        // Action 1 is _NET_WM_STATE_ADD; a second state of
+                        // 0 is none.
+                        if data[0] == 1 {
+                            let states = data[1..3].iter().filter(|&&s| s != 0);
+                            let added = states.map(|&s| (ev.window, s)).collect::<Vec<_>>();
+                            seen.added.extend(added);
                         }
-                    } else if ev.type_ == net_state && iconic {
-                        seen.restacks.push((ev.window, "_NET_WM_STATE"));
+                        if data[1..3].contains(&above) && withdrawn(&seen, ev.window) {
+                            seen.restacks.push((ev.window, "_NET_WM_STATE_ABOVE"));
+                        }
                     }
                 }
                 _ => {}
             }
-            wm.flush().unwrap();
+            let _ = wm.flush();
         }
     });
     seen
@@ -177,6 +261,12 @@ fn a_parked_overlay_leaves_a_screen_with_no_window_manager() {
     });
     let warm = daemon.until("the warmup to open the overlay", || {
         all_windows_of(&conn, root, OVERLAY).first().copied()
+    });
+    // A daemon starved of CPU reads as idle, so the park is awaited, and
+    // the overlay checked again once the daemon is idle after it.
+    daemon.settle();
+    daemon.until("the warmup to park the overlay", || {
+        windows_of(&conn, root, OVERLAY).is_empty().then_some(())
     });
     daemon.settle();
     let shown = windows_of(&conn, root, OVERLAY);
@@ -218,18 +308,35 @@ fn a_parked_overlay_leaves_a_screen_with_no_window_manager() {
 }
 
 #[test]
-fn a_parked_overlay_is_not_raised_again_under_a_window_manager() {
+fn a_parked_overlay_is_withdrawn_and_comes_back_unlisted_under_a_window_manager() {
+    withdrawn_and_back(
+        "a_parked_overlay_is_withdrawn_and_comes_back_unlisted_under_a_window_manager",
+        false,
+    );
+}
+
+#[test]
+fn a_parked_overlay_a_starting_window_manager_manages_is_withdrawn_again() {
+    withdrawn_and_back(
+        "a_parked_overlay_a_starting_window_manager_manages_is_withdrawn_again",
+        true,
+    );
+}
+
+/// Park the overlay at the warmup and after two captures under the
+/// stand-in window manager, which misses the warmup's withdrawal when
+/// `misses` is set, and check each park and each capture.
+fn withdrawn_and_back(case: &str, misses: bool) {
     if !enabled() {
         return;
     }
-    let case = "a_parked_overlay_is_not_raised_again_under_a_window_manager";
     let Some((_xvfb, display)) = xvfb(case) else {
         return;
     };
     let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
     let root = conn.setup().roots[screen].root;
     let stop = Arc::new(AtomicBool::new(false));
-    let seen = window_manager(&display, stop.clone());
+    let seen = window_manager(&display, stop.clone(), misses);
     let dir = tempfile::tempdir().unwrap();
     let daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
@@ -237,26 +344,109 @@ fn a_parked_overlay_is_not_raised_again_under_a_window_manager() {
     let warm = daemon.until("the warmup to open the overlay", || {
         all_windows_of(&conn, root, OVERLAY).first().copied()
     });
-    daemon.until("the warmup to minimize the overlay", || {
-        seen.lock().iconic.contains(&warm).then_some(())
-    });
-    // Past the second span assertion, 200 ms after the window manager
-    // lists the window, and the 50 ms rescan bound.
-    std::thread::sleep(Duration::from_millis(1000));
+    let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
+    let states = [
+        atom(b"_NET_WM_STATE_ABOVE"),
+        atom(b"_NET_WM_STATE_SKIP_TASKBAR"),
+        atom(b"_NET_WM_STATE_SKIP_PAGER"),
+    ];
+    // After the warmup's park and each capture's: withdrawn, never
+    // minimized, unmapped, and sent no restack, past the second span
+    // assertion 200 ms after the window manager lists the window and the
+    // 50 ms rescan bound. A capture's restore spans the withdrawn window
+    // before it maps it, so restacks count from each withdrawal on.
+    let parked = |when: &str, parks: usize| {
+        let since = daemon.until(&format!("{when} to withdraw the overlay"), || {
+            let seen = seen.lock();
+            let withdrawals = seen.withdrawn.iter().filter(|&&w| w == warm).count();
+            (withdrawals == parks && !seen.listed.contains(&warm)).then_some(seen.restacks.len())
+        });
+        std::thread::sleep(Duration::from_millis(1000));
+        let seen = seen.lock();
+        assert_eq!(
+            &seen.restacks[since..],
+            &[] as &[(u32, &str)],
+            "iris restacked the overlay {warm:#x} after {when} parked it"
+        );
+        assert_eq!(
+            seen.minimized,
+            Vec::<u32>::new(),
+            "{when} minimized the overlay, which keeps it managed and listed"
+        );
+        assert!(
+            !seen.listed.contains(&warm),
+            "the window manager manages the overlay after {when} parked it"
+        );
+        assert!(
+            windows_of(&conn, root, OVERLAY).is_empty(),
+            "the overlay is mapped after {when} parked it"
+        );
+    };
+    parked("the warmup", 1);
+    assert_eq!(
+        seen.lock().missed,
+        if misses { vec![warm] } else { vec![] },
+        "the window manager missed another withdrawal than the warmup's"
+    );
+
+    for capture in 1..=2 {
+        let asked = seen.lock().added.len();
+        daemon.send(&["--capture"]);
+        let focused = daemon.until(
+            &format!("capture {capture}'s overlay to take the focus"),
+            || {
+                let focused = focus(&conn);
+                windows_of(&conn, root, OVERLAY)
+                    .contains(&focused)
+                    .then_some(focused)
+            },
+        );
+        assert_eq!(
+            focused, warm,
+            "capture {capture} opened another overlay window"
+        );
+        let mapped = seen
+            .lock()
+            .mapped
+            .iter()
+            .rev()
+            .find(|m| m.0 == warm)
+            .map(|m| m.1.clone());
+        let missing: Vec<u32> = states
+            .iter()
+            .copied()
+            .filter(|s| !mapped.as_ref().is_some_and(|m| m.contains(s)))
+            .collect();
+        assert_eq!(
+            missing,
+            Vec::<u32>::new(),
+            "capture {capture}'s overlay was mapped without these states \
+             (above, skip taskbar, skip pager): {mapped:?}"
+        );
+        // A window manager may replace the states a window lists before
+        // its map with its own, so the overlay asks for them again once
+        // the window manager manages it.
+        daemon.until(
+            &format!("capture {capture}'s overlay to ask for its states"),
+            || {
+                let seen = seen.lock();
+                let added: Vec<u32> = seen.added[asked..]
+                    .iter()
+                    .filter(|a| a.0 == warm)
+                    .map(|a| a.1)
+                    .collect();
+                states.iter().all(|s| added.contains(s)).then_some(())
+            },
+        );
+        // Past the window manager listing the overlay, and the
+        // dispatcher's read of the list it changed.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            seen.lock().listed.contains(&warm) && windows_of(&conn, root, OVERLAY) == [warm],
+            "capture {capture}'s overlay was withdrawn while in use"
+        );
+        tap(&conn, root, ESCAPE);
+        parked(&format!("capture {capture}"), capture + 1);
+    }
     stop.store(true, Ordering::Relaxed);
-    let seen = seen.lock();
-    assert_eq!(
-        seen.restacks,
-        Vec::<(u32, &str)>::new(),
-        "iris restacked the parked overlay {warm:#x}"
-    );
-    assert_eq!(
-        seen.iconic,
-        vec![warm],
-        "the warmup did not leave the overlay minimized"
-    );
-    assert!(
-        windows_of(&conn, root, OVERLAY).is_empty(),
-        "the parked overlay is mapped"
-    );
 }

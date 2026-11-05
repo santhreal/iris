@@ -1,7 +1,10 @@
 //! Window manager state for mapped windows: stacking above other
-//! windows, and a span over the virtual screen. A window manager applies
-//! a _NET_WM_STATE request only to a window it manages, so a fixup
-//! waits on one thread until its window is in _NET_CLIENT_LIST.
+//! windows, a span over the virtual screen, and a place outside taskbars
+//! and window switchers; and withdrawal for a window taken off the
+//! screen. A window manager applies a _NET_WM_STATE request only to a
+//! window it manages, so a fixup waits on one thread until its window is
+//! in _NET_CLIENT_LIST, and the same thread withdraws a parked window
+//! the list holds again.
 
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -11,7 +14,8 @@ use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
-    ConnectionExt, EventMask, InputFocus, PropMode, StackMode, CLIENT_MESSAGE_EVENT,
+    ConnectionExt, EventMask, InputFocus, PropMode, StackMode, UnmapNotifyEvent,
+    CLIENT_MESSAGE_EVENT, UNMAP_NOTIFY_EVENT,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -26,6 +30,9 @@ enum Fixup {
     AlwaysOnTop,
     /// The union rect of the monitors in root pixels, raised, above.
     Span { x: i32, y: i32, w: u32, h: u32 },
+    /// _NET_WM_STATE_SKIP_TASKBAR and _NET_WM_STATE_SKIP_PAGER: no entry
+    /// in a taskbar, a window switcher, or an overview.
+    Unlisted,
 }
 
 /// A fixup waiting for its window to be managed.
@@ -52,6 +59,9 @@ static AGAIN: parking_lot::Mutex<Vec<(Instant, u32, Fixup)>> = parking_lot::Mute
 /// Held while the dispatcher sends fixups, so `forget` returns only
 /// once no request of a forgotten fixup is still to be sent.
 static SENDING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+/// Windows withdrawn by `withdraw` and not brought back by
+/// `unpark_span`.
+static PARKED: parking_lot::Mutex<Vec<u32>> = parking_lot::Mutex::new(Vec::new());
 /// The write end of the dispatcher's wake pipe, -1 until it runs.
 static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
 
@@ -62,61 +72,102 @@ pub fn always_on_top_after_map(xid: u32) {
 
 /// Span the virtual screen with window `xid` once it is managed: the
 /// union rect (`x`, `y`, `w`, `h`, root pixels), raised and above, with
-/// no window manager frame. The frame goes at once, from the calling
-/// thread; the rest waits until the window is managed.
+/// no window manager frame, and with no entry in a taskbar or a window
+/// switcher. The frame goes at once, from the calling thread; the rest
+/// waits until the window is managed.
 pub fn span_after_map(xid: u32, x: i32, y: i32, w: u32, h: u32) {
     if let Ok((conn, _)) = iris_lib::sys::capture::x11::shared_conn() {
         unframe(conn, xid);
         let _ = conn.flush();
     }
+    enqueue(xid, Fixup::Unlisted);
     enqueue(xid, Fixup::Span { x, y, w, h });
 }
 
-/// Unmap window `xid` when no window manager runs, and return whether
-/// it did. A minimize is a request to the window manager (ICCCM
-/// WM_CHANGE_STATE), and with none to act on it the window stays on
-/// screen. A window manager is the one client that selects
-/// SubstructureRedirect on the root.
-pub fn park_unmanaged(xid: u32) -> bool {
+/// Withdraw window `xid` (ICCCM 4.1.4): unmapped, and a synthetic
+/// UnmapNotify on the root for a window manager. A window manager stops
+/// managing a withdrawn window, so the window has no frame and no entry
+/// in a taskbar, a window switcher, or an overview, where a minimized
+/// window keeps all three. With no window manager the unmap alone takes
+/// it off the screen. A window manager that starts as the window is
+/// withdrawn can miss both and manage it anyway, so the dispatcher
+/// withdraws the window again each time the client list holds it, until
+/// `unpark_span`.
+pub fn withdraw(xid: u32) {
     let Ok((conn, screen)) = iris_lib::sys::capture::x11::shared_conn() else {
-        return false;
+        return;
     };
-    let root = conn.setup().roots[screen].root;
-    let managed = conn
-        .get_window_attributes(root)
-        .ok()
-        .and_then(|cookie| cookie.reply().ok())
-        .is_none_or(|a| a.all_event_masks.contains(EventMask::SUBSTRUCTURE_REDIRECT));
-    if managed {
-        return false;
+    dispatcher();
+    {
+        let mut parked = PARKED.lock();
+        if !parked.contains(&xid) {
+            parked.push(xid);
+        }
     }
-    let _ = conn.unmap_window(xid);
+    send_withdraw(conn, conn.setup().roots[screen].root, xid);
     let _ = conn.flush();
-    true
+}
+
+/// Send the requests that withdraw `win`: its unmap, and the synthetic
+/// UnmapNotify a window manager reads for a window it has a map request
+/// for and has not mapped yet. Unflushed.
+fn send_withdraw(conn: &impl Connection, root: u32, win: u32) {
+    let _ = conn.unmap_window(win);
+    let event = UnmapNotifyEvent {
+        response_type: UNMAP_NOTIFY_EVENT,
+        sequence: 0,
+        event: root,
+        window: win,
+        from_configure: false,
+    };
+    let mask = EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT;
+    let _ = conn.send_event(false, root, mask, event);
 }
 
 /// Drop every fixup still due on window `xid`, waiting or to be asserted
-/// again. A fixup restacks its window, and a window manager restores a
-/// minimized window it is asked to raise, so a window taken off the
-/// screen must receive no more of them. On return the dispatcher sends
-/// no further request for `xid`.
+/// again. A withdrawn window takes no more window manager requests: a
+/// window manager shows a window it is asked to raise. On return the
+/// dispatcher sends no further request for `xid`.
 pub fn forget(xid: u32) {
     let _sending = SENDING.lock();
     PENDING.lock().retain(|p| p.xid != xid);
     AGAIN.lock().retain(|a| a.1 != xid);
 }
 
-/// Bring the parked window `xid` back over the virtual screen: the
-/// union rect, mapped, raised, above, focused, and taking input again
-/// (`cutout::pass_input`). A window manager keeps the window managed
-/// while it is minimized, and with none a map shows it at once, so the
-/// requests go out at once, from the calling thread.
+/// Bring the withdrawn (`withdraw`) window `xid` back over the virtual
+/// screen: the union rect, mapped, raised, above, focused, and taking
+/// input again (`cutout::pass_input`). A withdrawn window takes its
+/// window manager states from its `_NET_WM_STATE` property, so the
+/// property lists them before the map; the requests go out at once,
+/// from the calling thread, and the span is asserted again once a window
+/// manager manages the window (`span_after_map`).
 pub fn unpark_span(xid: u32, x: i32, y: i32, w: u32, h: u32) {
     let Ok((conn, screen)) = iris_lib::sys::capture::x11::shared_conn() else {
         return;
     };
     let root = conn.setup().roots[screen].root;
+    {
+        // Under `SENDING`: once the window is mapped, no withdrawal of
+        // the dispatcher's is still to be sent for it.
+        let _sending = SENDING.lock();
+        PARKED.lock().retain(|&w| w != xid);
+    }
     super::cutout::take_input(conn, xid);
+    let states = [
+        atom_cached(conn, b"_NET_WM_STATE"),
+        atom_cached(conn, b"_NET_WM_STATE_ABOVE"),
+        atom_cached(conn, b"_NET_WM_STATE_SKIP_TASKBAR"),
+        atom_cached(conn, b"_NET_WM_STATE_SKIP_PAGER"),
+    ];
+    if let [Some(state), Some(above), Some(taskbar), Some(pager)] = states {
+        let _ = conn.change_property32(
+            PropMode::REPLACE,
+            xid,
+            state,
+            AtomEnum::ATOM,
+            &[above, taskbar, pager],
+        );
+    }
     let _ = conn.configure_window(xid, &span(x, y, w, h));
     let _ = conn.map_window(xid);
     request_above(conn, root, xid);
@@ -127,6 +178,19 @@ pub fn unpark_span(xid: u32, x: i32, y: i32, w: u32, h: u32) {
     activate(conn, root, xid);
     let _ = conn.set_input_focus(InputFocus::POINTER_ROOT, xid, x11rb::CURRENT_TIME);
     let _ = conn.flush();
+    if managed_screen(conn, root) {
+        enqueue(xid, Fixup::Unlisted);
+        enqueue(xid, Fixup::Span { x, y, w, h });
+    }
+}
+
+/// Whether a window manager runs on the screen of `root`: the one client
+/// that selects SubstructureRedirect on the root.
+fn managed_screen(conn: &impl Connection, root: u32) -> bool {
+    conn.get_window_attributes(root)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_none_or(|a| a.all_event_masks.contains(EventMask::SUBSTRUCTURE_REDIRECT))
 }
 
 /// Take the override-redirect window `xid` off the screen: shrunk to
@@ -215,13 +279,18 @@ fn dispatcher_loop(wake_fd: i32) {
         {
             let _sending = SENDING.lock();
             let waiting = !PENDING.lock().is_empty();
-            if waiting && (changed || scanned.elapsed() >= RESCAN) {
+            let parked = !PARKED.lock().is_empty();
+            if (waiting && (changed || scanned.elapsed() >= RESCAN)) || (parked && changed) {
                 scanned = now;
-                for (xid, fixup) in managed(&conn, root, client_list) {
+                let listed = client_windows(&conn, root, client_list);
+                for (xid, fixup) in managed(&listed) {
                     apply(&conn, root, xid, fixup);
                     if let Fixup::Span { .. } = fixup {
                         AGAIN.lock().push((now + SPAN_AGAIN, xid, fixup));
                     }
+                }
+                for &xid in PARKED.lock().iter().filter(|x| listed.contains(x)) {
+                    send_withdraw(&conn, root, xid);
                 }
             }
             AGAIN.lock().retain(|&(at, xid, fixup)| {
@@ -271,25 +340,23 @@ fn dispatcher_loop(wake_fd: i32) {
     }
 }
 
-/// Take the pending fixups whose windows the client list holds.
-fn managed(conn: &RustConnection, root: u32, client_list: Option<u32>) -> Vec<(u32, Fixup)> {
+/// The windows the client list holds; none when it cannot be read.
+fn client_windows(conn: &RustConnection, root: u32, client_list: Option<u32>) -> Vec<u32> {
     let Some(client_list) = client_list else {
         return Vec::new();
     };
-    let Some(list) = conn
-        .get_property(false, root, client_list, AtomEnum::WINDOW, 0, 4096)
+    conn.get_property(false, root, client_list, AtomEnum::WINDOW, 0, 4096)
         .ok()
         .and_then(|cookie| cookie.reply().ok())
-    else {
-        return Vec::new();
-    };
-    let Some(windows) = list.value32() else {
-        return Vec::new();
-    };
-    let windows: Vec<u32> = windows.collect();
+        .and_then(|list| list.value32().map(Iterator::collect))
+        .unwrap_or_default()
+}
+
+/// Take the pending fixups whose windows `listed` holds.
+fn managed(listed: &[u32]) -> Vec<(u32, Fixup)> {
     let mut ready = Vec::new();
     PENDING.lock().retain(|p| {
-        let managed = windows.contains(&p.xid);
+        let managed = listed.contains(&p.xid);
         if managed {
             ready.push((p.xid, p.fixup));
         }
@@ -300,10 +367,23 @@ fn managed(conn: &RustConnection, root: u32, client_list: Option<u32>) -> Vec<(u
 
 /// Send `fixup`'s requests for window `xid`, unflushed.
 fn apply(conn: &RustConnection, root: u32, xid: u32, fixup: Fixup) {
-    if let Fixup::Span { x, y, w, h } = fixup {
-        let _ = conn.configure_window(xid, &span(x, y, w, h));
+    match fixup {
+        Fixup::AlwaysOnTop => request_above(conn, root, xid),
+        Fixup::Span { x, y, w, h } => {
+            let _ = conn.configure_window(xid, &span(x, y, w, h));
+            request_above(conn, root, xid);
+        }
+        Fixup::Unlisted => {
+            if let (Some(state), Some(taskbar), Some(pager)) = (
+                atom_cached(conn, b"_NET_WM_STATE"),
+                atom_cached(conn, b"_NET_WM_STATE_SKIP_TASKBAR"),
+                atom_cached(conn, b"_NET_WM_STATE_SKIP_PAGER"),
+            ) {
+                // _NET_WM_STATE_ADD, two states, source: application.
+                send_to_wm(conn, root, xid, state, [1, taskbar, pager, 1, 0]);
+            }
+        }
     }
-    request_above(conn, root, xid);
 }
 
 /// The union rect, raised.

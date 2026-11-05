@@ -196,18 +196,17 @@ pub fn pass_input(window: &gpui::Window) {
     let _ = window;
 }
 
-/// Take `window` off the screen and keep it for `unpark_span`: minimized
-/// through the window manager, or, on an X11 screen with no window
-/// manager to act on a minimize, unmapped. Its fixups still due are
-/// dropped first: a window manager restores a minimized window that is
-/// raised.
+/// Take `window` off the screen and keep it for `unpark_span`: on X11
+/// withdrawn, so a window manager stops managing it and lists it in no
+/// taskbar, window switcher, or overview; elsewhere minimized. Its
+/// restacks still due are dropped first: a window manager shows a window
+/// it is asked to raise.
 pub fn park(window: &mut gpui::Window) {
     #[cfg(target_os = "linux")]
     if let Some(xid) = x11::xid(window) {
         x11::forget(xid);
-        if x11::park_unmanaged(xid) {
-            return;
-        }
+        x11::withdraw(xid);
+        return;
     }
     window.minimize_window();
 }

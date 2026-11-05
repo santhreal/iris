@@ -37,7 +37,7 @@ impl Overlay {
         self.frame_size = Some((width, height));
         self.frame_img = Some(img);
         // The prewarmed window maps unfocused and a WM does not
-        // re-focus an unminimized window: without this the first
+        // re-focus a window it maps again: without this the first
         // keystroke after re-arm can land on the root window. By the
         // time the frame lands the WM has finished its map handling,
         // so activation here sticks.
@@ -365,11 +365,11 @@ impl Overlay {
     }
 
     /// Park the window instead of destroying it: the next capture reuses
-    /// the live window and skips GPUI's ~130ms init. Parking minimizes
-    /// through the WM, so no placement constraint can fight it, and the
-    /// GPU surface is freed while iconic; with no WM it unmaps
-    /// (`sys::window::park`). Where a parked window cannot be restored
-    /// it is destroyed instead.
+    /// the live window and skips GPUI's ~130ms init. Parking withdraws
+    /// the window from the WM (`sys::window::park`), so no taskbar or
+    /// window switcher lists it and no placement constraint can fight
+    /// it, and the GPU surface is freed while it is unmapped. Where a
+    /// parked window cannot be restored it is destroyed instead.
     pub(super) fn park(&mut self, window: &mut Window, cx: &mut App) {
         self.release_assets(cx);
         self.hidden = true;

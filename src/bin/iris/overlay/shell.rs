@@ -186,7 +186,8 @@ fn open_shell_opts(
 
 /// True where a parked overlay can be restored: X11, where
 /// `sys::window::unpark_span` maps and re-spans it. Wayland has no
-/// unminimize, and Windows and macOS have no restore step.
+/// restore of a minimized window, and Windows and macOS have no restore
+/// step.
 pub(super) fn poolable() -> bool {
     iris_lib::sys::session::x11()
 }

@@ -11,7 +11,7 @@ mod wm_drag;
 
 pub use cutout::{compositor, pass_input, Cut, Cutout};
 pub use fixup::{
-    always_on_top_after_map, forget, park_unmanaged, show_span, span_after_map, stow, unpark_span,
+    always_on_top_after_map, forget, show_span, span_after_map, stow, unpark_span, withdraw,
 };
 pub use present::PresentWatch;
 pub use wm_drag::{begin_wm_move, begin_wm_resize};
