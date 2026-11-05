@@ -44,6 +44,8 @@ iris --record-region
 
 Opens the selection overlay in region-pick mode (`RecordPick`), with **Record Selection** chosen on the capture bar ([Region Capture](capture.md#region-capture)). Drag a bounding box or select a detected window rectangle. Press `Enter`, double-click, or click **Record** to commit the selection. Press `Escape`, click **Cancel**, or click the right mouse button to cancel. **Record Entire Screen** records the monitor clicked next.
 
+The recording starts once the overlay is off the screen, so its first frame does not contain the selection or its handles.
+
 If the selection width or height is zero or negative, iris rejects the command with `empty region {w}x{h}`.
 
 Platform behavior for region recording:

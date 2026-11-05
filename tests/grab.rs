@@ -25,20 +25,27 @@
 //! froze the last session's dimmed frame, or a black frame a window
 //! manager draws as the overlay goes, and dimmed it again. A case ends
 //! a session and presses the hotkey at once, and reads that the next
-//! frozen frame is the last one's.
+//! frozen frame is the last one's. A region pick's own recording read
+//! the overlay too: the overlay handed its region over and then left,
+//! so the recording's first frame, also the saved notice's poster,
+//! held the selection's handles. A case records a region of the
+//! one-colour desktop and reads that frame back through ffmpeg.
 //!
 //! Each pop-up case runs with no compositing manager, where a pop-up
 //! closes at once, and under picom fading windows out over two seconds,
 //! where a pop-up must draw itself empty before it closes. The overlay
 //! and pick cases run with none: they read which commands run, not how
-//! a window leaves. The hotkey case runs with both.
+//! a window leaves. The hotkey case runs with both, and the region
+//! recording's first frame under picom.
 //!
 //! Not covered: a pinned capture window and the recording chip, which
 //! are content a capture may hold; a window capture, and the frame a
 //! window manager draws as the overlay goes, which need a window
 //! manager; the time a held command waits after the withdrawal for the
 //! compositor to drop the window, which picom here drops before the grab
-//! reads; Wayland, whose portal captures with its own interface,
+//! reads; the other monitors' overlays, which close 80 ms after a
+//! region pick's handover and lie outside a region picked on one
+//! monitor; Wayland, whose portal captures with its own interface,
 //! Windows, and macOS. The cases run only with `IRIS_X11_TEST_DISPLAY`
 //! set and need Xvfb, and ffmpeg for the recording cases; without them
 //! a case prints that it did not run.
@@ -456,8 +463,8 @@ fn a_region_pick_opens_without_a_resting_toast() {
     );
 }
 
-/// The pick overlay hands its region over while it is still up: the
-/// recording it starts is not a second session the overlay holds off.
+/// The pick overlay hands its region over as it leaves: the recording
+/// it starts is not a second session the overlay holds off.
 #[test]
 fn a_region_pick_starts_the_recording_it_selects() {
     let case = "a_region_pick_starts_the_recording_it_selects";
@@ -490,6 +497,78 @@ fn a_region_pick_starts_the_recording_it_selects() {
         !daemon.log().contains(BUSY),
         "a command was ignored:\n{}",
         daemon.log()
+    );
+}
+
+/// The first frame of a region recording is the desktop the overlay
+/// left: picom here fades a withdrawn window over two seconds, as a
+/// desktop compositor animates one out.
+#[test]
+fn a_region_recordings_first_frame_holds_no_overlay() {
+    let case = "a_region_recordings_first_frame_holds_no_overlay";
+    if !enabled() {
+        return;
+    }
+    if !recording::on_path("ffmpeg") {
+        eprintln!("{case} did not run: no ffmpeg on PATH");
+        return;
+    }
+    let Some(s) = session(case, true) else {
+        return;
+    };
+    let (conn, root, daemon) = (&s.conn, s.root, &s.daemon);
+    daemon.send(&["--record-region"]);
+    daemon.until("the pick overlay to take the focus", || {
+        windows_of(conn, root, OVERLAY)
+            .contains(&x11::focus(conn))
+            .then_some(())
+    });
+    daemon.settle();
+    x11::drag(conn, root, (200, 200), (520, 440), 40);
+    // The pointer off the region, which ffmpeg may draw into a frame.
+    x11::move_to(conn, root, (60, 60));
+    x11::tap(conn, root, RETURN);
+    daemon.until("the region recording to start", || {
+        daemon.log().contains("iris: record: segment").then_some(())
+    });
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    daemon.send(&["--record-window"]);
+    daemon.until("the recording to be saved", || {
+        daemon.log().contains("iris: recording saved").then_some(())
+    });
+    let vids = s.dir.path().join("vids");
+    let mp4 = std::fs::read_dir(&vids)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "mp4"))
+        .unwrap_or_else(|| panic!("no recording in {}", vids.display()));
+    let first = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(&mp4)
+        .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success() && !first.stdout.is_empty(),
+        "ffmpeg read no first frame from {}: {}",
+        mp4.display(),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let desktop = [(DESKTOP >> 16) as u8, (DESKTOP >> 8) as u8, DESKTOP as u8];
+    let (pixels, _) = first.stdout.as_chunks::<3>();
+    let unlike: Vec<(usize, [u8; 3])> = pixels
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.iter().zip(desktop).any(|(a, b)| a.abs_diff(b) > 40))
+        .map(|(i, p)| (i, *p))
+        .collect();
+    assert!(
+        unlike.is_empty(),
+        "the recording's first frame shows {} of its {} pixels unlike the desktop {desktop:?}, \
+         the first (index, rgb) {:?}",
+        unlike.len(),
+        pixels.len(),
+        unlike.first()
     );
 }
 

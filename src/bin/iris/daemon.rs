@@ -168,8 +168,9 @@ enum Screen {
     /// It starts reading the screen: a capture, the region pick over the
     /// live desktop, or a recording's start.
     Starts,
-    /// The overlay hands over the region it picked, and the recording
-    /// starts reading it while that overlay is still up.
+    /// The overlay hands over the region it picked as it leaves: no
+    /// session holds the screen against it, and the recording starts
+    /// reading once that overlay is off the screen.
     Commits,
 }
 
@@ -263,7 +264,9 @@ pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
     }
     // An overlay on its way out is still on the screen, or a frame the
     // window manager draws as it goes is.
-    if cmd.screen() == Screen::Starts && overlay::hold_while_withdrawing(cmd) {
+    if matches!(cmd.screen(), Screen::Starts | Screen::Commits)
+        && overlay::hold_while_withdrawing(cmd)
+    {
         return Ok(());
     }
     if clear_popups_for(cx, cmd) {

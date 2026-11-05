@@ -287,22 +287,22 @@ impl Overlay {
             return;
         }
         if self.mode == OverlayMode::RecordPick {
-            // Hand the rect to the daemon; the overlay parks and the
-            // recording chip takes over the visual state. The source
-            // reads root coordinates: frame-relative plus the union's
-            // origin, which is negative with a monitor left of or
-            // above the primary.
-            crate::daemon::run(
-                cx,
-                &crate::daemon::Command::RecordRegion {
-                    x: region.x as i32 + self.origin.0,
-                    y: region.y as i32 + self.origin.1,
-                    w: region.width as i32,
-                    h: region.height as i32,
-                },
-            );
+            // Hand the rect to the daemon as the overlay parks: the
+            // daemon holds it until the overlay is off the screen, so
+            // the recording's first frame does not show the selection.
+            // The recording chip takes over the visual state. The
+            // source reads root coordinates: frame-relative plus the
+            // union's origin, which is negative with a monitor left of
+            // or above the primary.
+            let cmd = crate::daemon::Command::RecordRegion {
+                x: region.x as i32 + self.origin.0,
+                y: region.y as i32 + self.origin.1,
+                w: region.width as i32,
+                h: region.height as i32,
+            };
             close_other_overlays(cx, Some(window.window_handle()));
             self.park(window, cx);
+            crate::daemon::run(cx, &cmd);
             return;
         }
         let bgra = frame_img.as_bytes(0).unwrap_or(&[]);
