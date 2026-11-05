@@ -134,7 +134,7 @@ windows-sys = { version = "0.61", features = [
 widestring = "1"
 # Windows.Media.Ocr for Copy Text, through WinRT. Already in the tree
 # through gpui.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Foundation_Collections",
     "Graphics_Imaging",
     "Media_Ocr",
