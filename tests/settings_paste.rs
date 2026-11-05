@@ -186,13 +186,17 @@ fn a_paste_and_the_caret_keys_edit_a_settings_field_at_the_caret() {
     };
     caret_at_start("the caret to be drawn at the field's start");
     // An s at the start, an x after it that Left and Delete remove, and
-    // a z at the end.
+    // a z at the end. A daemon starved of CPU reads as idle, so the
+    // commit is awaited as a change of the saved template.
+    let before = template(dir.path());
     for keysym in [S, X, LEFT, DELETE, END, Z, RETURN] {
         tap(&conn, root, keysym);
     }
-    daemon.settle();
+    let committed = daemon.until("the field to commit", || {
+        Some(template(dir.path())).filter(|t| *t != before)
+    });
     assert_eq!(
-        template(dir.path()).as_deref(),
+        committed.as_deref(),
         Some(AFTER),
         "the field committed without the edits at the caret"
     );
