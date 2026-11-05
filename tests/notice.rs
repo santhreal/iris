@@ -1,5 +1,5 @@
-//! The update notice's Install button, driven on a private Xvfb with no
-//! window manager and read back from the screen.
+//! The notice card's buttons and poster, driven on a private Xvfb with
+//! no window manager and read back from the screen.
 //!
 //! WHY: the first case closes "an accent-filled button that still runs
 //! shows no hover or press". Install, on the accent, kept its fill under
@@ -30,14 +30,23 @@
 //! tooltip's 500 ms wait, every pixel the name lightens: all on the
 //! buttons' row, some left of the buttons, none on Install. Not covered
 //! by it: a title long enough to reach the buttons, which the name then
-//! covers, and the poster's tooltip on a saved recording's notice.
+//! covers.
+//!
+//! The fourth case closes the same class on a saved recording's notice,
+//! whose poster named itself "Open" in a tooltip across the card's
+//! bottom edge; with no compositing manager the window is cut to the
+//! card, and the tooltip was cut in half on the card's hairline. It
+//! records a window, stops, and rests the pointer on the poster and
+//! then on Show in Folder: no pixel on the card's hairline or outside
+//! it changes. Not covered by it: a notice stacked beyond a toast,
+//! whose window holds the margin on both sides.
 //!
 //! Not covered: Install's click, which downloads; Record while a
 //! recording runs, the library's other button on the accent; an
 //! accent-filled control added elsewhere, which only a case of its own
 //! reads; Wayland, Windows, and macOS. The cases run only with
-//! `IRIS_X11_TEST_DISPLAY` set and need Xvfb; without it a case prints
-//! that it did not run.
+//! `IRIS_X11_TEST_DISPLAY` set and need Xvfb, and the fourth ffmpeg;
+//! without them a case prints that it did not run.
 
 #![cfg(target_os = "linux")]
 
@@ -49,6 +58,10 @@ mod daemon;
 #[allow(dead_code)]
 #[path = "support/x11.rs"]
 mod x11;
+// The other test files use the rest of the recording harness.
+#[allow(dead_code)]
+#[path = "support/recording.rs"]
+mod recording;
 
 use std::path::Path;
 use std::time::Duration;
@@ -57,6 +70,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
 
 use daemon::{enabled, xvfb_sized, Daemon};
+use recording::Recording;
 use x11::{move_to, paint_root, press_and_move, rect, release, until_color, windows_of};
 
 /// The root window's colour, 0xRRGGBB.
@@ -84,6 +98,18 @@ const CLOSE: (i16, i16) = (44 + 380 - 13 - 12, 44 + 13 + 12);
 const ROW: std::ops::Range<usize> = 57..81;
 /// Install's box across the row, the leftmost button.
 const INSTALL_X: std::ops::Range<usize> = (INSTALL.0 as usize - 12)..(INSTALL.0 as usize + 12);
+/// The inside of the card's 1px hairline in a bottom-corner notice's
+/// window, whose card is BLEED (44) in from the window's left and top
+/// and MARGIN (12) in from its right and bottom.
+const INSIDE_X: std::ops::Range<usize> = 44 + 1..44 + 380 - 1;
+const INSIDE_TOP: usize = 44 + 1;
+const INSIDE_BOTTOM_MARGIN: usize = 12 + 1;
+/// A saved notice's poster centre: 67 by 42, inside the card's border
+/// and padding. Its buttons are Show in Folder then Close.
+const POSTER: (i16, i16) = (44 + 13 + 33, 44 + 13 + 21);
+const REVEAL: (i16, i16) = (CLOSE.0 - 24 - 4, CLOSE.1);
+/// A spot on a saved notice's title, which answers no pointer.
+const SAVED_TITLE: (i16, i16) = (44 + 13 + 67 + 10 + 40, 44 + 13 + 10);
 
 /// The notice's hold, notice::FAILURE_HOLD (8 s), with a second to
 /// spare: a notice the pointer does not hold has left by then.
@@ -290,4 +316,52 @@ fn a_buttons_name_shows_on_its_row_clear_of_the_buttons() {
         .filter(|&&i| INSTALL_X.contains(&(i % w)))
         .count();
     assert_eq!(on_install, 0, "Close's name covers Install");
+}
+
+#[test]
+fn a_hover_on_a_saved_notice_draws_inside_its_card() {
+    let Some(rec) = Recording::start("notice: saved") else {
+        return;
+    };
+    let (conn, root) = rec.x();
+    rec.daemon.send(&["--record-window"]);
+    let notice = rec.daemon.until("the saved notice to open", || {
+        windows_of(conn, root, NOTICE).first().copied()
+    });
+    let (x, y, _, _) = rect(conn, root, notice);
+    let at = |(dx, dy): (i16, i16)| (x + dx, y + dy);
+    // The pointer on the card holds it past its five seconds.
+    move_to(conn, root, at(SAVED_TITLE));
+    // The poster fades in once ffmpeg decodes it: a frame of the
+    // recorded window's blue, red, or green over the slot's grey.
+    rec.daemon.until("the poster to show", || {
+        let (w, _, shown) = x11::client(conn, root, notice);
+        let p = shown[(POSTER.1 as usize - 14) * w + POSTER.0 as usize - 26];
+        let (hi, lo) = (p.iter().max().unwrap(), p.iter().min().unwrap());
+        (hi - lo > 40).then_some(())
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    rec.daemon.settle();
+    for (name, spot) in [("the poster", POSTER), ("Show in Folder", REVEAL)] {
+        let (w, h, before) = x11::client(conn, root, notice);
+        move_to(conn, root, at(spot));
+        // Past the 500 ms a tooltip waits for, with time to draw.
+        std::thread::sleep(Duration::from_millis(900));
+        rec.daemon.settle();
+        let (_, _, after) = x11::client(conn, root, notice);
+        let inside_y = INSIDE_TOP..h - INSIDE_BOTTOM_MARGIN;
+        let outside: Vec<(usize, usize)> = (0..before.len())
+            .filter(|&i| {
+                let (a, b) = (before[i], after[i]);
+                a.iter().zip(b).any(|(a, b)| a.abs_diff(b) > 12)
+            })
+            .map(|i| (i % w, i / w))
+            .filter(|(px, py)| !INSIDE_X.contains(px) || !inside_y.contains(py))
+            .collect();
+        assert!(
+            outside.is_empty(),
+            "a hover on {name} drew on the card's edge or outside it, at {:?}",
+            &outside[..outside.len().min(5)]
+        );
+    }
 }

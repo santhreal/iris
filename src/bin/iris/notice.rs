@@ -583,7 +583,6 @@ impl Notice {
                     .border_1()
                     .border_color(theme::HAIRLINE),
             )
-            .tooltip(widgets::tip("Open", None))
             .on_click(cx.listener(move |n, _, _, cx| {
                 cx.open_with_system(&path);
                 n.leave(EXIT, cx);
