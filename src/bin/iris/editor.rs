@@ -174,9 +174,12 @@ pub struct Editor {
     pub(crate) on_close: crate::widgets::OnClose,
 }
 
-/// The editor window's minimum logical size, where its resize stops:
-/// the toolbar's tools and buttons with the file name still readable.
-const MIN_W: f32 = 760.0;
+/// The editor window's minimum logical size, where its resize stops.
+/// At this width the toolbar shows its tools and buttons and, whole, a
+/// file name of the default template (about 166 px) over the image's
+/// size: the title has 208 px beside Linux's round window buttons and
+/// 176 px beside the wider Windows caption buttons.
+const MIN_W: f32 = 900.0;
 const MIN_H: f32 = 480.0;
 const MIN_SIZE: Size<Pixels> = size(px(MIN_W), px(MIN_H));
 

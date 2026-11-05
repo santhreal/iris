@@ -135,5 +135,5 @@ A copy reports **Copied** or the error on the status line, a capsule centered 10
 
 ## Window
 
-Drag the toolbar to move the window. Double-click it to run the platform's title bar action: maximize on Linux and Windows, the Desktop & Dock setting on macOS. Drag an edge or corner to resize the window; it stops at 760×480. The toolbar and the tool options bar stay over a zoomed or panned image. See [Platform Backends](platforms.md#platform-capabilities-matrix) for the move and resize mechanism on each platform.
+Drag the toolbar to move the window. Double-click it to run the platform's title bar action: maximize on Linux and Windows, the Desktop & Dock setting on macOS. Drag an edge or corner to resize the window; it stops at 900×480. The toolbar and the tool options bar stay over a zoomed or panned image. See [Platform Backends](platforms.md#platform-capabilities-matrix) for the move and resize mechanism on each platform.
 
