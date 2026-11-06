@@ -75,20 +75,6 @@ pub(super) const SWIPE_VELOCITY: f32 = 400.0;
 /// actions return.
 pub(super) const STATUS_HOLD: Duration = Duration::from_millis(1600);
 
-/// How far the entrance has run at `now`, 0..=1: none while `opened`
-/// is unset, which holds the card past the screen edge until the
-/// window's first frame is on screen, and all of it on a screen that
-/// shows the card still.
-pub(super) fn entrance(opened: Option<Instant>, still: bool, now: Instant) -> f32 {
-    match opened {
-        _ if still => 1.0,
-        None => 0.0,
-        Some(opened) => (now.saturating_duration_since(opened).as_secs_f32()
-            / motion::tempo(ENTER).as_secs_f32())
-        .min(1.0),
-    }
-}
-
 /// How far the hover actions show, 0 hidden to 1 shown: `from` at the
 /// last crossing of the card's edge, eased toward the side the pointer
 /// is on over `t`, the fraction of the fade elapsed. A crossing in
@@ -304,7 +290,7 @@ impl Render for ToastStage {
 
         // Entrance: decelerating hard into the corner, from the frame
         // after the window's first one is on screen.
-        let enter_t = entrance(self.opened, still, Instant::now());
+        let enter_t = motion::entered(self.opened, still, Instant::now());
         let pose = motion::arrive(enter_t, MARGIN, w, reduced);
         let mut offset = pose.inset;
         let mut opacity = pose.opacity;

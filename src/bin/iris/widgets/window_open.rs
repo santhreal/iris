@@ -4,7 +4,11 @@
 //! shows in the macOS Dock and menu bar, and an app window's platform
 //! window controls.
 
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     point, px, size, ActivationPolicy, AnyWindowHandle, App, Bounds, Entity, Pixels, Render,
@@ -94,6 +98,64 @@ pub fn open_window<V: 'static + Render>(
         }
     }
     Ok(handle)
+}
+
+/// Bound on the wait for a window's first presented frame: a compositor
+/// that never answers a frame callback, or an X server that never
+/// reports the damage, still gets `then`.
+const FIRST_PRESENT_DEADLINE: Duration = Duration::from_millis(250);
+
+/// Run `then` once, when `window`'s first frame is on screen, at
+/// `FIRST_PRESENT_DEADLINE` at the latest, or at once if the window is
+/// gone. open_window drew that frame without presenting it; the first
+/// frame callback's frame presents it. Where the platform reports a
+/// present (X11 damage), `then` waits for that report, since an X11
+/// frame tick follows a timer and the present lands on the server
+/// later. Elsewhere the next frame callback runs after the compositor
+/// composited the present.
+pub fn after_first_present(
+    window: AnyWindowHandle,
+    cx: &mut App,
+    then: impl FnOnce(&mut App) + 'static,
+) {
+    let until = Instant::now() + FIRST_PRESENT_DEADLINE;
+    let then: Box<dyn FnOnce(&mut App)> = Box::new(then);
+    let slot = Rc::new(Slot::new(Some(then)));
+    let on_present = slot.clone();
+    let registered = window.update(cx, |_, window, _| {
+        let watch = crate::sys::window::PresentWatch::open(window, until);
+        window.on_next_frame(move |window, cx| match watch.and_then(|w| w.arm()) {
+            Some(presented) => cx
+                .spawn(async move |cx| {
+                    let _ = presented.await;
+                    cx.update(|cx| run_once(&on_present, cx));
+                })
+                .detach(),
+            // `then` may park another window; run it after this
+            // window's frame callback returns.
+            None => window.on_next_frame(move |_, cx| {
+                cx.defer(move |cx| run_once(&on_present, cx));
+            }),
+        });
+    });
+    if registered.is_err() {
+        run_once(&slot, cx);
+        return;
+    }
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(FIRST_PRESENT_DEADLINE).await;
+        cx.update(|cx| run_once(&slot, cx));
+    })
+    .detach();
+}
+
+/// The callback `after_first_present` runs once, until it runs.
+type Slot = Cell<Option<Box<dyn FnOnce(&mut App)>>>;
+
+fn run_once(slot: &Slot, cx: &mut App) {
+    if let Some(then) = slot.take() {
+        then(cx);
+    }
 }
 
 /// The PNG of the icon an X11 app window sets as `_NET_WM_ICON`.

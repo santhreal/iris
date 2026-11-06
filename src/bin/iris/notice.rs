@@ -292,6 +292,7 @@ pub struct Notice {
     inset: f32,
     left: bool,
     hold: Duration,
+    /// When the entrance started: the window's first frame on screen.
     opened: Option<Instant>,
     closing: Option<(Instant, Duration)>,
     hovered: bool,
@@ -479,6 +480,14 @@ fn open(
         |_, cx| cx.new(|_| notice),
     )
     .map_err(|e| format!("open notice window: {e}"))?;
+    crate::widgets::after_first_present(handle.into(), cx, move |cx| {
+        let _ = handle.update(cx, |n, _, cx| {
+            if n.opened.is_none() {
+                n.opened = Some(Instant::now());
+                cx.notify();
+            }
+        });
+    });
     let previous = NOTICE.lock().replace(handle);
     if let Some(previous) = previous {
         let _ = previous.update(cx, |n, _, cx| n.leave(REPLACE_EXIT, cx));
@@ -633,13 +642,9 @@ impl Render for Notice {
         // reduced motion the card does not travel, it fades.
         let still = !crate::sys::window::blended(window);
         let reduced = cx.reduce_motion();
-        // Entrance: decelerating hard into the corner, as the toast.
-        let opened = *self.opened.get_or_insert_with(Instant::now);
-        let enter_t = if still {
-            1.0
-        } else {
-            (opened.elapsed().as_secs_f32() / motion::tempo(motion::ENTER).as_secs_f32()).min(1.0)
-        };
+        // Entrance: decelerating hard into the corner, as the toast, from
+        // the frame after the window's first one is on screen.
+        let enter_t = motion::entered(self.opened, still, Instant::now());
         let pose = motion::arrive(enter_t, MARGIN, W, reduced);
         let mut offset = pose.inset;
         let mut opacity = pose.opacity;

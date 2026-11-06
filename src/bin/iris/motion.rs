@@ -6,7 +6,7 @@
 //! driver panics on deltas outside that range, and callers drive it
 //! manually per frame.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The shared timing vocabulary. Every duration a surface animates
 /// over comes from here so the app accelerates and settles as one.
@@ -79,6 +79,20 @@ pub fn arrive(t: f32, margin: f32, width: f32, reduced: bool) -> Pose {
     Pose {
         inset: margin - (1.0 - ease) * (width + 2.0 * margin),
         opacity: 1.0,
+    }
+}
+
+/// How far a corner card's ENTER entrance has run at `now`, 0..=1: none
+/// while `opened` is unset, which holds the card past the screen edge
+/// until its window's first frame is on screen, and all of it on a
+/// screen that shows the card still.
+pub fn entered(opened: Option<Instant>, still: bool, now: Instant) -> f32 {
+    match opened {
+        _ if still => 1.0,
+        None => 0.0,
+        Some(opened) => (now.saturating_duration_since(opened).as_secs_f32()
+            / tempo(ENTER).as_secs_f32())
+        .min(1.0),
     }
 }
 
@@ -158,6 +172,44 @@ mod tests {
         }
         assert_eq!(spring(0.0), 0.0);
         assert!((spring(1.0) - 1.0).abs() < 0.01);
+    }
+
+    // WHY: the class closed here is "a corner card's entrance plays
+    // before the card is on screen". The toast and the notice started
+    // their entrance clocks at their first render, and the window's
+    // first frame reached the screen about 100 ms later, so about half
+    // the slide or more ran unseen and the card appeared near its rest.
+    // An unstarted entrance holds the card at its start however long
+    // the wait, a started one runs ENTER from the start, and a screen
+    // that shows the card still shows it at rest. Not covered: who
+    // starts the clock, which the toast's and the notice's open paths
+    // do on the first present.
+    #[test]
+    fn an_entrance_runs_only_from_its_start() {
+        let now = Instant::now();
+        let enter = tempo(ENTER);
+        for late in [Duration::ZERO, enter, Duration::from_secs(10)] {
+            assert_eq!(
+                entered(None, false, now + late),
+                0.0,
+                "unstarted, {late:?} on"
+            );
+        }
+        for (since, want) in [
+            (Duration::ZERO, 0.0),
+            (enter / 2, 0.5),
+            (enter, 1.0),
+            (enter * 3, 1.0),
+        ] {
+            let t = entered(Some(now), false, now + since);
+            assert!(
+                (t - want).abs() < 1e-3,
+                "{since:?} after the start: {t}, want {want}"
+            );
+        }
+        for opened in [None, Some(now)] {
+            assert_eq!(entered(opened, true, now), 1.0, "still screen, {opened:?}");
+        }
     }
 
     #[test]
