@@ -376,7 +376,9 @@ fn bar(
                 .font_weight(FontWeight::SEMIBOLD)
                 .line_height(px(16.))
                 .text_color(theme::FG)
-                .text_ellipsis()
+                // A file name keeps its end: the time in a capture's
+                // name and the extension.
+                .text_ellipsis_middle()
                 .child(title),
         )
         .children(caption.map(|c| {

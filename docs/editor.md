@@ -20,7 +20,7 @@ Opened from a toast or a Library card, the editor grows out of the card's image 
 
 The toolbar holds, from left to right:
 
-- The window controls, the file name, and the image size in pixels under it.
+- The window controls, the file name, and the image size in pixels under it. A file name too long for the bar is shortened in the middle, keeping its end and extension.
 - The tools, one button each. A tool's tooltip shows its name and its key.
 - **Undo** and **Redo**.
 - **Copy**, a menu with **Copy Image**, **Copy File**, and **Copy Path** (see [Copy Controls](#copy-controls)).
