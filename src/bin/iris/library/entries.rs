@@ -224,11 +224,7 @@ impl Library {
             .cursor
             .and_then(|c| n.checked_sub(1).map(|last| c.min(last)));
         self.anchor = self.anchor.filter(|a| *a < n);
-        if self
-            .preview
-            .as_ref()
-            .is_some_and(|p| self.listing.entries().get(p.index).map(|e| &e.path) != Some(&p.path))
-        {
+        if self.preview.as_ref().is_some_and(|p| !self.lists(p)) {
             self.close_preview(cx);
         }
         // Decode the thumbnails the new listing draws now, before the

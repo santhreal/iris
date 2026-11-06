@@ -73,7 +73,7 @@ A right-click on a card opens a context menu at the pointer: **Open**, **Quick L
 
 ## Quick Look
 
-`Space` shows the selected capture over the grid at its own pixel size, scaled down to fit the window and never up, with its file name and dimensions under it. The card's thumbnail stands in until the full image decodes on a background thread. Arrow keys move the selection and the preview with it. `Return` opens the previewed capture in the editor. `Space`, `Escape`, or a click closes the preview.
+`Space` shows the selected capture over the grid at its own pixel size, scaled down to fit the window and never up, with its file name and dimensions under it. The preview fades in over 140 ms as the capture grows to its size, and fades out over 140 ms as it closes; under reduced motion only the opacity changes. The grid takes the keyboard and the pointer as soon as the preview starts to close. The card's thumbnail stands in until the full image decodes on a background thread. Arrow keys move the selection and the preview with it, with no fade. `Return` opens the previewed capture in the editor. `Space`, `Escape`, or a click closes the preview.
 
 ## Move to Trash
 

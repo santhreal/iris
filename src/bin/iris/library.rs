@@ -187,6 +187,8 @@ pub struct Library {
     pub(super) scroll: gpui::ScrollHandle,
     /// The Space preview, while it is open.
     preview: Option<preview::Preview>,
+    /// The closed Space preview while it fades out.
+    preview_out: Option<preview::Leaving>,
     /// The card context menu, while it is open.
     menu: Option<context_menu::ContextMenu>,
     /// Set by New Screenshot: the window draws empty and closes before
@@ -374,6 +376,7 @@ fn open_window(cx: &mut App, ready: Option<FirstScreen>, page: Page) -> Result<(
                     band: None,
                     scroll: gpui::ScrollHandle::new(),
                     preview: None,
+                    preview_out: None,
                     menu: None,
                     leaving: false,
                     page: Page::Library,
@@ -405,6 +408,13 @@ fn open_window(cx: &mut App, ready: Option<FirstScreen>, page: Page) -> Result<(
             if let Some(img) = this.preview.as_ref().and_then(|p| p.image.as_ref()) {
                 crate::widgets::release_render(img, cx);
             }
+            if let Some(img) = this
+                .preview_out
+                .as_ref()
+                .and_then(|l| l.preview.image.as_ref())
+            {
+                crate::widgets::release_render(img, cx);
+            }
         })
         .detach();
     }
@@ -433,9 +443,7 @@ impl Library {
                 self.help = false;
                 self.band = None;
                 self.ring = None;
-                if self.preview.is_some() {
-                    self.close_preview(cx);
-                }
+                self.drop_preview(cx);
                 let settings = self
                     .settings
                     .get_or_insert_with(|| crate::settings::page(window, cx));

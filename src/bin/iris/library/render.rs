@@ -357,16 +357,14 @@ impl Library {
             grid.child(content)
         };
 
-        let mut page = div()
+        let page = div()
             .relative()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
             .child(grid);
-        if let Some(preview) = &self.preview {
-            page = page.child(self.preview_view(preview, window, cx));
-        }
+        let mut page = self.preview_layers(page, Instant::now(), window, cx);
         if let Some(status) = &self.status {
             page = page.child(widgets::status_pill(status.clone(), 10.0));
         }

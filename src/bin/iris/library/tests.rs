@@ -13,7 +13,7 @@ use super::layout::{
     PAD_X, ROW_GAP,
 };
 use super::listing::{first_screen, ListPass, Listing};
-use super::preview::fit;
+use super::preview::{fit, pose};
 use super::render::{empty_hint, help_rows};
 use super::{Tool, CARD_H, CARD_W, GAP, MIN_SIZE, THUMB_H};
 use crate::sys::hotkeys::Binding;
@@ -780,6 +780,45 @@ fn the_preview_fits_a_capture_and_never_scales_it_up() {
         }
     }
     assert_eq!(fit(1920, 1080, 1.0, 0.0, 0.0), (0.0, 0.0));
+}
+
+// WHY: the class closed here is "the preview pops, or rests off its own
+// size": Quick Look appeared and vanished in one frame, and a fade that
+// rests a hair under scale 1 resamples every pixel of the capture. The
+// open starts clear and small and ends opaque at scale 1 exactly; the
+// close starts there and ends clear; both move one way only; reduced
+// motion keeps the scale at 1. Not covered: the frame clock that drives
+// `t`, and which layer takes the pointer while one fades.
+#[test]
+fn the_preview_fades_in_and_out_and_rests_at_its_own_size() {
+    for reduced in [false, true] {
+        assert_eq!(
+            pose(1.0, false, reduced),
+            (1.0, 1.0),
+            "open, reduced {reduced}"
+        );
+        assert_eq!(
+            pose(0.0, true, reduced),
+            (1.0, 1.0),
+            "closing, reduced {reduced}"
+        );
+        assert_eq!(pose(0.0, false, reduced).0, 0.0, "reduced {reduced}");
+        assert_eq!(pose(1.0, true, reduced).0, 0.0, "reduced {reduced}");
+        let mut last = (pose(0.0, false, reduced), pose(0.0, true, reduced));
+        for i in 1..=50 {
+            let t = i as f32 / 50.0;
+            let (open, close) = (pose(t, false, reduced), pose(t, true, reduced));
+            assert!(open.0 > last.0 .0 && close.0 < last.1 .0, "opacity at {t}");
+            if reduced {
+                assert_eq!((open.1, close.1), (1.0, 1.0), "scale at {t}");
+            } else {
+                assert!(open.1 > last.0 .1 && close.1 < last.1 .1, "scale at {t}");
+                assert!((0.9..=1.0).contains(&open.1) && (0.9..=1.0).contains(&close.1));
+            }
+            last = (open, close);
+        }
+    }
+    assert!(pose(0.0, false, false).1 < 1.0, "the open grows into place");
 }
 
 // WHY: the class closed here is "the shortcuts sheet shows a global
