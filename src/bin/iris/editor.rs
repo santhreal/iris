@@ -140,10 +140,9 @@ pub struct Editor {
     /// The window's frame: its shadow, input shape, and resize edges.
     pub(crate) frame: crate::widgets::AppFrame,
     /// Expand-morph from a toast/library card: the image's starting
-    /// rect in frame-local coordinates. The clock starts at first render:
-    /// window mapping latency would otherwise eat the animation.
+    /// rect in frame-local coordinates.
     pub(crate) morph: Option<(f32, f32, f32, f32)>,
-    pub(crate) morph_started: Option<Instant>,
+    pub(crate) morph_clock: MorphClock,
     /// Toast handoff: signaled once a frame with the capture has
     /// provably been presented (the second render after the decode
     /// lands: the compositor only asks for a next frame after consuming
@@ -183,11 +182,34 @@ const MIN_W: f32 = 900.0;
 const MIN_H: f32 = 480.0;
 const MIN_SIZE: Size<Pixels> = size(px(MIN_W), px(MIN_H));
 
-/// Editor window default placement; morph rects arrive in screen
-/// coordinates and the window grows to contain them.
+/// The expand-morph from a toast or library card.
 const MORPH: Duration = Duration::from_millis(380);
 /// Outro fade on Done/Discard.
 const OUTRO: Duration = Duration::from_millis(160);
+
+/// The expand-morph's clock. It starts on the first render that has
+/// both the capture and the window's first frame on screen: mapping a
+/// window takes long enough to run much of the morph off screen. Until
+/// then the capture holds at its source rect.
+#[derive(Default)]
+pub(crate) struct MorphClock {
+    /// The window's first frame is on screen.
+    pub(crate) presented: bool,
+    started: Option<Instant>,
+}
+
+impl MorphClock {
+    /// How far the morph has run at `now`, 0..=1, given whether the
+    /// capture is `decoded`.
+    pub(crate) fn run(&mut self, decoded: bool, now: Instant) -> f32 {
+        if !(decoded && self.presented) {
+            return 0.0;
+        }
+        let started = *self.started.get_or_insert(now);
+        (now.saturating_duration_since(started).as_secs_f32() / motion::tempo(MORPH).as_secs_f32())
+            .min(1.0)
+    }
+}
 
 /// Window origin and dimensions for `open`, bounding against monitors
 /// so the editor opens on the host monitor and never spills across edges.
@@ -413,7 +435,7 @@ fn open_window(
                     focus,
                     frame: crate::widgets::AppFrame::default(),
                     morph,
-                    morph_started: None,
+                    morph_clock: MorphClock::default(),
                     morph_sync,
                     morph_frames: 0,
                     closing: None,
@@ -441,6 +463,12 @@ fn open_window(
         },
     )
     .map_err(|e| format!("open editor window: {e}"))?;
+    crate::widgets::after_first_present(handle.into(), cx, move |cx| {
+        let _ = handle.update(cx, |e, _, cx| {
+            e.morph_clock.presented = true;
+            cx.notify();
+        });
+    });
     if let Some(pending) = pending {
         handle
             .update(cx, |_, _, cx| {
@@ -520,14 +548,9 @@ impl Render for Editor {
         let mut morph_radius = 0.0f32;
         if let Some(from) = self.morph {
             // The morph holds at its start, the window clear around the
-            // source rect, until there is a capture to grow out of it.
-            let t = match self.base_ready {
-                true => {
-                    let started = *self.morph_started.get_or_insert_with(Instant::now);
-                    (started.elapsed().as_secs_f32() / motion::tempo(MORPH).as_secs_f32()).min(1.0)
-                }
-                false => 0.0,
-            };
+            // source rect, until there is a capture to grow out of it
+            // and a frame of the window on screen.
+            let t = self.morph_clock.run(self.base_ready, Instant::now());
             // Under reduced motion the capture opens at rest and only
             // the chrome fades in around it.
             let e = if cx.reduce_motion() {
@@ -547,7 +570,6 @@ impl Render for Editor {
             morph_radius = (12.0 * (1.0 - e)).max(0.0);
             if t >= 1.0 {
                 self.morph = None;
-                self.morph_started = None;
             } else if self.base_ready {
                 // A held morph waits on the decode's notify, not vsync.
                 window.request_animation_frame();

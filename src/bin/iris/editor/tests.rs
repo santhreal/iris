@@ -468,3 +468,48 @@ fn the_caret_timer_waits_for_the_next_flip_of_the_blink() {
         );
     }
 }
+
+/// WHY: the class closed here is "the editor's morph runs before its
+/// window is on screen": a clock started at the first render loses the
+/// time the window takes to map, so the capture first shows already
+/// grown far past the card it opens from. The clock holds at the start
+/// until both the capture is decoded and the window's first frame is on
+/// screen, in either order, then runs from that render without
+/// restarting. Not covered: the present report that sets `presented`,
+/// which `tests/morph.rs` reaches under a compositor, and the spring the
+/// progress drives.
+#[test]
+fn the_morph_starts_once_the_capture_and_the_window_are_both_there() {
+    use super::{MorphClock, MORPH};
+    use std::time::{Duration, Instant};
+
+    let ms = Duration::from_millis;
+    let length = crate::motion::tempo(MORPH);
+    let open = Instant::now();
+    let close = |t: f32, want: f32| (t - want).abs() < 1e-6;
+
+    let mut clock = MorphClock::default();
+    for at in [0, 100, 1000] {
+        assert_eq!(clock.run(true, open + ms(at)), 0.0, "ran unseen at {at} ms");
+    }
+    clock.presented = true;
+    let shown = open + ms(1000);
+    assert_eq!(clock.run(true, shown), 0.0, "skipped its start");
+    assert!(
+        close(clock.run(true, shown + length / 2), 0.5),
+        "not halfway"
+    );
+    assert_eq!(clock.run(true, shown + length * 2), 1.0, "ran past its end");
+
+    let mut clock = MorphClock {
+        presented: true,
+        ..Default::default()
+    };
+    assert_eq!(clock.run(false, open + ms(500)), 0.0, "ran with no capture");
+    let decoded = open + ms(600);
+    assert_eq!(clock.run(true, decoded), 0.0, "skipped its start");
+    assert!(
+        close(clock.run(true, decoded + length / 2), 0.5),
+        "not halfway"
+    );
+}
