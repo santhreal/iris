@@ -127,10 +127,10 @@ impl Library {
                     .border_color(theme::HAIRLINE),
             );
 
-        // Quick actions in the capture's bottom-right corner, only while
-        // the pointer is on the card: they cover the image, so they do
-        // not rest on it.
-        if hovered {
+        // Quick actions in the capture's bottom-right corner while the
+        // pointer is on the card, fading in and out with its hover
+        // spring: they cover the image, so they do not rest on it.
+        if hovered || hover_amt > 0.0 {
             let (ax, ay) = actions_origin((ix, iy, iw, ih));
             thumb = thumb.child(
                 div()
