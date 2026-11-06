@@ -34,6 +34,9 @@ pub struct PinStage {
     /// Statuses shown so far: one clears the pill only when no later
     /// one has replaced it.
     statuses: u64,
+    /// The pointer input region: the frame, where the window keeps room
+    /// around it for the frame's shadow.
+    input: crate::sys::window::Cutout,
 }
 
 /// The shorter edge a pin zooms down to, unless its image is smaller.
@@ -131,14 +134,16 @@ pub(crate) fn place(size: (f32, f32), over: Option<Over>, taken: &[(f32, f32)]) 
     (x, y)
 }
 
-/// The origins of the open pins.
+/// The origins of the open pins' frames: a pin that keeps room around
+/// its frame (`widgets::with_shadow_room`) has its window that far up
+/// and left of the frame.
 fn pin_origins(cx: &mut App) -> Vec<(f32, f32)> {
     cx.windows()
         .into_iter()
         .filter_map(|window| window.downcast::<PinStage>())
         .filter_map(|pin| {
             pin.update(cx, |_, window, _| {
-                let origin = window.bounds().origin;
+                let origin = window.bounds().origin + window.client_area().origin;
                 (f32::from(origin.x), f32::from(origin.y))
             })
             .ok()
@@ -167,7 +172,7 @@ fn open_with_image(
     crate::widgets::open_window(
         cx,
         "Pin - iris",
-        WindowOptions {
+        crate::widgets::with_shadow_room(WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(x), px(y)),
                 size: size(px(vw), px(vh)),
@@ -185,7 +190,7 @@ fn open_with_image(
             window_decorations: Some(WindowDecorations::Client),
             tabbing_identifier: None,
             ..Default::default()
-        },
+        }),
         move |window, cx| {
             crate::sys::window::keep_above(window);
             cx.new(|cx| {
@@ -203,6 +208,7 @@ fn open_with_image(
                     zoom: scale,
                     status: None,
                     statuses: 0,
+                    input: Default::default(),
                 }
             })
         },
@@ -264,7 +270,9 @@ impl PinStage {
         }
         self.zoom = zoom;
         let (w, h) = self.native;
-        window.resize(size(px((w * zoom).round()), px((h * zoom).round())));
+        // The room around the frame stays as it is.
+        let room = window.viewport_size() - window.client_area().size;
+        window.resize(size(px((w * zoom).round()), px((h * zoom).round())) + room);
         self.show_status(format!("{}%", (zoom * 100.0).round()).into(), cx);
     }
 }
@@ -282,20 +290,47 @@ fn zoom_range(native: (f32, f32), screen: Option<(f32, f32)>) -> (f32, f32) {
 
 impl Render for PinStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // No shadow: the window is the image's own size, so a shadow
-        // would show only in the transparent rounded corners, as dark
-        // wedges that square them off. The toast card's outline gives the
-        // capture an edge over a desktop of its own color instead.
+        // The frame is the image's own size. Where the window keeps room
+        // around it (`widgets::with_shadow_room`), the frame has an app
+        // window's shadow there and only the frame takes pointer input;
+        // elsewhere it has no shadow, which would show only in the
+        // transparent rounded corners, as dark wedges that square them
+        // off. The toast card's outline gives the capture an edge over a
+        // desktop of its own color.
         // The pin places itself, so DWM leaves its corners to it.
         let framed = crate::sys::window::platform_frame(window);
         let radius = if framed { 0.0 } else { RADIUS };
-        div()
+        let area = window.client_area();
+        let room = area.size != window.viewport_size();
+        if room {
+            self.input.set(
+                window,
+                &[crate::sys::window::Rounded {
+                    x: f32::from(area.origin.x),
+                    y: f32::from(area.origin.y),
+                    w: f32::from(area.size.width),
+                    h: f32::from(area.size.height),
+                    r: 0.,
+                }],
+            );
+        }
+        let shadow = if room {
+            theme::window_shadow(window.is_window_active(), 1.0)
+        } else {
+            Vec::new()
+        };
+        let frame = div()
             .group("pin")
-            .size_full()
+            .absolute()
+            .left(area.origin.x)
+            .top(area.origin.y)
+            .w(area.size.width)
+            .h(area.size.height)
             .font_family(theme::FONT)
             .rounded(px(radius))
             .overflow_hidden()
             .bg(theme::BG_ELEV)
+            .shadow(shadow)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let ks = &ev.keystroke;
@@ -361,7 +396,8 @@ impl Render for PinStage {
                     .as_ref()
                     .map(|text| crate::widgets::status_pill(text.clone(), 10.0)),
             )
-            .children((!framed).then(|| crate::stage::edge(radius, 1.0).inset_0()))
+            .children((!framed).then(|| crate::stage::edge(radius, 1.0).inset_0()));
+        div().size_full().relative().child(frame)
     }
 }
 

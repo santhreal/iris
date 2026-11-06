@@ -61,7 +61,7 @@ pub use self::window_frame::{
     window_rounded, AppFrame, OnClose, Toolbar,
 };
 pub use self::window_move::{move_handle, Double};
-pub use self::window_open::{after_first_present, open_window};
+pub use self::window_open::{after_first_present, open_window, with_shadow_room};
 
 use gpui::*;
 

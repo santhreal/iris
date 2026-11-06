@@ -37,7 +37,7 @@ use gpui::{
 /// bar, and moves only from its toolbar's own drag; on Linux it draws
 /// again when the desktop's button layout changes. An app window that
 /// draws its own frame keeps room around it for its shadow where the
-/// platform has it (`sys::window::frame_room`; `with_frame_room`).
+/// platform has it (`with_shadow_room`); a pin opens with the same.
 ///
 /// `options` sets everything else, with the bounds and minimum size of
 /// the window's frame. clippy.toml disallows `App::open_window` and
@@ -51,12 +51,10 @@ pub fn open_window<V: 'static + Render>(
 ) -> gpui::Result<WindowHandle<V>> {
     let app_window = options.is_minimizable;
     let own_frame = matches!(options.window_decorations, Some(WindowDecorations::Client));
-    let options = match (app_window && own_frame)
-        .then(crate::sys::window::frame_room)
-        .flatten()
-    {
-        Some(room) => with_frame_room(options, room),
-        None => options,
+    let options = if app_window && own_frame {
+        with_shadow_room(options)
+    } else {
+        options
     };
     #[cfg(target_os = "linux")]
     let options = WindowOptions {
@@ -220,6 +218,17 @@ impl AppWindows {
         let before = self.0.len();
         self.0.retain(|w| *w != id);
         (before == 1 && self.0.is_empty()).then_some(ActivationPolicy::Accessory)
+    }
+}
+
+/// `options` for a window that draws its own frame, an app window or a
+/// pin: room around the frame for the frame's shadow where the platform
+/// has it (`sys::window::frame_room`; `with_frame_room`), else
+/// `options` as they are.
+pub fn with_shadow_room(options: WindowOptions) -> WindowOptions {
+    match crate::sys::window::frame_room() {
+        Some(room) => with_frame_room(options, room),
+        None => options,
     }
 }
 

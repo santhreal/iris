@@ -25,8 +25,10 @@ mod daemon;
 mod x11;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::ConnectionExt as _;
+use x11rb::protocol::shape::{ConnectionExt as _, SK};
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, ImageFormat, PropMode};
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 use daemon::{enabled, entries, store, xvfb_sized, Daemon};
 use x11::{click, click_with, client, drag, extent, move_to, paint_root, rect, tap, windows_of};
@@ -80,19 +82,71 @@ const CAPTURE: [u8; 4] = [40, 90, 200, 255];
 const CAPTURE_SIZE: (u32, u32) = (64, 48);
 /// The library card menu's Pin to Screen row: Open, Quick Look, Pin.
 const LIBRARY_PIN_ROW: usize = 3;
+/// The room an app window keeps around its frame for its shadow under a
+/// compositing manager and a window manager that lists
+/// `_GTK_FRAME_EXTENTS` (theme::WINDOW_ROOM; tests/frame.rs), in pixels.
+const ROOM: i16 = 40;
 
+/// WHY, beyond the module's: a pin opened at its image's size with no
+/// room around it, so where an app window floats on its shadow, under a
+/// compositing manager and a window manager that lists
+/// `_GTK_FRAME_EXTENTS`, a pin had none and looked flat beside it. The
+/// case runs with no compositor, where a window keeps no room, and under
+/// a stand-in compositor and window manager (tests/frame.rs), where it
+/// keeps ROOM. In each it reads every pin's window: the frame centered on
+/// the library's and the second CASCADE down and right of the first;
+/// ROOM around the frame, stated in `_GTK_FRAME_EXTENTS`, with pointer
+/// input only in the frame; the shadow under the frame and gone at the
+/// room's outer edge; and `=` zooming the frame from its corner with the
+/// room kept. Not covered: how a real window manager places a pin by its
+/// frame extents; the shadow's shape beyond those two points.
 #[test]
 fn a_library_pin_opens_over_the_library_and_a_second_one_cascades() {
-    let case = "a_library_pin_opens_over_the_library_and_a_second_one_cascades";
     if !enabled() {
         return;
     }
+    for room in [0, ROOM] {
+        library_pins(room);
+    }
+}
+
+fn library_pins(room: i16) {
     // A screen the library window fits, so its pixels read back.
-    let Some((_xvfb, display)) = xvfb_sized(case, "1600x1200x24") else {
+    let Some((_xvfb, display)) = xvfb_sized(&format!("library pins, room {room}"), "1600x1200x24")
+    else {
         return;
     };
     let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
     let root = conn.setup().roots[screen].root;
+    let atom = |name: &str| {
+        conn.intern_atom(false, name.as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom
+    };
+    let extents_atom = atom("_GTK_FRAME_EXTENTS");
+    let _compositor = (room > 0).then(|| {
+        let supported: Vec<u32> = [
+            "_NET_SUPPORTED",
+            "_NET_WM_NAME",
+            "_NET_WM_STATE",
+            "_GTK_FRAME_EXTENTS",
+        ]
+        .into_iter()
+        .map(atom)
+        .collect();
+        conn.change_property32(
+            PropMode::REPLACE,
+            root,
+            atom("_NET_SUPPORTED"),
+            AtomEnum::ATOM,
+            &supported,
+        )
+        .unwrap();
+        x11::wm_check(&conn, root);
+        x11::Compositor::start(&conn, root, atom(&format!("_NET_WM_CM_S{screen}")))
+    });
     let dir = tempfile::tempdir().unwrap();
     let daemon = Daemon::start(dir.path(), |cmd| {
         cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
@@ -113,28 +167,28 @@ fn a_library_pin_opens_over_the_library_and_a_second_one_cascades() {
     });
     daemon.settle();
     let (lx, ly, lw, lh) = rect(&conn, root, library);
-    let at = conn
-        .translate_coordinates(library, root, 0, 0)
-        .unwrap()
-        .reply()
-        .unwrap();
     let card = (
-        at.dst_x + ((left + right) / 2) as i16,
-        at.dst_y + ((top + bottom) / 2) as i16,
+        lx + ((left + right) / 2) as i16,
+        ly + ((top + bottom) / 2) as i16,
     );
+    // The pin's frame centers on the library's, and the library keeps
+    // the same room around its frame on every side.
     let centered = |offset: i16, extent: u16, size: u32| {
         offset + ((f32::from(extent) - size as f32) / 2.0).round() as i16
     };
     let first = (
-        centered(lx, lw, CAPTURE_SIZE.0),
-        centered(ly, lh, CAPTURE_SIZE.1),
+        centered(lx, lw, CAPTURE_SIZE.0) - room,
+        centered(ly, lh, CAPTURE_SIZE.1) - room,
     );
+    let grown = |(w, h): (u32, u32)| (w as u16 + 2 * room as u16, h as u16 + 2 * room as u16);
     let mut pins: Vec<u32> = Vec::new();
     for n in 0..2i16 {
         click_with(&conn, root, card, 3);
         daemon.settle();
-        // The pointer leaves the menu, so only the keys light a row.
-        move_to(&conn, root, (at.dst_x + 4, at.dst_y + 4));
+        // The pointer leaves the menu for the library's frame, so only
+        // the keys light a row, and with no window manager the keys go
+        // to the window under the pointer.
+        move_to(&conn, root, (lx + room + 4, ly + room + 4));
         daemon.settle();
         for _ in 0..LIBRARY_PIN_ROW {
             tap(&conn, root, DOWN);
@@ -150,15 +204,76 @@ fn a_library_pin_opens_over_the_library_and_a_second_one_cascades() {
         let (x, y, w, h) = rect(&conn, root, pin);
         let want = (first.0 + n * CASCADE, first.1 + n * CASCADE);
         assert_eq!(
-            ((x, y), (u32::from(w), u32::from(h))),
-            (want, CAPTURE_SIZE),
-            "library pin {n} opened at {:?}, {w}x{h}, not at {want:?} over the library at \
-             {:?}",
+            ((x, y), (w, h)),
+            (want, grown(CAPTURE_SIZE)),
+            "library pin {n} with room {room} opened at {:?}, {w}x{h}, not at {want:?} over \
+             the library at {:?}",
             (x, y),
             (lx, ly, lw, lh)
         );
+        let extents = conn
+            .get_property(false, pin, extents_atom, AtomEnum::CARDINAL, 0, 4)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .value32()
+            .map(|v| v.collect::<Vec<_>>());
+        let input: Vec<_> = conn
+            .shape_get_rectangles(pin, SK::INPUT)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .rectangles
+            .iter()
+            .map(|r| (r.x, r.y, r.width, r.height))
+            .collect();
+        let (cw, ch) = (CAPTURE_SIZE.0 as u16, CAPTURE_SIZE.1 as u16);
+        assert_eq!(
+            (extents, input),
+            (
+                (room > 0).then(|| vec![room as u32; 4]),
+                vec![(room, room, cw, ch)]
+            ),
+            "library pin {n} with room {room}: _GTK_FRAME_EXTENTS and input shape"
+        );
+        if room > 0 {
+            // The window's own alpha: the shadow 4 px under the frame's
+            // bottom center, and none on the room's outer edge there.
+            let image = conn
+                .get_image(ImageFormat::Z_PIXMAP, pin, 0, 0, w, h, !0)
+                .unwrap()
+                .reply()
+                .unwrap();
+            let alpha = |(ax, ay): (i16, i16)| {
+                image.data[(ay as usize * usize::from(w) + ax as usize) * 4 + 3]
+            };
+            let under = alpha((room + cw as i16 / 2, room + ch as i16 + 4));
+            let outside = alpha((room + cw as i16 / 2, h as i16 - 1));
+            assert!(
+                image.depth == 32 && under >= 24 && outside <= 2,
+                "library pin {n}'s shadow: alpha {under} under the frame, {outside} at the \
+                 room's edge, depth {}",
+                image.depth
+            );
+        }
         pins.push(pin);
     }
+    // `=` on the pin under the pointer: the frame grows a key step from
+    // its top-left corner and the room stays around it.
+    let pin = pins[1];
+    let (x, y, _, _) = rect(&conn, root, pin);
+    move_to(&conn, root, (x + room + 32, y + room + 24));
+    daemon.settle();
+    tap(&conn, root, EQUAL);
+    let zoomed = daemon.until("= to zoom the library pin a step", || {
+        let now = rect(&conn, root, pin);
+        (now.2 != grown(CAPTURE_SIZE).0).then_some(now)
+    });
+    assert_eq!(
+        zoomed,
+        (x, y, 80 + 2 * room as u16, 60 + 2 * room as u16),
+        "= zoomed the 64x48 pin with room {room} from ({x}, {y})"
+    );
 }
 
 #[test]
