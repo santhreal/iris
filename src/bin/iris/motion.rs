@@ -96,6 +96,20 @@ pub fn entered(opened: Option<Instant>, still: bool, now: Instant) -> f32 {
     }
 }
 
+/// How much of a card's shadow each of two windows casts while the
+/// card passes from the one it leaves to the one it lands in, as
+/// (leaving, landing) visibilities: all the leaving window's until
+/// `turned`, the landing window's first frame on screen, then a linear
+/// turn to the landing window over FADE. The two shadows sum to about
+/// one whichever window the compositor draws first, so the hand-over
+/// shows neither a doubled shadow nor a missing one.
+pub fn turnover(turned: Option<Instant>, now: Instant) -> (f32, f32) {
+    let landing = turned.map_or(0.0, |turned| {
+        (now.saturating_duration_since(turned).as_secs_f32() / tempo(FADE).as_secs_f32()).min(1.0)
+    });
+    (1.0 - landing, landing)
+}
+
 /// A corner card `width` wide leaving from `inset`, at `t` (0..=1) of
 /// its exit. It accelerates off the edge and fades over its last third.
 /// Under reduced motion it does not travel: it fades out where it is.
@@ -209,6 +223,46 @@ mod tests {
         }
         for opened in [None, Some(now)] {
             assert_eq!(entered(opened, true, now), 1.0, "still screen, {opened:?}");
+        }
+    }
+
+    // WHY: the class closed here is "a card handed between two windows
+    // casts two shadows, or none": the capture flight's card and the
+    // toast that takes it over both cast the card shadow, and for the
+    // frames between the toast's first present and the flight window's
+    // withdrawal the screen showed both, the shadow darkening around
+    // the card as it landed. Before the landing window is on screen the
+    // leaving one casts the whole shadow, the turn runs FADE from the
+    // landing window's first present, and at every instant the two
+    // windows' shadows composite within a quarter of the shadow's alpha
+    // squared of one shadow, never above it. Not covered: which window
+    // applies which share, which the flight and the toast do at their
+    // call sites.
+    #[test]
+    fn a_handed_over_shadow_sums_to_one_shadow() {
+        let now = Instant::now();
+        let fade = tempo(FADE);
+        for late in [Duration::ZERO, fade, Duration::from_secs(10)] {
+            assert_eq!(
+                turnover(None, now + late),
+                (1.0, 0.0),
+                "{late:?} before the turn"
+            );
+        }
+        assert_eq!(turnover(Some(now), now), (1.0, 0.0));
+        assert_eq!(turnover(Some(now), now + fade), (0.0, 1.0));
+        assert_eq!(turnover(Some(now), now + fade * 4), (0.0, 1.0));
+        let alpha = 0.34f32;
+        let mut last = 0.0f32;
+        for ms in 0..=200u64 {
+            let (leaving, landing) = turnover(Some(now), now + Duration::from_millis(ms));
+            assert!(landing >= last, "the turn went back at {ms} ms");
+            last = landing;
+            let both = 1.0 - (1.0 - alpha * leaving) * (1.0 - alpha * landing);
+            assert!(
+                both <= alpha + 1e-6 && alpha - both <= alpha * alpha / 4.0 + 1e-6,
+                "{ms} ms: the two shadows composite to {both}, one is {alpha}"
+            );
         }
     }
 

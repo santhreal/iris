@@ -139,16 +139,18 @@ fn start_entrance(toast: WindowHandle<ToastStage>, cx: &mut App) {
     });
 }
 
-/// Runs once when a toast's first frame is on screen, or when it cannot
-/// be.
-pub type Handoff = Box<dyn FnOnce(&mut App)>;
+/// Runs once when a toast's first frame is on screen, with that
+/// instant, or with None when the toast cannot open.
+pub type Handoff = Box<dyn FnOnce(&mut App, Option<Instant>)>;
 
 /// The capture-flight landing: the card appears at rest, no entrance,
 /// with the pixels the flight scaled while it was in the air. `anchor`
 /// is the committing monitor's rect in screen coordinates, so the card
 /// lands where the flight ended, not on another display, and `source`
-/// the selection's. `handoff` runs exactly once: after the toast's
-/// first frame is on screen, or at once if the toast cannot open.
+/// the selection's. The card's shadow passes from the flight's card to
+/// the toast's from the toast's first frame on screen
+/// (`motion::turnover`). `handoff` runs exactly once: at that frame, or
+/// at once if the toast cannot open.
 pub fn show_toast_landed(
     cx: &mut App,
     path: &Path,
@@ -158,11 +160,18 @@ pub fn show_toast_landed(
     handoff: Handoff,
 ) {
     match thumb.and_then(|t| open_toast_window(cx, path, t, true, anchor, source)) {
-        Ok(toast) => crate::widgets::after_first_present(toast.into(), cx, handoff),
+        Ok(toast) => crate::widgets::after_first_present(toast.into(), cx, move |cx| {
+            let turned = Instant::now();
+            let _ = toast.update(cx, |stage, _, cx| {
+                stage.cast = Cast::Landed(Some(turned));
+                cx.notify();
+            });
+            handoff(cx, Some(turned));
+        }),
         Err(e) => {
             iris_lib::ilog!("toast: {e}");
             crate::notice::failed(cx, "Toast did not open", &e);
-            handoff(cx);
+            handoff(cx, None);
         }
     }
 }
@@ -178,8 +187,10 @@ fn open_toast_window(
     let mut stage = ToastStage::from_parts(path, thumb);
     if landed {
         // Pretend the entrance finished long ago: the card appears at
-        // rest, where the flight card it replaces ended.
+        // rest, where the flight card it replaces ended, and casts no
+        // shadow until its turn starts.
         stage.opened = Some(Instant::now() - motion::tempo(ENTER));
+        stage.cast = Cast::Landed(None);
     }
     let (w, h) = (stage.thumb.card.w, stage.thumb.card.h);
 

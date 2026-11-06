@@ -24,6 +24,7 @@ impl ToastStage {
             card_screen: (0.0, 0.0, 0.0, 0.0),
             pin_over: None,
             opened: None,
+            cast: Cast::Own,
             hover_paused: false,
             pinned: false,
             dismiss_gen: 0,

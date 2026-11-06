@@ -29,6 +29,12 @@ pub(super) struct Flight {
     /// The selection's screen rect, which a pin of the capture opens
     /// over.
     pub(super) source: (f32, f32, f32, f32),
+    /// Whether the flight has opened its toast: the session is over,
+    /// and the window stays only for the shadow's turn.
+    pub(super) handed: bool,
+    /// When the toast's first frame was on screen: from then the card's
+    /// shadow passes to the toast's (`motion::turnover`).
+    pub(super) turned: Option<Instant>,
 }
 
 /// The flight card's rect at spring progress `e`.
@@ -89,7 +95,8 @@ impl Overlay {
                 self.hand_off(landed, &f, window, cx);
             }
         }
-        if !at_rest {
+        let (cast, _) = crate::motion::turnover(f.turned, Instant::now());
+        if !at_rest || (f.turned.is_some() && cast > 0.0) {
             window.request_animation_frame();
         }
         // The card lifts off the page: square and flat where it leaves
@@ -107,6 +114,9 @@ impl Overlay {
                 flight_rect(f.from, image_to, e),
             )
         };
+        // The card is built as the toast's is: the capture and the
+        // outline sit under the card's rounded clip, so at rest the two
+        // draw the same corner pixels.
         let mut card = div()
             .absolute()
             .left(px(x))
@@ -114,38 +124,38 @@ impl Overlay {
             .w(px(w.max(1.0)))
             .h(px(h.max(1.0)))
             .rounded(px(stage::RADIUS * e))
-            .shadow(theme::card_shadow(e));
+            .overflow_hidden()
+            .shadow(theme::card_shadow(e * cast));
         if f.card.letterboxed() {
             card = card.bg(theme::alpha(theme::BG_ELEV, e.clamp(0.0, 1.0)));
         }
-        div()
-            .size_full()
-            .opacity(opacity)
-            .child(card)
+        // At rest the capture sits where the toast places it on its card.
+        let (ox, oy) = if at_rest {
+            let (ox, oy, _, _) = f.card.image_at(0.0, 0.0);
+            (ox, oy)
+        } else {
+            (ix - x, iy - y)
+        };
+        let card = card
             .child(
-                // The image rounds itself: a parent's rounded overflow
-                // clip is a rectangle.
                 img(ImageSource::Render(f.img.clone()))
                     .absolute()
-                    .left(px(ix))
-                    .top(px(iy))
+                    .left(px(ox))
+                    .top(px(oy))
                     .w(px(iw.max(1.0)))
                     .h(px(ih.max(1.0)))
                     .object_fit(ObjectFit::Fill)
                     .rounded(px(f.card.image_radius() * e)),
             )
-            .child(
-                stage::edge(stage::RADIUS * e, e)
-                    .left(px(x))
-                    .top(px(y))
-                    .w(px(w.max(1.0)))
-                    .h(px(h.max(1.0))),
-            )
+            .child(stage::edge(stage::RADIUS * e, e).inset_0());
+        div().size_full().opacity(opacity).child(card)
     }
 
-    /// Open the landed toast and park this window once the toast is on
-    /// screen. The park checks the flight's start instant: a session
-    /// re-armed in between owns the window and is left alone.
+    /// Open the landed toast. Once the toast is on screen the card's
+    /// shadow passes to it, and the window parks when the turn ends; with
+    /// no toast, or where no compositor blends, it parks at once. Each
+    /// step checks the flight's start instant: a session re-armed in
+    /// between owns the window and is left alone.
     fn hand_off(
         &mut self,
         (path, thumb): (PathBuf, Result<stage::Thumb, String>),
@@ -157,13 +167,42 @@ impl Overlay {
             self.park(window, cx);
             return;
         };
+        if let Some(flight) = self.flight.as_mut() {
+            flight.handed = true;
+        }
         let (started, screen, source) = (f.started, f.screen, f.source);
-        let park = Box::new(move |cx: &mut App| {
-            let _ = overlay.update(cx, |this, window, cx| {
-                if this.flight.as_ref().is_some_and(|f| f.started == started) {
-                    this.park(window, cx);
+        let park = Box::new(move |cx: &mut App, turned: Option<Instant>| {
+            let turning = overlay.update(cx, |this, window, cx| {
+                let Some(f) = this.flight.as_mut().filter(|f| f.started == started) else {
+                    return false;
+                };
+                match turned.filter(|_| crate::sys::window::blends()) {
+                    Some(turned) => {
+                        f.turned = Some(turned);
+                        cx.notify();
+                        true
+                    }
+                    None => {
+                        this.park(window, cx);
+                        false
+                    }
                 }
             });
+            if !turning.unwrap_or(false) {
+                return;
+            }
+            cx.spawn(async move |cx| {
+                let turn = crate::motion::tempo(crate::motion::FADE);
+                cx.background_executor().timer(turn).await;
+                cx.update(|cx| {
+                    let _ = overlay.update(cx, |this, window, cx| {
+                        if this.flight.as_ref().is_some_and(|f| f.started == started) {
+                            this.park(window, cx);
+                        }
+                    });
+                });
+            })
+            .detach();
         });
         // Window ops from inside a render are dropped by GPUI's effect
         // queue; open the toast after this frame.

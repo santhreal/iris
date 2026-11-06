@@ -23,9 +23,9 @@ Dimensions and styling:
 - A one device pixel outline of mid-gray at 24% opacity runs inside the card's edge. It darkens a light capture and lightens a dark one, so the card keeps an edge over a desktop of the same color. The capture flight draws the same outline, fading in with the card's travel.
 - Edge margin is 12.0 logical pixels from the work area's edges.
 - Drop shadow applies a dual-layer box shadow: 12px blur at 8px Y offset and 5px blur at 2px Y offset.
-- Entrance: Once the window's first frame is on screen, slides in from beyond the work area's edge over 280 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance.
+- Entrance: Once the window's first frame is on screen, slides in from beyond the work area's edge over 280 milliseconds with quartic deceleration. When arriving from region capture flight, the card appears at rest without replaying the slide-in entrance. Its shadow passes from the flight's card to the toast's over 140 milliseconds from the toast's first frame on screen, and the flight's window withdraws once the toast casts the whole shadow.
 - Reduced motion: When the system requests reduced motion, the card does not travel. It fades in on its resting rect over 280 milliseconds and fades out in place when dismissed or expired, a swipe released below the thresholds returns the card at once, and the capture flight is replaced by the card fading in on its resting rect over 140 milliseconds.
-- On X11 with no compositing manager, the window shows only the card, with its corners cut to whole pixels and no shadow. The card appears at rest, stays in place during a dismiss swipe, and closes at once when dismissed or replaced. See [Pop-up Windows](platforms.md#linux-x11).
+- On X11 with no compositing manager, the window shows only the card, with its corners cut to whole pixels and no shadow. The capture flight does not run: the capture overlay leaves with the commit. The card appears at rest, stays in place during a dismiss swipe, and closes at once when dismissed or replaced. See [Pop-up Windows](platforms.md#linux-x11).
 
 ## Interaction and Actions
 

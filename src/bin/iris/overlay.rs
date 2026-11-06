@@ -182,6 +182,25 @@ pub fn session_live(cx: &App) -> bool {
         .any(|h| h.read_with(cx, |o, _| !o.hidden).unwrap_or(false))
 }
 
+/// Park each overlay whose flight has opened its toast (`Flight::handed`)
+/// and stays on screen only until the toast casts the card's shadow. A
+/// command that reads the screen then neither waits out that turn nor
+/// reads the flight's card: it waits on the withdrawal instead
+/// (`hold_while_withdrawing`). Call it outside every overlay's update.
+pub fn withdraw_landed(cx: &mut App) {
+    for overlay in cx
+        .windows()
+        .into_iter()
+        .filter_map(|h| h.downcast::<Overlay>())
+    {
+        let _ = overlay.update(cx, |o, window, cx| {
+            if o.flight.as_ref().is_some_and(|f| f.handed) {
+                o.park(window, cx);
+            }
+        });
+    }
+}
+
 /// The rect a drag from `anchor` to `cursor` selects, clamped to a
 /// window of `size`. `square` (Shift held) locks it to a square that
 /// grows away from the anchor in the drag's direction.

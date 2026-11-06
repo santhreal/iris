@@ -292,6 +292,12 @@ fn clear_popups_for(cx: &mut App, cmd: &Command) -> bool {
 /// own for the error (the library's status line) takes it here; every
 /// other caller goes through `run`.
 pub fn dispatch(cx: &mut App, cmd: &Command) -> Result<(), String> {
+    // A flight that has opened its toast is a finished session whose
+    // card stays only while its shadow passes to the toast's: it leaves
+    // now, and a command that reads the screen waits for it.
+    if matches!(cmd.screen(), Screen::Starts | Screen::Commits) {
+        overlay::withdraw_landed(cx);
+    }
     // A second session would read the first one's overlay, and a window
     // pick takes the next click, which would land on a new overlay.
     if cmd.screen() == Screen::Starts

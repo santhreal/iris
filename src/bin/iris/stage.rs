@@ -187,6 +187,8 @@ pub struct ToastStage {
     /// When the entrance started: the toast's first frame on screen,
     /// or for a landed card, an entrance's length before it opened.
     pub(super) opened: Option<Instant>,
+    /// How much of the card's shadow this window casts.
+    pub(super) cast: Cast,
     pub(super) hover_paused: bool,
     pub(super) pinned: bool,
     /// Dismiss-arm generation: each arm_dismiss bumps it, and a timer
@@ -243,6 +245,26 @@ pub struct ToastStage {
     pub(super) hidden: bool,
 }
 
+/// The share of a toast card's shadow its window casts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Cast {
+    /// All of it: the card slid in on its own.
+    Own,
+    /// The capture flight's card landed here: the share passes from the
+    /// flight's window to this one from this window's first frame on
+    /// screen, None until then (`motion::turnover`).
+    Landed(Option<Instant>),
+}
+
+impl Cast {
+    fn share(self, now: Instant) -> f32 {
+        match self {
+            Cast::Own => 1.0,
+            Cast::Landed(turned) => motion::turnover(turned, now).1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Gesture {
     Undecided,
@@ -294,8 +316,10 @@ impl Render for ToastStage {
         let pose = motion::arrive(enter_t, MARGIN, w, reduced);
         let mut offset = pose.inset;
         let mut opacity = pose.opacity;
-        let shadow_vis = 1.0 - (1.0 - enter_t).powi(4);
-        let mut animating = enter_t < 1.0;
+        let now = Instant::now();
+        let cast = self.cast.share(now);
+        let shadow_vis = (1.0 - (1.0 - enter_t).powi(4)) * cast;
+        let mut animating = enter_t < 1.0 || cast < 1.0;
         let reveal = self.reveal(still);
         if self.hover_turn.0.elapsed() < motion::tempo(motion::FADE) && !still {
             animating = true;

@@ -305,75 +305,50 @@ impl Overlay {
             crate::daemon::run(cx, &cmd);
             return;
         }
-        let bgra = frame_img.as_bytes(0).unwrap_or(&[]);
-        let crop = match pipeline::crop_bgra(bgra, fw, fh, region) {
-            Ok(c) => c,
-            Err(e) => {
-                // A bad crop loses this capture, never the daemon.
-                iris_lib::ilog!("iris: capture: {e}");
-                self.cancel(window, cx);
-                crate::notice::failed(cx, "Capture failed", &e);
-                return;
-            }
-        };
-        pipeline::play_shutter_sound(&self.cfg);
-        // Every other monitor's overlay leaves with the commit; only
-        // this window stays for the flight.
-        close_other_overlays(cx, Some(window.window_handle()));
-        let (cw, ch) = (region.width, region.height);
+        let show_toast = self.cfg.show_toast_after_capture;
+        // The card flies only where the screen blends the overlay over
+        // the desktop: elsewhere every transparent pixel around the card
+        // shows black. There the overlay leaves with the commit and the
+        // toast opens at rest.
+        let flies = show_toast && crate::sys::window::blends();
         // The flight needs pixels now, not after an encode/decode
         // round trip: the crop is already BGRA, so it wraps straight
         // into a RenderImage with no swizzle. The background finalize
         // re-crops from the shared frame and swizzles there, so the
         // UI thread never pays the RGBA pass.
-        let flight_img = crate::widgets::render_image_from_bgra_owned(cw, ch, crop);
-        let show_toast = self.cfg.show_toast_after_capture;
+        let flight_img = if flies {
+            let bgra = frame_img.as_bytes(0).unwrap_or(&[]);
+            match pipeline::crop_bgra(bgra, fw, fh, region) {
+                Ok(crop) => Some(crate::widgets::render_image_from_bgra_owned(
+                    region.width,
+                    region.height,
+                    crop,
+                )),
+                Err(e) => {
+                    // A bad crop loses this capture, never the daemon.
+                    iris_lib::ilog!("iris: capture: {e}");
+                    self.cancel(window, cx);
+                    crate::notice::failed(cx, "Capture failed", &e);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        pipeline::play_shutter_sound(&self.cfg);
+        // Every other monitor's overlay leaves with the commit; only
+        // this window stays for the flight.
+        close_other_overlays(cx, Some(window.window_handle()));
         // The toast lands on this window's display, at its scale.
         let sf = window.scale_factor();
         // The file states the frame pixels per logical pixel of this
         // window, the scale the selection showed at.
         let density = Density::of_scale(sf * Self::scale(window, self.view).0);
-        let frame_for_finalize = frame_img.clone();
-        let finalize = cx.background_executor().spawn(async move {
-            let bgra = frame_for_finalize.as_bytes(0).unwrap_or(&[]);
-            let path = pipeline::finalize_bgra(bgra, fw, fh, region, density)?;
-            // The toast's pixels scale from finalize's stash while the
-            // card is still in flight: the landing opens it at once.
-            let thumb = show_toast.then(|| stage::prepare_thumb(&path, sf));
-            Ok::<_, String>((path, thumb))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = finalize.await;
-            let _ = this.update(cx, |this, cx| match result {
-                Ok((path, Some(thumb))) => {
-                    this.landed = Some((path, thumb));
-                    cx.notify();
-                }
-                // No toast, so nothing lands.
-                Ok((_, None)) => {}
-                Err(e) => {
-                    // A failed save (full disk, unwritable dir) loses
-                    // the capture; the daemon and the overlay recover.
-                    iris_lib::ilog!("iris: capture: {e}");
-                    this.finalize_failed = true;
-                    cx.notify();
-                    crate::notice::failed(cx, "Capture failed", &e);
-                }
-            });
-        })
-        .detach();
-        if show_toast {
-            // The flight paints only its card over the live desktop.
-            // The finalize task retains the pixel Arc; the full-screen
-            // atlas tile no longer needs to survive the selection UI.
-            if let Some(frame) = self.frame_img.take() {
-                crate::widgets::release_render(&frame, cx);
-            }
-            if let Some((_, glass)) = self.bar_glass.take() {
-                crate::widgets::release_render(&glass, cx);
-            }
-            // The toast lands on the monitor under the selection's
-            // center, in the toast's corner of that monitor's work area.
+        // Where the toast lands: on the monitor under the selection's
+        // center, in the toast's corner of that monitor's work area. The
+        // card's resting rect, the card, that monitor's rect, and the
+        // selection's, all in logical screen coordinates.
+        let landing = if show_toast {
             // The selection in root space: the frame plus the origin.
             let root = WinRect {
                 x: region.x as i32 + self.origin.0,
@@ -390,33 +365,89 @@ impl Overlay {
             });
             let host = crate::sys::window::work_area(cx, host);
             let (mx, my, mw, mh) = Self::to_logical(self.origin, &host, sf, sx, sy);
-            let (r, card) = stage::card_rest_rect(mw, mh, cw, ch);
-            let rest = (mx + r.0, my + r.1, r.2, r.3);
-            self.flight = Some(Flight {
-                img: flight_img,
-                from: (x, y, w, h),
-                to: rest,
+            let (r, card) = stage::card_rest_rect(mw, mh, region.width, region.height);
+            let logical = |r: &WinRect| {
+                (
+                    r.x as f32 / sf,
+                    r.y as f32 / sf,
+                    r.width as f32 / sf,
+                    r.height as f32 / sf,
+                )
+            };
+            Some((
+                (mx + r.0, my + r.1, r.2, r.3),
                 card,
-                started: Instant::now(),
-                screen: (
-                    host.x as f32 / sf,
-                    host.y as f32 / sf,
-                    host.width as f32 / sf,
-                    host.height as f32 / sf,
-                ),
-                source: (
-                    root.x as f32 / sf,
-                    root.y as f32 / sf,
-                    root.width as f32 / sf,
-                    root.height as f32 / sf,
-                ),
-            });
-            self.current = None;
-            self.hovered = None;
-            cx.notify();
+                logical(&host),
+                logical(&root),
+            ))
         } else {
+            None
+        };
+        let lands_on = landing.map(|(_, _, screen, source)| (screen, source));
+        let frame_for_finalize = frame_img.clone();
+        let finalize = cx.background_executor().spawn(async move {
+            let bgra = frame_for_finalize.as_bytes(0).unwrap_or(&[]);
+            let path = pipeline::finalize_bgra(bgra, fw, fh, region, density)?;
+            // The toast's pixels scale from finalize's stash while the
+            // card is still in flight: the landing opens it at once.
+            let thumb = show_toast.then(|| stage::prepare_thumb(&path, sf));
+            Ok::<_, String>((path, thumb))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = finalize.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok((path, Some(thumb))) if this.flight.is_some() => {
+                    this.landed = Some((path, thumb));
+                    cx.notify();
+                }
+                // No card in flight: the toast opens at rest.
+                Ok((path, Some(thumb))) => {
+                    let (screen, source) = lands_on.unzip();
+                    cx.defer(move |cx| {
+                        let handoff = Box::new(|_: &mut App, _: Option<Instant>| {});
+                        stage::show_toast_landed(cx, &path, thumb, screen, source, handoff);
+                    });
+                }
+                // No toast, so nothing lands.
+                Ok((_, None)) => {}
+                Err(e) => {
+                    // A failed save (full disk, unwritable dir) loses
+                    // the capture; the daemon and the overlay recover.
+                    iris_lib::ilog!("iris: capture: {e}");
+                    this.finalize_failed = true;
+                    cx.notify();
+                    crate::notice::failed(cx, "Capture failed", &e);
+                }
+            });
+        })
+        .detach();
+        let Some(((rest, card, screen, source), img)) = landing.zip(flight_img) else {
             self.park(window, cx);
+            return;
+        };
+        // The flight paints only its card over the live desktop. The
+        // finalize task retains the pixel Arc; the full-screen atlas tile
+        // no longer needs to survive the selection UI.
+        if let Some(frame) = self.frame_img.take() {
+            crate::widgets::release_render(&frame, cx);
         }
+        if let Some((_, glass)) = self.bar_glass.take() {
+            crate::widgets::release_render(&glass, cx);
+        }
+        self.flight = Some(Flight {
+            img,
+            from: (x, y, w, h),
+            to: rest,
+            card,
+            started: Instant::now(),
+            screen,
+            source,
+            handed: false,
+            turned: None,
+        });
+        self.current = None;
+        self.hovered = None;
+        cx.notify();
     }
 
     /// Release this window's painted images: with the window pooled

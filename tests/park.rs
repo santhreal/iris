@@ -70,11 +70,17 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::CURRENT_TIME;
 
-use daemon::{enabled, xvfb, Daemon};
-use x11::{all_windows_of, focus, tap, windows_of, Compositor};
+use daemon::{enabled, entries, xvfb, Daemon};
+use x11::{all_windows_of, drag, focus, tap, windows_of, Compositor};
 
 /// The title of the capture overlay's window.
 const OVERLAY: &str = "Capture - iris";
+
+/// The title of the toast's window.
+const TOAST: &str = "Screenshot - iris";
+
+/// The keysym of `Return`, which commits a capture.
+const RETURN: u32 = 0xff0d;
 
 /// The keysym of `Escape`, which cancels a capture.
 const ESCAPE: u32 = 0xff1b;
@@ -476,6 +482,7 @@ fn a_parked_overlay_leaves_on_a_cleared_frame_where_a_compositor_blends() {
     last_frame(
         "a_parked_overlay_leaves_on_a_cleared_frame_where_a_compositor_blends",
         true,
+        false,
     );
 }
 
@@ -484,7 +491,67 @@ fn a_parked_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs() {
     last_frame(
         "a_parked_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs",
         false,
+        false,
     );
+}
+
+// WHY: a region capture's card flies from the selection to the toast's
+// corner over the overlay, which is otherwise transparent. Where no
+// compositor blends, a transparent pixel shows black, so every capture
+// with a toast blacked out the screen around the flying card until it
+// landed. The overlay now leaves with the commit there, and the toast
+// opens at rest. The class closed here is any overlay frame drawn after
+// a commit where no compositor runs, and a commit whose toast does not
+// open. Not covered: a compositor that leaves while a card flies, which
+// the flight does not watch for; a commit with the toast turned off,
+// which parks as a cancel does.
+#[test]
+fn a_committed_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs() {
+    last_frame(
+        "a_committed_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs",
+        false,
+        true,
+    );
+}
+
+// WHY: a region capture's flight lands its card on the toast's, and its
+// window stays on the screen until the toast casts the card's shadow.
+// A capture sent in that time counted the flight's window as a second
+// session and was dropped. The class closed here is a capture sent
+// while a landed flight's window is mapped that does not run.
+// Animations run 10 times slower here, so the capture is sent inside
+// the turn. Not covered: the order of the window's withdrawal and the
+// capture's grab, which the toast's own withdrawal for the capture
+// outlasts here; a command sent while the card flies, before its toast
+// opens, which is still dropped; `--record-region`, which shares the
+// dispatch; no compositor, where the window leaves as the toast's first
+// frame shows.
+#[test]
+fn a_capture_sent_as_a_flight_lands_runs() {
+    let case = "a_capture_sent_as_a_flight_lands_runs";
+    let Some(desk) = desk(case, true, 10) else {
+        return;
+    };
+    let (daemon, conn, root, warm) = (&desk.daemon, &desk.conn, desk.root, desk.warm);
+    let dir = desk.dir.path();
+    daemon.send(&["--capture"]);
+    daemon.until("the capture's frozen screen to show", || {
+        overlay_pixel(conn, warm).filter(|p| frozen_screen(p) && focus(conn) == warm)
+    });
+    daemon.settle();
+    drag(conn, root, (200, 200), (400, 350), 40);
+    tap(conn, root, RETURN);
+    daemon.until("the region's toast to open", || {
+        windows_of(conn, root, TOAST).first().copied()
+    });
+    let before = entries(dir).map_or(0, |e| e.len());
+    daemon.send(&["--capture-fullscreen"]);
+    daemon.until("the full-screen capture to land", || {
+        (entries(dir).map_or(0, |e| e.len()) > before).then_some(())
+    });
+    daemon.until("the landed flight's window to leave", || {
+        windows_of(conn, root, OVERLAY).is_empty().then_some(())
+    });
 }
 
 /// A daemon on a private Xvfb whose desktop is `DESKTOP`, under the
@@ -493,7 +560,7 @@ fn a_parked_overlay_leaves_on_its_last_drawn_frame_where_no_compositor_runs() {
 /// the X server last.
 struct Desk {
     daemon: Daemon,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     _compositor: Option<Compositor>,
     conn: RustConnection,
     root: u32,
@@ -502,7 +569,8 @@ struct Desk {
     _xvfb: daemon::Server,
 }
 
-fn desk(case: &str, composited: bool) -> Option<Desk> {
+/// Animations run `slowmo` times slower (`IRIS_SLOWMO`).
+fn desk(case: &str, composited: bool, slowmo: u32) -> Option<Desk> {
     if !enabled() {
         return None;
     }
@@ -531,7 +599,9 @@ fn desk(case: &str, composited: bool) -> Option<Desk> {
     });
     let dir = tempfile::tempdir().unwrap();
     let daemon = Daemon::start(dir.path(), |cmd| {
-        cmd.env("DISPLAY", &display).env_remove("WAYLAND_DISPLAY");
+        cmd.env("DISPLAY", &display)
+            .env_remove("WAYLAND_DISPLAY")
+            .env("IRIS_SLOWMO", slowmo.to_string());
     });
     let warm = daemon.until("the warmup to open the overlay", || {
         all_windows_of(&conn, root, OVERLAY).first().copied()
@@ -542,7 +612,7 @@ fn desk(case: &str, composited: bool) -> Option<Desk> {
     });
     Some(Desk {
         daemon,
-        _dir: dir,
+        dir,
         _compositor: compositor,
         conn,
         root,
@@ -568,11 +638,12 @@ fn frozen_screen(p: &[u8; 4]) -> bool {
     p[3] == 255 && p[..3] != DESKTOP.to_le_bytes()[..3] && p[..3] != [0, 0, 0]
 }
 
-/// Cancel a capture and check what the overlay draws before it is
-/// withdrawn: with `composited` it is withdrawn on a transparent frame,
-/// and without it on the frame the cancel found.
-fn last_frame(case: &str, composited: bool) {
-    let Some(desk) = desk(case, composited) else {
+/// End a capture, cancelled or with `commit` committed, and check what
+/// the overlay draws before it is withdrawn: with `composited` it is
+/// withdrawn on a transparent frame, and without it on the frame the
+/// end found. A commit then opens its toast.
+fn last_frame(case: &str, composited: bool, commit: bool) {
+    let Some(desk) = desk(case, composited, 1) else {
         return;
     };
     let (daemon, conn, root, warm) = (&desk.daemon, &desk.conn, desk.root, desk.warm);
@@ -580,7 +651,10 @@ fn last_frame(case: &str, composited: bool) {
     let frozen = daemon.until("the capture's frozen screen to show", || {
         overlay_pixel(conn, warm).filter(|p| frozen_screen(p) && focus(conn) == warm)
     });
-    // What the cancel draws: the window's damage until it unmaps, and,
+    if commit {
+        drag(conn, root, (200, 200), (400, 350), 40);
+    }
+    // What the end draws: the window's damage until it unmaps, and,
     // where the stand-in compositor holds the window's pixmap, the
     // frame the window was withdrawn on, which a compositor animates.
     conn.change_window_attributes(
@@ -593,14 +667,15 @@ fn last_frame(case: &str, composited: bool) {
     conn.damage_create(damage, warm, ReportLevel::RAW_RECTANGLES)
         .unwrap();
     let pixmap = conn.generate_id().unwrap();
-    // Past the session's entrance, whose frames are not the cancel's.
+    // Past the session's entrance and the drag, whose frames are not
+    // the end's.
     daemon.settle();
     if composited {
         conn.composite_name_window_pixmap(warm, pixmap).unwrap();
     }
     conn.get_input_focus().unwrap().reply().unwrap();
     while conn.poll_for_event().unwrap().is_some() {}
-    tap(conn, root, ESCAPE);
+    tap(conn, root, if commit { RETURN } else { ESCAPE });
     let mut drawn = 0;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -612,7 +687,7 @@ fn last_frame(case: &str, composited: bool) {
         }
         assert!(
             Instant::now() < deadline,
-            "the cancelled capture's overlay was not withdrawn within 5 s"
+            "the ended capture's overlay was not withdrawn within 5 s"
         );
     }
     if composited {
@@ -630,9 +705,14 @@ fn last_frame(case: &str, composited: bool) {
     } else {
         assert_eq!(
             drawn, 0,
-            "the overlay drew after the cancel, where a transparent pixel \
+            "the overlay drew after the capture ended, where a transparent pixel \
              shows black"
         );
+    }
+    if commit {
+        daemon.until("the committed capture's toast to open", || {
+            windows_of(conn, root, TOAST).first().copied()
+        });
     }
 }
 
@@ -650,7 +730,7 @@ fn last_frame(case: &str, composited: bool) {
 #[test]
 fn a_capture_overlay_maps_on_its_frozen_screen_where_no_compositor_runs() {
     let case = "a_capture_overlay_maps_on_its_frozen_screen_where_no_compositor_runs";
-    let Some(desk) = desk(case, false) else {
+    let Some(desk) = desk(case, false, 1) else {
         return;
     };
     let (daemon, conn, root, warm) = (&desk.daemon, &desk.conn, desk.root, desk.warm);
